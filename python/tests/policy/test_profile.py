@@ -25,17 +25,17 @@ from mirage.policy import Action, Ask, CommandContext, Decision, Policy, Scope
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
 from mirage.policy.errors import PolicyError
 from mirage.policy.match import Outcome
+from mirage.policy.profile import SessionProfile
 from mirage.policy.types import CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.mixin import LineExecutorMixin
-from mirage.runtime.types import RunResult
+from mirage.runtime.types import RunResult, ScriptSource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
-from mirage.workspace.session import SessionProfile
 from mirage.workspace.session.state import seed_var
 
-from mirage.workspace.session.permissions import (  # isort: skip
+from mirage.policy.profile import (  # isort: skip
     CommandsBlock, MountCommandsBlock, PathsBlock, ProfileMount, VarsBlock)
 
 
@@ -108,7 +108,7 @@ def test_a_mount_section_carries_a_mode_rules_and_hides():
 
 def test_profile_mounts_refuses_a_bare_list():
     # A list used to mean "only these mounts are reachable"; a mount a
-    # role does not name now keeps its own mode, so the list would
+    # profile does not name now keeps its own mode, so the list would
     # quietly drop the confinement it used to carry.
     with pytest.raises(ValidationError,
                        match=re.escape(
@@ -533,7 +533,7 @@ def test_profile_applies_every_narrowing_field():
     sess = ws.create_session("agent", profile=ANALYST)
     assert sess.mount_modes is not None
     assert sess.mount_modes["/a"] == MountMode.WRITE
-    # A mount the role never names is absent from the map and keeps the
+    # A mount the profile never names is absent from the map and keeps the
     # mode the workspace gave it; naming one mount is not an allowlist.
     assert "/b" not in sess.mount_modes
     assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ))
@@ -542,7 +542,7 @@ def test_profile_applies_every_narrowing_field():
 
 
 def test_one_profile_serves_many_sessions():
-    # A profile is a role, not a session: frozen, so two agents share
+    # A profile is a profile, not a session: frozen, so two agents share
     # one object and neither can bend the other's view.
     ws = _ws()
     s1 = ws.create_session("agent1", profile=ANALYST)
@@ -577,8 +577,8 @@ def test_profiled_session_is_narrowed_end_to_end():
         listing = await ws.execute("ls /a", session_id="agent")
         denied = await ws.execute("cat /a/secrets/token.txt",
                                   session_id="agent")
-        role = await ws.execute('echo "$ROLE"', session_id="agent")
-        return (await listing.stdout_str(), denied, await role.stdout_str())
+        profile = await ws.execute('echo "$ROLE"', session_id="agent")
+        return (await listing.stdout_str(), denied, await profile.stdout_str())
 
     listing_out, denied, role_out = asyncio.run(run())
     assert "x.txt" in listing_out
@@ -602,7 +602,7 @@ def test_profile_env_reaches_the_process_view():
     assert "ROLE=analyst\n" in asyncio.run(run())
 
 
-# Two roles, each the whole document it runs under: there is no
+# Two profiles, each the whole document it runs under: there is no
 # inheritance, so reading one is reading everything it may do.
 PROFILES = {
     "default":
@@ -663,8 +663,8 @@ def test_create_session_without_a_profile_takes_the_default_one():
 def test_default_profile_shapes_the_workspace_session_too():
     # The workspace's own session is a session created without a name,
     # so `profiles.default` reaches it: the primary agent starts in the
-    # role's cwd, sees its exported env and its per-mount modes, and
-    # cannot see what it hides. A workspace with no default role leaves
+    # profile's cwd, sees its exported env and its per-mount modes, and
+    # cannot see what it hides. A workspace with no default profile leaves
     # that session as it always was.
     ws = Workspace(
         {
@@ -698,7 +698,7 @@ def test_default_profile_shapes_the_workspace_session_too():
     pwd_out, pager_out, other_exit, vault_exit = asyncio.run(run())
     assert pwd_out == "/b\n"
     assert pager_out == "cat\n"
-    # A mount the role does not name is reachable at its own mode: the
+    # A mount the profile does not name is reachable at its own mode: the
     # `mounts` mapping narrows, it is not an allowlist.
     assert other_exit == 0
     assert vault_exit != 0
@@ -710,7 +710,7 @@ def test_default_profile_shapes_the_workspace_session_too():
 def test_a_role_keeps_a_mount_away_by_hiding_it_not_by_omitting_it():
     # Omission is not a refusal, so exclusion is a hide: the mount reads
     # as nonexistent rather than as a permission error naming something
-    # the role cannot see.
+    # the profile cannot see.
     ws = Workspace(
         {
             "/a": (RAMResource(), MountMode.WRITE),
@@ -742,7 +742,7 @@ def test_create_session_rejects_an_unknown_profile_name():
 
 
 def test_workspace_names_a_default_role_by_name():
-    # `profile=` on the workspace picks which role shapes a session
+    # `profile=` on the workspace picks which profile shapes a session
     # created without one, including its own.
     ws = Workspace(
         {
@@ -762,7 +762,7 @@ def test_workspace_names_a_default_role_by_name():
                   profile="gone")
 
 
-def test_inline_permissions_add_to_the_named_role():
+def test_inline_permissions_add_to_the_named_profile():
     ws = _profiled_ws()
     sess = ws.create_session("agent",
                              profile="reviewer",
@@ -772,8 +772,8 @@ def test_inline_permissions_add_to_the_named_role():
                                  paths=PathsBlock(hide=("*.key", )),
                                  vars=VarsBlock(hide=("AWS_*", ))))
     assert sess.mount_modes is not None
-    # The role says read and the inline document says write: the weaker
-    # one wins, which is the role's.
+    # The profile says read and the inline document says write: the weaker
+    # one wins, which is the profile's.
     assert sess.mount_modes["/a"] == MountMode.READ
     assert sess.hidden_paths == HiddenPaths(paths=("/a/secrets", ),
                                             patterns=("*.key", ))
@@ -783,7 +783,7 @@ def test_inline_permissions_add_to_the_named_role():
 
 def test_inline_permissions_may_not_state_an_allow_list():
     # The one rule about combining two documents: an inline document
-    # restricts, so an allow list there would install a command the role
+    # restricts, so an allow list there would install a command the profile
     # was never given.
     ws = _profiled_ws()
     with pytest.raises(PolicyError, match="not an allow list"):
@@ -805,7 +805,7 @@ def test_profile_cwd_is_where_the_session_starts():
     assert asyncio.run(run()) == "/b\n"
 
 
-# One mount section, written the same way by both roles below: rules
+# One mount section, written the same way by both profiles below: rules
 # here reach a line that works inside /repo, by cwd or by operand, which
 # is what a path-scoped rule cannot express (`cd /repo && git commit`
 # names no path).
@@ -821,7 +821,8 @@ COMMANDS_DOC = {
     "commands": {
         "allow": [
             "ls", "cat", "echo", "rm", "git", "python3", "mkdir", "touch",
-            "head", "xargs", "wc", "man", "find"
+            "head", "xargs", "wc", "man", "find", "type", "command", "which",
+            "cd", "["
         ],
         "deny": [{
             "reason": "no deletes in the repo",
@@ -839,7 +840,10 @@ COMMANDS_DOC = {
 }
 REVIEWER_COMMANDS = {
     "commands": {
-        "allow": ["ls", "cat", "echo", "git log", "git status", "xargs"]
+        "allow": [
+            "ls", "cat", "echo", "git log", "git status", "xargs", "type",
+            "eval"
+        ]
     },
     "mounts": {
         "/repo": REPO_SECTION
@@ -892,13 +896,18 @@ async def test_allow_list_hides_unlisted_tools_from_dispatch_and_enumerators():
         code, out, _ = await _line(ws, "man")
         assert code == 0 and "- cat" in out and "- sort" not in out
         assert (await _line(ws, "man sort"))[0] == 1
-        # Grammar-tier builtins and functions are not subjects; a listed
-        # tool runs; the workspace's own session is bound like any other.
+        # Builtins are subjects like everything else: the listed cd and
+        # [ run, the unlisted pwd and history are not commands at all.
+        # Functions are the one exemption, and every line of a body
+        # passes the gate itself.
         assert await _line(
             ws, "cd /repo && [ -f d/x ] && echo yes") == (0, "yes\n", "")
         assert await _line(ws, "f() { echo in-f; }; f") == (0, "in-f\n", "")
         assert (await _line(ws, "cat /repo/d/x"))[0] == 0
-        # `man` and `history` are tool-tier builtins: hidden when unlisted.
+        assert await _line(ws, "pwd") == (127, "", "pwd: command not found\n")
+        assert await _line(ws,
+                           "type pwd; echo $?") == (0, "1\n",
+                                                    "type: pwd: not found\n")
         assert await _line(ws, "history") == (127, "",
                                               "history: command not found\n")
     finally:
@@ -906,13 +915,13 @@ async def test_allow_list_hides_unlisted_tools_from_dispatch_and_enumerators():
 
 
 @pytest.mark.asyncio
-async def test_a_roles_allow_list_is_the_only_one_a_session_reads():
+async def test_a_profiles_allow_list_is_the_only_one_a_session_reads():
     ws = _commands_ws()
     ws.create_session("rev", profile="reviewer")
     try:
         await ws.execute("mkdir -p /repo/d && touch /repo/d/x")
-        # The reviewer role lists `cat` and not python3, whatever the
-        # default role lists; it lists `git log`, so `git` is visible but
+        # The reviewer profile lists `cat` and not python3, whatever the
+        # default profile lists; it lists `git log`, so `git` is visible but
         # a `git commit` line is covered by nothing (a refusal that names
         # the program, not "command not found").
         assert (await _line(ws, "cat /repo/d/x", "rev"))[0] == 0
@@ -1853,3 +1862,40 @@ def test_a_misspelled_document_field_fails_at_construction():
     ws = Workspace({"/data/": RAMResource()})
     with pytest.raises(ValidationError):
         ws.create_session("x", permissions={"command": {"deny": []}})
+
+
+def test_a_script_alone_is_a_whole_profile():
+    # The document is optional beside a script: nothing is hidden, and
+    # the script is the profile's whole admission policy.
+    profile = SessionProfile.model_validate({
+        "script": ScriptSource("None"),
+        "runtime": "monty",
+    })
+    assert isinstance(profile.script, ScriptSource)
+    assert profile.runtime == "monty"
+    assert profile.commands is None
+
+
+def test_a_script_rides_beside_the_document():
+    profile = SessionProfile.model_validate({
+        "commands": {
+            "allow": ["ls"]
+        },
+        "script": ScriptSource("None"),
+        "runtime": "monty",
+    })
+    assert isinstance(profile.script, ScriptSource)
+    assert profile.runtime == "monty"
+    assert profile.commands is not None
+
+
+def test_a_script_without_a_runtime_is_refused():
+    # There is no default engine, so a script that names none is a
+    # config error, not a guess.
+    with pytest.raises(ValidationError, match="set runtime beside script"):
+        SessionProfile.model_validate({"script": ScriptSource("None")})
+
+
+def test_a_runtime_without_a_script_is_refused():
+    with pytest.raises(ValidationError, match="states no script"):
+        SessionProfile.model_validate({"runtime": "monty"})

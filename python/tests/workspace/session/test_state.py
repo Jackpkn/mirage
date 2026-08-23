@@ -246,7 +246,7 @@ def test_visible_env_filters_reads_without_copying():
 
 
 def test_a_shaped_write_gates_the_value_that_lands():
-    # `declare -l role; role=ADMIN` stores `admin`, so a rule refusing
+    # `declare -l profile; profile=ADMIN` stores `admin`, so a rule refusing
     # `admin` has to see `admin`, not the raw text: coercion runs
     # before the gate.
     seen: list[str | None] = []
@@ -261,11 +261,11 @@ def test_a_shaped_write_gates_the_value_that_lands():
 
     async def run():
         view, session = _view(Policies([Capture()]))
-        seed_var(session, "role", "")
-        set_attr(session, "role", VarAttr.LOWER)
+        seed_var(session, "profile", "")
+        set_attr(session, "profile", VarAttr.LOWER)
         with pytest.raises(PolicyDenied):
-            await view.set("role", "ADMIN")
-        assert session.env["role"] == ""
+            await view.set("profile", "ADMIN")
+        assert session.env["profile"] == ""
         seed_var(session, "n", "0")
         set_attr(session, "n", VarAttr.INTEGER)
         await view.set("n", "3+4")

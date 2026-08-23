@@ -19,7 +19,7 @@ import { IOResult } from '../../io/types.ts'
 import type { AdmissionRules, CommandRule } from '../../policy/types.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
-import { parseSessionProfile } from './permissions.ts'
+import { parseSessionProfile } from '../../policy/profile.ts'
 import { Workspace } from '../workspace/workspace.ts'
 import { checkCliVerbs, checkRules } from './validate.ts'
 

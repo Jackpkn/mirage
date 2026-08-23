@@ -43,7 +43,7 @@ def test_head_visible_answers_the_roles_one_allow_list():
     assert head_visible("git", rules)
     assert not head_visible("cat", rules)
     assert not head_visible("rm", rules)
-    # A role without a list hides nothing, and neither does no role.
+    # A profile without a list hides nothing, and neither does no profile.
     assert head_visible("rm", AdmissionRules(deny=(CommandRule("x"), )))
     assert head_visible("rm", None)
 
@@ -60,7 +60,7 @@ def test_node_visible_narrows_a_tree_one_verb_at_a_time():
     assert not node_visible(("linear", "issue", "create"), rules)
     # head_visible is the one-word case, and agrees.
     assert head_visible("linear", rules) == node_visible(("linear", ), rules)
-    # A role without a list hides no node of any tree.
+    # A profile without a list hides no node of any tree.
     assert node_visible(("linear", "team"), None)
     assert node_visible(("linear", "team"),
                         AdmissionRules(deny=(CommandRule("x"), )))

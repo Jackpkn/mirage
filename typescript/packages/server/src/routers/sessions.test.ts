@@ -45,7 +45,7 @@ describe('sessions router', () => {
   })
 
   it('accepts a mount mode mapping and refuses a bare list', async () => {
-    // A list of prefixes used to mean "only these mounts". A role now
+    // A list of prefixes used to mean "only these mounts". A profile now
     // narrows the mounts it names and never decides whether one exists,
     // so the list would be a silent no-op that still reads like
     // confinement: the door refuses it instead.

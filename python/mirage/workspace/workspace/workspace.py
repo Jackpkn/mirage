@@ -31,7 +31,8 @@ from mirage.observe.record import OpRecord
 from mirage.observe.store import ObserverStore
 from mirage.ops import Ops
 from mirage.policy import (AskHandler, Decisions, Explanation,
-                           PermissionsPolicy, Policies, Policy, PolicyError)
+                           PermissionsPolicy, Policies, Policy, PolicyError,
+                           ScriptPolicy, SessionProfile)
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
@@ -49,8 +50,7 @@ from mirage.workspace.mount import MountEntry, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.node.explain import explain_line
-from mirage.workspace.session import (Session, SessionManager, SessionProfile,
-                                      SessionStore)
+from mirage.workspace.session import Session, SessionManager, SessionStore
 from mirage.workspace.session.resolve import (apply_profile, compile_profile,
                                               resolve_profile, with_inline)
 from mirage.workspace.session.validate import check_cli_verbs
@@ -117,9 +117,9 @@ class Workspace:
         | None = None,
     ) -> None:
         self._registry = MountRegistry()
-        # The permission documents: one role per name, and the role a
-        # session gets when it names none. A role is the whole document
-        # a session runs under, so there is no workspace-wide block
+        # The permission profiles: one per name, and the one a session
+        # gets when it names none. A profile is the whole document a
+        # session runs under, so there is no workspace-wide block
         # above it. Both accept the plain mapping a YAML file or the
         # TypeScript constructor would hold; model_validate is a no-op
         # on an already-built model.
@@ -158,13 +158,17 @@ class Workspace:
         self._default_agent_id = agent_id
         self._session_mgr = SessionManager(session_id, store=stores.sessions)
         # Admission policies, consulted in registration order after the
-        # built-ins the registry seeds: the role's admission rules
+        # built-ins the registry seeds: the profile's admission rules
         # (PermissionsPolicy, reading each session's compiled rules
-        # from the manager by the id the door puts in the context), then
-        # Policy instances, then anything added later through
-        # ws.policies.add(). The runtime policy (policy=) is the
-        # line-level counterpart until it is absorbed as a hook.
+        # from the manager by the id the door puts in the context), the
+        # profile's script (ScriptPolicy, evaluated per command through
+        # the same manager), then Policy instances, then anything added
+        # later through ws.policies.add(). The runtime policy (policy=)
+        # is the line-level counterpart until it is absorbed as a hook.
         self._registry.policies.add(PermissionsPolicy(self._session_mgr))
+        self._script_policy = ScriptPolicy(self._session_mgr,
+                                           self._mount_prefixes)
+        self._registry.policies.add(self._script_policy)
         for entry in policies or []:
             self._registry.policies.add(entry)
         # The ledger an Ask is taken to (design 3.9): records live on
@@ -197,12 +201,12 @@ class Workspace:
         # stamped onto the default session now and onto every session
         # created or hydrated later.
         # The workspace's own session is a session created without a
-        # name, so the default role shapes it too: the primary agent is
-        # not the one agent the document cannot reach.
-        default_role = self._role(None)
-        self._session_mgr.default_profile = (compile_profile(default_role)
-                                             if default_role is not None else
-                                             None)
+        # name, so the default profile shapes it too: the primary agent
+        # is not the one agent the document cannot reach.
+        default_base = self._base_profile(None)
+        self._session_mgr.default_profile = (compile_profile(
+            default_base, self._profile_name(None)) if default_base is not None
+                                             else None)
 
         self.observer = Observer(store=stores.observe)
         self._registry.mount(HISTORY_PREFIX,
@@ -258,8 +262,8 @@ class Workspace:
     async def explain(self,
                       line: str,
                       session_id: str = "") -> list[Explanation]:
-        """What a line would do under a session's role, without running
-        any of it.
+        """What a line would do under a session's profile, without
+        running any of it.
 
         The dry run of the gate every command passes through, so this
         and the refusal an agent would read come out of one place and
@@ -267,13 +271,14 @@ class Workspace:
         grant and puts no question to a host, which is what makes it
         safe to call about a line nobody typed.
 
-        Host-side only. The structure of a role's rules is an operator's
-        business, so there is no builtin an agent can type to read it.
+        Host-side only. The structure of a profile's rules is an
+        operator's business, so there is no builtin an agent can type
+        to read it.
 
         Args:
             line (str): the line to judge, as an agent would type it.
-            session_id (str): whose role to judge it under; the default
-                session when empty.
+            session_id (str): whose profile to judge it under; the
+                default session when empty.
 
         Returns:
             list[Explanation]: one per command the gate reads, in gate
@@ -694,12 +699,12 @@ class Workspace:
         profile: str | SessionProfile | Mapping[str, Any] | None = None,
         permissions: SessionProfile | Mapping[str, Any] | None = None,
     ) -> Session:
-        """Create a session under one role, with an optional inline
+        """Create a session under one profile, with an optional inline
         document of its own.
 
-        The role is a name from the workspace's ``profiles``, or the
-        workspace default when none is named, or a role document. The
-        inline ``permissions`` and ``mounts`` may add ask and deny
+        The profile is a name from the workspace's ``profiles``, or the
+        workspace default when none is named, or a profile document.
+        The inline ``permissions`` and ``mounts`` may add ask and deny
         rules, hides and weaker modes; they may never add an allow
         entry, which is the one rule about combining two documents.
 
@@ -710,27 +715,28 @@ class Workspace:
                 mode ("read", "write", "exec", or the filesystem aliases
                 "r", "rw", "rwx"), which may only be weaker than the
                 mount's own. A mount the mapping omits keeps its own
-                mode, so this narrows and never confines; a role that
-                must keep a session away from a mount hides it.
+                mode, so this narrows and never confines; a profile
+                that must keep a session away from a mount hides it.
             profile (str | SessionProfile | Mapping[str, Any] | None):
-                the role to create the session from: a name, a
+                the profile to create the session under: a name, a
                 SessionProfile, or its plain document.
             permissions (SessionProfile | Mapping[str, Any] | None): an
                 inline document of ask and deny rules and hides.
 
         Raises:
-            PolicyError: an unknown role name, or an inline document
-                that states an allow list.
+            PolicyError: an unknown profile name, or an inline document
+                that states an allow list or a script.
         """
         if isinstance(profile, Mapping):
             profile = SessionProfile.model_validate(profile)
-        base = self._role(profile)
+        base = self._base_profile(profile)
         inline = (SessionProfile.model_validate(permissions)
                   if permissions is not None else None)
         if mounts is not None:
             inline = with_inline(
                 inline, SessionProfile.model_validate({"mounts": mounts}))
-        compiled = compile_profile(with_inline(base, inline))
+        compiled = compile_profile(with_inline(base, inline),
+                                   self._profile_name(profile))
         check_cli_verbs(compiled.commands, self._cli_verbs())
         session = self._session_mgr.create(session_id)
         apply_profile(session, compiled)
@@ -748,10 +754,12 @@ class Workspace:
             for name, install in self._registry.clis.items().items()
         }
 
-    def _role(self,
-              profile: str | SessionProfile | None) -> SessionProfile | None:
-        """The role a session is created under: the name as given, else
-        the workspace's default role.
+    def _base_profile(
+            self,
+            profile: str | SessionProfile | None) -> SessionProfile | None:
+        """The base profile a session is created under, which the
+        inline ``permissions``/``mounts`` arguments then layer onto:
+        the profile as named, else the workspace default.
 
         Args:
             profile (str | SessionProfile | None): what the caller
@@ -760,6 +768,27 @@ class Workspace:
         if profile is None and self._default_profile_name is not None:
             return self._profiles[self._default_profile_name]
         return resolve_profile(self._profiles, profile)
+
+    def _profile_name(self, profile: str | SessionProfile | None) -> str:
+        """The name of the profile ``_base_profile`` resolves, which its
+        script reads as ``ctx["profile"]``; empty for a profile document
+        passed without one.
+
+        Args:
+            profile (str | SessionProfile | None): what the caller
+                named, None for the workspace default.
+        """
+        if isinstance(profile, str):
+            return profile
+        if profile is None and self._default_profile_name is not None:
+            return self._default_profile_name
+        return ""
+
+    def _mount_prefixes(self) -> list[str]:
+        """The mount prefixes a profile script reads as
+        ``ctx["mounts"]``, read per evaluation so a later mount shows.
+        """
+        return [entry.prefix for entry in self._registry.mounts()]
 
     def get_session(self, session_id: str) -> Session:
         return self._session_mgr.get(session_id)

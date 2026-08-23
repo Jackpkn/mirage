@@ -76,11 +76,11 @@ function normPrefix(mountPrefix: string): string {
  * The current session's mode for this mount.
  *
  * `MountMode.EXEC` (no narrowing) when no session is bound, when the
- * role names no mount, or when it names none for this one: a role's
+ * profile names no mount, or when it names none for this one: a profile's
  * mount sections narrow what the mount already offers and never decide
- * whether it exists. A role that must not reach a mount hides it, which
+ * whether it exists. A profile that must not reach a mount hides it, which
  * answers ENOENT rather than a permission error naming something the
- * role cannot see.
+ * profile cannot see.
  */
 function sessionMode(mountPrefix: string): MountMode {
   const sess = getCurrentSession()
@@ -138,7 +138,7 @@ export function sessionPathAllowed(sess: Session, virtual: string): boolean {
  * enumeration surfaces filter names through it and the doors answer
  * ENOENT (EACCES for creates) when it says no, so hiding reads as
  * nonexistence, never as a denial that leaks the name. True when no
- * session is bound. This is how a role keeps a session away from a
+ * session is bound. This is how a profile keeps a session away from a
  * mount, since naming mounts only narrows their modes.
  */
 export function pathAllowed(virtual: string): boolean {
@@ -232,10 +232,10 @@ export function redirectTargetJudged(virtual: string): boolean {
 }
 
 /**
- * The mount mode after narrowing by the current session's role. The
- * mount's own mode is the strongest one available; a role's mode can
- * only weaken it (a READ mount stays read-only whatever the role says).
- * A mount the role does not name keeps its own mode.
+ * The mount mode after narrowing by the current session's profile. The
+ * mount's own mode is the strongest one available; a profile's mode can
+ * only weaken it (a READ mount stays read-only whatever the profile says).
+ * A mount the profile does not name keeps its own mode.
  */
 export function effectiveMountMode(mountPrefix: string, mountMode: MountMode): MountMode {
   return weakerMode(mountMode, sessionMode(mountPrefix))

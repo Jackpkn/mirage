@@ -14,8 +14,9 @@
 
 import type { Runtime } from '../base.ts'
 import { LanguageRuntime } from '../language.ts'
+import { evalWithCtx } from '../script.ts'
 import { bindCommands, catchAll, runtimeBindingsFor } from '../table.ts'
-import { CommandTimeoutError, runWithTimeout } from '../../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../../commands/builtin/utils/limit.ts'
 import { EvalError } from '../errors.ts'
 import { isEvaluator, type Evaluator } from '../mixin.ts'
 import type { EvalValue } from '../types.ts'
@@ -102,12 +103,13 @@ async function evalSource(
     )
   }
   try {
-    const result = await runWithTimeout(
-      evaluator.eval(source, { inputs: { ctx: ctxPayload } }),
+    return await evalWithCtx(
+      source,
+      ctxPayload,
+      evaluator,
       POLICY_EVAL_TIMEOUT.seconds,
       'policy script',
     )
-    return result.value
   } catch (caught) {
     if (caught instanceof CommandTimeoutError) {
       throw new PolicyError(

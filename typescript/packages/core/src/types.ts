@@ -87,7 +87,7 @@ export function weakerMode(a: MountMode, b: MountMode): MountMode {
  * A sibling of `Session.mountModes`: per-session narrowing that the
  * doors enforce, null-on-the-session means unrestricted. Hiding is
  * "does not exist", never "forbidden" — matching paths answer ENOENT
- * and drop out of listings, which is what makes a hide the way a role
+ * and drop out of listings, which is what makes a hide the way a profile
  * keeps a session away from a mount: naming mounts only narrows their
  * modes, and a refusal would hand back the name.
  *

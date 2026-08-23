@@ -44,7 +44,7 @@ import {
   type RunResult,
   type RuntimeEntry,
 } from "@struktoai/mirage-node";
-import { parseSessionProfile } from "@struktoai/mirage-core/workspace/session/permissions";
+import { parseSessionProfile } from "@struktoai/mirage-core/policy/profile";
 
 const HOST = "typescript";
 const SUITE_DIR = dirname(fileURLToPath(import.meta.url));

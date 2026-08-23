@@ -60,13 +60,13 @@ async function structureWorld(): Promise<Workspace> {
 }
 
 /**
- * Two mounts, a role that hides the second.
+ * Two mounts, a profile that hides the second.
  *
  * `/open` (`pub.txt`) is reachable by session `agent`; `/closed`
- * (`sec.txt`) is hidden from it. A hide, not an omitted mount: a role
+ * (`sec.txt`) is hidden from it. A hide, not an omitted mount: a profile
  * narrows what it names and a mount it never names keeps its own mode,
  * so hiding is how a deployment puts a mount out of reach, and it
- * answers ENOENT rather than a refusal naming what the role cannot see.
+ * answers ENOENT rather than a refusal naming what the profile cannot see.
  */
 async function scopedWorld(): Promise<Workspace> {
   const parser = await getTestParser()

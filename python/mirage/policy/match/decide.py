@@ -67,7 +67,7 @@ def rule_at(live: LiveRules,
 
 
 def decide(ctx: CommandContext, rules: AdmissionRules | None) -> Ruling:
-    """The role's answer about one line: the whole law, in one place.
+    """The profile's answer about one line: the whole law, in one place.
 
     Two rules, because a command name and a path are not the same kind
     of thing. A rule naming no path is read by verb, deny before ask,

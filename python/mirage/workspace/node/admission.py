@@ -46,13 +46,13 @@ from mirage.workspace.expand.classify.path import classify_bare_path
 from mirage.workspace.expand.spec_hints import (spec_for_command,
                                                 spec_word_bases,
                                                 spec_word_kinds)
+from mirage.workspace.lookup import (SLASH_KEEPS_LAST, WordPolicy,
+                                     command_visible, follows_last_component,
+                                     is_tool, lookup, reads_subtrees,
+                                     walks_mounts, word_policy)
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.node.inner_lines import Word, inner_lines
-from mirage.workspace.route import (SLASH_KEEPS_LAST, WordPolicy,
-                                    command_visible, follows_last_component,
-                                    is_tool, reads_subtrees, route,
-                                    walks_mounts, word_policy)
 from mirage.workspace.session import Session
 from mirage.workspace.session.shell_dirs import home_dir
 
@@ -389,7 +389,7 @@ def _word_hints(
     consumed = registry.match_command_prefix(line)
     joined = " ".join(line[:consumed])
     if (joined in session.functions or word_policy(
-            route(joined, session, registry)) is not WordPolicy.MOUNT):
+            lookup(joined, session, registry)) is not WordPolicy.MOUNT):
         return None, None
     spec = spec_for_command(joined, registry, session.cwd)
     if not spec:

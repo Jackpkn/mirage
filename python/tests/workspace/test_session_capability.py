@@ -29,7 +29,7 @@ def _seed(name: str, body: bytes) -> RAMResource:
 
 
 def test_a_hidden_mount_reads_as_absent():
-    # A role narrows the mounts it names and never decides whether one
+    # A profile narrows the mounts it names and never decides whether one
     # exists, so keeping a session away from a mount is a hide, and a
     # hide answers ENOENT: naming the mount in a refusal would confirm
     # to the agent exactly what it was not meant to know is there.

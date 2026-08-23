@@ -14,11 +14,11 @@
 
 import { Session, varsFromEnv } from './session.ts'
 import { setCwd } from './shell_dirs.ts'
-import type { CompiledProfile } from './permissions.ts'
+import type { CompiledProfile } from '../../policy/profile.ts'
 import { RAMSessionStore } from './ram.ts'
 import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
-import type { AdmissionRules, Decision } from '../../policy/types.ts'
+import type { AdmissionRules, Decision, ProfileScript } from '../../policy/types.ts'
 import type { MountMode } from '../../types.ts'
 
 type StoredSession = Parameters<typeof Session.fromJSON>[0]
@@ -65,7 +65,7 @@ export class SessionManager {
    * applied in full now (modes, hides, exported env, cwd), and its
    * narrowing stamped again after hydration, where a record from before
    * the profile existed would otherwise wake the primary agent
-   * unrestricted. null (no default role) leaves the session, and
+   * unrestricted. null (no default profile) leaves the session, and
    * hydration, as they were.
    */
   set defaultProfile(compiled: CompiledProfile | null) {
@@ -75,7 +75,7 @@ export class SessionManager {
 
   /**
    * The admission rules one session runs under (SessionCommandsQuery).
-   * The default role's rules for an id this manager does not know, the
+   * The default profile's rules for an id this manager does not know, the
    * empty id of an unbound door included, so a door that names no
    * session still fails toward refusal.
    */
@@ -84,6 +84,18 @@ export class SessionManager {
     return session === undefined
       ? (this.defaultProfileInternal?.commands ?? null)
       : session.commands
+  }
+
+  /**
+   * The profile script one session runs under (SessionScriptsQuery).
+   * The default profile's for an id this manager does not know, the
+   * same fallback `commandsOf` makes and for the same reason: a door
+   * that names no session is judged like a session that named no
+   * profile.
+   */
+  scriptOf(sessionId: string): ProfileScript | null {
+    const session = this.sessions.get(sessionId)
+    return session === undefined ? (this.defaultProfileInternal?.script ?? null) : session.script
   }
 
   /**
@@ -184,6 +196,7 @@ export class SessionManager {
         dflt.hiddenPaths = stored.hiddenPaths
         dflt.hiddenVars = stored.hiddenVars
         dflt.commands = stored.commands
+        dflt.script = stored.script
         // The host's standing answers are session state like cwd:
         // dropped here, an approved line would ask again after a
         // restart and the next flush would erase the grant from the

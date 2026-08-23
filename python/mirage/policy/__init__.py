@@ -25,12 +25,17 @@ from mirage.policy.errors import PolicyDenied, PolicyError
 from mirage.policy.policies import (Policies, post_execute_gate, post_ops_gate,
                                     pre_ops_gate, pre_session_gate,
                                     render_deny, render_pending)
+from mirage.policy.profile import (CommandsBlock, CompiledProfile,
+                                   MountCommandsBlock, PathsBlock,
+                                   ProfileMount, SessionProfile, VarsBlock)
+from mirage.policy.script import ScriptPolicy
 
 from mirage.policy.types import (  # isort: skip
     VALIDITY, Action, Ask, CommandContext, CommandRule, AdmissionRules,
     Decision, Deny, DenyScope, ExecuteResultContext, Explanation, Limit,
-    MountRootQuery, OpsContext, OpsResultContext, Pending, Scope,
-    SessionCommandsQuery, SessionContext, SessionDecisionsQuery)
+    MountRootQuery, OpsContext, OpsResultContext, Pending, ProfileScript,
+    Scope, SessionCommandsQuery, SessionContext, SessionDecisionsQuery,
+    SessionScriptsQuery)
 
 __all__ = [
     "Action",
@@ -40,6 +45,8 @@ __all__ = [
     "AskHandler",
     "CommandContext",
     "CommandRule",
+    "CommandsBlock",
+    "CompiledProfile",
     "covers",
     "Decision",
     "decision_id",
@@ -53,11 +60,13 @@ __all__ = [
     "Explanation",
     "FALLBACK_LIMIT",
     "Limit",
+    "MountCommandsBlock",
     "MountRootPolicy",
     "MountRootQuery",
     "OpsContext",
     "OpsResultContext",
     "OutputCapPolicy",
+    "PathsBlock",
     "Pending",
     "PermissionsPolicy",
     "Policies",
@@ -69,14 +78,20 @@ __all__ = [
     "post_ops_gate",
     "pre_ops_gate",
     "pre_session_gate",
+    "ProfileMount",
+    "ProfileScript",
     "render_deny",
     "render_pending",
     "resolve_across_mounts",
     "resolve_limit",
     "resolve_producer",
     "Scope",
+    "ScriptPolicy",
     "SessionCommandsQuery",
     "SessionContext",
     "SessionDecisionsQuery",
+    "SessionProfile",
+    "SessionScriptsQuery",
     "VALIDITY",
+    "VarsBlock",
 ]

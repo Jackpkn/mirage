@@ -172,12 +172,13 @@ def test_installed_cli_is_discoverable_from_the_shell():
     assert "# clis" in _out(_exec(ws, "man"))
 
 
-def test_man_lists_only_the_cli_verbs_the_role_can_reach():
+def test_man_lists_only_the_cli_verbs_the_profile_can_reach():
     ws = _cli_ws()
-    ws.create_session("narrow",
-                      profile={"commands": {
-                          "allow": ["man", "linear issue"]
-                      }})
+    ws.create_session(
+        "narrow",
+        profile={"commands": {
+            "allow": ["man", "linear issue", "which"]
+        }})
     page = _out(_run(ws.execute("man linear", session_id="narrow")))
     assert "issue" in page
     assert "team" not in page

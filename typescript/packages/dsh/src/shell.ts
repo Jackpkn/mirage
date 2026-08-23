@@ -630,14 +630,14 @@ export class MirageShellExecutor extends ShellExecutor {
    * source held, since `read` is the weakest mode there is; naming a
    * mount only narrows it, so a prefix the map omits would keep its own
    * mode rather than disappear. The other three are copied from the
-   * source session rather than recompiled, because the role it was
+   * source session rather than recompiled, because the profile it was
    * created under is not something a session records.
    *
    * Leaving any of them behind widens. Hides are the obvious one: a
    * binding confined to `/allowed` would read `/secret` in read-only
    * mode although the same command is refused outside it. Command rules
    * are the one modes cannot stand in for, because a mode bounds a
-   * mount and an account CLI reaches a service: a role that denies
+   * mount and an account CLI reaches a service: a profile that denies
    * `slack message send` or `git push` still denies it here, where
    * every mount being `read` says nothing at all about it.
    *

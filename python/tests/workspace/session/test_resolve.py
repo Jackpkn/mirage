@@ -8,7 +8,7 @@ from mirage.types import HiddenPaths, HiddenVars, MountMode, PathSpec
 from mirage.utils.hidden import path_hidden
 from mirage.workspace.session.session import Session
 
-from mirage.workspace.session.permissions import (  # isort: skip
+from mirage.policy.profile import (  # isort: skip
     CommandsBlock, MountCommandsBlock, PathsBlock, ProfileMount,
     SessionProfile, VarsBlock)
 from mirage.workspace.session.resolve import (  # isort: skip
@@ -48,7 +48,7 @@ def test_with_inline_takes_the_weaker_mode_per_mount():
     out = with_inline(base, inline)
     assert out is not None and out.mounts is not None
     # Every prefix either side names survives; a mount only the inline
-    # document names is not a grant, since a mount the role never named
+    # document names is not a grant, since a mount the profile never named
     # was already reachable at its own mode.
     assert out.mounts["/a"].mode is MountMode.WRITE
     assert out.mounts["/b"].mode is MountMode.READ
@@ -112,7 +112,7 @@ def test_with_inline_adds_ask_and_deny_but_refuses_an_allow_list():
         deny=(CommandRule(reason="no", commands=("mv", )), )))
     out = with_inline(base, inline)
     assert out is not None and out.commands is not None
-    # The allow list is the role's alone, and the added rules land after
+    # The allow list is the profile's alone, and the added rules land after
     # it: an inline document restricts, it never installs.
     assert out.commands.allow == ("ls", "git", "cat")
     assert [r.commands for r in out.commands.ask] == [("git push", )]
@@ -120,9 +120,9 @@ def test_with_inline_adds_ask_and_deny_but_refuses_an_allow_list():
     with pytest.raises(PolicyError, match="not an allow list"):
         with_inline(base,
                     SessionProfile(commands=CommandsBlock(allow=("wc", ))))
-    # And with no role to add to: the refusal belongs to where the
+    # And with no profile to add to: the refusal belongs to where the
     # document was written, so a workspace that happens to declare no
-    # default role must not quietly accept what one with a role refuses.
+    # default profile must not quietly accept what one with a profile refuses.
     with pytest.raises(PolicyError, match="not an allow list"):
         with_inline(None,
                     SessionProfile(commands=CommandsBlock(allow=("wc", ))))
@@ -239,8 +239,9 @@ def test_compile_profile_collects_the_hides_of_every_mount_section():
                                            patterns=("/repo/*.pem", ))
     assert path_hidden(out.hidden_paths, "/repo/deep/key.pem")
     assert not path_hidden(out.hidden_paths, "/scratch/key.pem")
-    role = compile_profile(SessionProfile(paths=PathsBlock(hide=("*.pem", ))))
-    assert path_hidden(role.hidden_paths, "/scratch/key.pem")
+    profile = compile_profile(
+        SessionProfile(paths=PathsBlock(hide=("*.pem", ))))
+    assert path_hidden(profile.hidden_paths, "/scratch/key.pem")
 
 
 def test_compile_profile_of_a_bare_or_absent_role_states_nothing():
@@ -249,7 +250,7 @@ def test_compile_profile_of_a_bare_or_absent_role_states_nothing():
             empty.env, empty.cwd, empty.commands) == (None, None, None, None,
                                                       None, None)
     assert compile_profile(SessionProfile()) == empty
-    # A role that names a mount without a mode narrows nothing: the
+    # A profile that names a mount without a mode narrows nothing: the
     # mount keeps whatever the workspace gave it.
     assert compile_profile(
         SessionProfile(mounts={"/a": ProfileMount()})).mount_modes is None

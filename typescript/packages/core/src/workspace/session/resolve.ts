@@ -14,7 +14,8 @@
 
 import { checkRules } from './validate.ts'
 import { PolicyError } from '../../policy/errors.ts'
-import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
+import type { CommandRule, AdmissionRules, ProfileScript } from '../../policy/types.ts'
+import type { ScriptSource } from '../../runtime/policy/types.ts'
 import type { HiddenPaths, MountMode } from '../../types.ts'
 import { weakerMode } from '../../types.ts'
 import { classifyPaths, classifyVars } from '../../utils/hidden.ts'
@@ -27,16 +28,16 @@ import {
   type ProfileMount,
   type SessionProfile,
   type VarsBlock,
-} from './permissions.ts'
+} from '../../policy/profile.ts'
 import { DEFAULT_PROFILE } from './constants.ts'
 import { varsFromEnv, type Session } from './session.ts'
 import { setCwd } from './shell_dirs.ts'
 
 /**
- * The role a session is created from. A name is looked up as written; a
+ * The profile a session is created from. A name is looked up as written; a
  * profile object is itself; null picks `profiles.default` when the
  * workspace defines one and leaves the session unrestricted otherwise.
- * There is no inheritance chain: a role is the whole document, so
+ * There is no inheritance chain: a profile is the whole document, so
  * nothing is assembled from somewhere else before it is read. Throws
  * PolicyError on a name the workspace does not define.
  */
@@ -72,18 +73,18 @@ function rulesOf(
 }
 
 /**
- * The role's commands block with the inline document's rules added. An
+ * The profile's commands block with the inline document's rules added. An
  * inline document may only restrict, so it carries ask and deny rules
  * and never an allow list: a list there would install a command the
- * role does not have, which is the one thing a per-call document must
+ * profile does not have, which is the one thing a per-call document must
  * not do.
  */
 /**
  * Refuse an allow list in an inline document.
  *
  * The refusal belongs to *where the document was written*, not to
- * whether a role happened to resolve, so both paths into `withInline`
- * run it: a workspace with no default role must not quietly accept a
+ * whether a profile happened to resolve, so both paths into `withInline`
+ * run it: a workspace with no default profile must not quietly accept a
  * list a workspace with one refuses.
  */
 export function refuseAllow(inline: CommandsBlock | null | undefined): void {
@@ -128,14 +129,16 @@ function addMount(base: ProfileMount | undefined, inline: ProfileMount | undefin
 }
 
 /**
- * A role with the inline document of one `createSession` added.
+ * A profile with the inline document of one `createSession` added.
  *
  * The one rule about combining two documents: an inline document may
- * add ask and deny rules and hides, never an allow list, and that holds
- * even when there is no role to add to. Modes take the weaker of the
- * two, `cwd` and `env` are the inline document's when it states them
- * (they are session presets, not permissions). Either side null returns
- * the other unchanged.
+ * add ask and deny rules and hides, never an allow list and never a
+ * script, and that holds even when there is no profile to add to. Modes
+ * take the weaker of the two, `cwd` and `env` are the inline document's
+ * when it states them (they are session presets, not permissions).
+ * Either side null returns the other unchanged; the profile's script
+ * survives the merge, since the inline document can only add rules
+ * beside it.
  */
 export function withInline(
   base: SessionProfile | null,
@@ -143,6 +146,11 @@ export function withInline(
 ): SessionProfile | null {
   if (inline === null) return base
   refuseAllow(inline.commands)
+  if (inline.script !== undefined && inline.script !== null) {
+    throw new PolicyError(
+      'inline permissions may add ask and deny rules, not a script; state one on the profile',
+    )
+  }
   if (base === null) return inline
   const hidePaths = unionHide(base.paths, inline.paths)
   const hideVars = unionHide(base.vars, inline.vars)
@@ -153,6 +161,8 @@ export function withInline(
     paths?: PathsBlock | null
     vars?: VarsBlock | null
     commands?: CommandsBlock | null
+    script?: ScriptSource | string | null
+    runtime?: string | null
   } = {}
   out.cwd = inline.cwd ?? base.cwd ?? null
   if (base.env != null || inline.env != null) out.env = { ...base.env, ...inline.env }
@@ -169,6 +179,10 @@ export function withInline(
   if (base.paths != null || inline.paths != null) out.paths = { hide: hidePaths }
   if (base.vars != null || inline.vars != null) out.vars = { hide: hideVars }
   out.commands = addCommands(base.commands, inline.commands)
+  if (base.script != null) {
+    out.script = base.script
+    out.runtime = base.runtime ?? null
+  }
   return out
 }
 
@@ -214,8 +228,8 @@ function scopeRules(rules: readonly CommandRule[], root: string): CommandRule[] 
 }
 
 /**
- * A role's admission rules: its own, plus every mount section's, in one
- * list; null when the role states none. Mount rules come first so the
+ * A profile's admission rules: its own, plus every mount section's, in one
+ * list; null when the profile states none. Mount rules come first so the
  * section closest to the data speaks first when several rules match at
  * the same anchor depth and only the message differs.
  */
@@ -238,7 +252,7 @@ export function compileCommands(profile: SessionProfile): AdmissionRules | null 
 }
 
 /**
- * Every path the role hides: its own entries, and each mount section's
+ * Every path the profile hides: its own entries, and each mount section's
  * anchored to the mount it was written under, since the set is one list
  * for the whole session and nothing in it remembers which section an
  * entry came from (`anchored`).
@@ -253,7 +267,7 @@ function hiddenOf(profile: SessionProfile): HiddenPaths | null {
 
 /**
  * The mode each mount section states, null when none does. A mount the
- * role does not name is absent from the map and keeps the mode it
+ * profile does not name is absent from the map and keeps the mode it
  * declares in the workspace's `mounts:`; the map only narrows, it never
  * grants.
  */
@@ -265,8 +279,30 @@ function modesOf(profile: SessionProfile): Map<string, MountMode> | null {
   return modes.size > 0 ? modes : null
 }
 
-/** The session fields a role compiles to. */
-export function compileProfile(effective: SessionProfile | null): CompiledProfile {
+/**
+ * The profile's per-command script, compiled onto the session. `name` is
+ * the profile's name, empty for a document passed without one; what the
+ * script reads as `ctx.profile`.
+ *
+ * @throws PolicyError - the script is still a path, which means it
+ * reached the workspace without passing the config door that loads one.
+ */
+export function compileScript(effective: SessionProfile, name: string): ProfileScript | null {
+  const script = effective.script
+  if (script === undefined || script === null) return null
+  if (typeof script === 'string') {
+    throw new PolicyError(
+      `profile '${name}' names a script by path ('${script}'); ` +
+        `only the config door loads one, pass ScriptSource in code`,
+    )
+  }
+  // The parser refuses a script without a runtime, so this narrows a
+  // fact already established.
+  return { profile: name, script, runtime: effective.runtime ?? '' }
+}
+
+/** The session fields a profile compiles to. */
+export function compileProfile(effective: SessionProfile | null, name = ''): CompiledProfile {
   if (effective === null) {
     return {
       mountModes: null,
@@ -275,6 +311,7 @@ export function compileProfile(effective: SessionProfile | null): CompiledProfil
       env: null,
       cwd: null,
       commands: null,
+      script: null,
     }
   }
   const commands = compileCommands(effective)
@@ -286,13 +323,15 @@ export function compileProfile(effective: SessionProfile | null): CompiledProfil
     env: effective.env ?? null,
     cwd: effective.cwd ?? null,
     commands,
+    script: compileScript(effective, name),
   }
 }
 
 /**
- * Stamp a compiled role's narrowing onto a session: the four fields no
+ * Stamp a compiled profile's narrowing onto a session: the five fields no
  * shell line can edit (the per-mount modes, hidden paths, hidden
- * variables, the admission rules). Applied at creation and again
+ * variables, the admission rules, the profile's script). Applied at
+ * creation and again
  * whenever a stored record could carry a stale copy (the default
  * session after hydration), so the document, not the store, is what an
  * agent runs under.
@@ -302,11 +341,12 @@ export function narrow(session: Session, compiled: CompiledProfile): void {
   session.hiddenPaths = compiled.hiddenPaths
   session.hiddenVars = compiled.hiddenVars
   session.commands = compiled.commands
+  session.script = compiled.script ?? null
 }
 
 /**
- * Narrow a fresh session and seed its scratch state from the role.
- * A role's env is a *process* environment, the same shape
+ * Narrow a fresh session and seed its scratch state from the profile.
+ * A profile's env is a *process* environment, the same shape
  * `ws.env = {...}` speaks, so every name in it is exported: seeding
  * them plain left `$TOKEN` expanding while every command, CLI and
  * guest runtime in the profiled session saw nothing, since all three

@@ -24,9 +24,9 @@ from mirage.policy.types import Scope
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 
-ROLE = {
+PROFILE = {
     "commands": {
-        "allow": ["ls", "cat", "git", "rm", "mkdir"],
+        "allow": ["ls", "cat", "git", "rm", "mkdir", "cd", "echo"],
         "deny": [{
             "reason": "production data is protected",
             "commands": {
@@ -50,7 +50,7 @@ ROLE = {
 async def ws():
     workspace = Workspace({"/data/": RAMResource()},
                           mode=MountMode.WRITE,
-                          profiles={"r": ROLE})
+                          profiles={"r": PROFILE})
     await workspace.execute("mkdir -p /data/prod")
     await workspace.ops.write("/data/prod/x.txt", b"x\n")
     await workspace.ops.write("/data/a.txt", b"a\n")
@@ -233,7 +233,7 @@ async def test_a_grant_the_session_holds_shows_the_line_running(ws):
 
 SEALED = {
     "commands": {
-        "allow": ["ls", "cat", "rm", "mkdir"],
+        "allow": ["ls", "cat", "rm", "mkdir", "echo"],
         "deny": [{
             "reason": "sealed until review",
             "paths": ["/data/prod/*"],
@@ -324,7 +324,7 @@ async def _allow_once(record):
 async def inline():
     workspace = Workspace({"/data/": RAMResource()},
                           mode=MountMode.WRITE,
-                          profiles={"r": ROLE},
+                          profiles={"r": PROFILE},
                           on_ask=_allow_once)
     await workspace.execute("mkdir -p /data/prod")
     await workspace.ops.write("/data/prod/x.txt", b"x\n")

@@ -17,7 +17,7 @@ from mirage.policy.types import AdmissionRules, CommandRule
 
 
 def has_rules(rules: AdmissionRules | None) -> bool:
-    """Whether the role states any admission rule at all: an allow
+    """Whether the profile states any admission rule at all: an allow
     list, an ask or a deny.
 
     Args:

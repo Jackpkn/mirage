@@ -229,7 +229,7 @@ describe('sandbox policy', () => {
     workspaces.push(ws)
     await ws.fs.writeFile('/allowed/a.txt', 'granted')
     await ws.fs.writeFile('/secret/a.txt', 'classified')
-    // Exclusion is a hide: a mount the role does not name keeps its own
+    // Exclusion is a hide: a mount the profile does not name keeps its own
     // mode, so confining a session to /allowed means hiding /secret.
     ws.createSession('confined', {
       mounts: { '/allowed': 'exec' },
@@ -288,14 +288,14 @@ describe('sandbox policy', () => {
     await ws.fs.writeFile('/data/notes/a.txt', 'private')
     ws.createSession('agent', { profile: 'scoped' })
     const shell = await attachShell(ws, { sessionId: 'agent' })
-    // The role refuses this read, and read-only is not a way around it:
+    // The profile refuses this read, and read-only is not a way around it:
     // every mount being `read` says nothing about a rule on a path.
     const denied = await shell.run(
       shell.resolve({ command: 'cat /data/notes/a.txt', sandboxPolicy: READ_ONLY }),
     )
     expect(denied.exitCode).not.toBe(0)
     expect(denied.stderr.text).toContain('no notes')
-    // A word the role never installed is still not a command here.
+    // A word the profile never installed is still not a command here.
     const missing = await shell.run(
       shell.resolve({ command: 'sort /data/notes/a.txt', sandboxPolicy: READ_ONLY }),
     )

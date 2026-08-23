@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Outcome, Scope } from '@struktoai/mirage-core/policy/index'
-import type { SessionProfile } from '@struktoai/mirage-core/workspace/session/permissions'
+import type { SessionProfile } from '@struktoai/mirage-core/policy/profile'
 
 // integ/runtime holds the runtime suite (its own schema and runners,
 // integ/runtime/run.{py,ts} + cli.sh), not battery cases; keep it out.
@@ -75,20 +75,20 @@ export interface Target {
   // Scope an installed account CLI to this mount's folder, so the CLI and
   // the mount are pointed at the same place.
   cli_scope?: string
-  // The target's roles (`profiles:` in YAML). A role is the whole
+  // The target's profiles (`profiles:` in YAML). A profile is the whole
   // permission document a session runs under, per-mount rules included;
   // validated by the parser the YAML door uses.
   profiles?: Record<string, unknown>
-  // Which role shapes a session that names none, its own included.
+  // Which profile shapes a session that names none, its own included.
   profile?: string
   mounts: Mount[]
   // Sessions a case can name via its `session` field, through the two
-  // doors a host really has. A string names one of the target's roles,
+  // doors a host really has. A string names one of the target's profiles,
   // which is the whole document that session runs under. A mapping is
-  // an inline document added to the default role: it may add ask and
+  // an inline document added to the default profile: it may add ask and
   // deny rules and hides, never an allow list, so a session that needs
-  // its own allow list has to be a role. An empty mapping is the
-  // default role with nothing added.
+  // its own allow list has to be a profile. An empty mapping is the
+  // default profile with nothing added.
   sessions?: Record<string, string | Record<string, unknown> | null>
   // Session environment every case on this target runs under. The
   // conformance runner passes the same map to the real binary, so a CLI

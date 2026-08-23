@@ -187,7 +187,7 @@ async def test_structure_fallback_serves_when_no_policy_objects():
 
 @pytest.fixture
 def scoped_session():
-    """Bind a session whose role hides the parent mount's own content,
+    """Bind a session whose profile hides the parent mount's own content,
     leaving the mount nested below it reachable."""
     session = Session(session_id="agent",
                       hidden_paths=HiddenPaths(paths=("/data/locked/other",
@@ -202,7 +202,7 @@ async def test_a_structure_answer_still_clears_the_sessions_hides(
         scoped_session):
     # The synthetic answer passes the session's view as well as the
     # policy chain: it is produced above every backend, so a path the
-    # role hides would otherwise be served by the one code path that
+    # profile hides would otherwise be served by the one code path that
     # asks no mount anything.
     dispatcher, _ = _dispatcher(Policies())
     _structure_only(dispatcher)

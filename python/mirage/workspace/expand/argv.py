@@ -31,10 +31,10 @@ from mirage.workspace.expand.parts import expand_words
 from mirage.workspace.expand.spec_hints import (spec_for_command,
                                                 spec_word_bases,
                                                 spec_word_kinds)
+from mirage.workspace.lookup import (WordPolicy, end_options_after_program,
+                                     lookup, word_policy)
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
-from mirage.workspace.route import (WordPolicy, end_options_after_program,
-                                    route, word_policy)
 from mirage.workspace.session import Session
 
 
@@ -135,7 +135,7 @@ async def expand_argv(
         expanded = expanded[:consumed] + end_options_after_program(
             name, expanded[consumed:])
 
-    policy = word_policy(route(name, session, registry))
+    policy = word_policy(lookup(name, session, registry))
     word_kinds: list[ValueType | None] | None = None
     word_bases: list[str | None] | None = None
     if policy is WordPolicy.MOUNT:

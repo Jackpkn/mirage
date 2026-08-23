@@ -17,11 +17,11 @@ import asyncio
 import pytest
 
 from mirage.policy import CommandRule
+from mirage.policy.profile import CommandsBlock, SessionProfile
 from mirage.resource import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.executor.builtins.script import shebang_words
-from mirage.workspace.session.permissions import CommandsBlock, SessionProfile
 
 
 @pytest.fixture()

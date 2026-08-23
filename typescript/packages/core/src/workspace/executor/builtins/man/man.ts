@@ -20,7 +20,7 @@ import { IOResult } from '../../../../io/types.ts'
 import type { CLIInstall } from '../../../cli/types.ts'
 import { DEV_PREFIX } from '../../../mount/registry.ts'
 import type { MountRegistry } from '../../../mount/registry.ts'
-import { commandVisible, verbVisible } from '../../../route/route.ts'
+import { commandVisible, verbVisible } from '../../../lookup/lookup.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
 import type { Result } from '../shared.ts'
@@ -128,7 +128,7 @@ function renderSection(title: string, entries: readonly ManEntry[]): string {
  * lists the verbs and `man linear issue create` is the page for one leaf.
  *
  * The allow list narrows a tree the same way it narrows the bare listing,
- * one level down: a role holding `linear issue list` reads a manual for
+ * one level down: a profile holding `linear issue list` reads a manual for
  * that verb and nothing else, because a row it cannot run is an
  * advertisement for a 126.
  */

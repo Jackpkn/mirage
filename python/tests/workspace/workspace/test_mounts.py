@@ -65,7 +65,7 @@ def test_mount_carries_backend_and_mountpoint():
 
 
 def test_a_mount_carries_no_permissions():
-    # Permissions live in one document, the role, so a mount states
+    # Permissions live in one document, the profile, so a mount states
     # infrastructure only: what it is, where it is, how it is served.
     with pytest.raises(TypeError):
         Mount(resource=RAMResource(), permissions={"paths": {"hide": ["x"]}})

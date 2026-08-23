@@ -79,7 +79,7 @@
       }
     },
     {
-      "id": "cmd_grammar_and_functions_are_not_subjects",
+      "id": "cmd_listed_builtins_run_and_functions_are_exempt",
       "seq": 923007,
       "targets": [
         "ram-commands"
@@ -90,6 +90,19 @@
         "exit": 0,
         "stdout": "yes\nin-f\n",
         "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_unlisted_grammar_builtin_is_not_a_command",
+      "seq": 923269,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "pwd",
+      "expect": {
+        "exit": 127,
+        "stdout": "",
+        "stderr": "pwd: command not found\n"
       }
     },
     {

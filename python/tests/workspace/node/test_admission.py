@@ -17,6 +17,7 @@ import errno
 import pytest
 
 from mirage.policy import PolicyDenied
+from mirage.policy.profile import PathsBlock, SessionProfile
 from mirage.policy.types import AdmissionRules, CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.shell import parse
@@ -25,14 +26,12 @@ from mirage.workspace import Workspace
 from mirage.workspace.expand.classify import classify_parts
 from mirage.workspace.node.admission import (Admitted, admit, admit_line,
                                              policy_scopes)
-from mirage.workspace.session import SessionProfile
-from mirage.workspace.session.permissions import PathsBlock
 
 DOC = {
     "commands": {
         "allow": [
             "cat", "rm", "ls", "ln", "echo", "head", "grep", "rg", "cd",
-            "xargs", "sh", "mkdir"
+            "xargs", "sh", "mkdir", "eval", "source"
         ],
         "deny": [{
             "reason": "sealed",

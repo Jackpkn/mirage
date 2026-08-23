@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, ClassVar, Protocol
 
+from mirage.runtime.types import ScriptSource
 from mirage.types import Limit, PathSpec, Producer
 
 
@@ -49,7 +50,7 @@ class DenyScope(StrEnum):
 
 
 class Outcome(StrEnum):
-    """What the role's rules say about one line: the document's own
+    """What the profile's rules say about one line: the document's own
     three verbs and nothing else.
 
     ALLOW is silence as well as consent, since a line no rule speaks
@@ -91,7 +92,7 @@ class CommandRule:
     about) matching commands, on matching paths when it names any.
 
     It is the compiled element of ``commands.deny`` and ``commands.ask``
-    wherever the role writes one, and reaches the workspace only inside
+    wherever the profile writes one, and reaches the workspace only inside
     that document; the internal RulePolicy is what evaluates it. The
     document writes a rule in one of three shapes, and each compiles to
     rules of this class: a list of command patterns (a whole-line rule
@@ -131,7 +132,7 @@ class CommandRule:
 
 @dataclass(frozen=True, slots=True)
 class Ruling:
-    """The role's answer about one line, and what produced it.
+    """The profile's answer about one line, and what produced it.
 
     Args:
         outcome (Outcome): which verb spoke.
@@ -317,18 +318,18 @@ class SessionDecisionsQuery(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AdmissionRules:
-    """One role's admission rules, compiled: the whole permission
+    """One profile's admission rules, compiled: the whole permission
     document a session runs under.
 
     A session is evaluated against exactly one of these. It holds the
-    role's allow list, its ask and deny rules, and the rules its mount
+    profile's allow list, its ask and deny rules, and the rules its mount
     entries carry, each stamped with the mount it was written under so
     it applies to a line working inside that mount. There is nothing
     above it and nothing beside it: two rules that both match are
     resolved by anchor depth, then by verb (``policy/match/decide``).
 
     Args:
-        allow (tuple[str, ...] | None): the role's allow patterns; None
+        allow (tuple[str, ...] | None): the profile's allow patterns; None
             when it states no list (everything visible).
         ask (tuple[CommandRule, ...]): rules admitted only with an
             approval.
@@ -346,6 +347,30 @@ class AdmissionRules:
 LiveRules = Sequence[tuple[Outcome, CommandRule]]
 
 
+@dataclass(frozen=True, slots=True)
+class ProfileScript:
+    """One profile's script, as a session carries it: the program, the
+    engine it runs on, and the profile it speaks for.
+
+    Compiled off ``SessionProfile.script`` beside the admission rules,
+    and evaluated per command by ``ScriptPolicy`` with the command's
+    facts as ``ctx``; its answer is allow (no opinion), deny or ask.
+
+    Args:
+        profile (str): the profile's name, which the script reads as
+            ``ctx["profile"]`` and every refusal about it prints; empty
+            for a profile document passed to ``create_session`` without
+            a name.
+        script (ScriptSource): the program, as the config door loaded
+            it.
+        runtime (str): the engine the profile named for it.
+    """
+
+    profile: str
+    script: ScriptSource
+    runtime: str
+
+
 class SessionCommandsQuery(Protocol):
     """The one session question the permissions policy asks.
 
@@ -356,8 +381,27 @@ class SessionCommandsQuery(Protocol):
 
     def commands_of(self, session_id: str) -> "AdmissionRules | None":
         """The compiled admission rules of one session; the default
-        role's for an id the manager does not know, the empty id of an
+        profile's for an id the manager does not know, the empty id of an
         unbound door included.
+
+        Args:
+            session_id (str): the session, empty when none is bound.
+        """
+        ...
+
+
+class SessionScriptsQuery(Protocol):
+    """The one session question the script policy asks.
+
+    The SessionManager satisfies it structurally, the same way it
+    satisfies ``SessionCommandsQuery``, so the policy reads a session's
+    script by the id the door put in the context.
+    """
+
+    def script_of(self, session_id: str) -> "ProfileScript | None":
+        """The script of the profile one session runs under; the
+        default profile's for an id the manager does not know, None for
+        a profile that states none.
 
         Args:
             session_id (str): the session, empty when none is bound.
@@ -397,12 +441,13 @@ class CommandContext:
             words; for anything else the name and the raw argv.
         program (tuple[str, ...]): the head of ``tokens`` that names
             what runs: the name plus a CLI's verb path.
-        tool (bool): whether the word is a tool the allow lists govern.
-            The door clears it for the shell's own grammar (the
-            grammar-tier builtins), the agent's own function where the
-            function is what runs, and an executed path: none of those
-            is tool use, so an allow list never refuses them, though a
-            deny rule still can.
+        tool (bool): whether the word is a tool the allow lists govern,
+            which every named command is, shell builtins included. The
+            door clears it for the agent's own function where the
+            function is what runs, and for an executed path: neither is
+            a name a list could hold, and every line either runs passes
+            the gate itself, so an allow list never refuses them,
+            though a deny rule still can.
         walks (bool): whether the command descends its directory
             operands (``find``, ``du``, ``tree``, ``rg``, ``grep -r``,
             ``ls -R``), so a mount whose root sits under one of its
@@ -542,7 +587,7 @@ class Explanation:
     Args:
         command (str): the head word, as the gate read it.
         argv (tuple[str, ...]): the words after it.
-        outcome (Outcome): what the role's rules say.
+        outcome (Outcome): what the profile's rules say.
         rule (CommandRule | None): the rule that spoke, None when the
             allow list did or when nothing did.
         reason (str): the rule's reason, empty when there is no rule.

@@ -94,7 +94,8 @@ import {
 import {
   parseSessionProfile,
   type SessionProfile,
-} from '@struktoai/mirage-core/workspace/session/permissions'
+} from '@struktoai/mirage-core/policy/profile'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/types'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
 import { ChromaClient } from 'chromadb'
@@ -208,21 +209,37 @@ function consoleFactoryFor(target: Target): ConsoleFactory | undefined {
     )
 }
 
-// The target's roles, and which one shapes a session that names none.
-// A role is the whole permission document, so this is every permission
+// The target's profiles, and which one shapes a session that names none.
+// A profile is the whole permission document, so this is every permission
 // the target states, including the per-mount ones; the parser is the
 // one the YAML door uses, so a case runs under exactly what a
 // deployment would write. Only the openers that consult it may declare
 // one (main.ts refuses it on any other resource), the same way the
 // console block rides ram alone: an unwired opener would run the target
 // unbound and it would read as covered.
+/**
+ * Wrap a profile's inline script source the way the config door does.
+ *
+ * A target is JSON, so it carries a profile's script as source rather than
+ * as the path a YAML config would name. Loading is the config layer's
+ * job everywhere else, so the battery does that one step here and hands
+ * the workspace what code would pass.
+ */
+function scriptedProfile(doc: unknown): unknown {
+  if (typeof doc !== 'object' || doc === null) return doc
+  const script = (doc as { script?: unknown }).script
+  if (typeof script !== 'object' || script === null) return doc
+  const { source, language } = script as { source: string; language?: 'python' | 'js' }
+  return { ...(doc as object), script: new ScriptSource(source, language ?? 'python') }
+}
+
 function permissionOptions(target: Target): {
   profiles?: Record<string, SessionProfile>
   profile?: string
 } {
   const profiles: Record<string, SessionProfile> = {}
   for (const [name, doc] of Object.entries(target.profiles ?? {})) {
-    profiles[name] = parseSessionProfile(doc, `profile \`${name}\``)
+    profiles[name] = parseSessionProfile(scriptedProfile(doc), `profile \`${name}\``)
   }
   return {
     ...(Object.keys(profiles).length > 0 ? { profiles } : {}),

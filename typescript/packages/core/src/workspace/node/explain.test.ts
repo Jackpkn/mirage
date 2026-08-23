@@ -19,14 +19,14 @@ import type { Action, CommandContext, Policy } from '../../policy/index.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { MountMode } from '../../types.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
-import { parseSessionProfile } from '../session/permissions.ts'
+import { parseSessionProfile } from '../../policy/profile.ts'
 import { Workspace } from '../workspace/workspace.ts'
 
 const DEC = new TextDecoder()
 
-const ROLE = parseSessionProfile({
+const PROFILE = parseSessionProfile({
   commands: {
-    allow: ['ls', 'cat', 'git', 'rm', 'mkdir'],
+    allow: ['ls', 'cat', 'git', 'rm', 'mkdir', 'cd', 'echo'],
     deny: [{ reason: 'production data is protected', commands: { rm: ['/data/prod/*'] } }],
     ask: [
       { reason: 'pushes need sign-off', commands: ['git push'] },
@@ -44,7 +44,7 @@ async function ws(): Promise<Workspace> {
   const parser = await getTestParser()
   const w = new Workspace(
     { '/data': new RAMResource() },
-    { mode: MountMode.WRITE, shellParser: parser, profiles: { r: ROLE } },
+    { mode: MountMode.WRITE, shellParser: parser, profiles: { r: PROFILE } },
   )
   open.push(w)
   await w.execute('mkdir -p /data/prod')
@@ -228,7 +228,7 @@ describe('explain', () => {
 
 const SEALED = parseSessionProfile({
   commands: {
-    allow: ['ls', 'cat', 'rm', 'mkdir'],
+    allow: ['ls', 'cat', 'rm', 'mkdir', 'echo'],
     deny: [{ reason: 'sealed until review', paths: ['/data/prod/*'] }],
   },
 })
@@ -309,7 +309,7 @@ describe('prejudge', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        profiles: { r: ROLE },
+        profiles: { r: PROFILE },
         onAsk: (record) =>
           Promise.resolve({ ...record, outcome: Outcome.ALLOW, scope: Scope.ONCE }),
       },

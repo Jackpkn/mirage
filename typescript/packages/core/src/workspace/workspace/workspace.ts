@@ -71,8 +71,9 @@ import { buildFilePrompt } from '../file_prompt.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
-import { parseProfileMounts, type SessionProfile } from '../session/permissions.ts'
+import { parseProfileMounts, type SessionProfile } from '../../policy/profile.ts'
 import { applyProfile, compileProfile, resolveProfile, withInline } from '../session/resolve.ts'
+import { ScriptPolicy } from '../../policy/script.ts'
 import { newSessionId, newWorkspaceId } from '../../utils/ids.ts'
 import type { WatchRuntime } from '../../watch/base.ts'
 import { resolveControlStores } from './build.ts'
@@ -117,6 +118,7 @@ export class Workspace {
   private readonly runtimes: Runtimes
   private readonly policyRouter: PolicyRouter
   private readonly policy: PolicyFn | null
+  private readonly scriptPolicy: ScriptPolicy
   private readonly profiles: Record<string, SessionProfile>
   private readonly defaultProfileName: string | null
   // True when the workspace auto-added an empty `/` anchor (no user `/` mount).
@@ -176,22 +178,44 @@ export class Workspace {
     })
     rejectConfigScript('policy', options.policy)
     this.policy = options.policy ?? null
-    // The permission documents: one role per name, and the role a
-    // session gets when it names none. A role is the whole document a
+    // The permission profiles: one per name, and the one a session
+    // gets when it names none. A profile is the whole document a
     // session runs under, so there is no workspace-wide block above it.
     this.profiles = { ...(options.profiles ?? {}) }
     this.defaultProfileName = options.profile ?? null
     if (this.defaultProfileName !== null && !(this.defaultProfileName in this.profiles)) {
       throw new PolicyError(`unknown profile ${JSON.stringify(this.defaultProfileName)}`)
     }
+    // The config door validates the pairing too, but a typed caller
+    // does not pass that door, and the python host refuses the same
+    // profiles at construction.
+    for (const [name, profile] of Object.entries(this.profiles)) {
+      if (profile.script != null && profile.runtime == null) {
+        throw new PolicyError(
+          `profile '${name}': a profile script states the engine it runs on; ` +
+            `set runtime beside script`,
+        )
+      }
+      if (profile.script == null && profile.runtime != null) {
+        throw new PolicyError(
+          `profile '${name}': runtime names the engine a script runs on, ` +
+            `and this profile states no script`,
+        )
+      }
+    }
     // Admission policies, consulted in registration order after the
     // built-ins the registry seeds: the document's command tiers
     // (PermissionsPolicy, reading each session's compiled layers from
-    // the manager by the id the door puts in the context), then Policy
-    // instances, then anything added later through ws.policies.add().
-    // The runtime policy (policy option) is the line-level counterpart
-    // until it is absorbed as a hook.
+    // the manager by the id the door puts in the context), the
+    // profile's script (ScriptPolicy, evaluated per command through the
+    // same manager), then Policy instances, then anything added later
+    // through ws.policies.add(). The runtime policy (policy option) is
+    // the line-level counterpart until it is absorbed as a hook.
     this.registry.policies.add(new PermissionsPolicy(this.sessionManager))
+    this.scriptPolicy = new ScriptPolicy(this.sessionManager, () =>
+      this.mounts().map((entry) => entry.prefix),
+    )
+    this.registry.policies.add(this.scriptPolicy)
     for (const entry of options.policies ?? []) this.registry.policies.add(entry)
     // The approval door an Ask is taken to (design 3.9): grants live on
     // the sessions, the host answers through `onAsk` (or just records
@@ -244,9 +268,9 @@ export class Workspace {
     // The workspace's own session is a session created without a name,
     // so `profiles.default` shapes it too (design 3.4): the primary
     // agent is not the one agent the document cannot reach.
-    const defaultProfile = this.roleFor(null)
+    const defaultBase = this.baseProfile(null)
     this.sessionManager.defaultProfile =
-      defaultProfile === null ? null : compileProfile(defaultProfile)
+      defaultBase === null ? null : compileProfile(defaultBase, this.profileName(null))
     for (const resource of [...this.registry.allMounts().map((m) => m.resource), this.cache]) {
       const resourceOps = resource.ops?.()
       if (resourceOps === undefined) continue
@@ -497,10 +521,11 @@ export class Workspace {
   }
 
   /**
-   * The role a session is created under: the name as given, else the
-   * workspace's default role.
+   * The base profile a session is created under, which the inline
+   * `permissions`/`mounts` options then layer onto: the profile as
+   * named, else the workspace default.
    */
-  private roleFor(profile: string | SessionProfile | null): SessionProfile | null {
+  private baseProfile(profile: string | SessionProfile | null): SessionProfile | null {
     if (profile === null && this.defaultProfileName !== null) {
       return this.profiles[this.defaultProfileName] ?? null
     }
@@ -508,21 +533,32 @@ export class Workspace {
   }
 
   /**
-   * Create a session under one role, with an optional inline document
-   * of its own.
+   * The name of the profile `baseProfile` resolves, which its script
+   * reads as `ctx.profile`; empty for a profile document passed without
+   * one.
+   */
+  private profileName(profile: string | SessionProfile | null): string {
+    if (typeof profile === 'string') return profile
+    if (profile === null && this.defaultProfileName !== null) return this.defaultProfileName
+    return ''
+  }
+
+  /**
+   * Create a session under one profile, with an optional inline
+   * document of its own.
    *
-   * The role is a name from the workspace's `profiles`, or the workspace
-   * default when none is named, or a role document. The inline
-   * `permissions` and `mounts` may add ask and deny rules, hides and
-   * weaker modes; they may never add an allow entry, which is the one
-   * rule about combining two documents. `mounts` is sugar for
+   * The profile is a name from the workspace's `profiles`, or the
+   * workspace default when none is named, or a profile document. The
+   * inline `permissions` and `mounts` may add ask and deny rules, hides
+   * and weaker modes; they may never add an allow entry, which is the
+   * one rule about combining two documents. `mounts` is sugar for
    * `permissions.mounts`: a mapping assigns each prefix a mode ('read',
    * 'write', 'exec', or the filesystem aliases 'r', 'rw', 'rwx'), which
    * may only be weaker than the mount's own. A mount the mapping omits
-   * keeps its own mode, so this narrows and never confines; a role that
-   * must keep a session away from a mount hides it. Throws PolicyError
-   * on an unknown role name, or on an inline document with an allow
-   * list.
+   * keeps its own mode, so this narrows and never confines; a profile
+   * that must keep a session away from a mount hides it. Throws
+   * PolicyError on an unknown profile name, or on an inline document
+   * with an allow list.
    */
   createSession(
     sessionId: string,
@@ -532,12 +568,15 @@ export class Workspace {
       permissions?: SessionProfile | null
     } = {},
   ): Session {
-    const base = this.roleFor(options.profile ?? null)
+    const base = this.baseProfile(options.profile ?? null)
     let inline: SessionProfile | null = options.permissions ?? null
     if (options.mounts != null) {
       inline = withInline(inline, { mounts: parseProfileMounts(options.mounts) })
     }
-    const compiled = compileProfile(withInline(base, inline))
+    const compiled = compileProfile(
+      withInline(base, inline),
+      this.profileName(options.profile ?? null),
+    )
     checkCliVerbs(compiled.commands, this.cliVerbs())
     const session = this.sessionManager.create(sessionId)
     applyProfile(session, compiled)
@@ -585,7 +624,7 @@ export class Workspace {
   }
 
   /**
-   * What a line would do under a session's role, without running any of
+   * What a line would do under a session's profile, without running any
    * it: one Explanation per command the gate reads, in gate order,
    * nested lines included.
    *
@@ -595,7 +634,7 @@ export class Workspace {
    * puts no question to a host, which is what makes it safe to call
    * about a line nobody typed.
    *
-   * Host-side only. The structure of a role's rules is an operator's
+   * Host-side only. The structure of a profile's rules is an operator's
    * business, so there is no builtin an agent can type to read it.
    */
   async explain(line: string, sessionId = ''): Promise<Explanation[]> {
@@ -1026,6 +1065,7 @@ export class Workspace {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    await this.scriptPolicy.close()
     await closeWorkspace({
       watch: this.watchManager,
       cache: this.cache,

@@ -16,11 +16,6 @@ from mirage.context import (get_current_session, get_current_session_for,
                             reset_current_session, set_current_session)
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.manager import SessionManager
-from mirage.workspace.session.permissions import (CommandsBlock,
-                                                  CompiledProfile,
-                                                  MountCommandsBlock,
-                                                  PathsBlock, ProfileMount,
-                                                  SessionProfile, VarsBlock)
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.session import Session
 from mirage.workspace.session.state import (ensure_var_visible, env_snapshot,
@@ -34,13 +29,6 @@ __all__ = [
     "env_snapshot",
     "ensure_var_visible",
     "exported_names",
-    "SessionProfile",
-    "CommandsBlock",
-    "CompiledProfile",
-    "MountCommandsBlock",
-    "PathsBlock",
-    "ProfileMount",
-    "VarsBlock",
     "session_view",
     "visible_arrays",
     "visible_env",

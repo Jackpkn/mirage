@@ -368,7 +368,7 @@ async function setVar(
   // so every reader agrees without per-read work. `-i` evaluates against
   // the visible env, and a bad expression throws the arithmetic error
   // as bash does. Coercion runs before the gate so a rule judges the
-  // value that will land: `declare -l role; role=ADMIN` stores `admin`,
+  // value that will land: `declare -l profile; profile=ADMIN` stores `admin`,
   // and a rule refusing `admin` must see that, not the raw text.
   const shaped =
     existing !== undefined && existing.attrs.size > 0

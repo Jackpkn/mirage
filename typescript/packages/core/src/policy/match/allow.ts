@@ -18,7 +18,7 @@ import { patternMatches, patternReaches } from './pattern.ts'
 /**
  * Whether a session can see one node of a program tree.
  *
- * A role without an allow list hides nothing; a role with one hides every
+ * A profile without an allow list hides nothing; a profile with one hides every
  * node no pattern of it reaches. Only a CLI's verbs can be narrowed this
  * way, and only because the walk canonicalizes them (an alias resolved,
  * the global options before the verb dropped) before any pattern is read.
@@ -31,10 +31,10 @@ export function nodeVisible(path: readonly string[], rules: AdmissionRules | nul
 }
 
 /**
- * Whether a session can see a command at all. A role without an allow
- * list hides nothing; a role with one hides every name none of its
- * patterns start with. Grammar builtins and shell functions are the
- * caller's exemptions, not this one's. The head-word case of
+ * Whether a session can see a command at all. A profile without an allow
+ * list hides nothing; a profile with one hides every name none of its
+ * patterns start with, builtins included. Shell functions are the
+ * caller's exemption, not this one's. The head-word case of
  * `nodeVisible`.
  */
 export function headVisible(name: string, rules: AdmissionRules | null): boolean {
@@ -50,10 +50,10 @@ export function lineTokens(ctx: CommandContext): readonly string[] {
 }
 
 /**
- * Whether the role's allow list has a pattern for the whole line. A
- * word that is not a tool (`ctx.tool` cleared by the door: shell grammar,
- * the agent's own function, an executed path) is always allowed here; a
- * deny rule is the only thing that can refuse it.
+ * Whether the profile's allow list has a pattern for the whole line. A
+ * word that is not a tool (`ctx.tool` cleared by the door: the agent's
+ * own function, an executed path) is always allowed here; a deny rule
+ * is the only thing that can refuse it.
  */
 export function lineAllowed(ctx: CommandContext, rules: AdmissionRules | null): boolean {
   if (ctx.tool === false) return true

@@ -38,9 +38,9 @@ from mirage.workspace.executor.command import handle_command
 from mirage.workspace.expand import expand_node
 from mirage.workspace.expand.argv import Argv, expand_argv
 from mirage.workspace.expand.globs import expand_boundary_globs
+from mirage.workspace.lookup import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
+                                     follows_last_component)
 from mirage.workspace.node.admission import Admitted, Refusal, admit
-from mirage.workspace.route import (SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS,
-                                    follows_last_component)
 from mirage.workspace.session.state import (ensure_var_visible,
                                             pre_session_gate, seed_var,
                                             session_view, set_attr)
@@ -361,7 +361,7 @@ async def _run_argv(
     # builtins, namespace-routed commands (touch/chmod/ln -s), job
     # builtins, shell functions, and mount commands all route below, so
     # the gate must fire here, not in handle_command. Checked ahead of
-    # the BUILTINS table, which runs before route(); the enumerators
+    # the BUILTINS table, which runs before lookup(); the enumerators
     # read the same visibility filter through _layers. Refusals win
     # over flag parsing, routing, and runtime placement.
     admitted: Admitted | None = None

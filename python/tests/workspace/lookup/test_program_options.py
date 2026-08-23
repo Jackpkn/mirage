@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.workspace.route import end_options_after_program
+from mirage.workspace.lookup import end_options_after_program
 
 
 def rewrite(words: list[str]) -> list[str]:

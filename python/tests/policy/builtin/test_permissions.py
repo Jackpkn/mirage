@@ -62,7 +62,7 @@ def _ctx(command: str,
                           tool=tool)
 
 
-# One role, compiled: its own rules plus the ones its `mounts./repo`
+# One profile, compiled: its own rules plus the ones its `mounts./repo`
 # section carries, which the compiler stamped with that root.
 MOUNT_DENY = CommandRule(reason="history is read-only here",
                          commands=("git push", ),
@@ -163,7 +163,7 @@ async def test_the_deeper_anchor_wins_and_deny_breaks_a_tie():
              paths=(_path("/repo/x"), ))) == Ask("needs a nod", shallow,
                                                  (shallow, ))
     # The other way round: an ask anchored deeper than a deny wins, so a
-    # role can carve an exception out of a broad refusal.
+    # profile can carve an exception out of a broad refusal.
     flipped = PermissionsPolicy(
         _Sessions({
             "s":

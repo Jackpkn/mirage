@@ -58,7 +58,7 @@ function ctx(
   }
 }
 
-// One role, compiled: its own rules plus the ones its `mounts./repo`
+// One profile, compiled: its own rules plus the ones its `mounts./repo`
 // section carries, which the compiler stamped with that root.
 const MOUNT_DENY: CommandRule = {
   reason: 'history is read-only here',
@@ -155,7 +155,7 @@ describe('PermissionsPolicy', () => {
       rules: [shallow],
     })
     // The other way round: an ask anchored deeper than a deny wins, so a
-    // role can carve an exception out of a broad refusal.
+    // profile can carve an exception out of a broad refusal.
     const flipped = new PermissionsPolicy(
       new Sessions({
         s: {

@@ -15,17 +15,16 @@
 from collections.abc import Iterator, Sequence
 
 from mirage.policy.match import head_visible, node_visible
-from mirage.shell.types import GRAMMAR_BUILTINS
+from mirage.workspace.lookup.constants import NAMESPACE_COMMANDS, SHELL_NAMES
+from mirage.workspace.lookup.types import Consumer
 from mirage.workspace.mount import MountRegistry
-from mirage.workspace.route.constants import NAMESPACE_COMMANDS, SHELL_NAMES
-from mirage.workspace.route.types import Consumer
 from mirage.workspace.session import Session
 
 
 def listed(name: str, session: Session) -> bool:
     """What the session's allow list says about a tool word.
 
-    A role without a list installs everything; a role with one installs
+    A profile without a list installs everything; a profile with one installs
     only the names its patterns start with (``head_visible``). This is
     the raw answer; ``command_visible`` and ``_layers`` add the words
     that are never subjects.
@@ -40,18 +39,20 @@ def listed(name: str, session: Session) -> bool:
 def is_tool(name: str, session: Session) -> bool:
     """Whether a command word is a tool the allow lists govern.
 
-    Three kinds of word are never subjects: the shell's own grammar
-    (the grammar-tier builtins), a path being executed (its lines are
-    each checked as they run), and the agent's own function where the
-    function is what runs, which in this shell means a name no builtin
-    owns (builtins shadow functions), so a function cannot resurrect a
-    hidden builtin.
+    Every named command is a subject, shell builtins included: an allow
+    list stating ``cat`` leaves no ``echo`` and no ``cd``. Two kinds of
+    word are not, because neither is a name the list could hold: a path
+    being executed (its lines are each checked as they run), and the
+    agent's own function where the function is what runs, which in this
+    shell means a name no builtin owns (builtins shadow functions), so
+    a function cannot resurrect a hidden builtin, and its body's lines
+    each pass this gate themselves.
 
     Args:
         name (str): expanded command name.
         session (Session): the shell session running the line.
     """
-    if name in GRAMMAR_BUILTINS or "/" in name:
+    if "/" in name:
         return False
     return not (name in session.functions and name not in SHELL_NAMES)
 
@@ -59,7 +60,7 @@ def is_tool(name: str, session: Session) -> bool:
 def command_visible(name: str, session: Session) -> bool:
     """Whether a session can see a command word at all.
 
-    The role's allow list (``commands.allow``) decides: a tool name no
+    The profile's allow list (``commands.allow``) decides: a tool name no
     pattern of it starts with is not installed for the session, so it
     is 127 at the chokepoint and absent from every enumerator; a word
     that is not a tool (``is_tool``) is always visible.
@@ -77,7 +78,7 @@ def verb_visible(head: str, path: Sequence[str], session: Session) -> bool:
     ``command_visible`` answers for a word, which is all dispatch needs:
     a CLI is routed by its head word and the verbs after it are the
     program's own operand. Discovery needs the finer answer, because a
-    role allowed ``linear issue list`` is not allowed ``linear team``,
+    profile allowed ``linear issue list`` is not allowed ``linear team``,
     and a manual that lists the second is advertising a line that
     cannot run. ``is_tool``'s exemptions have nothing to say here:
     shell grammar and functions are single words, so a verb path only
@@ -96,14 +97,14 @@ def _layers(name: str, session: Session,
             registry: MountRegistry) -> Iterator[Consumer]:
     """Yield every layer holding the name, most-preferred first.
 
-    The one place precedence is written down: ``route`` reads the first
-    yield and ``route_all`` reads all of them. Lazy on purpose, so the
+    The one place precedence is written down: ``lookup`` reads the first
+    yield and ``lookup_all`` reads all of them. Lazy on purpose, so the
     winner costs exactly what it did before the split (a name an
     installed CLI answers never reaches the mount lookup). The
     document's visibility filter lives here too, so ``type``, ``which``,
     ``command -v`` and dispatch agree on what a session can see: an
-    unlisted tool word yields nothing (grammar and functions are not
-    subjects, and a function named after a hidden builtin is as
+    unlisted word yields nothing, builtins included (only functions are
+    not subjects, and a function named after a hidden builtin is as
     unreachable as the builtin).
 
     Args:
@@ -112,7 +113,7 @@ def _layers(name: str, session: Session,
         registry (MountRegistry): mount registry (command registration).
     """
     installed = listed(name, session)
-    if name in SHELL_NAMES and (installed or name in GRAMMAR_BUILTINS):
+    if name in SHELL_NAMES and installed:
         yield Consumer.SESSION
     if installed and name in NAMESPACE_COMMANDS:
         yield Consumer.NAMESPACE
@@ -124,7 +125,7 @@ def _layers(name: str, session: Session,
         yield Consumer.MOUNT
 
 
-def route(name: str, session: Session, registry: MountRegistry) -> Consumer:
+def lookup(name: str, session: Session, registry: MountRegistry) -> Consumer:
     """Route a command name to the layer that consumes it.
 
     Order mirrors dispatch precedence: shell builtins shadow functions,
@@ -150,7 +151,7 @@ def route(name: str, session: Session, registry: MountRegistry) -> Consumer:
     a command executes (docker vs vfs), never whether the name exists.
 
     This is the winner only. A name can sit in more than one layer at
-    once (a function shadowing an installed CLI); ``route_all`` reports
+    once (a function shadowing an installed CLI); ``lookup_all`` reports
     them all, which is what ``type -a`` prints. Reading one item off the
     generator is what makes that sharing free: the lookups after the
     winner never run, so dispatch pays exactly what it did when this was
@@ -164,11 +165,11 @@ def route(name: str, session: Session, registry: MountRegistry) -> Consumer:
     return next(_layers(name, session, registry), Consumer.UNKNOWN)
 
 
-def route_all(name: str, session: Session,
-              registry: MountRegistry) -> list[Consumer]:
+def lookup_all(name: str, session: Session,
+               registry: MountRegistry) -> list[Consumer]:
     """Every layer holding the name, most-preferred first.
 
-    Empty when nothing holds it, where ``route`` says UNKNOWN. Only
+    Empty when nothing holds it, where ``lookup`` says UNKNOWN. Only
     introspection (``type -a``, ``which -a``) needs this: dispatch runs
     the winner and never asks what it shadowed.
 

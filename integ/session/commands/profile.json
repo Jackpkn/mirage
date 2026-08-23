@@ -113,7 +113,7 @@
       }
     },
     {
-      "id": "cmd_a_role_is_the_whole_document",
+      "id": "cmd_a_profile_is_the_whole_document",
       "seq": 923020,
       "targets": [
         "ram-commands"
@@ -153,7 +153,7 @@
       }
     },
     {
-      "id": "cmd_inline_permissions_add_to_the_role",
+      "id": "cmd_inline_permissions_add_to_the_profile",
       "seq": 923024,
       "targets": [
         "ram-commands"

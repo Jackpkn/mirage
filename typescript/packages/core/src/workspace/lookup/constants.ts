@@ -18,7 +18,7 @@ import { ShellBuiltin } from '../../shell/types.ts'
 import type { PathSpec } from '../../types.ts'
 
 // Bash builtins the parser accepts but the executor cannot honor; they
-// still route to the shell layer so the error names a capability gap.
+// still lookup to the shell layer so the error names a capability gap.
 export const UNSUPPORTED_BUILTINS: ReadonlySet<string> = new Set([
   'bg',
   'complete',
@@ -29,7 +29,7 @@ export const UNSUPPORTED_BUILTINS: ReadonlySet<string> = new Set([
 export const NAMESPACE_COMMANDS: ReadonlySet<string> = new Set(['ln', 'readlink'])
 
 // bash reserved words that mirage's grammar implements. The parser, not
-// the executor, consumes them, so they never reach route; `type` reports
+// the executor, consumes them, so they never reach lookup; `type` reports
 // them and the CLI registry refuses them as head words. bash's `time`
 // and `coproc` are left out on purpose: mirage implements neither
 // construct, so a line starting with one reports `command not found`,

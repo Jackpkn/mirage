@@ -12,14 +12,14 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.workspace.route.constants import (  # isort: skip
+from mirage.workspace.lookup.constants import (  # isort: skip
     JOB_BUILTINS, NAMESPACE_COMMANDS, NO_FOLLOW_COMMANDS, SLASH_KEEPS_LAST,
     UNSUPPORTED_BUILTINS, dereferences, end_options_after_program,
     follows_last_component, reads_subtrees, reports_link, walks_mounts)
-from mirage.workspace.route.route import (command_visible, is_tool, route,
-                                          route_all, verb_visible)
-from mirage.workspace.route.types import (SHELL_CONSUMERS, Consumer,
-                                          WordPolicy, word_policy)
+from mirage.workspace.lookup.lookup import (command_visible, is_tool, lookup,
+                                            lookup_all, verb_visible)
+from mirage.workspace.lookup.types import (SHELL_CONSUMERS, Consumer,
+                                           WordPolicy, word_policy)
 
 __all__ = [
     "end_options_after_program",
@@ -36,10 +36,10 @@ __all__ = [
     "UNSUPPORTED_BUILTINS",
     "walks_mounts",
     "WordPolicy",
-    "route",
+    "lookup",
     "command_visible",
     "is_tool",
-    "route_all",
+    "lookup_all",
     "verb_visible",
     "word_policy",
 ]

@@ -14,9 +14,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from '../../policy/constants.ts'
-import { MountMode } from '../../types.ts'
-import { parseProfileMount, parseProfileMounts, parseSessionProfile } from './permissions.ts'
+import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from './constants.ts'
+import { MountMode } from '../types.ts'
+import { parseProfileMount, parseProfileMounts, parseSessionProfile } from './profile.ts'
 
 const mountSection = (raw: unknown): unknown => parseProfileMount(raw, '/repo', 'mounts[/repo]')
 
@@ -68,7 +68,7 @@ describe('parseSessionProfile', () => {
 
   it('refuses a bare list of mounts', () => {
     // A list used to mean "only these mounts are reachable"; a mount a
-    // role does not name now keeps its own mode, so the list would
+    // profile does not name now keeps its own mode, so the list would
     // quietly drop the confinement it used to carry.
     expect(() => parseSessionProfile({ mounts: ['/repo'] })).toThrow(
       /mounts must be a mapping of prefix to its settings/,
@@ -252,7 +252,7 @@ describe('parseSessionProfile', () => {
     },
   )
 
-  it('refuses a blank hide entry, in a role and in a mount section', () => {
+  it('refuses a blank hide entry, in a profile and in a mount section', () => {
     // "" is the root under the subtree rule: it would hide the whole tree.
     expect(() => parseSessionProfile({ paths: { hide: ['/a', ''] } })).toThrow(
       /hide\[1\] must name a path/,

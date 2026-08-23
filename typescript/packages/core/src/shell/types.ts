@@ -465,14 +465,15 @@ export const ShellBuiltin = Object.freeze({
 
 export type ShellBuiltin = (typeof ShellBuiltin)[keyof typeof ShellBuiltin]
 
-// Which of two things a shell builtin is to a permission rule. GRAMMAR
-// is the shell's own language: it moves session state, control flow, or
-// the line's own streams, and never reaches a backend except through the
-// op dispatcher. TOOL is a program the line invokes that a real system
+// Which of two things a shell builtin is, as taxonomy. GRAMMAR is the
+// shell's own language: it moves session state, control flow, or the
+// line's own streams, and never reaches a backend except through the op
+// dispatcher. TOOL is a program the line invokes that a real system
 // ships as a separate binary, or that reaches beyond the session (an
 // interpreter, the job table, the history recording). The permission
-// layer exempts grammar from a command allowlist and treats tools as its
-// subjects; both tiers stay deniable by name.
+// layer reads no tier: every builtin is a subject of a command
+// allowlist exactly like an installed command, and both tiers are
+// deniable by name.
 export const BuiltinTier = Object.freeze({
   GRAMMAR: 'grammar',
   TOOL: 'tool',

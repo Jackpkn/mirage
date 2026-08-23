@@ -61,14 +61,14 @@ def create_cmd(
               "'/data' to keep the mount's own mode. Repeat per mount. "
               "This narrows only; a mount you do not name keeps its own "
               "mode, and keeping a session away from one is a hide in "
-              "its role."),
+              "its profile."),
     ),
     profile: str | None = typer.Option(
         None,
         "--profile",
         "-p",
-        help=("The role this session runs under, by name from the "
-              "workspace's profiles. A role is the whole permission "
+        help=("The profile this session runs under, by name from the "
+              "workspace's profiles. A profile is the whole permission "
               "document; omit it to take the workspace default."),
     ),
 ) -> None:

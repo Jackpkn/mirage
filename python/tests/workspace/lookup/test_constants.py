@@ -13,9 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.types import PathSpec
-from mirage.workspace.route.constants import (NO_FOLLOW_COMMANDS, dereferences,
-                                              reads_subtrees, reports_link,
-                                              walks_mounts)
+from mirage.workspace.lookup.constants import (NO_FOLLOW_COMMANDS,
+                                               dereferences, reads_subtrees,
+                                               reports_link, walks_mounts)
 
 
 def test_stat_is_a_no_follow_command():

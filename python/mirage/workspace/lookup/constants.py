@@ -22,7 +22,7 @@ from mirage.workspace.names import (JOB_BUILTINS, NAMESPACE_COMMANDS,
                                     UNSUPPORTED_BUILTINS)
 
 # The pools live in workspace/names.py (a leaf shared with the CLI
-# registry's collision rule); this module keeps route's public surface.
+# registry's collision rule); this module keeps lookup's public surface.
 __all__ = [
     "JOB_BUILTINS",
     "NAMESPACE_COMMANDS",
