@@ -25,7 +25,7 @@ from mirage.commands.resolve import get_extension
 from mirage.commands.spec import CommandSpec
 from mirage.commands.spec.types import FlagValue
 from mirage.context import (effective_mount_mode, effective_path_mode,
-                            reset_mount_gate, set_mount_gate,
+                            readonly_below, reset_mount_gate, set_mount_gate,
                             strongest_mode_under)
 from mirage.io.cachable_iterator import CachableAsyncIterator
 from mirage.io.types import ByteSource, IOResult
@@ -43,6 +43,13 @@ from mirage.types import (ConsistencyPolicy, Limit, MountMode, PathSpec,
                           Producer)
 from mirage.utils.errors import ReadOnlyError, enotsup
 from mirage.utils.key_prefix import mount_key
+
+# Ops that mutate everything under their endpoints in one backend call
+# (a directory rename relocates its whole subtree), so the door also
+# refuses a read-only region below either endpoint. The removal ops
+# stay per-path: the runtimes compose rmtree from unlink/rmdir, and
+# each of those answers for its own path above.
+_SUBTREE_OPS = frozenset({"rename"})
 
 
 def _wrap_cmd_streams(
@@ -672,7 +679,9 @@ class MountEntry:
             # TypeScript erofsReadOnly stamp). Per path, not per mount:
             # a show entry can hold one subtree below `w` on a writable
             # mount, or one writable region on a read mount. A rename
-            # mutates its destination too, so both endpoints answer.
+            # mutates its destination too, so both endpoints answer,
+            # and it relocates whole subtrees in one call, so a
+            # read-only region below either endpoint refuses it too.
             if effective_path_mode(path, self.prefix,
                                    self.mode) == MountMode.READ:
                 raise ReadOnlyError(errno.EROFS, "Read-only file system", path)
@@ -681,6 +690,15 @@ class MountEntry:
                     dst.virtual, self.prefix, self.mode) == MountMode.READ:
                 raise ReadOnlyError(errno.EROFS, "Read-only file system",
                                     dst.virtual)
+            if op_name in _SUBTREE_OPS:
+                endpoints = [path]
+                if isinstance(dst, PathSpec):
+                    endpoints.append(dst.virtual)
+                for endpoint in endpoints:
+                    blame = readonly_below(endpoint, self.prefix, self.mode)
+                    if blame is not None:
+                        raise ReadOnlyError(errno.EROFS,
+                                            "Read-only file system", blame)
 
         mount_prefix = self.prefix.rstrip("/")
         scope = PathSpec(

@@ -23,7 +23,10 @@ import {
   hiddenPathsIntersect,
   pathAllowed,
   pathRulesActive,
+  readonlyBelow,
+  requireMountWritable,
   runWithAdmission,
+  runWithMountGate,
   runWithSession,
   sessionPathAllowed,
   strongestModeUnder,
@@ -264,6 +267,69 @@ describe('the path axis modes', () => {
       expect(strongestModeUnder('/other', MountMode.READ)).toBe(MountMode.READ)
       return Promise.resolve()
     })
+  })
+
+  it('readonlyBelow blames the carved anchor', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      shownPaths: {
+        entries: [
+          { path: '/repo/tree/locked', mode: MountMode.READ },
+          { path: '/repo/tree/locked/pub', mode: MountMode.WRITE },
+        ],
+      },
+    })
+    await runWithSession(sess, () => {
+      // The anchor lies strictly below the operand, so a subtree
+      // mutation over it is refused, and the deeper re-widening does
+      // not clear it (the region between the two stays read-only).
+      expect(readonlyBelow('/repo/tree', '/repo', MountMode.WRITE)).toBe('/repo/tree/locked')
+      expect(readonlyBelow('/repo', '/repo', MountMode.WRITE)).toBe('/repo/tree/locked')
+      // The operand itself or a sibling is the flat check's business.
+      expect(readonlyBelow('/repo/tree/locked', '/repo', MountMode.WRITE)).toBeNull()
+      expect(readonlyBelow('/repo/other', '/repo', MountMode.WRITE)).toBeNull()
+      return Promise.resolve()
+    })
+    expect(readonlyBelow('/repo/tree', '/repo', MountMode.WRITE)).toBeNull()
+  })
+
+  it('readonlyBelow blames the operand for a pattern', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      shownPaths: { entries: [{ path: '/repo/*/locked', mode: MountMode.READ }] },
+    })
+    await runWithSession(sess, () => {
+      // A pattern names no single anchor, so the operand is blamed
+      // whenever the match space could reach below it.
+      expect(readonlyBelow('/repo/tree', '/repo', MountMode.WRITE)).toBe('/repo/tree')
+      expect(readonlyBelow('/other/tree', '/repo', MountMode.WRITE)).toBeNull()
+      return Promise.resolve()
+    })
+  })
+
+  it('requireMountWritable needs the broad grant', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      mountModes: new Map([['/trello', MountMode.READ]]),
+      shownPaths: { entries: [{ path: '/trello/board', mode: MountMode.WRITE }] },
+    })
+    await runWithSession(sess, () =>
+      runWithMountGate('/trello', MountMode.WRITE, () => {
+        // The carve-out admits the command, but an id-addressed write
+        // names no path, so only the mount-wide grant counts.
+        expect(() => {
+          requireMountWritable()
+        }).toThrowError(/read-only/)
+        return Promise.resolve()
+      }),
+    )
+    // Unrestricted (no session narrowing) writes pass, and with no
+    // mount bound the check is inert.
+    await runWithMountGate('/trello', MountMode.WRITE, () => {
+      requireMountWritable()
+      return Promise.resolve()
+    })
+    requireMountWritable()
   })
 })
 

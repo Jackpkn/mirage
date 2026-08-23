@@ -16,11 +16,14 @@ import pytest
 
 from mirage.context import (effective_mount_mode, effective_path_mode,
                             get_current_session, get_current_session_for,
-                            hidden_paths_intersect, reset_current_session,
-                            session_path_allowed, set_current_session,
+                            hidden_paths_intersect, readonly_below,
+                            require_mount_writable, reset_current_session,
+                            reset_mount_gate, session_path_allowed,
+                            set_current_session, set_mount_gate,
                             strongest_mode_under)
 from mirage.types import (HiddenPaths, MountMode, ShowEntry, ShownPaths,
                           weaker_mode)
+from mirage.utils.errors import ReadOnlyError
 from mirage.workspace.session import Session, SessionManager
 
 
@@ -280,6 +283,72 @@ def test_strongest_mode_under_counts_a_show_grant():
             == MountMode.READ
     finally:
         reset_current_session(token)
+
+
+def test_readonly_below_blames_the_carved_anchor():
+    sess = Session(session_id="agent",
+                   shown_paths=ShownPaths(entries=(
+                       ShowEntry("/repo/tree/locked", MountMode.READ),
+                       ShowEntry("/repo/tree/locked/pub", MountMode.WRITE),
+                   )))
+    token = set_current_session(sess)
+    try:
+        # The anchor lies strictly below the operand, so a subtree
+        # mutation over it is refused, and the deeper re-widening does
+        # not clear it (the region between the two stays read-only).
+        assert readonly_below("/repo/tree", "/repo",
+                              MountMode.WRITE) == "/repo/tree/locked"
+        assert readonly_below("/repo", "/repo",
+                              MountMode.WRITE) == "/repo/tree/locked"
+        # The operand itself or a sibling is the flat check's business.
+        assert readonly_below("/repo/tree/locked", "/repo",
+                              MountMode.WRITE) is None
+        assert readonly_below("/repo/other", "/repo", MountMode.WRITE) is None
+    finally:
+        reset_current_session(token)
+    assert readonly_below("/repo/tree", "/repo", MountMode.WRITE) is None
+
+
+def test_readonly_below_blames_the_operand_for_a_pattern():
+    sess = Session(
+        session_id="agent",
+        shown_paths=ShownPaths(
+            entries=(ShowEntry("/repo/*/locked", MountMode.READ), )))
+    token = set_current_session(sess)
+    try:
+        # A pattern names no single anchor, so the operand is blamed
+        # whenever the match space could reach below it.
+        assert readonly_below("/repo/tree", "/repo",
+                              MountMode.WRITE) == "/repo/tree"
+        assert readonly_below("/other/tree", "/repo", MountMode.WRITE) is None
+    finally:
+        reset_current_session(token)
+
+
+def test_require_mount_writable_needs_the_broad_grant():
+    sess = Session(
+        session_id="agent",
+        mount_modes={"/trello": MountMode.READ},
+        shown_paths=ShownPaths(
+            entries=(ShowEntry("/trello/board", MountMode.WRITE), )))
+    session_token = set_current_session(sess)
+    gate_token = set_mount_gate("/trello", MountMode.WRITE)
+    try:
+        # The carve-out admits the command, but an id-addressed write
+        # names no path, so only the mount-wide grant counts.
+        with pytest.raises(ReadOnlyError):
+            require_mount_writable()
+    finally:
+        reset_mount_gate(gate_token)
+        reset_current_session(session_token)
+    # Unrestricted (no session narrowing) writes pass, and with no
+    # mount bound the check is inert.
+    gate_token = set_mount_gate("/trello", MountMode.WRITE)
+    try:
+        require_mount_writable()
+    finally:
+        reset_mount_gate(gate_token)
+    require_mount_writable()
 
 
 def test_hidden_paths_intersect_is_per_operand():

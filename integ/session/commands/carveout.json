@@ -126,6 +126,51 @@
         "stdout": "",
         "stderr": "mv: cannot move '/scratch/grove/build/a.txt' to '/scratch/grove/moved.txt': Read-only file system\n"
       }
+    },
+    {
+      "id": "carve_subtree_seed",
+      "seq": 923312,
+      "targets": ["ram-commands"],
+      "command": "mkdir -p /scratch/pine/keep && echo kept > /scratch/pine/keep/f.txt && echo open > /scratch/pine/open.txt",
+      "expect": { "exit": 0, "stdout": "", "stderr": "" }
+    },
+    {
+      "id": "carve_a_recursive_remove_answers_for_the_regions_below_it",
+      "seq": 923313,
+      "targets": ["ram-commands"],
+      "session": "pruner",
+      "command": "rm -r /scratch/pine",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: cannot remove '/scratch/pine/keep': Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_a_directory_move_answers_for_the_regions_below_it",
+      "seq": 923314,
+      "targets": ["ram-commands"],
+      "session": "pruner",
+      "command": "mv /scratch/pine /scratch/oak",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: cannot move '/scratch/pine' to '/scratch/oak': Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_the_refused_subtree_kept_its_content",
+      "seq": 923315,
+      "targets": ["ram-commands"],
+      "command": "cat /scratch/pine/keep/f.txt /scratch/pine/open.txt",
+      "expect": { "exit": 0, "stdout": "kept\nopen\n", "stderr": "" }
+    },
+    {
+      "id": "carve_subtree_cleanup",
+      "seq": 923316,
+      "targets": ["ram-commands"],
+      "command": "rm -r /scratch/pine",
+      "expect": { "exit": 0, "stdout": "", "stderr": "" }
     }
   ]
 }

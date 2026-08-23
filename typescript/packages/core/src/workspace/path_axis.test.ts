@@ -248,6 +248,37 @@ describe('the path axis end to end', () => {
     expect(stderrStr(moved)).toContain('Read-only file system')
   })
 
+  it('a subtree mutation answers for the regions below it', async () => {
+    // A native rm -r or a directory rename covers everything below its
+    // operand in one backend call, so a read-only carve-out below the
+    // operand refuses the whole op up front rather than being deleted
+    // past the per-path check.
+    const ws = await seeded()
+    const grown = await ws.execute(
+      'mkdir -p /repo/tree/locked && ' +
+        "printf 'kept\\n' > /repo/tree/locked/f.txt && " +
+        "printf 'open\\n' > /repo/tree/open.txt",
+    )
+    expect(grown.exitCode).toBe(0)
+    ws.createSession('rev', {
+      profile: parseSessionProfile({
+        paths: { show: { '/repo/tree/locked': 'r' } },
+      }),
+    })
+    const held = await ws.execute('rm -r /repo/tree', { sessionId: 'rev' })
+    expect(held.exitCode).not.toBe(0)
+    expect(stderrStr(held)).toBe("rm: cannot remove '/repo/tree/locked': Read-only file system\n")
+    expect((await ws.execute('cat /repo/tree/locked/f.txt', { sessionId: 'rev' })).exitCode).toBe(0)
+    expect((await ws.execute('cat /repo/tree/open.txt', { sessionId: 'rev' })).exitCode).toBe(0)
+    const moved = await ws.execute('mv /repo/tree /repo/moved', { sessionId: 'rev' })
+    expect(moved.exitCode).not.toBe(0)
+    expect(stderrStr(moved)).toContain('Read-only file system')
+    expect((await ws.execute('cat /repo/tree/locked/f.txt', { sessionId: 'rev' })).exitCode).toBe(0)
+    // A subtree with no carve-out below still mutates freely.
+    const ok = await ws.execute('rm -r /repo/public', { sessionId: 'rev' })
+    expect(ok.exitCode).toBe(0)
+  })
+
   it('a globbed show reopens and stays walkable', async () => {
     // The carve-out spelled as a pattern: the anchor directory the glob
     // exposes children of stays traversable, so the road to the matches

@@ -2496,7 +2496,8 @@
         "scripted": "scripted",
         "scriptedask": "scriptedask",
         "keeper": "keeper",
-        "opener": "opener"
+        "opener": "opener",
+        "pruner": "pruner"
       },
       "profile": "default",
       "profiles": {
@@ -2517,6 +2518,13 @@
           "paths": {
             "show": {
               "/scratch/grove/build": "rw"
+            }
+          }
+        },
+        "pruner": {
+          "paths": {
+            "show": {
+              "/scratch/pine/keep": "r"
             }
           }
         },

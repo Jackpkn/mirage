@@ -18,6 +18,7 @@ import {
   getAdmission,
   getMountGate,
   pathAllowed,
+  readonlyBelow,
 } from '../../../context/session_context.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import type { StatOverlay } from '../../../ops/types.ts'
@@ -474,6 +475,23 @@ function modeCheck(...written: readonly PathSpec[]): void {
   }
 }
 
+/** Refuse a subtree mutation whose operand covers a read-only region
+ * below it (`readonlyBelow`): a native `rm -r`, a directory rename or
+ * a native `cp -r` mutates everything under its endpoints in one
+ * backend call no per-path check ever sees. Runs after `modeCheck`
+ * has judged the endpoints themselves. */
+function subtreeModeCheck(...written: readonly PathSpec[]): void {
+  const gate = getMountGate()
+  if (gate === null) return
+  const [prefix, mode] = gate
+  for (const spec of written) {
+    const blame = readonlyBelow(spec.virtual, prefix, mode)
+    if (blame !== null) {
+      throw erofsReadOnly(`mount ${prefix} is read-only`, blame)
+    }
+  }
+}
+
 /**
  * Return `ops` whose mutation slots hold each written path to its
  * region's effective mode.
@@ -533,6 +551,7 @@ export function withModeGuard<A extends Accessor = Accessor>(ops: CommandIO<A>):
   if (rt !== undefined) {
     guarded.rmR = (accessor, path) => {
       modeCheck(path)
+      subtreeModeCheck(path)
       return rt(accessor, path)
     }
   }
@@ -554,6 +573,7 @@ export function withModeGuard<A extends Accessor = Accessor>(ops: CommandIO<A>):
   if (rn !== undefined) {
     guarded.rename = (accessor, src, dst) => {
       modeCheck(src, dst)
+      subtreeModeCheck(src, dst)
       return rn(accessor, src, dst)
     }
   }
@@ -568,10 +588,44 @@ export function withModeGuard<A extends Accessor = Accessor>(ops: CommandIO<A>):
   if (dc !== undefined) {
     guarded.dirCopy = (accessor, src, dst) => {
       modeCheck(dst)
+      subtreeModeCheck(dst)
       return dc(accessor, src, dst)
     }
   }
   return guarded
+}
+
+/**
+ * Return `ops` under the whole path axis: hides answer ENOENT first,
+ * rules refuse next, the mode speaks last.
+ *
+ * The one spelling of the guard chain, used by the commands factory
+ * for every generic command and by a bespoke command family that
+ * consumes a `CommandIO` directly (the object-store overrides), so an
+ * override enforces the session's path axis exactly like the generic
+ * it replaces.
+ */
+export function withPathGuards<A extends Accessor = Accessor>(ops: CommandIO<A>): CommandIO<A> {
+  return withHiddenGuard(withRuleGuard(withModeGuard(ops)))
+}
+
+/**
+ * Guard one bare backend write the way the adapter guards a slot.
+ *
+ * For a bespoke command wired from loose functions rather than a
+ * `CommandIO` (the google `rm` family binds an index-threaded unlink):
+ * the same chain in the same order, judging the written path. A hidden
+ * path answers ENOENT, the flavor of the flat mutation slots.
+ */
+export function withWriteGuards<A extends Accessor, R>(
+  fn: (accessor: A, path: PathSpec, index?: IndexCacheStore) => R,
+): (accessor: A, path: PathSpec, index?: IndexCacheStore) => R {
+  return (accessor, path, index) => {
+    refuseHidden(path, false)
+    ruleCheck(path)
+    modeCheck(path)
+    return fn(accessor, path, index)
+  }
 }
 
 /**

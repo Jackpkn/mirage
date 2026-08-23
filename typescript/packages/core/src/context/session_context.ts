@@ -16,7 +16,15 @@ import { createAsyncContext } from '../utils/async_context.ts'
 import type { SessionManager } from '../workspace/session/manager.ts'
 import type { Session } from '../workspace/session/session.ts'
 import { stripSlash } from '../utils/slash.ts'
-import { anchorDepth, hidesIntersect, pathVisible, showHead, shownMode } from '../utils/hidden.ts'
+import {
+  anchorDepth,
+  hidesIntersect,
+  isGlob,
+  pathVisible,
+  showHead,
+  shownMode,
+} from '../utils/hidden.ts'
+import { erofsReadOnly } from '../utils/errors.ts'
 import type { EntryGate, PathSpec } from '../types.ts'
 import { MOUNT_MODE_RANK, MountMode, weakerMode } from '../types.ts'
 
@@ -363,4 +371,64 @@ export function strongestModeUnder(mountPrefix: string, mountMode: MountMode): M
     }
   }
   return best
+}
+
+/**
+ * The path to blame when a subtree mutation reaches into a read-only
+ * region below its operand, null when nothing below is weaker.
+ *
+ * The dual of the per-path check, for the ops that mutate a whole
+ * subtree in one backend call (`rm -r`, a directory rename, a native
+ * `cp -r`): the operand's own region may grant writes while a
+ * mode-carrying show entry holds a deeper subtree to `r`, and the
+ * backend cannot honor that boundary mid-call, so the caller refuses
+ * the operand up front. An exact entry is blamed by its anchor, the
+ * row GNU would report the refusal on; a pattern names no single
+ * anchor, so the operand itself is blamed whenever the pattern's
+ * match space could reach below it, failing toward refusal.
+ */
+export function readonlyBelow(
+  virtual: string,
+  mountPrefix: string,
+  mountMode: MountMode,
+): string | null {
+  const sess = getCurrentSession()
+  if (sess?.shownPaths == null) return null
+  const v = '/' + virtual.replace(/^\/+|\/+$/g, '')
+  for (const entry of sess.shownPaths.entries) {
+    if (entry.mode == null) continue
+    if (isGlob(entry.path)) {
+      if (entry.mode === MountMode.READ && reachesUnder(showHead(entry.path), v)) {
+        return virtual
+      }
+      continue
+    }
+    const anchor = '/' + entry.path.replace(/^\/+|\/+$/g, '')
+    const below = v === '/' ? anchor !== '/' : anchor.startsWith(v + '/')
+    if (!below) continue
+    if (effectivePathMode(anchor, mountPrefix, mountMode) === MountMode.READ) {
+      return anchor
+    }
+  }
+  return null
+}
+
+/**
+ * Refuse a service-addressed write unless the whole mount's effective
+ * mode grants writes.
+ *
+ * For bespoke commands whose write is addressed by a service id rather
+ * than a path (trello's card writes): the admission gate lets them run
+ * while any shown subtree grants writes, but an id names no path a
+ * per-path check could judge, so only the mount-wide grant counts and
+ * a write-granting carve-out alone refuses, failing toward refusal.
+ * Inert outside a mount's command.
+ */
+export function requireMountWritable(): void {
+  const gate = getMountGate()
+  if (gate === null) return
+  const [prefix, mode] = gate
+  if (effectiveMountMode(prefix, mode) === MountMode.READ) {
+    throw erofsReadOnly(`mount ${prefix} is read-only`, prefix)
+  }
 }

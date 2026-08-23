@@ -265,6 +265,43 @@ def test_the_write_gate_holds_per_path_inside_an_admitted_command():
     assert b"Read-only file system" in (moved.stderr or b"")
 
 
+def test_a_subtree_mutation_answers_for_the_regions_below_it():
+    # A native rm -r or a directory rename covers everything below its
+    # operand in one backend call, so a read-only carve-out below the
+    # operand refuses the whole op up front rather than being deleted
+    # past the per-path check.
+    ws = _seeded()
+
+    async def grow():
+        io = await ws.execute("mkdir -p /repo/tree/locked && "
+                              "printf 'kept\\n' > /repo/tree/locked/f.txt && "
+                              "printf 'open\\n' > /repo/tree/open.txt")
+        assert io.exit_code == 0, io.stderr
+
+    asyncio.run(grow())
+    ws.create_session("rev",
+                      profile={
+                          "paths": {
+                              "show": {
+                                  "/repo/tree/locked": "r"
+                              }
+                          },
+                      })
+    held = _run(ws, "rm -r /repo/tree")
+    assert held.exit_code != 0
+    assert (held.stderr or b"") == (
+        b"rm: cannot remove '/repo/tree/locked': Read-only file system\n")
+    assert _run(ws, "cat /repo/tree/locked/f.txt").exit_code == 0
+    assert _run(ws, "cat /repo/tree/open.txt").exit_code == 0
+    moved = _run(ws, "mv /repo/tree /repo/moved")
+    assert moved.exit_code != 0
+    assert b"Read-only file system" in (moved.stderr or b"")
+    assert _run(ws, "cat /repo/tree/locked/f.txt").exit_code == 0
+    # A subtree with no carve-out below still mutates freely.
+    ok = _run(ws, "rm -r /repo/public")
+    assert ok.exit_code == 0, ok.stderr
+
+
 def test_a_globbed_show_reopens_and_stays_walkable():
     # The carve-out spelled as a pattern: the anchor directory the glob
     # exposes children of stays traversable, so the road to the matches

@@ -45,6 +45,7 @@ import { rstripSlash } from '../../utils/slash.ts'
 import {
   effectiveMountMode,
   effectivePathMode,
+  readonlyBelow,
   runWithMountGate,
   strongestModeUnder,
 } from '../../context/session_context.ts'
@@ -52,6 +53,13 @@ import { compareCodePoints } from '../../utils/sort.ts'
 
 type CmdKey = string
 type OpKey = string
+
+// Ops that mutate everything under their endpoints in one backend call
+// (a directory rename relocates its whole subtree), so the door also
+// refuses a read-only region below either endpoint. The removal ops
+// stay per-path: the runtimes compose rmtree from unlink/rmdir, and
+// each of those answers for its own path above.
+const SUBTREE_OPS = new Set(['rename'])
 
 function cmdKey(name: string, filetype: string | null): CmdKey {
   return `${name}\u0000${filetype ?? ''}`
@@ -571,7 +579,9 @@ export class MountEntry {
     }
     // Per path, not per mount: a show entry can hold one subtree below
     // `w` on a writable mount, or one writable region on a read mount.
-    // A rename mutates its destination too, so both endpoints answer.
+    // A rename mutates its destination too, so both endpoints answer,
+    // and it relocates whole subtrees in one call, so a read-only
+    // region below either endpoint refuses it too.
     if (levels.some((o) => o.write)) {
       if (effectivePathMode(path, this.prefix, this.mode) === MountMode.READ) {
         throw erofsReadOnly(`mount ${this.prefix} is read-only`, path)
@@ -582,6 +592,15 @@ export class MountEntry {
         effectivePathMode(dst.virtual, this.prefix, this.mode) === MountMode.READ
       ) {
         throw erofsReadOnly(`mount ${this.prefix} is read-only`, dst.virtual)
+      }
+      if (SUBTREE_OPS.has(opName)) {
+        const endpoints = dst instanceof PathSpec ? [path, dst.virtual] : [path]
+        for (const endpoint of endpoints) {
+          const blame = readonlyBelow(endpoint, this.prefix, this.mode)
+          if (blame !== null) {
+            throw erofsReadOnly(`mount ${this.prefix} is read-only`, blame)
+          }
+        }
       }
     }
     const mountPrefix = rstripSlash(this.prefix)

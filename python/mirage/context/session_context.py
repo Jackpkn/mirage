@@ -12,14 +12,16 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from mirage.types import (MOUNT_MODE_RANK, EntryGate, MountMode, PathSpec,
                           weaker_mode)
-from mirage.utils.hidden import (anchor_depth, hides_intersect, path_visible,
-                                 show_head, shown_mode)
+from mirage.utils.errors import ReadOnlyError
+from mirage.utils.hidden import (anchor_depth, hides_intersect, is_glob,
+                                 path_visible, show_head, shown_mode)
 
 if TYPE_CHECKING:
     from mirage.workspace.session.manager import SessionManager
@@ -456,3 +458,68 @@ def strongest_mode_under(mount_prefix: str,
             if MOUNT_MODE_RANK[reached] > MOUNT_MODE_RANK[best]:
                 best = reached
     return best
+
+
+def readonly_below(virtual: str, mount_prefix: str,
+                   mount_mode: MountMode) -> str | None:
+    """The path to blame when a subtree mutation reaches into a
+    read-only region below its operand, None when nothing below is
+    weaker.
+
+    The dual of the per-path check, for the ops that mutate a whole
+    subtree in one backend call (``rm -r``, a directory rename, a
+    native ``cp -r``): the operand's own region may grant writes while
+    a mode-carrying show entry holds a deeper subtree to ``r``, and the
+    backend cannot honor that boundary mid-call, so the caller refuses
+    the operand up front. An exact entry is blamed by its anchor, the
+    row GNU would report the refusal on; a pattern names no single
+    anchor, so the operand itself is blamed whenever the pattern's
+    match space could reach below it, failing toward refusal.
+
+    Args:
+        virtual (str): absolute virtual path the mutation covers.
+        mount_prefix (str): the owning mount's prefix.
+        mount_mode (MountMode): the mount's configured mode.
+    """
+    sess = get_current_session()
+    if sess is None or sess.shown_paths is None:
+        return None
+    v = "/" + virtual.strip("/")
+    for entry in sess.shown_paths.entries:
+        if entry.mode is None:
+            continue
+        if is_glob(entry.path):
+            if entry.mode == MountMode.READ and _reaches_under(
+                    show_head(entry.path), v):
+                return virtual
+            continue
+        anchor = "/" + entry.path.strip("/")
+        below = anchor != "/" if v == "/" else anchor.startswith(v + "/")
+        if not below:
+            continue
+        if effective_path_mode(anchor, mount_prefix,
+                               mount_mode) == MountMode.READ:
+            return anchor
+    return None
+
+
+def require_mount_writable() -> None:
+    """Refuse a service-addressed write unless the whole mount's
+    effective mode grants writes.
+
+    For bespoke commands whose write is addressed by a service id
+    rather than a path (trello's card writes): the admission gate lets
+    them run while any shown subtree grants writes, but an id names no
+    path a per-path check could judge, so only the mount-wide grant
+    counts and a write-granting carve-out alone refuses, failing
+    toward refusal. Inert outside a mount's command.
+
+    Args:
+        None
+    """
+    gate = get_mount_gate()
+    if gate is None:
+        return
+    prefix, mode = gate
+    if effective_mount_mode(prefix, mode) == MountMode.READ:
+        raise ReadOnlyError(errno.EROFS, "Read-only file system", prefix)
