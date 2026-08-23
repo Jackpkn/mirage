@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { pathSafeName, sanitizeName } from '../../utils/sanitize.ts'
-import { makeIdName } from '../../utils/naming.ts'
+import { pathSafeName } from '../../utils/sanitize.ts'
+import { fitIdName, makeIdName } from '../../utils/naming.ts'
 import type { SlackScope } from './scope.ts'
 
 const DEC = new TextDecoder('utf-8', { fatal: false })
@@ -41,7 +41,8 @@ export function userFilename(u: { id: string; name?: string }): string {
 /**
  * Construct a stable VFS filename for a Slack file, of shape
  * `<stem>__<F-id>.<ext>`. The stem keeps the original spelling, only `/` is
- * replaced.
+ * replaced, and it is the only part trimmed to fit NAME_MAX -- the id and
+ * extension are what make the name resolve, so they are spent first.
  */
 export function fileBlobName(file: { id?: string; name?: string; title?: string }): string {
   const raw = file.name ?? file.title ?? 'file'
@@ -50,9 +51,9 @@ export function fileBlobName(file: { id?: string; name?: string; title?: string 
   if (dot >= 0) {
     const stem = raw.slice(0, dot)
     const ext = raw.slice(dot + 1)
-    return `${pathSafeName(stem)}__${fid}.${ext}`
+    return fitIdName(pathSafeName(stem), fid, `.${ext}`)
   }
-  return `${pathSafeName(raw)}__${fid}`
+  return fitIdName(pathSafeName(raw), fid)
 }
 
 interface SearchMessageMatch {
@@ -109,7 +110,14 @@ export function formatGrepResults(raw: Uint8Array, scope: SlackScope, prefix: st
     const chId = ch.id ?? scope.channelId ?? ''
     const container = scope.container ?? 'channels'
     const dateStr = tsToDate(msg.ts ?? '0')
-    const dirname = chId !== '' ? `${sanitizeName(chName)}__${chId}` : sanitizeName(chName)
+    // The dirname readdir emits, not a second spelling of it: the label's
+    // byte budget depends on the id, so composing the pair here reported a
+    // path that does not exist as soon as a long channel name was trimmed on
+    // one side and not the other. It also sanitized where readdir keeps the
+    // original spelling, so the two disagreed on any name carrying a space,
+    // an apostrophe or an emoji -- DM directories, named after a user's
+    // display name, hit that on far shorter strings than NAME_MAX.
+    const dirname = chId !== '' ? channelDirname({ id: chId, name: chName }) : pathSafeName(chName)
     const path =
       dateStr !== ''
         ? `${prefix}/${container}/${dirname}/${dateStr}/chat.jsonl`
@@ -137,8 +145,7 @@ export function formatFileGrepResults(
     if (scope.channelId === undefined || scope.channelId === '') continue
     const chId = scope.channelId
     const chName = scope.channelName ?? ''
-    const safeName = chName !== '' ? sanitizeName(chName) : ''
-    const dirname = safeName !== '' ? `${safeName}__${chId}` : chId
+    const dirname = chName !== '' ? channelDirname({ id: chId, name: chName }) : chId
     const container = scope.container ?? 'channels'
     const path =
       dateStr !== ''

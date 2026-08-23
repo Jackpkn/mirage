@@ -23,6 +23,7 @@ import {
   userFilename,
 } from './formatters.ts'
 import type { SlackScope } from './scope.ts'
+import { NAME_MAX_BYTES, byteLength } from '../../utils/sanitize.ts'
 
 const ENC = new TextEncoder()
 
@@ -214,5 +215,61 @@ describe('dirname helpers', () => {
 
   it('userFilename falls back to unknown when name missing', () => {
     expect(userFilename({ id: 'U2' })).toBe('unknown__U2.json')
+  })
+})
+
+describe('a long channel name renders one way everywhere', () => {
+  const NAME = '会議'.repeat(100)
+
+  it('reports the dirname readdir emits, not a second spelling of it', () => {
+    const raw = ENC.encode(
+      JSON.stringify({
+        messages: {
+          matches: [{ channel: { id: 'C001', name: NAME }, ts: '1712707200.0', text: 'hello' }],
+        },
+      }),
+    )
+    const scope: SlackScope = {
+      useNative: true,
+      container: 'channels',
+      channelName: NAME,
+      channelId: 'C001',
+      resourcePath: 'channels',
+    }
+    const dirname = formatGrepResults(raw, scope, '/slack')[0]
+      ?.split('/slack/channels/')[1]
+      ?.split('/')[0]
+
+    expect(dirname).toBe(channelDirname({ id: 'C001', name: NAME }))
+    expect(byteLength(dirname ?? '')).toBeLessThanOrEqual(NAME_MAX_BYTES)
+  })
+
+  it('reports it for file hits too', () => {
+    const raw = ENC.encode(
+      JSON.stringify({
+        files: { matches: [{ id: 'F001', name: 'report.pdf', timestamp: 1712707200 }] },
+      }),
+    )
+    const scope: SlackScope = {
+      useNative: true,
+      container: 'channels',
+      channelName: NAME,
+      channelId: 'C001',
+      resourcePath: 'channels',
+    }
+    const dirname = formatFileGrepResults(raw, scope, '/slack')[0]
+      ?.split('/slack/channels/')[1]
+      ?.split('/')[0]
+
+    expect(dirname).toBe(channelDirname({ id: 'C001', name: NAME }))
+    expect(byteLength(dirname ?? '')).toBeLessThanOrEqual(NAME_MAX_BYTES)
+  })
+
+  it('fits a long slack filename inside NAME_MAX, keeping id and extension', () => {
+    const name = fileBlobName({ id: 'F0123456789', name: `${NAME}.txt` })
+
+    expect(byteLength(name)).toBeLessThanOrEqual(NAME_MAX_BYTES)
+    expect(name.endsWith('F0123456789.txt')).toBe(true)
+    expect(name).not.toContain('\uFFFD')
   })
 })

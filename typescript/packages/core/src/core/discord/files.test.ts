@@ -13,7 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { downloadFile } from './files.ts'
+import { downloadFile, fileBlobName } from './files.ts'
+import { NAME_MAX_BYTES, byteLength } from '../../utils/sanitize.ts'
 
 const BODY = '0123456789'
 
@@ -69,5 +70,24 @@ describe('downloadFile', () => {
   it('throws on a failed response', async () => {
     vi.stubGlobal('fetch', respond(404, ''))
     await expect(downloadFile('https://cdn.example/gone.csv')).rejects.toThrow(/404/)
+  })
+})
+
+describe('fileBlobName', () => {
+  const NAME = '会議'.repeat(100)
+
+  it('fits a long attachment name inside NAME_MAX, keeping id and extension', () => {
+    const name = fileBlobName({ id: '1234567890123456789', filename: `${NAME}.txt` })
+
+    expect(byteLength(name)).toBeLessThanOrEqual(NAME_MAX_BYTES)
+    expect(name.endsWith('1234567890123456789.txt')).toBe(true)
+    expect(name).not.toContain('\uFFFD')
+  })
+
+  it('fits one with no extension', () => {
+    const name = fileBlobName({ id: '1234567890123456789', filename: NAME })
+
+    expect(byteLength(name)).toBeLessThanOrEqual(NAME_MAX_BYTES)
+    expect(name.endsWith('1234567890123456789')).toBe(true)
   })
 })

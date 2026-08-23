@@ -15,6 +15,7 @@
 from typing import Any
 
 from mirage.core.api.client import api_request, status_error
+from mirage.utils.naming import fit_id_name
 from mirage.utils.ranges import window_for
 from mirage.utils.sanitize import path_safe_name
 
@@ -27,14 +28,16 @@ def file_blob_name(att: dict[str, Any]) -> str:
 
     Returns:
         str: VFS filename of shape ``<stem>__<att-id>.<ext>``. The stem
-        keeps the original spelling, only ``/`` is replaced.
+        keeps the original spelling, only ``/`` is replaced, and it is the
+        only part trimmed to fit NAME_MAX -- the id and extension are what
+        make the name resolve, so they are spent first.
     """
     raw_name = att.get("filename") or att.get("title") or "file"
     aid = str(att.get("id", ""))
     if "." in raw_name:
         stem, _, ext = raw_name.rpartition(".")
-        return f"{path_safe_name(stem)}__{aid}.{ext}"
-    return f"{path_safe_name(raw_name)}__{aid}"
+        return fit_id_name(path_safe_name(stem), aid, f".{ext}")
+    return fit_id_name(path_safe_name(raw_name), aid)
 
 
 async def download_file(url: str,

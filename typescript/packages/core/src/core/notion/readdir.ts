@@ -32,7 +32,7 @@ import {
   searchDataSources,
   searchTopLevelPages,
 } from './pages.ts'
-import { sanitizeName } from './pathing.ts'
+import { formatSegment } from './pathing.ts'
 import { detectScope } from './scope.ts'
 
 function pickString(record: Record<string, unknown>, key: string): string {
@@ -123,7 +123,7 @@ async function listPage(
     ],
   ]
   for (const ref of refs) {
-    const dirname = `${sanitizeName(ref.title)}__${ref.id}`
+    const dirname = formatSegment({ id: ref.id, title: ref.title })
     entries.push([
       dirname,
       new IndexEntry({
