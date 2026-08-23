@@ -336,6 +336,18 @@ describe('buildResource colon reference', () => {
     '  static async create(config) { const r = new LateResource(); r.config = config; return r }\n' +
     '}\n' +
     'export class NotAResource {}\n' +
+    'export class HalfResource {\n' +
+    '  get kind() { return "half" }\n' +
+    '  async open() {}\n' +
+    '  async close() {}\n' +
+    '}\n' +
+    'export class NamelessResource {\n' +
+    '  kind = ""\n' +
+    '  async open() {}\n' +
+    '  async close() {}\n' +
+    '  getState() { return {type: ""} }\n' +
+    '  loadState() {}\n' +
+    '}\n' +
     'export const NOT_A_CLASS = {name: "wiki"}\n'
 
   function fixture(): string {
@@ -380,7 +392,27 @@ describe('buildResource colon reference', () => {
   it('refuses a class that does not build a resource', async () => {
     const dir = fixture()
     await expect(buildResource(`${join(dir, 'wiki.mjs')}:NotAResource`)).rejects.toThrow(
-      'did not build a resource',
+      'is missing open, close, getState, loadState',
+    )
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('names the members a half-built resource left out', async () => {
+    // open/close alone used to pass, and the class reached installMounts and
+    // then crashed Workspace.save() on the getState it never declared.
+    const dir = fixture()
+    await expect(buildResource(`${join(dir, 'wiki.mjs')}:HalfResource`)).rejects.toThrow(
+      'is missing getState, loadState',
+    )
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('refuses a resource whose kind is empty', async () => {
+    // kind is how a command or op registered for this backend is found, so
+    // an empty one registers nothing and fails nowhere.
+    const dir = fixture()
+    await expect(buildResource(`${join(dir, 'wiki.mjs')}:NamelessResource`)).rejects.toThrow(
+      'has no kind',
     )
     rmSync(dir, { recursive: true, force: true })
   })

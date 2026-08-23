@@ -322,20 +322,36 @@ export function register(name: string, factory: ResourceFactory): void {
   CUSTOM[name] = factory
 }
 
+// Every member `Resource` declares non-optionally, which is the whole set a
+// mount reaches for whatever the backend is: `open`/`close` on the
+// lifecycle, `getState`/`loadState` on save and load. Checking a subset only
+// moves the failure later and into a frame the author never wrote, which is
+// the very thing this guard exists to prevent: `open`/`close` alone accepted
+// a class whose missing `getState` crashed `Workspace.save()` instead.
+const RESOURCE_METHODS = ['open', 'close', 'getState', 'loadState'] as const
+
 /**
- * True when a loaded export answers the calls every mount makes on a
- * resource.
+ * The reason a loaded export cannot serve as a resource, or null when it
+ * can.
  *
- * The check is `open`/`close`, the two the workspace calls on every mount
- * whatever the backend is, so a value that passes cannot fail on the
- * lifecycle. It exists because a colon reference loads whatever the file
- * exports: without it a typo'd export name reaches `installMounts` and
- * fails there, naming a frame the author never wrote.
+ * A string rather than a boolean because a colon reference loads whatever
+ * the file exports, and "did not build a resource" does not tell the author
+ * which member they forgot. Python's `_resource_defect` is the twin, with
+ * `close`/`get_state`/`load_state` and no `open`, because a python mount has
+ * no open call. Its set is the same for the same reason: `BaseResource`
+ * supplies every member, so a class that subclasses it can never be missing
+ * one, and the colon rung is the only one that accepts a class subclassing
+ * nothing.
  */
-function looksLikeResource(value: unknown): boolean {
-  if (value === null || typeof value !== 'object') return false
+function resourceDefect(value: unknown): string | null {
+  if (value === null || typeof value !== 'object') return `built a ${typeof value}`
   const node = value as Record<string, unknown>
-  return typeof node.open === 'function' && typeof node.close === 'function'
+  const missing = RESOURCE_METHODS.filter((name) => typeof node[name] !== 'function')
+  if (missing.length > 0) return `is missing ${missing.join(', ')}`
+  // A resource is keyed by `kind`: it is how a command or op registered for
+  // this backend is found, so an empty one silently registers nothing.
+  if (typeof node.kind !== 'string' || node.kind === '') return 'has no kind'
+  return null
 }
 
 /**
@@ -357,8 +373,9 @@ async function buildFromRef(ref: string, config: Record<string, unknown>): Promi
     new (config: Record<string, unknown>): unknown
   }
   const built = await (typeof cls.create === 'function' ? cls.create(config) : new cls(config))
-  if (!looksLikeResource(built)) {
-    throw new Error(`resource ref ${JSON.stringify(ref)} did not build a resource`)
+  const defect = resourceDefect(built)
+  if (defect !== null) {
+    throw new Error(`resource ref ${JSON.stringify(ref)} ${defect}`)
   }
   return built as Resource
 }

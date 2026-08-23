@@ -286,6 +286,48 @@ def _resolve_entry(name: str) -> ResourceEntry | None:
     return _CUSTOM.get(name)
 
 
+# Every member the workspace reaches for on a mount whatever the backend
+# is: close on teardown, get_state and load_state on save and load.
+# BaseResource supplies all three, so a class that subclasses it can never
+# be missing one; a colon reference is the one rung that accepts a class
+# which subclasses nothing.
+_RESOURCE_METHODS = ("close", "get_state", "load_state")
+
+
+def _resource_defect(built: "BaseResource") -> str | None:
+    """The reason a colon-referenced class cannot serve as a resource.
+
+    A sentence rather than a bool, because a colon reference loads
+    whatever the module exports and "did not build a resource" does not
+    tell the author which member they forgot. Only that rung is checked:
+    a builtin is known good, and ``register_resource`` is called by the
+    embedding program rather than by a line an agent types.
+
+    Nothing enforced this before, and ``build_resource``'s own history
+    is why it should: making it async in 0.0.5 surfaced as
+    ``'coroutine' object has no attribute 'set_index'`` two frames away
+    in ``install_mounts``, which is the same failure shape a class
+    missing ``get_state`` has at ``Workspace.save()``. Mirrors
+    ``resourceDefect`` in the TypeScript registry, where the set also
+    carries ``open`` because a mount opens there.
+
+    Args:
+        built (BaseResource): the instance the referenced class produced.
+    """
+    missing = [
+        name for name in _RESOURCE_METHODS
+        if not callable(getattr(built, name, None))
+    ]
+    if missing:
+        return f"is missing {', '.join(missing)}"
+    # A resource is keyed by its name: it is how a command or op
+    # registered for this backend is found, so an empty one silently
+    # registers nothing.
+    if not isinstance(getattr(built, "name", None), str) or not built.name:
+        return "has no name"
+    return None
+
+
 def build_resource(name: str,
                    config: dict[str, Any] | None = None) -> "BaseResource":
     """Construct a resource instance by its registry name.
@@ -343,6 +385,12 @@ def build_resource(name: str,
     if config_ref is None:
         config_ref = getattr(resource_cls, "CONFIG_CLS", None)
     if config_ref is None:
-        return resource_cls(**cfg_dict)
-    config_cls = resolve_class(config_ref)
-    return resource_cls(config_cls(**cfg_dict))
+        built = resource_cls(**cfg_dict)
+    else:
+        config_cls = resolve_class(config_ref)
+        built = resource_cls(config_cls(**cfg_dict))
+    if ":" in name:
+        defect = _resource_defect(built)
+        if defect is not None:
+            raise TypeError(f"resource ref {name!r} {defect}")
+    return built

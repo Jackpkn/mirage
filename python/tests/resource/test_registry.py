@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from mirage.resource import registry
+from mirage.resource.base import BaseResource
 from mirage.resource.hf_buckets import HfBucketsResource
 from mirage.resource.registry import (REGISTRY, build_resource,
                                       known_resources, register_resource)
@@ -148,24 +149,46 @@ class FakeCustomConfig:
         self.url = url
 
 
-class FakeCustomResource:
+# The colon rung is the one that accepts a class subclassing nothing, so
+# these stand in for a real out-of-tree backend and subclass BaseResource
+# the way one does. NotAResource below is the class that does not.
+class FakeCustomResource(BaseResource):
+
+    name = "fake_custom"
 
     def __init__(self, config: FakeCustomConfig) -> None:
+        super().__init__()
         self.config = config
 
 
-class FakeKwargsResource:
+class FakeKwargsResource(BaseResource):
+
+    name = "fake_kwargs"
+
+    def __init__(self, root: str = "/") -> None:
+        super().__init__()
+        self.root = root
+
+
+class FakeConfigClsResource(BaseResource):
+
+    name = "fake_attr"
+    CONFIG_CLS = FakeCustomConfig
+
+    def __init__(self, config: FakeCustomConfig) -> None:
+        super().__init__()
+        self.config = config
+
+
+class NotAResource:
 
     def __init__(self, root: str = "/") -> None:
         self.root = root
 
 
-class FakeConfigClsResource:
+class NamelessResource(BaseResource):
 
-    CONFIG_CLS = FakeCustomConfig
-
-    def __init__(self, config: FakeCustomConfig) -> None:
-        self.config = config
+    name = ""
 
 
 @pytest.fixture
@@ -230,6 +253,28 @@ def test_colon_reference_does_not_shadow_a_builtin_name(clean_registry):
 def test_colon_reference_to_a_missing_attribute_raises(clean_registry):
     with pytest.raises(ValueError):
         build_resource("tests.resource.test_registry:NoSuchResource")
+
+
+def test_colon_reference_names_the_members_a_class_left_out(clean_registry):
+    # Nothing validated this rung, so a class subclassing nothing reached
+    # install_mounts and then crashed Workspace.save() on the get_state it
+    # never declared.
+    with pytest.raises(TypeError, match="is missing close, get_state"):
+        build_resource("tests.resource.test_registry:NotAResource")
+
+
+def test_colon_reference_refuses_a_resource_with_no_name(clean_registry):
+    # The name is how a command or op registered for this backend is
+    # found, so an empty one registers nothing and fails nowhere.
+    with pytest.raises(TypeError, match="has no name"):
+        build_resource("tests.resource.test_registry:NamelessResource")
+
+
+def test_a_registry_name_is_not_re_validated(clean_registry):
+    # Only the colon rung is checked: a builtin is known good, and
+    # register_resource is called by the embedding program.
+    register_resource("fake_bare", NotAResource)
+    assert build_resource("fake_bare", {"root": "/x"}).root == "/x"
 
 
 def test_known_resources_includes_custom(clean_registry):
