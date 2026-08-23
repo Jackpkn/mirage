@@ -14,5 +14,6 @@
 
 from mirage.core.nextcloud.du.entries import entries
 from mirage.core.nextcloud.du.size import size
+from mirage.core.nextcloud.du.walk import stat_or_null
 
-__all__ = ["entries", "size"]
+__all__ = ["entries", "size", "stat_or_null"]

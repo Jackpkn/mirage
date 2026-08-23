@@ -12,37 +12,27 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from opendal.exceptions import NotFound
-
 from mirage.accessor.nextcloud import NextcloudAccessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.nextcloud.du.walk import stat_or_null
-from mirage.types import FileType, PathSpec
+from mirage.core.nextcloud.stat import stat
+from mirage.types import FileStat, PathSpec
 
 
-async def size(accessor: NextcloudAccessor,
-               path: PathSpec,
-               index: IndexCacheStore = NULL_INDEX) -> int:
-    """Recursive byte size of everything under a path.
+async def stat_or_null(accessor: NextcloudAccessor,
+                       path: PathSpec,
+                       index: IndexCacheStore = NULL_INDEX) -> FileStat | None:
+    """The path's row, or None when nothing is there.
+
+    A du walk starts from a path it cannot assume exists, and both
+    callers ask the same question: is this a file to size directly, a
+    directory to scan, or nothing at all.
 
     Args:
         accessor (NextcloudAccessor): Nextcloud accessor.
         path (PathSpec): target path.
+        index (IndexCacheStore): listing cache.
     """
-    info = await stat_or_null(accessor, path, index=index)
-    if info is not None and info.type != FileType.DIRECTORY:
-        return info.size or 0
-    pfx = path.mount_path.strip("/")
-    scan_path = pfx + "/" if pfx else "/"
-    op = accessor.operator()
-    total = 0
     try:
-        async for entry in await op.scan(scan_path):
-            if entry.path.endswith("/"):
-                continue
-            meta = entry.metadata
-            if meta is not None:
-                total += int(meta.content_length or 0)
-    except NotFound:
-        return 0
-    return total
+        return await stat(accessor, path, index=index)
+    except FileNotFoundError:
+        return None
