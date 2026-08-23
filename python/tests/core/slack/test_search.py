@@ -18,9 +18,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from mirage.core.slack.config import SlackConfig
-from mirage.core.slack.formatters import format_grep_results
+from mirage.core.slack.formatters import channel_dirname, format_grep_results
 from mirage.core.slack.scope import SearchTarget
 from mirage.core.slack.search import search_messages
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len
 
 
 @pytest.mark.asyncio
@@ -78,3 +79,33 @@ def test_format_grep_results_path_uses_chat_jsonl():
     line = lines[0]
     assert line.startswith(
         "/slack/channels/general__C001/2024-04-10/chat.jsonl:"), line
+
+
+def test_a_long_channel_name_reports_the_path_readdir_emits():
+    """A grep hit must name the directory the listing actually contains.
+
+    The formatter composed ``<name>__<id>`` itself, so a CJK channel name
+    rendered a 613-byte segment where readdir emits a 253-byte one: the
+    reported path could not be opened.
+    """
+    name = "会議" * 100
+    raw = json.dumps({
+        "messages": {
+            "matches": [{
+                "channel": {
+                    "id": "C001",
+                    "name": name
+                },
+                "ts": "1712707200.0",
+                "text": "hello",
+            }],
+        },
+    }).encode()
+    scope = SearchTarget(container="channels",
+                         channel_name=name,
+                         channel_id="C001")
+    line = format_grep_results(raw, scope, "/slack")[0]
+    dirname = line.split("/slack/channels/")[1].split("/")[0]
+
+    assert dirname == channel_dirname({"id": "C001", "name": name})
+    assert byte_len(dirname) <= NAME_MAX_BYTES

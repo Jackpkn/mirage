@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cycleFilename,
+  documentFilename,
   issueDirname,
   memberFilename,
   projectFilename,
@@ -22,6 +23,7 @@ import {
   splitSuffixId,
   teamDirname,
 } from './pathing.ts'
+import { NAME_MAX_BYTES, byteLength } from '../../utils/sanitize.ts'
 
 describe('sanitizeName', () => {
   it('replaces unsafe chars and collapses underscores', () => {
@@ -72,5 +74,34 @@ describe('dirnames and filenames', () => {
   })
   it('builds cycle filename', () => {
     expect(cycleFilename({ id: 'c1', name: 'Sprint 12' })).toBe('Sprint_12__c1.json')
+  })
+})
+
+const CJK = '会議の記録'.repeat(40)
+const UUID = '3fa85f64-5717-4562-b3fc-2c963f66afa6'
+
+describe('linear names fit NAME_MAX', () => {
+  // These composed `<label>__<id>` by hand, so the 100-character cap in
+  // sanitizeName let a CJK name render 338-343 bytes against a 255-byte
+  // NAME_MAX. They route through fitIdName now.
+  const cases: [string, (v: string, i: string) => string, string][] = [
+    ['teamDirname', (v, i) => teamDirname({ key: v, name: v, id: i }), ''],
+    ['memberFilename', (v, i) => memberFilename({ displayName: v, id: i }), '.json'],
+    ['issueDirname', (v, i) => issueDirname({ identifier: v, id: i }), ''],
+    ['projectFilename', (v, i) => projectFilename({ name: v, id: i }), '.json'],
+    ['cycleFilename', (v, i) => cycleFilename({ name: v, id: i }), '.json'],
+    ['documentFilename', (v, i) => documentFilename({ title: v, id: i }), '.json'],
+  ]
+  it.each(cases)('%s fits and still addresses the id', (_name, build, suffix) => {
+    const name = build(CJK, UUID)
+    expect(byteLength(name)).toBeLessThanOrEqual(NAME_MAX_BYTES)
+    expect(name).not.toContain('\uFFFD')
+    expect(splitSuffixId(name, suffix)[1]).toBe(UUID)
+  })
+
+  it('keeps the separator between teamDirname parts', () => {
+    // The label is two sanitized parts joined by `__`; re-sanitizing it would
+    // collapse that to `_` and change the directory's name.
+    expect(teamDirname({ key: 'ENG', name: 'Engineering', id: 'T1' })).toBe('ENG__Engineering__T1')
   })
 })

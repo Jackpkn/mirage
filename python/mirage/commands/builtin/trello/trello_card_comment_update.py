@@ -20,6 +20,7 @@ from mirage.commands.builtin.trello._input import (file_operand,
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec.types import CommandSpec, FlagView, Option
+from mirage.context import require_mount_writable
 from mirage.core.trello.client import comment_update
 from mirage.core.trello.normalize import normalize_comment
 from mirage.io.stream import yield_bytes
@@ -56,6 +57,9 @@ async def trello_card_comment_update(
         stdin=opts.stdin,
         error_message="comment text is required",
     )
+    # A card write is addressed by id, not path, so only the mount-wide
+    # grant can admit it (a write-granting carve-out names no card).
+    require_mount_writable()
     comment = await comment_update(config,
                                    card_id=card_id,
                                    comment_id=comment_id,

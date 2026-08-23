@@ -20,6 +20,8 @@ import type { NotionTransport } from './client.ts'
 import { normalizeDatabase, toJsonBytes } from './normalize.ts'
 import type { NotionAccessor } from '../../accessor/notion.ts'
 import { readdir } from './readdir.ts'
+import { formatSegment } from './pathing.ts'
+import { NAME_MAX_BYTES, byteLength } from '../../utils/sanitize.ts'
 
 class FakeTransport implements NotionTransport {
   public readonly invocations: { name: string; args: Record<string, unknown> }[] = []
@@ -359,5 +361,23 @@ describe('notion readdir subtree', () => {
       undefined,
     )
     expect(out).toEqual([`${dirPath}/page.json`, `${dirPath}/ChildA__${CHILD1_ID}`])
+  })
+})
+
+describe('notion readdir long child titles', () => {
+  it('budgets a CJK child page title instead of composing it inline', async () => {
+    const title = '会議'.repeat(100)
+    const transport = new FakeTransport()
+    transport.enqueue('API-retrieve-block-children', {
+      results: [{ id: CHILD1_ID, type: 'child_page', child_page: { title } }],
+      has_more: false,
+      next_cursor: null,
+    })
+    const dirPath = `/pages/Top1__${TOP1_ID}`
+    const out = await readdir(makeAccessor(transport), spec(dirPath), undefined)
+    const child = out.find((p) => !p.endsWith('page.json'))?.slice(dirPath.length + 1)
+
+    expect(child).toBe(formatSegment({ id: CHILD1_ID, title }))
+    expect(byteLength(child ?? '')).toBeLessThanOrEqual(NAME_MAX_BYTES)
   })
 })

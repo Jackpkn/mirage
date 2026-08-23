@@ -26,8 +26,7 @@ import {
   resolveGlobOf,
   supports,
   withDirGuard,
-  withHiddenGuard,
-  withRuleGuard,
+  withPathGuards,
 } from './adapter.ts'
 import { BUILDERS } from './builders/index.ts'
 import { defaultProvision } from './provision.ts'
@@ -137,11 +136,10 @@ export function makeGenericCommands<A extends Accessor = Accessor>(
   const commands: RegisteredCommand[] = []
   for (const b of BUILDERS) {
     if (skip.has(b.name)) continue
-    // Hidden-path and rule enforcement wrap here, once for every generic
-    // command, hides outermost so a hidden path answers ENOENT before
-    // any rule can name it; the raw adapter stays untouched for the ops
+    // Hidden-path, rule and mode enforcement wrap here, once for every
+    // generic command; the raw adapter stays untouched for the ops
     // tables, whose door does its own enforcement.
-    const baseOps = withHiddenGuard(withRuleGuard((opsOver[b.name] ?? ops) as CommandIO))
+    const baseOps = withPathGuards((opsOver[b.name] ?? ops) as CommandIO)
     // A backend missing an op a command cannot run without (cp/mv/tee/
     // gunzip/...) doesn't get the command registered, rather than getting
     // one that crashes when invoked.

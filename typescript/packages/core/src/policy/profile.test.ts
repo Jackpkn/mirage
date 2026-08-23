@@ -95,8 +95,8 @@ describe('parseSessionProfile', () => {
     expect(() => parseSessionProfile({ hidden_paths: {} })).toThrow(/unknown field `hidden_paths`/)
     expect(() => parseSessionProfile({ hiddenPaths: {} })).toThrow(/unknown field/)
     expect(() => parseSessionProfile({ commands: { hide: [] } })).toThrow(/unknown field `hide`/)
-    expect(() => parseSessionProfile({ paths: { show: {} } })).toThrow(
-      /paths: unknown field `show`/,
+    expect(() => parseSessionProfile({ paths: { carve: {} } })).toThrow(
+      /paths: unknown field `carve`/,
     )
     expect(() => parseSessionProfile({ vars: { mask: [] } })).toThrow(/unknown field `mask`/)
     expect(() => parseSessionProfile({ mounts: { '/a': 'w' } })).toThrow(/invalid mount mode/)
@@ -260,6 +260,77 @@ describe('parseSessionProfile', () => {
     expect(() =>
       parseSessionProfile({ mounts: { '/a': { paths: { hide: ['/a/x', ''] } } } }),
     ).toThrow(/hide\[1\] must name a path/)
+  })
+
+  it('paths.show takes a mapping or a plain list', () => {
+    // A mapping states path -> mode; a plain list inherits the mount's
+    // mode, which the entry records as null until the mode law asks.
+    const p = parseSessionProfile({
+      paths: { hide: ['/repo'], show: { '/repo/public': 'r', '/repo/build': 'rw' } },
+    })
+    expect(p.paths?.show).toEqual([
+      { path: '/repo/public', mode: MountMode.READ },
+      { path: '/repo/build', mode: MountMode.WRITE },
+    ])
+    const bare = parseSessionProfile({ paths: { show: ['/repo/public', '/repo/docs/*'] } })
+    expect(bare.paths?.show).toEqual([
+      { path: '/repo/public', mode: null },
+      { path: '/repo/docs/*', mode: null },
+    ])
+  })
+
+  it.each(['public', '*.md', 'docs/site', ''])(
+    'a show entry is absolute or refused: %j',
+    (entry) => {
+      // A show anchors to a place and a name pattern names none, so the
+      // slashless spelling hide accepts is refused here.
+      expect(() => parseSessionProfile({ paths: { show: [entry] } })).toThrow(
+        /anchor to a place|must name a path/,
+      )
+    },
+  )
+
+  it('a show mode must be a mode name or alias', () => {
+    expect(() => parseSessionProfile({ paths: { show: { '/repo/public': 7 } } })).toThrow(
+      /mode name or alias/,
+    )
+    expect(() => parseSessionProfile({ paths: { show: { '/repo/public': 'admin' } } })).toThrow(
+      /invalid mount mode/,
+    )
+  })
+
+  it('a hide group carries its reason into the side table', () => {
+    // The group is a spelling of `hide`: its patterns join the flat list
+    // (so matching never consults the reason) and the reason lands in
+    // `reasons`, which no agent-facing surface renders.
+    const p = parseSessionProfile({
+      paths: {
+        hide: ['/repo/.env', { patterns: ['/repo/secrets', '*.pem'], reason: 'credentials' }],
+      },
+    })
+    expect(p.paths?.hide).toEqual(['/repo/.env', '/repo/secrets', '*.pem'])
+    expect(p.paths?.reasons).toEqual([
+      { patterns: ['/repo/secrets', '*.pem'], reason: 'credentials' },
+    ])
+  })
+
+  it.each([
+    [{ patterns: [], reason: 'x' }, /at least one pattern/],
+    [{ patterns: ['/a'], reason: '  ' }, /non-empty string/],
+    [{ patterns: ['/a'] }, /non-empty string/],
+    [{ patterns: ['/a'], reason: 'x', why: 'no' }, /unknown field/],
+  ])('a malformed hide group is refused: %j', (group, message) => {
+    expect(() => parseSessionProfile({ paths: { hide: [group] } })).toThrow(message)
+  })
+
+  it("a mount section's show must lie under that mount", () => {
+    expect(() =>
+      parseSessionProfile({ mounts: { '/repo': { paths: { show: { '/other/x': 'r' } } } } }),
+    ).toThrow(/outside the mount/)
+    const ok = parseSessionProfile({
+      mounts: { '/repo': { paths: { hide: ['/repo'], show: ['/repo/public'] } } },
+    })
+    expect(ok.mounts?.get('/repo')?.paths?.show).toEqual([{ path: '/repo/public', mode: null }])
   })
 
   it("the root mount's section holds every path under it", () => {

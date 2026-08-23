@@ -14,28 +14,43 @@
 
 from typing import Any
 
-from mirage.utils.naming import parse_id_name
+from mirage.utils.naming import fit_id_name, parse_id_name
 from mirage.utils.sanitize import sanitize_name
 
 split_suffix_id = parse_id_name
 
 
+def format_segment(title: str, object_id: str) -> str:
+    """Join a Notion object's title to its id inside the NAME_MAX budget.
+
+    The one place the pair is composed, mirroring the TypeScript
+    ``formatSegment``. Every dirname below and the child-page rows in
+    ``readdir`` route through it so a title long enough to be trimmed is
+    trimmed the same way everywhere -- a second spelling names a path that
+    does not exist.
+
+    Args:
+        title (str): raw title, empty for an untitled object.
+        object_id (str): Notion object id, never trimmed.
+
+    Returns:
+        str: dirname of shape ``<label>__<id>``.
+    """
+    return fit_id_name(
+        sanitize_name(title) if title else "untitled", object_id)
+
+
 def page_dirname(page: dict[str, Any]) -> str:
-    title = extract_title(page)
-    label = sanitize_name(title) if title else "untitled"
-    return f"{label}__{page['id']}"
+    return format_segment(extract_title(page), page["id"])
 
 
 def database_dirname(database: dict[str, Any]) -> str:
-    title = extract_database_title(database)
-    label = sanitize_name(title) if title else "untitled"
-    return f"{label}__{database['id']}"
+    return format_segment(extract_database_title(database), database["id"])
 
 
 def data_source_dirname(data_source: dict[str, Any]) -> str:
-    title = extract_data_source_title(data_source)
-    label = sanitize_name(title) if title else "untitled"
-    return f"{label}__{data_source['id']}"
+    return format_segment(extract_data_source_title(data_source),
+                          data_source["id"])
 
 
 def extract_data_source_title(data_source: dict[str, Any]) -> str:

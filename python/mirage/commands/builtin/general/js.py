@@ -30,9 +30,16 @@ async def _js(
     opts: CommandOpts,
 ) -> CommandOutput:
     fl = FlagView(opts.flags, spec=SPECS["js"])
-    error, prepared = await resolve_source("js", paths, texts, fl.as_str("e"),
-                                           opts.stdin, opts.dispatch, opts.cwd,
-                                           opts.exec_allowed)
+    error, prepared = await resolve_source(
+        "js",
+        paths,
+        texts,
+        fl.as_str("e"),
+        opts.stdin,
+        opts.dispatch,
+        opts.cwd,
+        opts.exec_allowed,
+        exec_path_allowed=opts.exec_path_allowed)
     if error is not None or prepared is None:
         assert error is not None
         return error

@@ -21,7 +21,7 @@ import { getExtension } from '../../commands/resolve.ts'
 import { IOResult, type OpReport } from '../../io/types.ts'
 import {
   eacces,
-  eaccesReadOnly,
+  erofsReadOnly,
   eexist,
   einval,
   enoent,
@@ -64,11 +64,7 @@ import {
   POLICY_WRITE_OPS,
   SETATTR_KEYS,
 } from './constants.ts'
-import {
-  effectiveMountMode,
-  getCurrentSession,
-  pathAllowed,
-} from '../../context/session_context.ts'
+import { effectivePathMode, getCurrentSession, pathAllowed } from '../../context/session_context.ts'
 
 const NOOP_ACCESSOR_INSTANCE = new NOOPAccessor()
 
@@ -309,11 +305,15 @@ export class Dispatcher {
         return [served, new IOResult({ reads: { [p.virtual]: served } })]
       }
     }
-    if (
-      effectiveMountMode(mountPrefix, mode) === MountMode.READ &&
-      this.opsRegistry.find(opName, resource.kind)?.write === true
-    ) {
-      throw eaccesReadOnly(`mount at '${p.virtual}' is read-only`, p)
+    if (this.opsRegistry.find(opName, resource.kind)?.write === true) {
+      if (effectivePathMode(p.virtual, mountPrefix, mode) === MountMode.READ) {
+        throw erofsReadOnly(`mount at '${p.virtual}' is read-only`, p)
+      }
+      // A rename mutates its destination too, so both endpoints answer.
+      const wDst = opName === 'rename' && args?.[0] instanceof PathSpec ? args[0] : null
+      if (wDst !== null && effectivePathMode(wDst.virtual, mountPrefix, mode) === MountMode.READ) {
+        throw erofsReadOnly(`mount at '${wDst.virtual}' is read-only`, wDst)
+      }
     }
     // Ops registered under a rendered filetype (gdocs/gsheets/gslides/
     // gmail reads) resolve by the path's extension; Python reaches them

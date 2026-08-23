@@ -287,6 +287,7 @@ export async function runOnMount(
       env: envSnapshot(session),
       sessionView: sessionView(session, registry.policies),
       execAllowed: registry.isExecAllowed(),
+      execPathAllowed: registry.execAllowedAt,
       ...(lineRuntime !== undefined ? { runtime: lineRuntime } : {}),
       ns,
       statPath,

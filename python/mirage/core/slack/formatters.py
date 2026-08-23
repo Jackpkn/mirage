@@ -49,7 +49,7 @@ def dm_dirname(dm: dict[str, Any], user_map: dict[str, str]) -> str:
 def user_filename(u: dict[str, Any]) -> str:
     """Compute the VFS filename for a user, of the form `name__U123.json`."""
     name = u.get("name", u.get("id", "unknown"))
-    return f"{make_id_name(name, u['id'], path_safe=True)}.json"
+    return make_id_name(name, u["id"], path_safe=True, suffix=".json")
 
 
 def build_query(pattern: str, scope: SearchTarget) -> str:
@@ -99,8 +99,14 @@ def format_grep_results(
                 ts_float, tz=timezone.utc).date().isoformat()
         except (TypeError, ValueError):
             date_str = ""
-        safe_name = path_safe_name(ch_name)
-        dirname = f"{safe_name}__{ch_id}" if ch_id else safe_name
+        # The dirname readdir emits, not a second spelling of it: the
+        # label's byte budget depends on the id, so composing the pair here
+        # reported a path that does not exist as soon as a long channel name
+        # was trimmed on one side and not the other.
+        dirname = (channel_dirname({
+            "id": ch_id,
+            "name": ch_name
+        }) if ch_id else path_safe_name(ch_name))
         path = (f"{prefix}/{container}/{dirname}/{date_str}/chat.jsonl"
                 if date_str else f"{prefix}/{container}/{dirname}")
         author = msg.get("username") or msg.get("user") or "?"
@@ -141,8 +147,10 @@ def format_file_grep_results(
             continue
         ch_id = scope.channel_id
         ch_name = scope.channel_name or ""
-        safe_name = path_safe_name(ch_name) if ch_name else ""
-        dirname = f"{safe_name}__{ch_id}" if safe_name else ch_id
+        dirname = (channel_dirname({
+            "id": ch_id,
+            "name": ch_name
+        }) if ch_name else ch_id)
         container = scope.container or "channels"
         path = (f"{prefix}/{container}/{dirname}/{date_str}/files/{blob_name}"
                 if date_str else

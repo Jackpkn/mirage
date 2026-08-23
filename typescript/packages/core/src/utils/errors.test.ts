@@ -15,7 +15,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   eacces,
-  eaccesReadOnly,
+  eaccesRefused,
+  erofsReadOnly,
   enoent,
   enotsup,
   enotdir,
@@ -91,12 +92,21 @@ describe('enotsup', () => {
   })
 })
 
-describe('eaccesReadOnly', () => {
-  it('keeps the read-only message while stamping EACCES and the operand', () => {
-    const err = eaccesReadOnly("mount '/mail/' is read-only", '/mail/a.txt')
-    expect(err.code).toBe('EACCES')
+describe('erofsReadOnly', () => {
+  it('keeps the read-only message while stamping EROFS and the operand', () => {
+    const err = erofsReadOnly("mount '/mail/' is read-only", '/mail/a.txt')
+    expect(err.code).toBe('EROFS')
     expect(err.virtualPath).toBe('/mail/a.txt')
     expect(err.message).toContain('read-only')
+    expect(fsStrerror(err)).toBe('Read-only file system')
+  })
+})
+
+describe('eaccesRefused', () => {
+  it('carries a caller message while stamping EACCES and the operand', () => {
+    const err = eaccesRefused('S3 refused to delete 2 source object(s)', '/mail/a.txt')
+    expect(err.code).toBe('EACCES')
+    expect(err.virtualPath).toBe('/mail/a.txt')
     expect(fsStrerror(err)).toBe('Permission denied')
   })
 })

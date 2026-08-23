@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { TrelloAccessor } from '../../../accessor/trello.ts'
+import { requireMountWritable } from '../../../context/session_context.ts'
 import { cardUpdate } from '../../../core/trello/client.ts'
 import { normalizeCard } from '../../../core/trello/normalize.ts'
 import { IOResult } from '../../../io/types.ts'
@@ -66,6 +67,9 @@ async function trelloCardUpdateCommand(
   const closedFlag = fl.asStr('closed')
   const closed = closedFlag === undefined ? null : parseBool(closedFlag)
   const due = fl.asStr('due') ?? null
+  // A card write is addressed by id, not path, so only the mount-wide
+  // grant can admit it (a write-granting carve-out names no card).
+  requireMountWritable(opts.mountPrefix ?? '')
   const card = await cardUpdate(accessor.transport, {
     cardId,
     ...(name !== null ? { name } : {}),

@@ -69,12 +69,13 @@ let spillCounter = 0
 const SINK_PREFIX = '/dev'
 
 // How mirage refuses a write the session's mount grants do not allow.
-// Two spellings, because the refusal is raised in two places: a command
-// names the mount it would not write to, while a redirection is refused
-// as the shell opens the file. Only consulted for a call that ran under
-// `read-only`, so the only permission error these can catch is the one
-// this executor just imposed.
-const DENIAL_SIGNATURES = ['read-only mount at ', ': Permission denied']
+// Three spellings, because the refusal is raised in two places: a command
+// names the mount it would not write to, while a redirection or an op below
+// the granted mode is refused in the read-only voice as the file opens.
+// Hide refusals keep `Permission denied`. Only consulted for a call that
+// ran under `read-only`, so the only permission error these can catch is
+// the one this executor just imposed.
+const DENIAL_SIGNATURES = ['read-only mount at ', ': Permission denied', ': Read-only file system']
 
 /** Configuration for the mirage shell executor. */
 export interface MirageShellConfig {

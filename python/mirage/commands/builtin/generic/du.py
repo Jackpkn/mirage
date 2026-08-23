@@ -10,7 +10,8 @@ from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
-from mirage.context import hidden_paths_active, path_allowed, path_rules_active
+from mirage.context import (hidden_paths_intersect, path_allowed,
+                            path_rules_active)
 from mirage.io.types import IOResult
 from mirage.ops.types import LinkView, MountView, StatPath
 from mirage.types import FileStat, PathSpec
@@ -533,13 +534,15 @@ async def _du_one(
         leaves = drop_shadowed(leaves, roots)
     link_total = sum(size for _, size in leaves)
 
-    if (flags.s and not flags.S and not roots and not hidden_paths_active()
+    if (flags.s and not flags.S and not roots
+            and not hidden_paths_intersect(path.virtual)
             and not path_rules_active()):
         # The one-total fast path trusts the backend's own sum, which a
-        # session hiding paths cannot: hidden leaves would be counted
-        # into a total their names never justify, so that session takes
-        # the entries walk below instead; a path rule likewise, since
-        # the walk is where a refused directory is reported.
+        # session hiding paths under this operand cannot: hidden leaves
+        # would be counted into a total their names never justify, so
+        # that session takes the entries walk below instead; a path
+        # rule likewise, since the walk is where a refused directory is
+        # reported. Per operand: a hide elsewhere keeps this total.
         total = await compute_size(path) + link_total
         return [_line(total, flags.h, label)], total
 

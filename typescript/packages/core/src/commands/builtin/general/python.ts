@@ -63,16 +63,6 @@ async function pythonCommand(
   texts: string[],
   opts: CommandOpts,
 ): Promise<CommandFnResult> {
-  if (opts.execAllowed === false) {
-    return [
-      null,
-      new IOResult({
-        exitCode: 126,
-        stderr: ENC.encode("python3: root mount '/' is not in EXEC mode\n"),
-      }),
-    ]
-  }
-
   if (!(opts.runtime instanceof LanguageRuntime)) {
     return [
       null,
@@ -135,6 +125,34 @@ async function pythonCommand(
     argStrs = []
     mode = 'stdin'
     argv0 = ''
+  }
+
+  // The x check follows the source's door: a file operand asks the
+  // per-path door about the script's own path, so a session whose only
+  // x grant is one show subtree runs scripts there and nowhere else;
+  // inline code, -m and stdin keep the whole-session rule, since no
+  // path holds them. Outside a workspace no door is wired and
+  // execAllowed answers for files too.
+  if (mode === 'file' && scriptPath !== null) {
+    const allowed = opts.execPathAllowed?.(scriptPath.virtual) ?? opts.execAllowed !== false
+    if (!allowed) {
+      const display = scriptPath.rawPath !== '' ? scriptPath.rawPath : scriptPath.virtual
+      return [
+        null,
+        new IOResult({
+          exitCode: 126,
+          stderr: ENC.encode(`python3: ${display}: not in EXEC mode\n`),
+        }),
+      ]
+    }
+  } else if (opts.execAllowed === false) {
+    return [
+      null,
+      new IOResult({
+        exitCode: 126,
+        stderr: ENC.encode("python3: root mount '/' is not in EXEC mode\n"),
+      }),
+    ]
   }
 
   let resolvedCode: string | null = moduleName !== null ? moduleSource(moduleName, 'python3') : code

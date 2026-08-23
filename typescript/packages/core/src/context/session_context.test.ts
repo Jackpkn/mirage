@@ -15,15 +15,21 @@
 import { describe, expect, it } from 'vitest'
 import {
   effectiveMountMode,
+  effectivePathMode,
   getAdmission,
   getCurrentSession,
   getCurrentSessionFor,
   hiddenPathsActive,
+  hiddenPathsIntersect,
   pathAllowed,
   pathRulesActive,
+  readonlyBelow,
+  requireMountWritable,
   runWithAdmission,
+  runWithMountGate,
   runWithSession,
   sessionPathAllowed,
+  strongestModeUnder,
 } from './session_context.ts'
 import { asyncContextIsolatesTasks } from '../utils/async_context.ts'
 import { MountMode, weakerMode } from '../types.ts'
@@ -203,6 +209,154 @@ describe('hides', () => {
       expect(pathAllowed('/repo/.env')).toBe(true)
       return Promise.resolve()
     })
+  })
+})
+
+describe('the path axis modes', () => {
+  it('effectivePathMode is the anchor-depth rule', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      mountModes: new Map([['/repo', MountMode.READ]]),
+      shownPaths: {
+        entries: [
+          { path: '/repo/build', mode: MountMode.WRITE },
+          { path: '/repo/tools', mode: MountMode.EXEC },
+        ],
+      },
+    })
+    await runWithSession(sess, () => {
+      // The mount cap holds where no deeper entry speaks...
+      expect(effectivePathMode('/repo/README.md', '/repo', MountMode.EXEC)).toBe(MountMode.READ)
+      // ...and the deeper show entry wins below its anchor.
+      expect(effectivePathMode('/repo/build/out', '/repo', MountMode.EXEC)).toBe(MountMode.WRITE)
+      expect(effectivePathMode('/repo/tools/go.py', '/repo', MountMode.EXEC)).toBe(MountMode.EXEC)
+      // The configured mode stays the strongest answer possible.
+      expect(effectivePathMode('/repo/tools/go.py', '/repo', MountMode.READ)).toBe(MountMode.READ)
+      return Promise.resolve()
+    })
+  })
+
+  it("effectivePathMode without a session is the mount's own", () => {
+    expect(effectivePathMode('/a/x', '/a', MountMode.WRITE)).toBe(MountMode.WRITE)
+  })
+
+  it('an equal-depth pair takes the weaker', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      mountModes: new Map([['/repo', MountMode.EXEC]]),
+      shownPaths: { entries: [{ path: '/repo', mode: MountMode.READ }] },
+    })
+    await runWithSession(sess, () => {
+      expect(effectivePathMode('/repo/x', '/repo', MountMode.EXEC)).toBe(MountMode.READ)
+      return Promise.resolve()
+    })
+  })
+
+  it('strongestModeUnder counts a show grant', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      mountModes: new Map([['/repo', MountMode.READ]]),
+      shownPaths: { entries: [{ path: '/repo/build', mode: MountMode.WRITE }] },
+    })
+    await runWithSession(sess, () => {
+      // The mount-wide mode is READ, but a deeper grant makes a write
+      // command runnable; the op door then refuses per path.
+      expect(strongestModeUnder('/repo', MountMode.EXEC)).toBe(MountMode.WRITE)
+      // Capped by the configured mode, and other mounts unaffected.
+      expect(strongestModeUnder('/repo', MountMode.READ)).toBe(MountMode.READ)
+      expect(strongestModeUnder('/other', MountMode.READ)).toBe(MountMode.READ)
+      return Promise.resolve()
+    })
+  })
+
+  it('readonlyBelow blames the carved anchor', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      shownPaths: {
+        entries: [
+          { path: '/repo/tree/locked', mode: MountMode.READ },
+          { path: '/repo/tree/locked/pub', mode: MountMode.WRITE },
+        ],
+      },
+    })
+    await runWithSession(sess, () => {
+      // The anchor lies strictly below the operand, so a subtree
+      // mutation over it is refused, and the deeper re-widening does
+      // not clear it (the region between the two stays read-only).
+      expect(readonlyBelow('/repo/tree', '/repo', MountMode.WRITE)).toBe('/repo/tree/locked')
+      expect(readonlyBelow('/repo', '/repo', MountMode.WRITE)).toBe('/repo/tree/locked')
+      // The operand itself or a sibling is the flat check's business.
+      expect(readonlyBelow('/repo/tree/locked', '/repo', MountMode.WRITE)).toBeNull()
+      expect(readonlyBelow('/repo/other', '/repo', MountMode.WRITE)).toBeNull()
+      return Promise.resolve()
+    })
+    expect(readonlyBelow('/repo/tree', '/repo', MountMode.WRITE)).toBeNull()
+  })
+
+  it('readonlyBelow blames the operand for a pattern', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      shownPaths: { entries: [{ path: '/repo/*/locked', mode: MountMode.READ }] },
+    })
+    await runWithSession(sess, () => {
+      // A pattern names no single anchor, so the operand is blamed
+      // whenever the match space could reach below it.
+      expect(readonlyBelow('/repo/tree', '/repo', MountMode.WRITE)).toBe('/repo/tree')
+      expect(readonlyBelow('/other/tree', '/repo', MountMode.WRITE)).toBeNull()
+      return Promise.resolve()
+    })
+  })
+
+  it('requireMountWritable needs the broad grant', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      mountModes: new Map([['/trello', MountMode.READ]]),
+      shownPaths: { entries: [{ path: '/trello/board', mode: MountMode.WRITE }] },
+    })
+    await runWithSession(sess, () =>
+      runWithMountGate('/trello', MountMode.WRITE, () => {
+        // The carve-out admits the command, but an id-addressed write
+        // names no path, so only the mount-wide grant counts.
+        expect(() => {
+          requireMountWritable('/trello')
+        }).toThrowError(/read-only/)
+        return Promise.resolve()
+      }),
+    )
+    // Unrestricted (no session narrowing) writes pass, and with no
+    // mount bound the check is inert.
+    await runWithMountGate('/trello', MountMode.WRITE, () => {
+      requireMountWritable('/trello')
+      return Promise.resolve()
+    })
+    requireMountWritable('/trello')
+  })
+})
+
+describe('the per-operand hide gate', () => {
+  it('hiddenPathsIntersect answers per operand', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      hiddenPaths: { paths: ['/repo/.env'] },
+    })
+    await runWithSession(sess, () => {
+      expect(hiddenPathsIntersect('/repo')).toBe(true)
+      expect(hiddenPathsIntersect('/repo/.env')).toBe(true)
+      expect(hiddenPathsIntersect('/s3')).toBe(false)
+      return Promise.resolve()
+    })
+    expect(hiddenPathsIntersect('/repo')).toBe(false)
+  })
+
+  it('a show reaches the session predicate', () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      hiddenPaths: { paths: ['/repo'] },
+      shownPaths: { entries: [{ path: '/repo/public', mode: null }] },
+    })
+    expect(sessionPathAllowed(sess, '/repo/public/index.html')).toBe(true)
+    expect(sessionPathAllowed(sess, '/repo')).toBe(true)
+    expect(sessionPathAllowed(sess, '/repo/secrets')).toBe(false)
   })
 })
 

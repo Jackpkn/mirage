@@ -26,7 +26,7 @@ from mirage.io.stream import yield_bytes
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import NamespaceView, ReaddirPath, SessionView, StatPath
 from mirage.runtime.base import Runtime
-from mirage.runtime.types import DispatchFn
+from mirage.runtime.types import DispatchFn, ExecPathFn
 from mirage.types import Limit, PathSpec
 from mirage.version import __version__
 
@@ -85,6 +85,10 @@ class CommandOpts:
         env (dict[str, str] | None): The session environment.
         exec_allowed (bool): Whether the policy layer permits spawning
             an interpreter.
+        exec_path_allowed (ExecPathFn | None): Whether code may be
+            loaded from one path, for an interpreter's file operand;
+            None outside a workspace, where ``exec_allowed`` answers
+            for files too.
         runtime (Runtime | None): The resolved runtime for interpreter
             commands.
         runtime_unavailable (str | None): The hint naming why the
@@ -114,6 +118,7 @@ class CommandOpts:
     session_id: str | None = None
     env: dict[str, str] | None = None
     exec_allowed: bool = True
+    exec_path_allowed: ExecPathFn | None = None
     runtime: Runtime | None = None
     runtime_unavailable: str | None = None
     ns: NamespaceView | None = None

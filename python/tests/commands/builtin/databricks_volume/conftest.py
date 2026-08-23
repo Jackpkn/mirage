@@ -88,8 +88,10 @@ def databricks_text_files() -> FakeFiles:
 
 @pytest.fixture
 def databricks_text_workspace(databricks_text_files: FakeFiles) -> Workspace:
+    # WRITE, because sed -i writes back through the command-tier write
+    # slot, which now answers the mount mode like every other write.
     return Workspace({"/dbx/": make_resource(databricks_text_files)},
-                     mode=MountMode.READ)
+                     mode=MountMode.WRITE)
 
 
 @pytest.fixture

@@ -19,7 +19,7 @@ import { PolicyError } from '../../policy/errors.ts'
 import { matchOp, ruleScope } from '../../policy/match/rule.ts'
 import type { OpsContext } from '../../policy/types.ts'
 import { MountMode, PathSpec } from '../../types.ts'
-import { pathHidden } from '../../utils/hidden.ts'
+import { pathHidden, pathVisible } from '../../utils/hidden.ts'
 import { parseSessionProfile, type SessionProfile } from '../../policy/profile.ts'
 import {
   applyProfile,
@@ -281,6 +281,8 @@ describe('compileProfile', () => {
       cwd: null,
       commands: null,
       script: null,
+      shownPaths: null,
+      hideReasons: [],
     })
     expect(compileProfile({})).toEqual(empty)
     // A profile that names a mount without a mode narrows nothing: the
@@ -329,5 +331,101 @@ describe('narrow / applyProfile', () => {
     narrow(session, compiled)
     expect(session.commands).toEqual(compiled.commands)
     expect(compileProfile({ cwd: '/x' }).commands).toBeNull()
+  })
+})
+
+describe('the path axis through resolve', () => {
+  it("withInline cannot add show and the profile's survives", () => {
+    const base = parseSessionProfile({
+      paths: {
+        hide: [{ patterns: ['/repo'], reason: 'sealed' }],
+        show: ['/repo/public'],
+      },
+    })
+    const inline = parseSessionProfile({
+      paths: { hide: [{ patterns: ['/repo/extra'], reason: 'audit' }] },
+    })
+    const out = withInline(base, inline)
+    // The profile's show and both sides' reasons survive the merge.
+    expect(out?.paths?.show).toEqual([{ path: '/repo/public', mode: null }])
+    expect(out?.paths?.hide).toEqual(['/repo', '/repo/extra'])
+    expect(out?.paths?.reasons).toEqual([
+      { patterns: ['/repo'], reason: 'sealed' },
+      { patterns: ['/repo/extra'], reason: 'audit' },
+    ])
+    expect(() =>
+      withInline(base, parseSessionProfile({ paths: { show: ['/repo/secrets'] } })),
+    ).toThrow('not show entries')
+    // The mount-section spelling is the same statement.
+    expect(() =>
+      withInline(
+        base,
+        parseSessionProfile({ mounts: { '/repo': { paths: { show: ['/repo/secrets'] } } } }),
+      ),
+    ).toThrow('not show entries')
+    // And with no profile to add to, same rule as the allow list.
+    expect(() => withInline(null, parseSessionProfile({ paths: { show: ['/x'] } }))).toThrow(
+      'not show entries',
+    )
+  })
+
+  it("withInline keeps a mount section's show", () => {
+    const base = parseSessionProfile({
+      mounts: { '/repo': { paths: { hide: ['/repo'], show: { '/repo/public': 'r' } } } },
+    })
+    const inline = parseSessionProfile({
+      mounts: { '/repo': { paths: { hide: ['/repo/extra'] } } },
+    })
+    const entry = withInline(base, inline)?.mounts?.get('/repo')
+    expect(entry?.paths?.show).toEqual([{ path: '/repo/public', mode: MountMode.READ }])
+    expect(entry?.paths?.hide).toEqual(['/repo', '/repo/extra'])
+  })
+
+  it('compileProfile collects the shows of every mount section', () => {
+    const out = compileProfile(
+      parseSessionProfile({
+        paths: { hide: ['/repo'], show: ['/repo/public'] },
+        mounts: { '/data': { paths: { hide: ['/data'], show: { '/data/out': 'rw' } } } },
+      }),
+    )
+    expect(out.shownPaths).toEqual({
+      entries: [
+        { path: '/repo/public', mode: null },
+        { path: '/data/out', mode: MountMode.WRITE },
+      ],
+    })
+    // The axis reads them together: the show reopens its subtree.
+    expect(pathVisible(out.hiddenPaths, out.shownPaths, '/repo/public/a')).toBe(true)
+    expect(pathVisible(out.hiddenPaths, out.shownPaths, '/repo/x')).toBe(false)
+  })
+
+  it("compileProfile anchors a mount section's reasons", () => {
+    const out = compileProfile(
+      parseSessionProfile({
+        paths: { reasons: [{ patterns: ['/shared'], reason: 'global' }] },
+        mounts: {
+          '/repo': { paths: { reasons: [{ patterns: ['*.pem'], reason: 'credentials' }] } },
+        },
+      }),
+    )
+    expect(out.hideReasons).toEqual([
+      { patterns: ['/shared'], reason: 'global' },
+      { patterns: ['/repo/*.pem'], reason: 'credentials' },
+    ])
+  })
+
+  it('narrow stamps the path axis', () => {
+    const compiled = compileProfile(
+      parseSessionProfile({
+        paths: { hide: [{ patterns: ['/repo'], reason: 'sealed' }], show: ['/repo/public'] },
+      }),
+    )
+    const session = new Session({ sessionId: 's' })
+    narrow(session, compiled)
+    expect(session.shownPaths).toEqual(compiled.shownPaths)
+    expect(session.hideReasons).toEqual(compiled.hideReasons)
+    const empty = compileProfile(null)
+    expect(empty.shownPaths).toBeNull()
+    expect(empty.hideReasons).toEqual([])
   })
 })

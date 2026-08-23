@@ -15,9 +15,11 @@
 from collections.abc import Mapping
 
 from mirage.policy.errors import PolicyError
-from mirage.policy.types import AdmissionRules, CommandRule, ProfileScript
-from mirage.types import HiddenPaths, MountMode, weaker_mode
-from mirage.utils.hidden import classify_paths, classify_vars
+from mirage.policy.types import (AdmissionRules, CommandRule, HideReason,
+                                 ProfileScript)
+from mirage.types import (HiddenPaths, MountMode, ShowEntry, ShownPaths,
+                          weaker_mode)
+from mirage.utils.hidden import classify_paths, classify_shows, classify_vars
 from mirage.workspace.session.constants import DEFAULT_PROFILE
 from mirage.workspace.session.session import Session, vars_from_env
 from mirage.workspace.session.shell_dirs import set_cwd
@@ -93,6 +95,27 @@ def refuse_allow(inline: CommandsBlock | None) -> None:
                           "not an allow list")
 
 
+def refuse_show(inline: SessionProfile) -> None:
+    """Refuse a show entry in an inline document.
+
+    An inline document may only restrict: it adds ask and deny rules
+    and hides. A show re-opens a subtree or states a mode, which is the
+    profile's to say; same rule as :func:`refuse_allow`, and it runs on
+    both paths into ``with_inline`` for the same reason.
+
+    Args:
+        inline (SessionProfile): what ``create_session`` added.
+
+    Raises:
+        PolicyError: the inline document states a show entry.
+    """
+    blocks = [inline.paths]
+    blocks.extend(entry.paths for entry in (inline.mounts or {}).values())
+    if any(block is not None and block.show for block in blocks):
+        raise PolicyError("inline permissions may add ask and deny rules "
+                          "and hides, not show entries")
+
+
 def _add_commands(base: CommandsBlock | None,
                   inline: CommandsBlock | None) -> CommandsBlock | None:
     """The profile's commands block with the inline document's rules added.
@@ -141,10 +164,29 @@ def _add_mount(base: ProfileMount | None,
     deny = _rules_of(base.commands, "deny") + _rules_of(
         inline.commands, "deny")
     hide = _union_hide(base.paths, inline.paths)
-    return ProfileMount(mode=mode,
-                        commands=(MountCommandsBlock(ask=ask, deny=deny) if
-                                  (ask or deny) else None),
-                        paths=PathsBlock(hide=hide) if hide else None)
+    show = base.paths.show if base.paths is not None else ()
+    reasons = _merge_reasons(base.paths, inline.paths)
+    return ProfileMount(
+        mode=mode,
+        commands=(MountCommandsBlock(ask=ask, deny=deny) if
+                  (ask or deny) else None),
+        paths=(PathsBlock(hide=hide, show=show, reasons=reasons) if
+               (hide or show or reasons) else None))
+
+
+def _merge_reasons(a: PathsBlock | None,
+                   b: PathsBlock | None) -> tuple[HideReason, ...]:
+    """Both blocks' reason groups, the profile's first.
+
+    Args:
+        a (PathsBlock | None): the profile's block.
+        b (PathsBlock | None): the inline block.
+    """
+    out: list[HideReason] = []
+    for block in (a, b):
+        if block is not None:
+            out.extend(block.reasons)
+    return tuple(out)
 
 
 def _rules_of(block: MountCommandsBlock | None,
@@ -185,6 +227,7 @@ def with_inline(base: SessionProfile | None,
     if inline is None:
         return base
     refuse_allow(inline.commands)
+    refuse_show(inline)
     if inline.script is not None:
         raise PolicyError("inline permissions may add ask and deny rules, "
                           "not a script; state one on the profile")
@@ -209,7 +252,10 @@ def with_inline(base: SessionProfile | None,
         cwd=inline.cwd if inline.cwd is not None else base.cwd,
         env=env,
         mounts=mounts,
-        paths=(PathsBlock(hide=hide_paths) if
+        paths=(PathsBlock(hide=hide_paths,
+                          show=base.paths.show if base.paths is not None else
+                          (),
+                          reasons=_merge_reasons(base.paths, inline.paths)) if
                (base.paths is not None or inline.paths is not None) else None),
         vars=(VarsBlock(hide=hide_vars) if
               (base.vars is not None or inline.vars is not None) else None),
@@ -319,6 +365,43 @@ def _hidden(profile: SessionProfile) -> HiddenPaths | None:
     return classify_paths(entries)
 
 
+def _shown(profile: SessionProfile) -> ShownPaths | None:
+    """Every show entry the profile states: its own and each mount
+    section's, one list, since a show entry is absolute wherever it is
+    written and the compiled axis has no sections.
+
+    Args:
+        profile (SessionProfile): the resolved profile.
+    """
+    entries: list[ShowEntry] = []
+    if profile.paths is not None:
+        entries.extend(profile.paths.show)
+    for entry in (profile.mounts or {}).values():
+        if entry.paths is not None:
+            entries.extend(entry.paths.show)
+    return classify_shows(entries)
+
+
+def _hide_reasons(profile: SessionProfile) -> tuple[HideReason, ...]:
+    """The operator's reasons for grouped hides, a mount section's
+    anchored to its mount exactly like the hide entries they describe,
+    so the side table names what the compiled spec matches.
+
+    Args:
+        profile (SessionProfile): the resolved profile.
+    """
+    groups: list[HideReason] = []
+    if profile.paths is not None:
+        groups.extend(profile.paths.reasons)
+    for prefix, entry in (profile.mounts or {}).items():
+        if entry.paths is not None:
+            root = _root_of(prefix)
+            groups.extend(
+                HideReason(patterns=_anchored(g.patterns, root),
+                           reason=g.reason) for g in entry.paths.reasons)
+    return tuple(groups)
+
+
 def _modes(profile: SessionProfile) -> dict[str, MountMode] | None:
     """The mode each mount section states, None when none does.
 
@@ -396,15 +479,17 @@ def compile_profile(effective: SessionProfile | None,
         cwd=effective.cwd,
         commands=commands,
         script=compile_script(effective, name),
+        shown_paths=_shown(effective),
+        hide_reasons=_hide_reasons(effective),
     )
 
 
 def narrow(session: Session, compiled: CompiledProfile) -> None:
     """Stamp a compiled profile's narrowing onto a session.
 
-    The five fields no shell line can edit: the per-mount modes, hidden
-    paths, hidden variables, the admission rules, the profile's
-    script. Applied at creation
+    The fields no shell line can edit: the per-mount modes, hidden
+    paths, show entries, hidden variables, hide reasons, the admission
+    rules, the profile's script. Applied at creation
     and again whenever a stored record could carry a stale copy (the
     default session after hydration), so the document, not the store,
     is what an agent runs under.
@@ -416,7 +501,9 @@ def narrow(session: Session, compiled: CompiledProfile) -> None:
     session.mount_modes = (dict(compiled.mount_modes)
                            if compiled.mount_modes is not None else None)
     session.hidden_paths = compiled.hidden_paths
+    session.shown_paths = compiled.shown_paths
     session.hidden_vars = compiled.hidden_vars
+    session.hide_reasons = compiled.hide_reasons
     session.commands = compiled.commands
     session.script = compiled.script
 

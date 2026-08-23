@@ -54,6 +54,7 @@ describe('readdir', () => {
   })
 
   it('lists schema: tables and views directories', async () => {
+    vi.mocked(client.listSchemas).mockResolvedValue(['public'])
     const out = await readdir(
       makeAccessor(),
       new PathSpec({
@@ -66,6 +67,7 @@ describe('readdir', () => {
   })
 
   it('lists kind=tables', async () => {
+    vi.mocked(client.listSchemas).mockResolvedValue(['public'])
     vi.mocked(client.listTables).mockResolvedValue(['users', 'orders'])
     const out = await readdir(
       makeAccessor(),
@@ -79,6 +81,7 @@ describe('readdir', () => {
   })
 
   it('lists kind=views: union of views and matviews, sorted', async () => {
+    vi.mocked(client.listSchemas).mockResolvedValue(['public'])
     vi.mocked(client.listViews).mockResolvedValue(['z_view'])
     vi.mocked(client.listMatviews).mockResolvedValue(['a_mview', 'z_view'])
     const out = await readdir(
@@ -93,6 +96,7 @@ describe('readdir', () => {
   })
 
   it('lists entity: schema.json + semantic.json + rows.jsonl', async () => {
+    vi.mocked(client.listTables).mockResolvedValue(['users'])
     const out = await readdir(
       makeAccessor(),
       new PathSpec({
@@ -131,6 +135,49 @@ describe('readdir', () => {
           virtual: '/pg/public/tables/users/schema.json',
           directory: '/pg/public/tables/users/',
           resourcePath: mountKey('/pg/public/tables/users/schema.json', '/pg'),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses a schema that does not exist', async () => {
+    vi.mocked(client.listSchemas).mockResolvedValue(['public'])
+    await expect(
+      readdir(
+        makeAccessor(),
+        new PathSpec({
+          virtual: '/pg/nope.txt',
+          directory: '/pg/nope.txt',
+          resourcePath: mountKey('/pg/nope.txt', '/pg'),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses a kind directory under a schema that does not exist', async () => {
+    vi.mocked(client.listSchemas).mockResolvedValue(['public'])
+    vi.mocked(client.listTables).mockResolvedValue([])
+    await expect(
+      readdir(
+        makeAccessor(),
+        new PathSpec({
+          virtual: '/pg/nope/tables',
+          directory: '/pg/nope/tables',
+          resourcePath: mountKey('/pg/nope/tables', '/pg'),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses an entity that does not exist', async () => {
+    vi.mocked(client.listTables).mockResolvedValue(['users'])
+    await expect(
+      readdir(
+        makeAccessor(),
+        new PathSpec({
+          virtual: '/pg/public/tables/ghost',
+          directory: '/pg/public/tables/ghost',
+          resourcePath: mountKey('/pg/public/tables/ghost', '/pg'),
         }),
       ),
     ).rejects.toMatchObject({ code: 'ENOENT' })

@@ -70,7 +70,7 @@ export const KERNEL_BACKENDS: readonly MountBackend[] = Object.freeze([
   MountBackend.FSKIT,
 ])
 
-const MOUNT_MODE_RANK: Readonly<Record<MountMode, number>> = Object.freeze({
+export const MOUNT_MODE_RANK: Readonly<Record<MountMode, number>> = Object.freeze({
   [MountMode.READ]: 1,
   [MountMode.WRITE]: 2,
   [MountMode.EXEC]: 3,
@@ -101,6 +101,34 @@ export function weakerMode(a: MountMode, b: MountMode): MountMode {
 export interface HiddenPaths {
   readonly paths?: readonly string[]
   readonly patterns?: readonly string[]
+}
+
+/**
+ * One `show` entry of a profile's path axis, compiled.
+ *
+ * `path` is the entry as written: an exact subtree or an anchored
+ * pattern, always absolute (a slashless name pattern is refused at
+ * validation, because a show anchors to a place and a name pattern
+ * names none). `mode` is what the entry states for its subtree; null
+ * for a list-form entry, which inherits the mount's.
+ */
+export interface ShowEntry {
+  readonly path: string
+  readonly mode: MountMode | null
+}
+
+/**
+ * The `show` half of one session's path axis.
+ *
+ * A sibling of `HiddenPaths`: per-session state the doors read,
+ * null-on-the-session means the document states no show. An entry does
+ * two things, each on the one anchor-depth rule: it re-opens a subtree
+ * inside a hidden region when its anchor is deeper than the hide's,
+ * and it states the mode in force below its anchor when it carries
+ * one.
+ */
+export interface ShownPaths {
+  readonly entries: readonly ShowEntry[]
 }
 
 /**

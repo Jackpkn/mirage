@@ -26,12 +26,12 @@ from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
 from mirage.policy.errors import PolicyError
 from mirage.policy.match import Outcome
 from mirage.policy.profile import SessionProfile
-from mirage.policy.types import CommandRule
+from mirage.policy.types import CommandRule, HideReason
 from mirage.resource.ram import RAMResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.mixin import LineExecutorMixin
 from mirage.runtime.types import RunResult, ScriptSource
-from mirage.types import HiddenPaths, HiddenVars, MountMode
+from mirage.types import HiddenPaths, HiddenVars, MountMode, ShowEntry
 from mirage.workspace import Workspace
 from mirage.workspace.session.state import seed_var
 
@@ -155,7 +155,7 @@ def test_profile_rejects_unknown_and_unshipped_fields():
             }
     }, {
             "paths": {
-                "show": {}
+                "carve": {}
             }
     }, {
             "vars": {
@@ -506,6 +506,123 @@ def test_a_blank_hide_entry_is_refused():
                     }
                 }
             }})
+
+
+def test_paths_show_takes_a_mapping_or_a_plain_list():
+    # A mapping states path -> mode; a plain list inherits the mount's
+    # mode, which the entry records as None until the mode law asks.
+    p = SessionProfile.model_validate({
+        "paths": {
+            "hide": ["/repo"],
+            "show": {
+                "/repo/public": "r",
+                "/repo/build": "rw"
+            },
+        }
+    })
+    assert p.paths.show == (ShowEntry(path="/repo/public",
+                                      mode=MountMode.READ),
+                            ShowEntry(path="/repo/build",
+                                      mode=MountMode.WRITE))
+    bare = SessionProfile.model_validate(
+        {"paths": {
+            "show": ["/repo/public", "/repo/docs/*"]
+        }})
+    assert bare.paths.show == (ShowEntry(path="/repo/public", mode=None),
+                               ShowEntry(path="/repo/docs/*", mode=None))
+
+
+@pytest.mark.parametrize("entry", ["public", "*.md", "docs/site", ""])
+def test_a_show_entry_is_absolute_or_refused(entry):
+    # A show anchors to a place and a name pattern names none, so the
+    # slashless spelling hide accepts is refused here.
+    with pytest.raises(ValidationError,
+                       match="anchor to a place|must name a path"):
+        SessionProfile.model_validate({"paths": {"show": [entry]}})
+
+
+def test_a_show_mode_must_be_a_mode_name_or_alias():
+    with pytest.raises(ValidationError, match="mode name or alias"):
+        SessionProfile.model_validate({"paths": {"show": {"/repo/public": 7}}})
+    with pytest.raises(ValidationError, match="not a valid MountMode"):
+        SessionProfile.model_validate(
+            {"paths": {
+                "show": {
+                    "/repo/public": "admin"
+                }
+            }})
+
+
+def test_a_hide_group_carries_its_reason_into_the_side_table():
+    # The group is a spelling of `hide`: its patterns join the flat list
+    # (so matching never consults the reason) and the reason lands in
+    # `reasons`, which no agent-facing surface renders.
+    p = SessionProfile.model_validate({
+        "paths": {
+            "hide": [
+                "/repo/.env",
+                {
+                    "patterns": ["/repo/secrets", "*.pem"],
+                    "reason": "credentials",
+                },
+            ]
+        }
+    })
+    assert p.paths.hide == ("/repo/.env", "/repo/secrets", "*.pem")
+    assert p.paths.reasons == (HideReason(patterns=("/repo/secrets", "*.pem"),
+                                          reason="credentials"), )
+    again = SessionProfile.model_validate(p.model_dump(exclude_none=True))
+    assert again.paths.hide == p.paths.hide
+    assert again.paths.reasons == p.paths.reasons
+
+
+@pytest.mark.parametrize("group, message", [
+    ({
+        "patterns": [],
+        "reason": "x"
+    }, "at least one pattern"),
+    ({
+        "patterns": ["/a"],
+        "reason": "  "
+    }, "non-empty string"),
+    ({
+        "patterns": ["/a"]
+    }, "non-empty string"),
+    ({
+        "patterns": ["/a"],
+        "reason": "x",
+        "why": "no"
+    }, "unknown field"),
+])
+def test_a_malformed_hide_group_is_refused(group, message):
+    with pytest.raises(ValidationError, match=message):
+        SessionProfile.model_validate({"paths": {"hide": [group]}})
+
+
+def test_a_mount_sections_show_must_lie_under_that_mount():
+    with pytest.raises(ValidationError, match="outside the mount"):
+        SessionProfile.model_validate(
+            {"mounts": {
+                "/repo": {
+                    "paths": {
+                        "show": {
+                            "/other/x": "r"
+                        }
+                    }
+                }
+            }})
+    ok = SessionProfile.model_validate({
+        "mounts": {
+            "/repo": {
+                "paths": {
+                    "hide": ["/repo"],
+                    "show": ["/repo/public"]
+                }
+            }
+        }
+    })
+    assert ok.mounts["/repo"].paths.show == (ShowEntry(path="/repo/public",
+                                                       mode=None), )
 
 
 def _ws() -> Workspace:

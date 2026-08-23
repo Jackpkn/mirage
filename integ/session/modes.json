@@ -56,7 +56,7 @@
       "expect": {
         "exit": 1,
         "stdout": "",
-        "stderr": "/data/sess/new.txt: Permission denied\n"
+        "stderr": "/data/sess/new.txt: Read-only file system\n"
       }
     },
     {
@@ -130,7 +130,7 @@
       "expect": {
         "exit": 1,
         "stdout": "",
-        "stderr": "/ro/sess_y.txt: Permission denied\n"
+        "stderr": "/ro/sess_y.txt: Read-only file system\n"
       }
     },
     {
@@ -214,7 +214,7 @@
       "expect": {
         "exit": 1,
         "stdout": "",
-        "stderr": "/root.txt: Permission denied\n"
+        "stderr": "/root.txt: Read-only file system\n"
       }
     },
     {

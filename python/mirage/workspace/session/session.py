@@ -20,13 +20,15 @@ from typing import Any
 
 from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.types import ByteSource
-from mirage.policy.types import AdmissionRules, Decision, ProfileScript
+from mirage.policy.types import (AdmissionRules, Decision, HideReason,
+                                 ProfileScript)
 from mirage.shell.array import ShellArray
 from mirage.shell.constants import SHELL_ARGV0
 from mirage.shell.types import FunctionBody
 from mirage.shell.variable import (ShellVar, VarAttr, attrs_from_letters,
                                    stored_attrs, with_value)
-from mirage.types import HiddenPaths, HiddenVars, MountMode
+from mirage.types import (HiddenPaths, HiddenVars, MountMode, ShowEntry,
+                          ShownPaths)
 from mirage.workspace.session.constants import (CHILD_SHELL_FIELDS,
                                                 INHERITED_FIELDS)
 
@@ -147,7 +149,14 @@ class Session:
     # means unrestricted, the doors enforce (data door for paths, the
     # session door for vars), fork carries them, to_dict serializes.
     hidden_paths: HiddenPaths | None = None
+    # The show half of the path axis: re-opened subtrees and per-subtree
+    # modes, resolved against hidden_paths by anchor depth.
+    shown_paths: ShownPaths | None = None
     hidden_vars: HiddenVars | None = None
+    # The operator's reasons for grouped hides: never rendered to the
+    # agent (a reason on ENOENT would confirm the path exists),
+    # persisted so the host's read-back doors survive a restart.
+    hide_reasons: tuple[HideReason, ...] = ()
     # The profile's admission rules, compiled: its allow list, its ask and
     # deny rules, and every rule its mount entries carry. One document,
     # so there is nothing above it to join with. A durable restriction
@@ -267,6 +276,20 @@ class Session:
                 "paths": list(self.hidden_paths.paths),
                 "patterns": list(self.hidden_paths.patterns),
             }
+        if self.shown_paths is not None:
+            data["shown_paths"] = {
+                "entries": [{
+                    "path": e.path
+                } if e.mode is None else {
+                    "path": e.path,
+                    "mode": e.mode.value
+                } for e in self.shown_paths.entries]
+            }
+        if self.hide_reasons:
+            data["hide_reasons"] = [{
+                "patterns": list(g.patterns),
+                "reason": g.reason
+            } for g in self.hide_reasons]
         if self.hidden_vars is not None:
             data["hidden_vars"] = {
                 "names": list(self.hidden_vars.names),
@@ -296,11 +319,14 @@ class Session:
                             if attrs is None else vars_from_dict(env, attrs))
         modes = data.get("mount_modes")
         paths = data.get("hidden_paths")
+        shown = data.get("shown_paths")
+        reasons = data.get("hide_reasons")
         vars_ = data.get("hidden_vars")
         commands = data.get("commands")
         script = data.get("script")
         decisions = data.get("decisions")
-        if (modes is not None or paths is not None or vars_ is not None
+        if (modes is not None or paths is not None or shown is not None
+                or reasons is not None or vars_ is not None
                 or commands is not None or script is not None
                 or decisions is not None):
             data = dict(data)
@@ -313,6 +339,15 @@ class Session:
             data["hidden_paths"] = HiddenPaths(
                 paths=tuple(paths.get("paths", ())),
                 patterns=tuple(paths.get("patterns", ())))
+        if shown is not None:
+            data["shown_paths"] = ShownPaths(entries=tuple(
+                ShowEntry(path=e["path"],
+                          mode=MountMode(e["mode"]) if "mode" in e else None)
+                for e in shown.get("entries", ())))
+        if reasons is not None:
+            data["hide_reasons"] = tuple(
+                HideReason(patterns=tuple(g.get("patterns", ())),
+                           reason=g.get("reason", "")) for g in reasons)
         if vars_ is not None:
             data["hidden_vars"] = HiddenVars(
                 names=tuple(vars_.get("names", ())),

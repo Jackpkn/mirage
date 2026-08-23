@@ -33,12 +33,19 @@ async def _python3(
     opts: CommandOpts,
 ) -> CommandOutput:
     fl = FlagView(opts.flags, spec=SPECS["python3"])
-    error, prepared = await resolve_source("python3", paths, texts,
-                                           fl.as_str("c"), opts.stdin,
-                                           opts.dispatch,
-                                           opts.cwd, opts.exec_allowed,
-                                           fl.as_str("m"), CPYTHON_ARGV0,
-                                           fl.as_bool("x"))
+    error, prepared = await resolve_source(
+        "python3",
+        paths,
+        texts,
+        fl.as_str("c"),
+        opts.stdin,
+        opts.dispatch,
+        opts.cwd,
+        opts.exec_allowed,
+        fl.as_str("m"),
+        CPYTHON_ARGV0,
+        fl.as_bool("x"),
+        exec_path_allowed=opts.exec_path_allowed)
     if error is not None or prepared is None:
         assert error is not None
         return error

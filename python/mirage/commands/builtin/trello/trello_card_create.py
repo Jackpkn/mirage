@@ -20,6 +20,7 @@ from mirage.commands.builtin.trello._input import (file_operand,
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec.types import CommandSpec, FlagView, Option
+from mirage.context import require_mount_writable
 from mirage.core.trello.client import card_create
 from mirage.core.trello.normalize import normalize_card
 from mirage.io.stream import yield_bytes
@@ -56,6 +57,9 @@ async def trello_card_create(
             stdin=opts.stdin,
             error_message="desc is required",
         )
+    # A card write is addressed by id, not path, so only the mount-wide
+    # grant can admit it (a write-granting carve-out names no card).
+    require_mount_writable()
     card = await card_create(
         config,
         list_id=list_id,
