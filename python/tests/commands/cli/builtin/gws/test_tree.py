@@ -44,6 +44,8 @@ def test_passthroughs_nest_by_discovery_resource():
     assert [v.name for v in leaf("slides").subcommands] == ["presentations"]
     assert [v.name for v in leaf("slides", "presentations").subcommands
             ] == ["get", "create", "batchUpdate"]
+    assert [v.name for v in leaf("drive", "permissions").subcommands
+            ] == ["create", "list", "delete"]
     assert [v.name for v in leaf("gmail", "users", "messages").subcommands
             ] == ["list", "get", "send", "trash", "attachments"]
     assert leaf("gmail", "users", "messages", "attachments",
@@ -65,7 +67,11 @@ def test_writes_follow_http_semantics():
     assert leaf("slides", "presentations", "create").write
     assert leaf("slides", "presentations", "batchUpdate").write
     assert leaf("drive", "files", "delete").write
+    assert not leaf("drive", "permissions", "list").write
+    assert leaf("drive", "permissions", "create").write
+    assert leaf("drive", "permissions", "delete").write
     assert leaf("sheets", "spreadsheets", "batchUpdate").write
+    assert leaf("gmail", "users", "messages", "trash").write
     assert not leaf("gmail", "triage").write
 
 
