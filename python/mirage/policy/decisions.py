@@ -12,15 +12,70 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import dataclasses
 import hashlib
 from collections.abc import Awaitable, Callable
 
 from mirage.policy.match import Outcome
-from mirage.policy.types import (Ask, CommandContext, CommandRule, Decision,
-                                 Deny, Pending, Scope, SessionDecisionsQuery)
+from mirage.policy.types import (Abandoned, Ask, CommandContext, CommandRule,
+                                 Decision, Deny, Pending, Scope,
+                                 SessionDecisionsQuery)
 
+# A host that answers an Ask inside the line.
+#
+# One argument, where the typescript twin takes a second optional
+# AbortSignal. The asymmetry is the runtimes', not a divergence: a
+# pending javascript promise cannot be interrupted, so a host there has
+# to be handed the run's signal to take its own prompt down, while here
+# the wait below cancels the handler's task outright and CancelledError
+# arrives inside it at the await it is parked on. Python's own idiom is
+# the stronger one, and asking every embedder to grow a parameter to be
+# told what cancellation already tells them would be the weaker mirror.
 AskHandler = Callable[[Decision], Awaitable[Decision | None]]
+
+ABANDONED = Abandoned()
+
+
+async def answered(
+    start: Callable[[], Awaitable[Decision | None]],
+    cancel: asyncio.Event | None,
+) -> Decision | None | Abandoned:
+    """A host's answer, or the abandonment of the question when the run
+    waiting on it is killed first.
+
+    The wait is taken as a thunk so a run already over never starts one:
+    nothing should be put to a host on behalf of a line that no longer
+    exists. An abandoned wait is cancelled, so an answer that would
+    otherwise be recorded against a dead run never arrives, and the
+    handler learns of the kill the way any parked coroutine does: as
+    CancelledError raised at the await it is sitting on, which a host
+    holding a prompt open can catch or clean up after.
+
+    Args:
+        start (Callable[[], Awaitable[Decision | None]]): begins the
+            wait; called at most once.
+        cancel (asyncio.Event | None): the run's kill channel; None
+            leaves the wait alone.
+
+    Returns:
+        The host's answer, or ABANDONED once the run is gone.
+    """
+    if cancel is None:
+        return await start()
+    if cancel.is_set():
+        return ABANDONED
+    wait_task = asyncio.ensure_future(start())
+    cancel_task = asyncio.create_task(cancel.wait())
+    done, pending = await asyncio.wait(
+        {wait_task, cancel_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in pending:
+        task.cancel()
+    if wait_task in done:
+        return wait_task.result()
+    return ABANDONED
 
 
 def decision_id(session_id: str, cwd: str, argv: tuple[str, ...]) -> str:
@@ -184,8 +239,12 @@ class Decisions:
                 return
         raise KeyError(decision_id)
 
-    async def resolve(self, ctx: CommandContext,
-                      ask: Ask) -> Deny | Pending | None:
+    async def resolve(
+        self,
+        ctx: CommandContext,
+        ask: Ask,
+        cancel: asyncio.Event | None = None,
+    ) -> Deny | Pending | Abandoned | None:
         """The executor's branch for an Ask: settled records answer it,
         else the question is raised now.
 
@@ -199,10 +258,14 @@ class Decisions:
         Args:
             ctx (CommandContext): the asked line.
             ask (Ask): the chain's answer.
+            cancel (asyncio.Event | None): the run's kill channel, so a
+                question outlives neither its run's deadline nor a
+                caller's kill.
 
         Returns:
             None to run the line, a Deny to refuse it, a Pending when
-            the host has not decided.
+            the host has not decided, an Abandoned for a run killed
+            mid-question.
         """
         rules = ask.rules or (ask_rule(ctx, ask), )
         argv = (ctx.command, *ctx.argv)
@@ -219,7 +282,7 @@ class Decisions:
         for rule, record in answers:
             if record is not None:
                 continue
-            action = await self._raise(ctx, rule, argv)
+            action = await self._raise(ctx, rule, argv, cancel)
             if action is not None:
                 return action
         await self._spend(ctx.session_id, spent)
@@ -258,18 +321,36 @@ class Decisions:
         return Pending(decision_id(ctx.session_id, ctx.cwd, argv),
                        unanswered.reason)
 
-    async def _raise(self, ctx: CommandContext, rule: CommandRule,
-                     argv: tuple[str, ...]) -> Deny | Pending | None:
+    async def _raise(
+        self,
+        ctx: CommandContext,
+        rule: CommandRule,
+        argv: tuple[str, ...],
+        cancel: asyncio.Event | None = None,
+    ) -> Deny | Pending | Abandoned | None:
         """Record one rule of a line as a question and put it to the
         host, None when the host said yes.
 
         A question already waiting is reused rather than duplicated, so
         a retry keeps quoting one id.
 
+        The host is given the run's kill channel and the wait is bounded
+        by it, because a host that asks a person can take an unbounded
+        amount of time and the executor's own cooperative abort checks
+        cannot reach inside that wait: without this a killed or
+        timed-out run would sit here until somebody answered.
+
+        A run killed mid-question is reported as Abandoned and its
+        record is left waiting, with whatever the host eventually says
+        dropped rather than recorded: an ALLOW banked against a run that
+        is already dead would leave a spent-once grant in the ledger for
+        the next identical line to take, with nobody asked.
+
         Args:
             ctx (CommandContext): the asked line.
             rule (CommandRule): the rule nothing answers.
             argv (tuple[str, ...]): the line's words, name first.
+            cancel (asyncio.Event | None): the run's kill channel.
         """
         record = self._waiting(ctx, rule, argv)
         if record is None:
@@ -284,14 +365,16 @@ class Decisions:
                               rule=rule)
             self._add(ctx.session_id, record)
             await self._flush()
-        if self._on_ask is None:
+        on_ask = self._on_ask
+        if on_ask is None:
             return Pending(record.id, rule.reason)
-        answered = await self._on_ask(record)
-        if answered is None or answered.outcome is None:
+        said = await answered(lambda: on_ask(record), cancel)
+        if isinstance(said, Abandoned):
+            return said
+        if said is None or said.outcome is None:
             return Pending(record.id, rule.reason)
-        await self.answer(record.id, answered.outcome, answered.scope,
-                          answered.note)
-        if answered.outcome is Outcome.DENY:
+        await self.answer(record.id, said.outcome, said.scope, said.note)
+        if said.outcome is Outcome.DENY:
             return Deny(rule.reason)
         return None
 

@@ -316,6 +316,7 @@ async def _allow_once(record):
 
     Args:
         record (Decision): the question the ledger raised.
+        cancel (asyncio.Event | None): the run's kill channel, unused.
     """
     return dataclasses.replace(record, outcome=Outcome.ALLOW, scope=Scope.ONCE)
 

@@ -34,6 +34,21 @@ function codeOf(err: unknown): string | null {
 // that would couple this adapter to mirage internals.
 function codeFor(err: unknown): FsErrorCode {
   if (isMissingPath(err)) return 'FS_NOT_FOUND'
+  // An admission policy refused the op at the door: the session's
+  // permission document, or a code policy registered beside it. EACCES is
+  // too coarse to say so alone, since a plain mount-mode refusal carries
+  // it too, and the two want different answers — a mode refusal is the
+  // shape of this world, while a policy refusal is a confinement the call
+  // may be entitled to escalate past. So it maps to the sandbox code,
+  // which is what makes dsh's tool layer attach the escalation hint
+  // (`FsSandboxController.mapError` keys on exactly this code) and render
+  // the same denial marker bash gets for a refused command.
+  //
+  // Matched on `name`, like the AbortError case below and for the same
+  // reason: core's PolicyDenied documents that name as the discriminator
+  // for "handlers that special-case mount-mode refusals", and matching it
+  // needs no import of a class this adapter never constructs.
+  if (err instanceof Error && err.name === 'PolicyDenied') return 'FS_SANDBOX_DENIED'
   switch (codeOf(err)) {
     case 'EISDIR':
       return 'FS_NOT_REGULAR_FILE'

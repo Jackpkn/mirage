@@ -40,6 +40,7 @@ import { PathSpec } from '../../types.ts'
 import type { EntryGate } from '../../types.ts'
 import { isGlob } from '../../utils/hidden.ts'
 import { CycleError, resolvePath } from '../../utils/path.ts'
+import { makeAbortError } from '../abort.ts'
 import { toScope } from '../executor/builtins/scope.ts'
 import { followPaths } from '../executor/builtins/links/links.ts'
 import {
@@ -340,6 +341,10 @@ export async function admit(
   agentId = '',
   stdin: ByteSource | null = null,
   redirects: readonly PathSpec[] = [],
+  // The run's abort signal, carried only so a question put to a host
+  // cannot outlive the run that raised it. Nothing else here waits on
+  // anything outside mirage.
+  signal?: AbortSignal,
 ): Promise<Refusal | Admitted> {
   const gated = await gate(
     name,
@@ -358,7 +363,14 @@ export async function admit(
   // door answers it from the session's grants or the host, so a grant
   // never re-opens a deny.
   const action =
-    asked !== null && asked.kind === 'ask' ? await registry.decisions.resolve(ctx, asked) : asked
+    asked !== null && asked.kind === 'ask'
+      ? await registry.decisions.resolve(ctx, asked, signal)
+      : asked
+  // The ledger stopped waiting on a host because this run was killed
+  // while it was deciding. That is the kill landing late, not a ruling,
+  // so it joins every other abandoned wait rather than being rendered
+  // as a refusal the document never made.
+  if (action !== null && action.kind === 'abandoned') throw makeAbortError()
   if (action === null) {
     const granted = session.decisions
       .filter((r) => r.scope === Scope.SESSION && r.outcome === Outcome.ALLOW)
@@ -435,6 +447,7 @@ async function admitWords(
   rules: AdmissionRules | null,
   reparse: (line: string) => TSNodeLike,
   redirectWords: readonly Word[] = [],
+  signal?: AbortSignal,
 ): Promise<Refusal | null> {
   const head = words[0]
   if (head === undefined) return null
@@ -454,6 +467,7 @@ async function admitWords(
     agentId,
     null,
     redirects,
+    signal,
   )
   if (!(verdict instanceof Admitted)) return verdict
   if (verdict.scoped) {
@@ -482,7 +496,15 @@ async function admitWords(
     }
     const innerRefusal =
       inner.line !== null
-        ? await admitLine(reparse(inner.line), session, registry, namespace, agentId, reparse)
+        ? await admitLine(
+            reparse(inner.line),
+            session,
+            registry,
+            namespace,
+            agentId,
+            reparse,
+            signal,
+          )
         : await admitWords(
             inner.argv,
             inner.open,
@@ -492,6 +514,8 @@ async function admitWords(
             agentId,
             rules,
             reparse,
+            [],
+            signal,
           )
     if (innerRefusal !== null) return innerRefusal
   }
@@ -532,6 +556,7 @@ export async function admitLine(
   namespace: Namespace | null,
   agentId: string,
   reparse: (line: string) => TSNodeLike,
+  signal?: AbortSignal,
 ): Promise<Refusal | null> {
   const rules = session.commands
   const home = homeDir(session)
@@ -552,6 +577,7 @@ export async function admitLine(
       rules,
       reparse,
       statementRedirects(node, home),
+      signal,
     )
     if (refusal !== null) return refusal
   }

@@ -361,6 +361,11 @@ export async function prejudgeLine(
   namespace: Namespace | null,
   agentId: string,
   reparse: (line: string) => TSNodeLike,
+  // This pass puts real questions to a host, so it carries the run's
+  // kill channel exactly as the per-command gate does. Without it a
+  // compound line asked here waited on an answer that its own timeout
+  // could no longer cut short.
+  signal?: AbortSignal,
 ): Promise<Refusal | null> {
   const judged: [Word[], Session, Explanation[]][] = []
   for (const [words, redirects, walked] of walkedLine(root, session)) {
@@ -391,6 +396,7 @@ export async function prejudgeLine(
         // lines it runs after it, so only the first explanation is the
         // command the redirects belong to.
         index === 0 ? targets : [],
+        signal,
       )
       if (!(answered instanceof Admitted)) return answered
       // The host answered this one inline. The rest of the line has not

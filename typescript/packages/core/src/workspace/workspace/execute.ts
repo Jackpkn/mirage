@@ -25,7 +25,7 @@ import type { JobTable } from '../../shell/job_table/index.ts'
 import { findSyntaxError, findUnterminatedBacktick, type ShellParser } from '../../shell/parse.ts'
 import type { ProvisionResult } from '../../provision/types.ts'
 import { errorVirtualPath, gnuStrerror } from '../../utils/errors.ts'
-import { makeAbortError } from '../abort.ts'
+import { makeAbortError, mergeSignals } from '../abort.ts'
 import type { Dispatcher } from '../dispatcher/index.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import { PolicyDeny, type PolicyDecision } from '../../runtime/policy/index.ts'
@@ -308,6 +308,10 @@ async function runParsedLine(
     // previous line's read/select would otherwise serve EOF forever.
     effectiveSession.stdinBuffer = null
   }
+  // The session's kill channel folded in, as the dispatcher folds it
+  // for the tree: a question put to a host has to answer to both, and
+  // both admission passes below can put one.
+  const killed = mergeSignals(deps.signal, effectiveSession.abortSignal)
   const lineRuntime = env.runtimes.wholeLineFor(rootNode, deps.routingDecision ?? null)
   if (lineRuntime?.runLine !== undefined) {
     // A whole line is a command like any other: the same visibility and
@@ -320,6 +324,7 @@ async function runParsedLine(
       env.namespace,
       callAgentId,
       reparse,
+      killed,
     )
     if (refusal !== null) {
       targetSession.lastExitCode = refusal.exitCode
@@ -373,6 +378,7 @@ async function runParsedLine(
     env.namespace,
     callAgentId,
     reparse,
+    killed,
   )
   if (prejudged !== null) {
     targetSession.lastExitCode = prejudged.exitCode
