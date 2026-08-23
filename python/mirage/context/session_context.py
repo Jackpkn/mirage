@@ -248,6 +248,41 @@ def get_admission() -> "EntryGate | None":
     return _current_admission.get()
 
 
+_current_mount_gate: ContextVar[tuple[str, MountMode] | None] = ContextVar(
+    "mirage_current_mount_gate",
+    default=None,
+)
+
+
+def set_mount_gate(prefix: str, mode: MountMode) -> Token[Any]:
+    """Bind the executing mount's prefix and configured mode to the
+    current async context, for the run of one command.
+
+    Set by ``Mount.execute_cmd`` around the handler, so the mode guard
+    on the command tier's I/O can resolve ``effective_path_mode`` for
+    every path a handler mutates: the write-command gate admits a
+    command when any shown subtree grants writes, and this binding is
+    how each individual write is then held to its own region's mode.
+
+    Args:
+        prefix (str): the mount's prefix.
+        mode (MountMode): the mount's configured mode.
+    """
+    return _current_mount_gate.set((prefix, mode))
+
+
+def reset_mount_gate(token: Token[Any]) -> None:
+    """Restore the previous mount binding."""
+    _current_mount_gate.reset(token)
+
+
+def get_mount_gate() -> tuple[str, MountMode] | None:
+    """The executing mount's (prefix, configured mode), None outside a
+    mount's command (a generic invoked directly in a test, or the
+    scratch tier)."""
+    return _current_mount_gate.get()
+
+
 def path_rules_active() -> bool:
     """Whether a path rule in force reads the running command's paths.
 

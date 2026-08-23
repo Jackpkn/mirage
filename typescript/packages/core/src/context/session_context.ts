@@ -199,6 +199,35 @@ export function pathRulesActive(): boolean {
   return getAdmission()?.scoped ?? false
 }
 
+const mountGateStorage = createAsyncContext<readonly [string, MountMode]>()
+
+/**
+ * Bind the executing mount's prefix and configured mode for the
+ * duration of `fn`: the run of one command.
+ *
+ * Bound by `Mount.executeCmd` around the handler, so the mode guard on
+ * the command tier's I/O can resolve `effectivePathMode` for every path
+ * a handler mutates: the write-command gate admits a command when any
+ * shown subtree grants writes, and this binding is how each individual
+ * write is then held to its own region's mode.
+ */
+export function runWithMountGate<T>(
+  prefix: string,
+  mode: MountMode,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return Promise.resolve(mountGateStorage.run([prefix, mode], fn))
+}
+
+/**
+ * The executing mount's [prefix, configured mode], null outside a
+ * mount's command (a generic invoked directly in a test, or the scratch
+ * tier).
+ */
+export function getMountGate(): readonly [string, MountMode] | null {
+  return mountGateStorage.getStore() ?? null
+}
+
 const redirectStorage = createAsyncContext<[object, readonly PathSpec[]]>()
 
 /**

@@ -230,6 +230,66 @@ def test_inline_permissions_cannot_add_show():
         raise AssertionError("inline show was accepted")
 
 
+def test_the_write_gate_holds_per_path_inside_an_admitted_command():
+    # The command gate admits mkdir because one region grants writes;
+    # each write the handler then makes still answers for its own
+    # region, so the whole-mount admission opens no side door.
+    ws = _seeded()
+    ws.create_session("rev",
+                      profile={
+                          "mounts": {
+                              "/repo": "r"
+                          },
+                          "paths": {
+                              "show": {
+                                  "/repo/build": "rw"
+                              }
+                          },
+                      })
+    ok = _run(ws, "mkdir /repo/build")
+    assert ok.exit_code == 0, ok.stderr
+    held = _run(ws, "mkdir /repo/probe")
+    assert held.exit_code != 0
+    assert b"Read-only file system" in (held.stderr or b"")
+    removed = _run(ws, "rm /repo/README.md")
+    assert removed.exit_code != 0
+    assert b"Read-only file system" in (removed.stderr or b"")
+    assert _run(ws, "cat /repo/README.md").exit_code == 0
+    # Copying OUT of the read-only region is a read plus a write into
+    # the granted one, both allowed; moving back mutates a read-only
+    # endpoint and is refused.
+    copied = _run(ws, "cp /repo/README.md /repo/build/copy.md")
+    assert copied.exit_code == 0, copied.stderr
+    moved = _run(ws, "mv /repo/build/copy.md /repo/copy.md")
+    assert moved.exit_code != 0
+    assert b"Read-only file system" in (moved.stderr or b"")
+
+
+def test_a_globbed_show_reopens_and_stays_walkable():
+    # The carve-out spelled as a pattern: the anchor directory the glob
+    # exposes children of stays traversable, so the road to the matches
+    # exists.
+    ws = _seeded()
+    ws.create_session("rev",
+                      profile={
+                          "mounts": {
+                              "/repo": "r"
+                          },
+                          "paths": {
+                              "hide": ["/repo"],
+                              "show": ["/repo/public/*"]
+                          },
+                      })
+    walked = _run(ws, "ls /repo")
+    assert (walked.stdout or b"").split() == [b"public"]
+    listed = _run(ws, "ls /repo/public")
+    assert listed.exit_code == 0
+    found = _run(ws, "find /repo -type f")
+    out = (found.stdout or b"").splitlines()
+    assert b"/repo/public/index.html" in out
+    assert b"/repo/secrets/key.pem" not in out
+
+
 def test_a_fork_carries_the_carve_out():
     # A subshell forks the session; the axis rides INHERITED_FIELDS, so
     # the fork answers exactly like its parent.

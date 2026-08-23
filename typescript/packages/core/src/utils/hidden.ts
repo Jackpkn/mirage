@@ -262,7 +262,14 @@ export function pathVisible(
   const norm = normAbs(virtual)
   for (const entry of shown.entries) {
     const head = showHead(entry.path)
-    if (head === norm) continue
+    if (head === norm) {
+      // A globbed carve-out keeps its own anchor traversable: the
+      // children `/repo/public/*` exposes score the anchor's depth, so
+      // the anchor directory answers by the same compare (an exact
+      // entry already answered through showDepth above).
+      if (head !== entry.path && anchorDepth(entry.path) > deepestHide) return true
+      continue
+    }
     if ((norm === '/' || head.startsWith(norm + '/')) && pathVisible(hidden, shown, head)) {
       return true
     }
@@ -325,7 +332,19 @@ export function hidesIntersect(hidden: HiddenPaths | null | undefined, virtual: 
   const patterns = hidden.patterns ?? []
   if (paths.length === 0 && patterns.length === 0) return false
   if (patterns.some((p) => !p.includes('/'))) return true
-  return pathHidden(hidden, virtual) || pathCovers(hidden, virtual)
+  if (pathHidden(hidden, virtual) || pathCovers(hidden, virtual)) return true
+  // An anchored pattern's wildcard tail can match anywhere below its
+  // fixed head, so an operand at or under that head may hold matches
+  // inside its subtree (`/repo/*/secret` against a walk of
+  // `/repo/public`) even though the operand itself is neither hidden
+  // nor an ancestor of the head.
+  const norm = normAbs(virtual)
+  return patterns
+    .filter((p) => p.includes('/'))
+    .some((p) => {
+      const head = patternHead(p)
+      return head === '/' || norm.startsWith(head + '/')
+    })
 }
 
 /** Whether the session's spec hides this variable name. */

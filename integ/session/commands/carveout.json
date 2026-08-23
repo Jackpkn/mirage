@@ -102,6 +102,30 @@
         "stdout": "",
         "stderr": "python3: /scratch/grove/open/index.txt: not in EXEC mode\n"
       }
+    },
+    {
+      "id": "carve_the_write_gate_holds_per_path_inside_an_admitted_command",
+      "seq": 923310,
+      "targets": ["ram-commands"],
+      "session": "opener",
+      "command": "mkdir /scratch/grove/probe",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mkdir: cannot create directory '/scratch/grove/probe': Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_a_move_whose_destination_is_read_only_is_refused",
+      "seq": 923311,
+      "targets": ["ram-commands"],
+      "session": "opener",
+      "command": "mv /scratch/grove/build/a.txt /scratch/grove/moved.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: cannot move '/scratch/grove/build/a.txt' to '/scratch/grove/moved.txt': Read-only file system\n"
+      }
     }
   ]
 }

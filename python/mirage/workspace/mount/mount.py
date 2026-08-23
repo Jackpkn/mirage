@@ -25,6 +25,7 @@ from mirage.commands.resolve import get_extension
 from mirage.commands.spec import CommandSpec
 from mirage.commands.spec.types import FlagValue
 from mirage.context import (effective_mount_mode, effective_path_mode,
+                            reset_mount_gate, set_mount_gate,
                             strongest_mode_under)
 from mirage.io.cachable_iterator import CachableAsyncIterator
 from mirage.io.types import ByteSource, IOResult
@@ -571,6 +572,11 @@ class MountEntry:
         prev_prefix = push_mount_prefix(mount_prefix)
         revs_token = push_revisions(self.revisions or None)
         prev_manager = push_cache_manager(self.cache_manager)
+        # What the command tier's mode guard reads: the write-command
+        # gate below admits a command when any shown subtree grants
+        # writes, and this binding is how each write the handler then
+        # makes is held to its own region's mode.
+        gate_token = set_mount_gate(self.prefix, self.mode)
         try:
             # --help / --version short-circuit inside the handler wrapper
             # and never touch the backend, so a read-only mount answers
@@ -611,6 +617,7 @@ class MountEntry:
                     return stream, io
             return None, IOResult()
         finally:
+            reset_mount_gate(gate_token)
             reset_revisions(revs_token)
             push_mount_prefix(prev_prefix)
             push_cache_manager(prev_manager)
@@ -658,15 +665,22 @@ class MountEntry:
         if not levels:
             raise enotsup(str(self.resource.name), op_name, path)
 
-        if (any(o.write for o in levels) and effective_path_mode(
-                path, self.prefix, self.mode) == MountMode.READ):
+        if any(o.write for o in levels):
             # GNU reports the operand, not the guard's own wording, so
             # stamp errno + filename and let format_fs_error render
             # "<cmd>: <path>: Read-only file system" (mirrors the
             # TypeScript erofsReadOnly stamp). Per path, not per mount:
             # a show entry can hold one subtree below `w` on a writable
-            # mount, or one writable region on a read mount.
-            raise ReadOnlyError(errno.EROFS, "Read-only file system", path)
+            # mount, or one writable region on a read mount. A rename
+            # mutates its destination too, so both endpoints answer.
+            if effective_path_mode(path, self.prefix,
+                                   self.mode) == MountMode.READ:
+                raise ReadOnlyError(errno.EROFS, "Read-only file system", path)
+            dst = kwargs.get("dst")
+            if isinstance(dst, PathSpec) and effective_path_mode(
+                    dst.virtual, self.prefix, self.mode) == MountMode.READ:
+                raise ReadOnlyError(errno.EROFS, "Read-only file system",
+                                    dst.virtual)
 
         mount_prefix = self.prefix.rstrip("/")
         scope = PathSpec(

@@ -293,3 +293,32 @@ def test_hides_intersect_is_the_per_operand_gate():
     assert hides_intersect(sealed, "/repo/sealed/x")
     assert not hides_intersect(sealed, "/repo/open")
     assert not hides_intersect(None, "/")
+
+
+def test_hides_intersect_counts_an_operand_below_a_patterns_head():
+    # The wildcard tail can match anywhere under the fixed head, so a
+    # walk of any subtree below it may hold matches (`/repo/*/secret`
+    # covers `/repo/public/secret`), even though the operand itself is
+    # neither hidden nor an ancestor of the head.
+    spec = classify_paths(["/repo/*/secret"])
+    assert hides_intersect(spec, "/repo/public")
+    assert hides_intersect(spec, "/repo/public/deep")
+    assert hides_intersect(spec, "/repo")
+    assert not hides_intersect(spec, "/other")
+
+
+def test_a_globbed_show_keeps_its_anchor_traversable():
+    # `hide /repo` + `show /repo/public/*`: the matches score the
+    # anchor's depth, so the anchor directory and the road above it
+    # answer by the same compare instead of staying hidden around
+    # visible children.
+    hidden = classify_paths(["/repo"])
+    shown = classify_shows([ShowEntry("/repo/public/*")])
+    assert path_visible(hidden, shown, "/repo/public/index.html")
+    assert path_visible(hidden, shown, "/repo/public")
+    assert path_visible(hidden, shown, "/repo")
+    assert not path_visible(hidden, shown, "/repo/secrets")
+    # A hide at the anchor's own depth still wins the tie.
+    rehidden = classify_paths(["/repo", "/repo/public"])
+    assert not path_visible(rehidden, shown, "/repo/public")
+    assert not path_visible(rehidden, shown, "/repo/public/index.html")

@@ -217,6 +217,58 @@ describe('the path axis end to end', () => {
     ).toThrow('not show entries')
   })
 
+  it('the write gate holds per path inside an admitted command', async () => {
+    // The command gate admits mkdir because one region grants writes;
+    // each write the handler then makes still answers for its own
+    // region, so the whole-mount admission opens no side door.
+    const ws = await seeded()
+    ws.createSession('rev', {
+      profile: parseSessionProfile({
+        mounts: { '/repo': 'r' },
+        paths: { show: { '/repo/build': 'rw' } },
+      }),
+    })
+    const ok = await ws.execute('mkdir /repo/build', { sessionId: 'rev' })
+    expect(ok.exitCode).toBe(0)
+    const held = await ws.execute('mkdir /repo/probe', { sessionId: 'rev' })
+    expect(held.exitCode).not.toBe(0)
+    expect(stderrStr(held)).toContain('Read-only file system')
+    const removed = await ws.execute('rm /repo/README.md', { sessionId: 'rev' })
+    expect(removed.exitCode).not.toBe(0)
+    expect(stderrStr(removed)).toContain('Read-only file system')
+    const still = await ws.execute('cat /repo/README.md', { sessionId: 'rev' })
+    expect(still.exitCode).toBe(0)
+    // Copying OUT of the read-only region is a read plus a write into
+    // the granted one, both allowed; moving back mutates a read-only
+    // endpoint and is refused.
+    const copied = await ws.execute('cp /repo/README.md /repo/build/copy.md', { sessionId: 'rev' })
+    expect(copied.exitCode).toBe(0)
+    const moved = await ws.execute('mv /repo/build/copy.md /repo/copy.md', { sessionId: 'rev' })
+    expect(moved.exitCode).not.toBe(0)
+    expect(stderrStr(moved)).toContain('Read-only file system')
+  })
+
+  it('a globbed show reopens and stays walkable', async () => {
+    // The carve-out spelled as a pattern: the anchor directory the glob
+    // exposes children of stays traversable, so the road to the matches
+    // exists.
+    const ws = await seeded()
+    ws.createSession('rev', {
+      profile: parseSessionProfile({
+        mounts: { '/repo': 'r' },
+        paths: { hide: ['/repo'], show: ['/repo/public/*'] },
+      }),
+    })
+    const walked = await ws.execute('ls /repo', { sessionId: 'rev' })
+    expect(stdoutStr(walked).split(/\s+/).filter(Boolean)).toEqual(['public'])
+    const listed = await ws.execute('ls /repo/public', { sessionId: 'rev' })
+    expect(listed.exitCode).toBe(0)
+    const found = await ws.execute('find /repo -type f', { sessionId: 'rev' })
+    const out = stdoutStr(found).split('\n').filter(Boolean)
+    expect(out).toContain('/repo/public/index.html')
+    expect(out).not.toContain('/repo/secrets/key.pem')
+  })
+
   it('a fork carries the carve-out', async () => {
     // A subshell forks the session; the axis rides the inherited
     // fields, so the fork answers exactly like its parent.

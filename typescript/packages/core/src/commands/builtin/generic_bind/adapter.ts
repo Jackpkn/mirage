@@ -13,12 +13,18 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Accessor } from '../../../accessor/base.ts'
-import { getAdmission, pathAllowed } from '../../../context/session_context.ts'
+import {
+  effectivePathMode,
+  getAdmission,
+  getMountGate,
+  pathAllowed,
+} from '../../../context/session_context.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import type { StatOverlay } from '../../../ops/types.ts'
 import type { FindOptions } from '../../../resource/base.ts'
 import {
   FileType,
+  MountMode,
   PathSpec,
   type CopyFn,
   type FindFn,
@@ -29,7 +35,7 @@ import {
   type ReaddirFn,
   type StatFn,
 } from '../../../types.ts'
-import { eacces, eisdir, enoent } from '../../../utils/errors.ts'
+import { eacces, eisdir, enoent, erofsReadOnly } from '../../../utils/errors.ts'
 import type { ChildMounts } from '../../../ops/types.ts'
 import { DEFAULT_MAX_GLOB_MATCHES, resolveGlobWith } from '../../../utils/glob_walk.ts'
 import { norm, parent } from '../../../utils/path.ts'
@@ -448,6 +454,120 @@ export function withRuleGuard<A extends Accessor = Accessor>(ops: CommandIO<A>):
   if (dc !== undefined) {
     guarded.dirCopy = (accessor, src, dst) => {
       ruleCheck(src, dst)
+      return dc(accessor, src, dst)
+    }
+  }
+  return guarded
+}
+
+/** Hold each written path to its region's effective mode before a
+ * backend mutation runs. Inert with no mount bound (a generic invoked
+ * outside a mount's command). */
+function modeCheck(...written: readonly PathSpec[]): void {
+  const gate = getMountGate()
+  if (gate === null) return
+  const [prefix, mode] = gate
+  for (const spec of written) {
+    if (effectivePathMode(spec.virtual, prefix, mode) === MountMode.READ) {
+      throw erofsReadOnly(`mount ${prefix} is read-only`, spec.virtual)
+    }
+  }
+}
+
+/**
+ * Return `ops` whose mutation slots hold each written path to its
+ * region's effective mode.
+ *
+ * The per-path half of the mount's write gate, innermost of the three
+ * guards: hides answer ENOENT first, rules refuse next, and only a path
+ * both leave standing is judged for its mode, the same order the op
+ * door applies. Reads are never wrapped, because `READ` allows them
+ * everywhere the other guards do; a copy's source is a read too, so
+ * only its destination answers, while a rename mutates both endpoints.
+ */
+export function withModeGuard<A extends Accessor = Accessor>(ops: CommandIO<A>): CommandIO<A> {
+  const guarded: CommandIO<A> = { ...ops }
+  const w = ops.write
+  if (w !== undefined) {
+    guarded.write = (accessor, path, data) => {
+      modeCheck(path)
+      return w(accessor, path, data)
+    }
+  }
+  const mk = ops.mkdir
+  if (mk !== undefined) {
+    guarded.mkdir = (accessor, path, parents) => {
+      modeCheck(path)
+      return mk(accessor, path, parents)
+    }
+  }
+  const ap = ops.append
+  if (ap !== undefined) {
+    guarded.append = (accessor, path, data) => {
+      modeCheck(path)
+      return ap(accessor, path, data)
+    }
+  }
+  const cr = ops.create
+  if (cr !== undefined) {
+    guarded.create = (accessor, path) => {
+      modeCheck(path)
+      return cr(accessor, path)
+    }
+  }
+  const ul = ops.unlink
+  if (ul !== undefined) {
+    guarded.unlink = (accessor, path) => {
+      modeCheck(path)
+      return ul(accessor, path)
+    }
+  }
+  const rd = ops.rmdir
+  if (rd !== undefined) {
+    guarded.rmdir = (accessor, path) => {
+      modeCheck(path)
+      return rd(accessor, path)
+    }
+  }
+  const rt = ops.rmR
+  if (rt !== undefined) {
+    guarded.rmR = (accessor, path) => {
+      modeCheck(path)
+      return rt(accessor, path)
+    }
+  }
+  const tr = ops.truncate
+  if (tr !== undefined) {
+    guarded.truncate = (accessor, path, length) => {
+      modeCheck(path)
+      return tr(accessor, path, length)
+    }
+  }
+  const sa = ops.setAttrs
+  if (sa !== undefined) {
+    guarded.setAttrs = (accessor: A, path: PathSpec, ...rest: unknown[]) => {
+      modeCheck(path)
+      return sa(accessor, path, ...rest)
+    }
+  }
+  const rn = ops.rename
+  if (rn !== undefined) {
+    guarded.rename = (accessor, src, dst) => {
+      modeCheck(src, dst)
+      return rn(accessor, src, dst)
+    }
+  }
+  const cp = ops.copy
+  if (cp !== undefined) {
+    guarded.copy = (accessor, src, dst) => {
+      modeCheck(dst)
+      return cp(accessor, src, dst)
+    }
+  }
+  const dc = ops.dirCopy
+  if (dc !== undefined) {
+    guarded.dirCopy = (accessor, src, dst) => {
+      modeCheck(dst)
       return dc(accessor, src, dst)
     }
   }

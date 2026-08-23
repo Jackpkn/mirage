@@ -284,4 +284,34 @@ describe('hidesIntersect', () => {
     expect(hidesIntersect(sealed, '/repo/open')).toBe(false)
     expect(hidesIntersect(null, '/')).toBe(false)
   })
+
+  it("counts an operand below a pattern's head", () => {
+    // The wildcard tail can match anywhere under the fixed head, so a
+    // walk of any subtree below it may hold matches (`/repo/*/secret`
+    // covers `/repo/public/secret`), even though the operand itself is
+    // neither hidden nor an ancestor of the head.
+    const spec = classifyPaths(['/repo/*/secret'])
+    expect(hidesIntersect(spec, '/repo/public')).toBe(true)
+    expect(hidesIntersect(spec, '/repo/public/deep')).toBe(true)
+    expect(hidesIntersect(spec, '/repo')).toBe(true)
+    expect(hidesIntersect(spec, '/other')).toBe(false)
+  })
+})
+
+describe('a globbed show keeps its anchor traversable', () => {
+  it('the anchor and the road above answer by the same compare', () => {
+    // `hide /repo` + `show /repo/public/*`: the matches score the
+    // anchor's depth, so the anchor directory and the road above it
+    // stay visible instead of hiding around visible children.
+    const hidden = classifyPaths(['/repo'])
+    const shown = classifyShows([{ path: '/repo/public/*', mode: null }])
+    expect(pathVisible(hidden, shown, '/repo/public/index.html')).toBe(true)
+    expect(pathVisible(hidden, shown, '/repo/public')).toBe(true)
+    expect(pathVisible(hidden, shown, '/repo')).toBe(true)
+    expect(pathVisible(hidden, shown, '/repo/secrets')).toBe(false)
+    // A hide at the anchor's own depth still wins the tie.
+    const rehidden = classifyPaths(['/repo', '/repo/public'])
+    expect(pathVisible(rehidden, shown, '/repo/public')).toBe(false)
+    expect(pathVisible(rehidden, shown, '/repo/public/index.html')).toBe(false)
+  })
 })

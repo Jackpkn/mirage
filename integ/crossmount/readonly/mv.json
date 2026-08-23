@@ -11,7 +11,7 @@
       "expect": {
         "exit": 1,
         "stdout": "",
-        "stderr": "mv: cannot create regular file '/ro/xro2.txt': Permission denied\n"
+        "stderr": "mv: cannot create regular file '/ro/xro2.txt': Read-only file system\n"
       }
     },
     {

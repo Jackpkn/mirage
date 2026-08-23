@@ -268,6 +268,13 @@ def path_visible(hidden: HiddenPaths | None, shown: ShownPaths | None,
     for entry in shown.entries:
         head = show_head(entry.path)
         if head == norm:
+            # A globbed carve-out keeps its own anchor traversable: the
+            # children `/repo/public/*` exposes score the anchor's
+            # depth, so the anchor directory answers by the same
+            # compare (an exact entry already answered through
+            # show_depth above).
+            if head != entry.path and anchor_depth(entry.path) > deepest_hide:
+                return True
             continue
         if (norm == "/" or head.startswith(norm + "/")) and path_visible(
                 hidden, shown, head):
@@ -391,7 +398,17 @@ def hides_intersect(hidden: HiddenPaths | None, virtual: str) -> bool:
         return False
     if any("/" not in p for p in hidden.patterns):
         return True
-    return path_hidden(hidden, virtual) or path_covers(hidden, virtual)
+    if path_hidden(hidden, virtual) or path_covers(hidden, virtual):
+        return True
+    # An anchored pattern's wildcard tail can match anywhere below its
+    # fixed head, so an operand at or under that head may hold matches
+    # inside its subtree (`/repo/*/secret` against a walk of
+    # `/repo/public`) even though the operand itself is neither hidden
+    # nor an ancestor of the head.
+    norm = _norm_abs(virtual)
+    return any(head == "/" or norm.startswith(head + "/")
+               for head in (_pattern_head(p) for p in hidden.patterns
+                            if "/" in p))
 
 
 def var_hidden(hidden: HiddenVars | None, name: str) -> bool:
