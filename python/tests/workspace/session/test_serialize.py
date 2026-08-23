@@ -12,11 +12,14 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.policy.types import CommandRule, CommandsSpec, Grant
-from mirage.workspace.session.serialize import (commands_from_dict,
-                                                commands_to_dict,
-                                                grant_from_dict, grant_to_dict,
-                                                rule_from_dict, rule_to_dict)
+from mirage.policy.match import Outcome
+from mirage.policy.types import (AdmissionRules, CommandRule, Decision,
+                                 ProfileScript, Scope)
+from mirage.runtime.types import ScriptSource
+
+from mirage.workspace.session.serialize import (  # isort: skip
+    commands_from_dict, commands_to_dict, decision_from_dict, decision_to_dict,
+    rule_from_dict, rule_to_dict, script_from_dict, script_to_dict)
 
 
 def test_rule_round_trips_and_writes_mount_only_when_set():
@@ -35,21 +38,58 @@ def test_rule_round_trips_and_writes_mount_only_when_set():
 
 
 def test_commands_round_trips_and_keeps_an_absent_allow_list():
-    spec = CommandsSpec(allow=("ls", "git log"),
-                        ask=(CommandRule(reason="sign-off",
-                                         commands=("git push", )), ),
-                        deny=(CommandRule(reason="no", commands=("rm", )), ))
+    spec = AdmissionRules(allow=("ls", "git log"),
+                          ask=(CommandRule(reason="sign-off",
+                                           commands=("git push", )), ),
+                          deny=(CommandRule(reason="no", commands=("rm", )), ))
     assert commands_from_dict(commands_to_dict(spec)) == spec
-    unlisted = CommandsSpec(deny=(CommandRule(reason="x"), ))
+    unlisted = AdmissionRules(deny=(CommandRule(reason="x"), ))
     data = commands_to_dict(unlisted)
     assert data["allow"] is None
     assert commands_from_dict(data) == unlisted
-    assert commands_from_dict({}) == CommandsSpec()
+    assert commands_from_dict({}) == AdmissionRules()
 
 
-def test_grant_round_trips_with_defaults():
+def test_script_round_trips_with_its_language_and_engine():
+    entry = ProfileScript(profile="release",
+                          script=ScriptSource("None\n", language="js"),
+                          runtime="quickjs")
+    data = script_to_dict(entry)
+    assert data == {
+        "profile": "release",
+        "language": "js",
+        "source": "None\n",
+        "runtime": "quickjs",
+    }
+    assert script_from_dict(data) == entry
+
+
+def test_decision_round_trips_with_defaults():
     rule = CommandRule(reason="sign-off", commands=("git push", ))
-    grant = Grant("allow_session", rule, ("git", "push"), "/repo")
-    assert grant_from_dict(grant_to_dict(grant)) == grant
-    read = grant_from_dict({"decision": "deny", "rule": rule_to_dict(rule)})
-    assert read == Grant("deny", rule, (), "/")
+    record = Decision(id="d1",
+                      session_id="agent",
+                      agent_id="a",
+                      command="git",
+                      argv=("push", ),
+                      cwd="/repo",
+                      paths=("/repo", ),
+                      reason="sign-off",
+                      rule=rule,
+                      outcome=Outcome.ALLOW,
+                      scope=Scope.SESSION,
+                      note="ok")
+    assert decision_from_dict(decision_to_dict(record)) == record
+    # A record still waiting has no outcome, and a sparse one reads
+    # back on the defaults rather than failing.
+    waiting = Decision(id="d2",
+                       session_id="agent",
+                       agent_id="",
+                       command="git",
+                       argv=(),
+                       cwd="/",
+                       paths=(),
+                       reason="",
+                       rule=rule)
+    assert decision_from_dict(decision_to_dict(waiting)) == waiting
+    read = decision_from_dict({"id": "d3", "rule": rule_to_dict(rule)})
+    assert (read.outcome, read.scope, read.cwd) == (None, Scope.ONCE, "/")

@@ -99,10 +99,13 @@ def member_entry(m: dict[str, Any]) -> IndexEntry:
     )
 
 
-def history_entry(channel_key: str, date: str) -> IndexEntry:
+def history_entry(channel_id: str, date: str) -> IndexEntry:
+    # channel_id rides extra so the day and files listers can query the
+    # history API without re-resolving the channel through its parent.
     return IndexEntry(
-        id=f"{channel_key}:{date}",
+        id=f"{channel_id}:{date}",
         name=date,
         resource_type=DiscordResourceType.HISTORY,
-        vfs_name=f"{date}.jsonl",
+        vfs_name=date,
+        extra={"channel_id": channel_id},
     )

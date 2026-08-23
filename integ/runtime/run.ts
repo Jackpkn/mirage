@@ -44,7 +44,7 @@ import {
   type RunResult,
   type RuntimeEntry,
 } from "@struktoai/mirage-node";
-import { parseWorkspacePermissions } from "@struktoai/mirage-core/workspace/session/permissions";
+import { parseSessionProfile } from "@struktoai/mirage-core/policy/profile";
 
 const HOST = "typescript";
 const SUITE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -103,7 +103,8 @@ interface World {
   runtimes?: (string | Record<string, unknown>)[];
   policy?: string;
   policies?: PolicySpec[];
-  permissions?: Record<string, unknown>;
+  profiles?: Record<string, unknown>;
+  profile?: string;
   mounts?: Record<string, MountSpecJson>;
   clis?: Record<string, CliSpecJson>;
 }
@@ -397,9 +398,15 @@ async function buildWorkspace(world: World, runId: string): Promise<Workspace> {
   if (world.runtimes !== undefined) options.runtimes = world.runtimes.map(buildEntry);
   if (world.policy !== undefined) options.policy = new ScriptSource(world.policy);
   if (world.policies !== undefined) options.policies = world.policies.map(buildPolicy);
-  if (world.permissions !== undefined) {
-    options.permissions = parseWorkspacePermissions(world.permissions);
+  if (world.profiles !== undefined) {
+    options.profiles = Object.fromEntries(
+      Object.entries(world.profiles).map(([name, doc]) => [
+        name,
+        parseSessionProfile(doc, `profile \`${name}\``),
+      ]),
+    );
   }
+  if (world.profile !== undefined) options.profile = world.profile;
   const ws = new Workspace(mounts, options);
   // The world's script CLIs, the yaml `clis:` shape inline: each entry
   // embeds its program instead of naming a file, the same way a runtime

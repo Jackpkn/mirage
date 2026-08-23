@@ -32,7 +32,7 @@ from mirage.core.discord.entry import channel_dirname
 from mirage.core.discord.formatters import format_grep_results
 from mirage.core.discord.read import read as discord_read
 from mirage.core.discord.readdir import readdir as _readdir
-from mirage.core.discord.scope import detect_scope
+from mirage.core.discord.scope import NATIVE_KINDS, detect_scope
 from mirage.core.discord.search import search_guild
 from mirage.core.discord.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
@@ -56,20 +56,22 @@ async def rg(accessor: DiscordAccessor, paths: list[PathSpec],
     # the generic scan; see SEARCH_HONORED above.
     operand = pushdown_operand(paths, opts.flags, pattern_str, SEARCH_HONORED)
     if operand is not None and fl.as_bool("w"):
-        scope = detect_scope(operand)
-        if scope.use_native and scope.guild_id is not None:
+        match = detect_scope(operand)
+        if match.kind in NATIVE_KINDS:
+            guild_id = match.slots["guild_id"]
             try:
                 msgs = await search_guild(
                     accessor.config,
-                    scope.guild_id,
+                    guild_id,
                     pattern_str,
-                    channel_id=scope.channel_id,
+                    channel_id=match.slots.get("channel_id"),
                     limit=SEARCH_MAX_RESULTS,
                 )
                 file_prefix = mount_prefix_of(operand.virtual,
                                               operand.resource_path) or ""
-                resource_first = scope.resource_path.split("/", 1)[0]
-                channels = await list_channels(accessor.config, scope.guild_id)
+                resource_first = match.resource_path.strip("/").split("/",
+                                                                      1)[0]
+                channels = await list_channels(accessor.config, guild_id)
                 channel_map = {c["id"]: channel_dirname(c) for c in channels}
                 lines = format_grep_results(msgs, file_prefix, resource_first,
                                             channel_map)
@@ -96,7 +98,7 @@ async def rg(accessor: DiscordAccessor, paths: list[PathSpec],
     stdout, io = await generic_rg(
         resolved,
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(_readdir, accessor, opts.index),
         stat=bound_op(_stat, accessor, opts.index),
         read_bytes=bound_op(discord_read, accessor, opts.index),

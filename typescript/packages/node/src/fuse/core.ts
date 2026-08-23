@@ -192,8 +192,21 @@ export class MountCore {
     return posix.relative(parent, virtualTarget)
   }
 
-  linkStat(target: string): FuseAttr {
+  /**
+   * The attrs a namespace link reports, from its own node row.
+   *
+   * Built from the target string alone, every link over a mount answered
+   * the mount's construction time and the mounting user, so what
+   * `chown -h` and `touch -h` wrote was invisible through the kernel.
+   * The row is the same one the door answers a no-follow stat with. Size
+   * stays the displayable target's length (what this mount's readlink
+   * returns), and the mode is always lrwxrwxrwx: a symlink's permission
+   * bits are not consulted by any POSIX system.
+   */
+  linkStat(target: string, virtual: string): FuseAttr {
     const entry = this.fileStat(new TextEncoder().encode(target).byteLength)
+    const row = this.ops.links?.linkStatAt(virtual) ?? null
+    if (row !== null) this.applyStatAttrs(entry, row)
     entry.mode = 0o120777
     return entry
   }
@@ -283,7 +296,7 @@ export class MountCore {
     // Link check must precede the workspace stat: the fs facade follows
     // namespace links, so stat on a link path reports the target.
     const target = this.linkTarget(path)
-    if (target !== null) return this.linkStat(target)
+    if (target !== null) return this.linkStat(target, this.resolve(path))
     const s = await this.ops.stat(this.resolve(path))
     if (s.type === FileType.DIRECTORY) {
       return this.applyStatAttrs(this.dirStat(), s)

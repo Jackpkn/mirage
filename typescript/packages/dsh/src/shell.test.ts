@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
-import { LocalRuntime, Workspace } from '@struktoai/mirage-node'
+import { LocalRuntime, Workspace, parseSessionProfile } from '@struktoai/mirage-node'
 import { MirageService } from './service.ts'
 import { MirageShellExecutor } from './shell.ts'
 import type { MirageShellConfig } from './shell.ts'
@@ -229,7 +229,12 @@ describe('sandbox policy', () => {
     workspaces.push(ws)
     await ws.fs.writeFile('/allowed/a.txt', 'granted')
     await ws.fs.writeFile('/secret/a.txt', 'classified')
-    ws.createSession('confined', { mounts: { '/allowed': 'exec' } })
+    // Exclusion is a hide: a mount the profile does not name keeps its own
+    // mode, so confining a session to /allowed means hiding /secret.
+    ws.createSession('confined', {
+      mounts: { '/allowed': 'exec' },
+      permissions: { paths: { hide: ['/secret'] } },
+    })
     const shell = await attachShell(ws, { sessionId: 'confined' })
     const granted = await shell.run(
       shell.resolve({ command: 'cat /allowed/a.txt', sandboxPolicy: READ_ONLY }),
@@ -259,6 +264,42 @@ describe('sandbox policy', () => {
       }),
     )
     expect(next.stdout.text.trim().split('\n')).toEqual(['/', '[]'])
+  })
+
+  it("carries the bound session's command rules into the read-only twin", async () => {
+    const ws = new Workspace(
+      { '/data': [new RAMResource(), MountMode.WRITE] },
+      {
+        profiles: {
+          scoped: parseSessionProfile(
+            {
+              commands: {
+                allow: ['cat', 'ls', 'echo'],
+                deny: [{ reason: 'no notes', paths: ['/data/notes/*'] }],
+              },
+            },
+            'profile scoped',
+          ),
+        },
+      },
+    )
+    workspaces.push(ws)
+    await ws.fs.mkdir('/data/notes')
+    await ws.fs.writeFile('/data/notes/a.txt', 'private')
+    ws.createSession('agent', { profile: 'scoped' })
+    const shell = await attachShell(ws, { sessionId: 'agent' })
+    // The profile refuses this read, and read-only is not a way around it:
+    // every mount being `read` says nothing about a rule on a path.
+    const denied = await shell.run(
+      shell.resolve({ command: 'cat /data/notes/a.txt', sandboxPolicy: READ_ONLY }),
+    )
+    expect(denied.exitCode).not.toBe(0)
+    expect(denied.stderr.text).toContain('no notes')
+    // A word the profile never installed is still not a command here.
+    const missing = await shell.run(
+      shell.resolve({ command: 'sort /data/notes/a.txt', sandboxPolicy: READ_ONLY }),
+    )
+    expect(missing.stderr.text).toContain('command not found')
   })
 
   it('keeps a bound session out of the read-only twin it narrowed into', async () => {

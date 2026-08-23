@@ -42,7 +42,7 @@ def render_deny(subject: str, deny: Deny) -> tuple[bytes, int]:
 
     Args:
         subject (str): the command name (or ``line`` at the boundary).
-        deny (Deny): the verdict.
+        deny (Deny): the action.
     """
     if deny.scope is DenyScope.OPERAND:
         return (f"{subject}: {deny.reason}\n".encode(),
@@ -168,20 +168,20 @@ async def post_execute_gate(
     return await policies.post_execute(ctx)
 
 
-def _deny_only(hook: str, verdict: Deny | Ask | None) -> Deny | None:
+def _deny_only(hook: str, action: Deny | Ask | None) -> Deny | None:
     """Narrow a hook's answer where VALIDITY admits no Ask.
 
     Args:
         hook (str): the hook name, for the message.
-        verdict (Deny | Ask | None): what the loop returned.
+        action (Deny | Ask | None): what the loop returned.
 
     Raises:
         PolicyError: an Ask reached a hook that cannot carry one, which
             VALIDITY already refuses inside the loop.
     """
-    if isinstance(verdict, Ask):
-        raise PolicyError(f"{hook} cannot answer with an Ask: {verdict!r}")
-    return verdict
+    if isinstance(action, Ask):
+        raise PolicyError(f"{hook} cannot answer with an Ask: {action!r}")
+    return action
 
 
 class Policies:
@@ -290,8 +290,8 @@ class Policies:
         Args:
             ctx (CommandContext): the classified command.
         """
-        verdict, _ = await self._fire("pre_command", ctx)
-        return verdict
+        action, _ = await self._fire("pre_command", ctx)
+        return action
 
     async def pre_ops(self, ctx: OpsContext) -> Deny | None:
         """Fire pre_ops across the policies; first Deny wins.
@@ -299,8 +299,8 @@ class Policies:
         Args:
             ctx (OpsContext): the op about to run.
         """
-        verdict, _ = await self._fire("pre_ops", ctx)
-        return _deny_only("pre_ops", verdict)
+        action, _ = await self._fire("pre_ops", ctx)
+        return _deny_only("pre_ops", action)
 
     async def pre_session(self, ctx: SessionContext) -> Deny | None:
         """Fire pre_session across the policies; first Deny wins.
@@ -308,8 +308,8 @@ class Policies:
         Args:
             ctx (SessionContext): the mutation about to land.
         """
-        verdict, _ = await self._fire("pre_session", ctx)
-        return _deny_only("pre_session", verdict)
+        action, _ = await self._fire("pre_session", ctx)
+        return _deny_only("pre_session", action)
 
     async def post_ops(
             self, ctx: OpsResultContext) -> tuple[Deny | None, Limit | None]:
@@ -318,8 +318,8 @@ class Policies:
         Args:
             ctx (OpsResultContext): the op and its raw result.
         """
-        verdict, limit = await self._fire("post_ops", ctx)
-        return _deny_only("post_ops", verdict), limit
+        action, limit = await self._fire("post_ops", ctx)
+        return _deny_only("post_ops", action), limit
 
     async def post_execute(
             self,
@@ -329,5 +329,5 @@ class Policies:
         Args:
             ctx (ExecuteResultContext): the finished line's facts.
         """
-        verdict, limit = await self._fire("post_execute", ctx)
-        return _deny_only("post_execute", verdict), limit
+        action, limit = await self._fire("post_execute", ctx)
+        return _deny_only("post_execute", action), limit

@@ -60,6 +60,12 @@ export interface FSNode {
   contents?: Uint8Array
   usedBytes?: number
   unreadable?: boolean
+  /**
+   * A symlink's target, verbatim as it was typed. Emscripten's own
+   * MEMFS keeps it under this name and `FS.readlink` reads it, so the
+   * spelling is the interpreter's, not ours.
+   */
+  link?: string
 }
 
 export interface FSStream {
@@ -103,6 +109,7 @@ export interface NodeOps {
   rmdir(parent: FSNode, name: string): void
   readdir(node: FSNode): string[]
   symlink(parent: FSNode, name: string, target: string): FSNode
+  readlink(node: FSNode): string
 }
 
 export interface StreamOps {
@@ -130,6 +137,7 @@ export interface NodeHost {
   createNode(parent: FSNode | null, name: string, mode: number, rdev: number): FSNode
   isDir(mode: number): boolean
   isFile(mode: number): boolean
+  isLink(mode: number): boolean
 }
 
 /**

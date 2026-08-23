@@ -21,7 +21,7 @@ import { CacheManager } from '../../cache/manager.ts'
 import { GENERAL_COMMANDS } from '../../commands/builtin/general/index.ts'
 import { cachesReads, type Resource } from '../../resource/base.ts'
 import { DevResource } from '../../resource/dev/dev.ts'
-import { Approvals, MountRootPolicy, OutputCapPolicy, Policies } from '../../policy/index.ts'
+import { Decisions, MountRootPolicy, OutputCapPolicy, Policies } from '../../policy/index.ts'
 import { type Limit, ConsistencyPolicy, MountMode, PathSpec } from '../../types.ts'
 import { CLIRegistry } from '../cli/registry.ts'
 import { MountEntry } from './mount.ts'
@@ -91,8 +91,8 @@ export class MountRegistry {
   ])
   // The approval door the executor takes an Ask to, hosted here for the
   // same reason as the policies: the workspace replaces it with one
-  // bound to its session manager and approver.
-  approvals = new Approvals()
+  // bound to its session manager and ask handler.
+  decisions = new Decisions()
   // Installed CLIs. Not mount state: CLIs are fully separate from
   // mounts (a CLI exists because it was installed, never because
   // storage was mounted). The registry object is just the vehicle that

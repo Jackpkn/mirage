@@ -15,8 +15,8 @@
 import pytest
 
 from mirage.commands.builtin.generic.mv import MvFlags, mv
-from mirage.types import (FileStat, FileType, NativeMove, PathSpec,
-                          PrimitiveMove)
+from mirage.types import (ContentType, FileStat, FileType, NativeMove,
+                          PathSpec, PrimitiveMove)
 from mirage.utils.errors import enoent, enotdir, enotsup
 
 
@@ -41,7 +41,8 @@ def _make_backend(files: dict[str, bytes],
             return FileStat(name=k.rsplit("/", 1)[-1], type=FileType.DIRECTORY)
         if k in files:
             return FileStat(name=k.rsplit("/", 1)[-1],
-                            type=FileType.TEXT,
+                            type=FileType.FILE,
+                            content=ContentType.TEXT,
                             modified=stamps.get(k))
         raise FileNotFoundError(k)
 

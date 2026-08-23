@@ -99,10 +99,14 @@ def structure_world(runtime: str) -> Workspace:
 
 
 def scoped_world(runtime: str) -> Workspace:
-    """Two mounts, a session granted only the first.
+    """Two mounts, a role that hides the second.
 
-    ``/open`` (``pub.txt``) is granted to session ``agent``; ``/closed``
-    (``sec.txt``) is not. ``/open/esc`` is a namespace symlink into
+    ``/open`` (``pub.txt``) is reachable by session ``agent``;
+    ``/closed`` (``sec.txt``) is hidden from it. A hide, not an omitted
+    mount: a role narrows what it names and a mount it never names keeps
+    its own mode, so hiding is how a deployment puts a mount out of
+    reach, and it answers ENOENT rather than a refusal naming what the
+    role cannot see. ``/open/esc`` is a namespace symlink into
     ``/closed``, the cross-mount escape a confined guest must not be
     able to follow.
 
@@ -117,7 +121,7 @@ def scoped_world(runtime: str) -> Workspace:
         mode=MountMode.EXEC,
         runtimes=[runtime, "vfs"],
     )
-    ws.create_session("agent", mounts=["/open"])
+    ws.create_session("agent", profile={"paths": {"hide": ["/closed"]}})
     return ws
 
 
@@ -359,7 +363,7 @@ async def test_namespace_only_ancestor_serves_every_ls_variant():
 # ── Group 3: a scoped session confines every surface ──
 #
 # Explicit operands and the headless FUSE core are confined today. The
-# fan-out shell commands and the guest are not: they reach an ungranted
+# fan-out shell commands and the guest are not: they reach a hidden
 # mount's names, bytes and sizes, and the guest can even write there.
 
 
@@ -371,8 +375,12 @@ async def test_namespace_only_ancestor_serves_every_ls_variant():
     "find /closed",
     "du /closed",
 ])
-async def test_explicit_operand_at_boundary_is_denied(line: str):
-    """A named operand on an ungranted mount is refused out loud.
+async def test_explicit_operand_at_boundary_reads_as_absent(line: str):
+    """A named operand on a hidden mount is nonexistent, not refused.
+
+    The wording is the whole point: "not allowed" would confirm that
+    something is there, so a hide answers what an agent would see for
+    any path that was never mounted.
 
     Args:
         line (str): the shell line naming ``/closed`` directly.
@@ -381,20 +389,21 @@ async def test_explicit_operand_at_boundary_is_denied(line: str):
     try:
         code, _, err = await _sh(ws, line, session_id="agent")
         assert code != 0
-        assert "not allowed" in err and "/closed" in err
+        assert "No such file or directory" in err and "/closed" in err
+        assert "not allowed" not in err
     finally:
         await ws.close()
 
 
 @pytest.mark.asyncio
-async def test_fuse_core_confines_ungranted_mount():
+async def test_fuse_core_confines_a_hidden_mount():
     ws = scoped_world("monty")
     try:
         sess = ws.get_session("agent")
         core = MountCore(ws.ops, session=sess)
-        with pytest.raises(PermissionError):
+        with pytest.raises(FileNotFoundError):
             core.readdir("/closed")
-        with pytest.raises(PermissionError):
+        with pytest.raises(FileNotFoundError):
             fh = core.open("/closed/sec.txt")
             core.read("/closed/sec.txt", 4096, 0, fh)
     finally:
@@ -414,12 +423,12 @@ async def test_scoped_session_hides_name_from_root_listing():
 
 
 @pytest.mark.asyncio
-async def test_scoped_link_below_ungranted_mount_stays_hidden():
-    """A namespace link under an ungranted mount must not leak its name.
+async def test_scoped_link_below_a_hidden_mount_stays_hidden():
+    """A namespace link under a hidden mount must not leak its name.
 
     ``child_mount_names`` already hides ``/closed`` itself; a link at
     ``/closed/leak`` is namespace state above the backend, but its path
-    discloses the same name, so the same grant filters it. The
+    discloses the same name, so the same hide filters it. The
     unrestricted view keeps the link.
     """
     ws = scoped_world("monty")
@@ -436,13 +445,13 @@ async def test_scoped_link_below_ungranted_mount_stays_hidden():
 
 
 def granted_child_world(runtime: str) -> Workspace:
-    """An ungranted parent mount with a granted child nested inside.
+    """A hidden parent mount with a reachable child nested inside.
 
-    ``/base`` (``a.txt``) is not granted to session ``agent``;
-    ``/base/inner`` (``deep.txt``) is. The root listing deliberately
-    shows ``base`` as the traversal path to the grant, so the walk down
-    through ``/base`` must answer with structure and nothing of the
-    parent's own content.
+    ``/base``'s own content (``a.txt``) is hidden from session
+    ``agent``; ``/base/inner`` (``deep.txt``) is not. The root listing
+    deliberately shows ``base`` as the traversal path to the child, so
+    the walk down through ``/base`` must answer with structure and
+    nothing of the parent's own content.
 
     Args:
         runtime (str): registry name of the guest runtime to attach.
@@ -455,18 +464,14 @@ def granted_child_world(runtime: str) -> Workspace:
         mode=MountMode.EXEC,
         runtimes=[runtime, "vfs"],
     )
-    ws.create_session("agent", mounts=["/base/inner"])
+    ws.create_session("agent", profile={"paths": {"hide": ["/base/a.txt"]}})
     return ws
 
 
 @pytest.mark.asyncio
-async def test_scoped_walk_reaches_nested_grant():
-    """An ungranted parent with a granted child serves its structure.
-
-    Refusing ``/base`` strands the session outside its own mount, and
-    serving the backend would leak ungranted content; the answer is
-    the granted structure and nothing else.
-    """
+async def test_scoped_walk_reaches_a_child_below_hidden_content():
+    """A hidden entry never strands the session outside the tree it
+    has to walk through to reach what it may see."""
     ws = granted_child_world("monty")
     try:
         sess = ws.get_session("agent")
@@ -476,7 +481,7 @@ async def test_scoped_walk_reaches_nested_grant():
         assert "a.txt" not in names
         assert core.getattr("/base")["st_mode"] & 0o040000
         assert "deep.txt" in core.readdir("/base/inner")
-        with pytest.raises(PermissionError):
+        with pytest.raises(FileNotFoundError):
             core.getattr("/base/a.txt")
     finally:
         await ws.close()
@@ -490,7 +495,7 @@ async def test_scoped_walk_reaches_nested_grant():
     ("du -a /", "/closed"),
 ])
 async def test_fanout_does_not_cross_boundary(line: str, needle: str):
-    """A fan-out from ``/`` must not surface an ungranted mount.
+    """A fan-out from ``/`` must not surface a hidden mount.
 
     Args:
         line (str): the recursive shell line rooted above the boundary.
@@ -505,14 +510,13 @@ async def test_fanout_does_not_cross_boundary(line: str, needle: str):
 
 
 def shadowed_world(runtime: str) -> Workspace:
-    """A parent backend holding keys shadowed by an ungranted mount.
+    """A parent backend holding keys shadowed by a hidden mount.
 
-    ``/base`` (granted to session ``agent``) is seeded with
-    ``inner/leftover.txt`` in its own backend; ``/base/inner`` is a
-    second, ungranted mount that shadows that key in the merged view.
-    The trap: with no *allowed* descendant the fan-out is tempting to
-    skip, and single-mount dispatch then serves the shadowed key that
-    path dispatch itself refuses.
+    ``/base`` is seeded with ``inner/leftover.txt`` in its own backend;
+    ``/base/inner`` is a second mount, hidden from session ``agent``,
+    that shadows that key in the merged view. The trap: with no visible
+    descendant the fan-out is tempting to skip, and single-mount
+    dispatch then serves the shadowed key that path dispatch refuses.
 
     Args:
         runtime (str): registry name of the guest runtime to attach.
@@ -530,7 +534,7 @@ def shadowed_world(runtime: str) -> Workspace:
         mode=MountMode.EXEC,
         runtimes=[runtime, "vfs"],
     )
-    ws.create_session("agent", mounts=["/base"])
+    ws.create_session("agent", profile={"paths": {"hide": ["/base/inner"]}})
     return ws
 
 
@@ -539,9 +543,9 @@ def shadowed_world(runtime: str) -> Workspace:
     ("find /base", "leftover"),
     ("grep -r SHADOWED /base", "SHADOWED-xyz"),
 ])
-async def test_fanout_hides_shadowed_keys_when_no_descendant_is_granted(
+async def test_fanout_hides_shadowed_keys_when_the_descendant_is_hidden(
         line: str, needle: str):
-    """Fan-out still engages when every descendant mount is ungranted.
+    """Fan-out still engages when every descendant mount is hidden.
 
     The parent backend's keys under the hidden mount's prefix are
     shadowed in the merged view, so the walk must drop them even though
@@ -573,7 +577,7 @@ async def test_fanout_hides_shadowed_keys_when_no_descendant_is_granted(
         "console.log(f.readAsString())\"",
     }),
 )
-async def test_guest_cannot_read_ungranted_mount(runtime: str, line: str):
+async def test_guest_cannot_read_a_hidden_mount(runtime: str, line: str):
     """A confined guest reading ``/closed`` must be refused, not served.
 
     Args:
@@ -590,12 +594,14 @@ async def test_guest_cannot_read_ungranted_mount(runtime: str, line: str):
 
 
 @pytest.mark.asyncio
-async def test_guest_cannot_write_ungranted_mount():
+async def test_guest_cannot_write_a_hidden_mount():
     ws = scoped_world("monty")
     try:
         line = ("python3 -c \"from pathlib import Path; "
                 "Path('/closed/planted.txt').write_text('X')\"")
         await _sh(ws, line, session_id="agent")
+        # Read back through the unrestricted default session: the
+        # confined one cannot see the mount at all.
         code, out, _ = await _sh(ws, "ls /closed")
         assert code == 0
         assert "planted.txt" not in out

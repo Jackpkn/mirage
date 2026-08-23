@@ -66,21 +66,21 @@ def _two_mounts(policies=None) -> Workspace:
                      policies=policies)
 
 
-def test_fuse_symlink_on_ungranted_turf_is_refused():
+def test_fuse_symlink_on_hidden_turf_is_refused():
     # The R8 hole: a session-scoped kernel mount could create a link on
-    # an ungranted mount's turf because the FUSE symlink path wrote the
-    # namespace table directly, at a layer no session grant covers.
+    # a mount the profile hides, because the FUSE symlink path wrote the
+    # namespace table directly, at a layer no session view covers.
     ws = _two_mounts()
-    sess = ws.create_session("agent", mounts={"/a": "write"})
+    sess = ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
     core = MountCore(ws.ops, session=sess)
     with pytest.raises(PermissionError):
         core.symlink("/b/lk", "/a/x.txt")
     assert not ws.namespace.is_link("/b/lk")
 
 
-def test_fuse_symlink_on_granted_turf_still_works():
+def test_fuse_symlink_on_visible_turf_still_works():
     ws = _two_mounts()
-    sess = ws.create_session("agent", mounts={"/a": "write"})
+    sess = ws.create_session("agent")
     core = MountCore(ws.ops, session=sess)
     core.symlink("/a/lk", "x.txt")
     assert ws.namespace.readlink("/a/lk") == "x.txt"
@@ -111,9 +111,9 @@ def test_ln_leaves_an_op_record():
     assert any(r.op == "symlink" and r.path == "/a/lk" for r in ws.ops.records)
 
 
-def test_scoped_shell_ln_onto_ungranted_turf_is_refused():
+def test_scoped_shell_ln_onto_hidden_turf_is_refused():
     ws = _two_mounts()
-    ws.create_session("agent", mounts={"/a": "write"})
+    ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
 
     async def run():
         return await ws.execute("ln -s /a/x.txt /b/lk", session_id="agent")
@@ -136,12 +136,12 @@ def test_symlink_and_readlink_answer_on_the_ops_facade():
     assert ws.namespace.readlink("/a/lk") == "x.txt"
 
 
-def test_scoped_shell_readlink_on_ungranted_turf_is_refused():
-    # The read twin of the scoped-ln hole: a session granted only /a
+def test_scoped_shell_readlink_on_hidden_turf_is_refused():
+    # The read twin of the scoped-ln hole: a session that cannot see /b
     # must not learn /b/lk's target through the readlink builtin, which
     # used to read the node table directly instead of dispatching.
     ws = _two_mounts()
-    ws.create_session("agent", mounts={"/a": "write"})
+    ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
 
     async def run():
         made = await ws.execute("ln -s /b/y.txt /b/lk")
@@ -153,11 +153,11 @@ def test_scoped_shell_readlink_on_ungranted_turf_is_refused():
     assert b"y.txt" not in (io.stdout or b"")
 
 
-def test_scoped_shell_readlink_f_on_ungranted_turf_is_refused():
+def test_scoped_shell_readlink_f_on_hidden_turf_is_refused():
     # -m/-f canonicalize without any existence probe, so without the
-    # gate they printed the resolved target of an ungranted link.
+    # gate they printed the resolved target of a hidden link.
     ws = _two_mounts()
-    ws.create_session("agent", mounts={"/a": "write"})
+    ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
 
     async def run():
         made = await ws.execute("ln -s /b/y.txt /b/lk")
@@ -362,15 +362,19 @@ def test_a_command_can_opt_into_the_session_view():
     assert asyncio.run(run()).strip() == "yes"
 
 
-def test_facade_symlink_respects_session_grants():
+def test_facade_symlink_respects_the_sessions_view():
     ws = _two_mounts()
-    sess = ws.create_session("agent", mounts={"/a": "write"})
+    sess = ws.create_session("agent", profile={"paths": {"hide": ["/b"]}})
 
     async def run():
         token = set_current_session(sess)
         try:
             await ws.ops.symlink("/a/lk", "x.txt")
-            with pytest.raises(PermissionError, match="not allowed"):
+            # Creating under a hidden path is EACCES, not ENOENT: a
+            # create is the one op a hide answers out loud, because
+            # silently succeeding would leave a link the session
+            # cannot see and the next writer cannot overwrite.
+            with pytest.raises(PermissionError):
                 await ws.ops.symlink("/b/lk", "y.txt")
         finally:
             reset_current_session(token)

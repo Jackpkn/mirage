@@ -17,6 +17,10 @@ const S_IFREG = 0o100000
 
 export const DIR_MODE = S_IFDIR | 0o777
 export const FILE_MODE = S_IFREG | 0o666
+// A link is not this filesystem's choice the way the two above are: no
+// POSIX system consults the bits on a symlink, so every translator
+// reports the same mode and this one is shared rather than restated.
+export { LINK_MODE } from '../../../utils/stat_view.ts'
 
 export const BLKSIZE = 4096
 

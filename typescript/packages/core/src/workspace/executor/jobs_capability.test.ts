@@ -15,17 +15,17 @@
 import { describe, expect, it } from 'vitest'
 import { makeWorkspace, stdoutStr } from '../fixtures/workspace_fixture.ts'
 
-describe('background jobs respect mountModes (regression)', () => {
+describe("background jobs respect the session's hides (regression)", () => {
   // This passes both before and after the Session.fork() migration: the
   // bg-job promise is created inside the parent's runWithSession() scope,
-  // so AsyncLocalStorage propagates the *parent* session to
-  // assertMountAllowed even though the bgSession object itself does not
-  // carry mountModes. Pinning this so a future change to ALS scoping
+  // so AsyncLocalStorage propagates the *parent* session to the hide
+  // filter even though the bgSession object itself does not carry the
+  // hidden-paths spec. Pinning this so a future change to ALS scoping
   // (or a switch from ALS to per-session-object enforcement) cannot
-  // silently let `cmd &` escape an allowlist.
-  it('cmd & in a restricted session cannot escape the allowlist', async () => {
+  // silently let `cmd &` write where the session cannot see.
+  it('cmd & in a restricted session cannot escape the hides', async () => {
     const { ws } = await makeWorkspace()
-    ws.createSession('restricted', { mounts: ['/disk'] })
+    ws.createSession('restricted', { profile: { paths: { hide: ['/ram'] } } })
     await ws.execute('echo hello > /ram/leaked.txt &', {
       sessionId: 'restricted',
     })

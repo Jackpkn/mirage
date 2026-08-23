@@ -118,7 +118,7 @@ async def grep(accessor: GitHubAccessor, paths: list[PathSpec],
     return await generic_grep(
         resolved,
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(github_readdir, accessor, opts.index),
         stat=bound_op(github_stat, accessor, opts.index),
         read_bytes=bound_op(github_read, accessor, opts.index),

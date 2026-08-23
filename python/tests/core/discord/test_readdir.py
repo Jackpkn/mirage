@@ -12,362 +12,119 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from unittest.mock import AsyncMock, patch
+import re
 
 import pytest
 
-from mirage.accessor.discord import DiscordAccessor
-from mirage.cache.index import IndexEntry
-from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.discord.config import DiscordConfig
+import mirage.core.discord.readdir as readdir_mod
 from mirage.core.discord.readdir import readdir
 from mirage.core.discord.render import history_jsonl_bytes, member_json_bytes
 from mirage.types import PathSpec
+from tests.core.discord.conftest import DAY, MEMBERS, MESSAGES
+
+pytestmark = pytest.mark.asyncio
+
+GUILD_DIR = "My Server__G001"
+CHANNEL = f"{GUILD_DIR}/channels/general__C001"
 
 
-@pytest.fixture
-def index():
-    return RAMIndexCacheStore()
+def spec(virtual: str) -> PathSpec:
+    return PathSpec(virtual=virtual,
+                    directory=virtual,
+                    resource_path=virtual.lstrip("/"))
 
 
-@pytest.fixture
-def accessor():
-    return DiscordAccessor(config=DiscordConfig(token="test-bot-token"), )
+async def test_readdir_root(api, accessor, index):
+    result = await readdir(accessor, spec("/"), index)
+    assert result == [f"/{GUILD_DIR}"]
 
 
-@pytest.mark.asyncio
-async def test_readdir_root(accessor, index):
-    guilds = [
-        {
-            "id": "G001",
-            "name": "My Server"
-        },
-    ]
-    with patch(
-            "mirage.core.discord.readdir.list_guilds",
-            new_callable=AsyncMock,
-            return_value=guilds,
-    ):
-        result = await readdir(
-            accessor, PathSpec(resource_path="", virtual="/", directory="/"),
-            index)
+async def test_readdir_root_with_slash_in_name(api, accessor, index,
+                                               monkeypatch):
 
-    assert "/My Server__G001" in result
+    async def guilds(config):
+        return [{"id": "G001", "name": "A/B Test Server"}]
 
-
-@pytest.mark.asyncio
-async def test_readdir_root_with_slash_in_name(accessor, index):
-    guilds = [
-        {
-            "id": "G001",
-            "name": "A/B Test Server"
-        },
-    ]
-    with patch(
-            "mirage.core.discord.readdir.list_guilds",
-            new_callable=AsyncMock,
-            return_value=guilds,
-    ):
-        result = await readdir(
-            accessor, PathSpec(resource_path="", virtual="/", directory="/"),
-            index)
-
+    monkeypatch.setattr(readdir_mod, "list_guilds", guilds)
+    result = await readdir(accessor, spec("/"), index)
     assert result == ["/A∕B Test Server__G001"]
 
 
-@pytest.mark.asyncio
-async def test_readdir_root_with_apostrophe(accessor, index):
-    guilds = [
-        {
-            "id": "G001",
-            "name": "Zecheng's Server"
-        },
-    ]
-    with patch(
-            "mirage.core.discord.readdir.list_guilds",
-            new_callable=AsyncMock,
-            return_value=guilds,
-    ):
-        result = await readdir(
-            accessor, PathSpec(resource_path="", virtual="/", directory="/"),
-            index)
+async def test_readdir_root_with_apostrophe(api, accessor, index, monkeypatch):
 
-    assert "/Zecheng's Server__G001" in result
+    async def guilds(config):
+        return [{"id": "G001", "name": "Zecheng's Server"}]
+
+    monkeypatch.setattr(readdir_mod, "list_guilds", guilds)
+    result = await readdir(accessor, spec("/"), index)
+    assert result == ["/Zecheng's Server__G001"]
 
 
-@pytest.mark.asyncio
-async def test_readdir_guild(accessor, index):
-    await index.put(
-        "/My Server",
-        IndexEntry(
-            id="G001",
-            name="My Server",
-            resource_type="discord/guild",
-            vfs_name="My Server",
-        ),
-    )
-
-    result = await readdir(
-        accessor,
-        PathSpec(resource_path="My Server",
-                 virtual="/My Server",
-                 directory="/My Server"), index)
-
+async def test_readdir_guild(api, accessor, index):
+    result = await readdir(accessor, spec(f"/{GUILD_DIR}"), index)
     assert result == [
-        "/My Server/channels",
-        "/My Server/members",
+        f"/{GUILD_DIR}/channels",
+        f"/{GUILD_DIR}/members",
     ]
 
 
-@pytest.mark.asyncio
-async def test_readdir_channels(accessor, index):
-    await index.put(
-        "/My Server",
-        IndexEntry(
-            id="G001",
-            name="My Server",
-            resource_type="discord/guild",
-            vfs_name="My Server",
-        ),
-    )
-    channels = [
-        {
-            "id": "C001",
-            "name": "general",
-            "type": 0
-        },
-        {
-            "id": "C002",
-            "name": "random",
-            "type": 0
-        },
-    ]
-    with patch(
-            "mirage.core.discord.readdir.list_channels",
-            new_callable=AsyncMock,
-            return_value=channels,
-    ):
-        result = await readdir(
-            accessor,
-            PathSpec(resource_path="My Server/channels",
-                     virtual="/My Server/channels",
-                     directory="/My Server/channels"), index)
-
-    assert "/My Server/channels/general__C001" in result
-    assert "/My Server/channels/random__C002" in result
-
-
-@pytest.mark.asyncio
-async def test_readdir_channel_dates(accessor, index):
-    await index.put(
-        "/My Server",
-        IndexEntry(
-            id="G001",
-            name="My Server",
-            resource_type="discord/guild",
-            vfs_name="My Server",
-        ),
-    )
-    await index.put(
-        "/My Server/channels/general",
-        IndexEntry(
-            id="C001",
-            name="general",
-            resource_type="discord/channel",
-            vfs_name="general",
-        ),
-    )
-
-    result = await readdir(
-        accessor,
-        PathSpec(resource_path="My Server/channels/general",
-                 virtual="/My Server/channels/general",
-                 directory="/My Server/channels/general"), index)
-
-    assert len(result) >= 1
-    # New layout: date directories (no extension)
-    import re
-    date_re = re.compile(r"^/My Server/channels/general/\d{4}-\d{2}-\d{2}$")
-    assert all(date_re.match(r) for r in result)
-
-
-@pytest.mark.asyncio
-async def test_readdir_date_sizes_chat_jsonl(accessor, index):
-    await index.put(
-        "/My Server",
-        IndexEntry(
-            id="G001",
-            name="My Server",
-            resource_type="discord/guild",
-            vfs_name="My Server",
-        ),
-    )
-    await index.put(
-        "/My Server/channels/general",
-        IndexEntry(
-            id="C001",
-            name="general",
-            resource_type="discord/channel",
-            vfs_name="general",
-        ),
-    )
-    messages = [
-        {
-            "id": "1",
-            "content": "hello",
-            "author": {
-                "username": "alice"
-            }
-        },
-        {
-            "id": "2",
-            "content": "world",
-            "author": {
-                "username": "bob"
-            }
-        },
-    ]
-    with patch(
-            "mirage.core.discord.readdir.list_messages_for_day",
-            new_callable=AsyncMock,
-            return_value=messages,
-    ):
-        await readdir(
-            accessor,
-            PathSpec(resource_path="My Server/channels/general/2024-01-15",
-                     virtual="/My Server/channels/general/2024-01-15",
-                     directory="/My Server/channels/general/2024-01-15"),
-            index)
-
-    lookup = await index.get(
-        "/My Server/channels/general/2024-01-15/chat.jsonl")
-    assert lookup.entry.size == len(history_jsonl_bytes(messages))
-
-
-@pytest.mark.asyncio
-async def test_readdir_members_sized(accessor, index):
-    await index.put(
-        "/My Server",
-        IndexEntry(
-            id="G001",
-            name="My Server",
-            resource_type="discord/guild",
-            vfs_name="My Server",
-        ),
-    )
-    members = [{"user": {"id": "U001", "username": "alice"}, "nick": "al"}]
-    with patch(
-            "mirage.core.discord.readdir.list_members",
-            new_callable=AsyncMock,
-            return_value=members,
-    ):
-        await readdir(
-            accessor,
-            PathSpec(resource_path="My Server/members",
-                     virtual="/My Server/members",
-                     directory="/My Server/members"), index)
-
-    lookup = await index.get("/My Server/members/alice__U001.json")
-    assert lookup.entry.size == len(member_json_bytes(members[0]))
-
-
-@pytest.mark.asyncio
-async def test_readdir_unknown_shape_raises_enoent(accessor, index):
-    await index.put(
-        "/My Server",
-        IndexEntry(
-            id="G001",
-            name="My Server",
-            resource_type="discord/guild",
-            vfs_name="My Server",
-        ),
-    )
+async def test_readdir_bogus_guild_is_enoent(api, accessor, index):
     with pytest.raises(FileNotFoundError):
-        await readdir(
-            accessor,
-            PathSpec(resource_path="My Server/nope",
-                     virtual="/My Server/nope",
-                     directory="/My Server/nope"), index)
+        await readdir(accessor, spec("/Nope__G9"), index)
 
 
-@pytest.mark.asyncio
-async def test_readdir_leaf_raises_enotdir(accessor, index):
+async def test_readdir_channels(api, accessor, index):
+    result = await readdir(accessor, spec(f"/{GUILD_DIR}/channels"), index)
+    assert f"/{GUILD_DIR}/channels/general__C001" in result
+    assert f"/{GUILD_DIR}/channels/random__C002" in result
+
+
+async def test_readdir_channel_dates(api, accessor, index):
+    result = await readdir(accessor, spec(f"/{CHANNEL}"), index)
+    assert len(result) >= 1
+    date_re = re.compile(rf"^/{re.escape(CHANNEL)}/\d{{4}}-\d{{2}}-\d{{2}}$")
+    assert all(date_re.match(r) for r in result)
+    assert f"/{CHANNEL}/{DAY}" in result
+
+
+async def test_readdir_date_sizes_chat_jsonl(api, accessor, index):
+    await readdir(accessor, spec(f"/{CHANNEL}/{DAY}"), index)
+    lookup = await index.get(f"/{CHANNEL}/{DAY}/chat.jsonl")
+    assert lookup.entry.size == len(history_jsonl_bytes(MESSAGES))
+
+
+async def test_readdir_members_sized(api, accessor, index):
+    await readdir(accessor, spec(f"/{GUILD_DIR}/members"), index)
+    lookup = await index.get(f"/{GUILD_DIR}/members/alice__U001.json")
+    assert lookup.entry.size == len(member_json_bytes(MEMBERS[0]))
+
+
+async def test_readdir_unknown_shape_raises_enoent(api, accessor, index):
+    with pytest.raises(FileNotFoundError):
+        await readdir(accessor, spec(f"/{GUILD_DIR}/nope"), index)
+
+
+async def test_readdir_leaf_raises_enotdir(api, accessor, index):
     # A file is ENOTDIR, not ENOENT: callers tell "read this" from "nothing
     # here" by the errno.
-    key = "My Server/channels/general/2026-06-01/chat.jsonl"
     with pytest.raises(NotADirectoryError):
-        await readdir(
-            accessor,
-            PathSpec(resource_path=key, virtual="/" + key,
-                     directory="/" + key), index)
+        await readdir(accessor, spec(f"/{CHANNEL}/{DAY}/chat.jsonl"), index)
 
 
-@pytest.mark.asyncio
-async def test_readdir_files_skips_tombstoned_attachments(accessor, index):
+async def test_readdir_files_skips_tombstoned_attachments(
+        api, accessor, index):
     # Tombstoned and access-restricted attachments carry an id but no
     # download URL and no byte size; listing them would surface phantom
     # files that ENOENT on read.
-    await index.put(
-        "/My Server",
-        IndexEntry(
-            id="G001",
-            name="My Server",
-            resource_type="discord/guild",
-            vfs_name="My Server",
-        ),
-    )
-    await index.put(
-        "/My Server/channels/general",
-        IndexEntry(
-            id="C001",
-            name="general",
-            resource_type="discord/channel",
-            vfs_name="general",
-        ),
-    )
-    messages = [{
-        "id":
-        "1",
-        "content":
-        "files",
-        "author": {
-            "username": "alice"
-        },
-        "attachments": [
-            {
-                "id": "A1",
-                "filename": "kept.txt",
-                "url": "https://cdn.example/kept.txt",
-                "size": 5,
-            },
-            {
-                "id": "A2",
-                "filename": "tombstoned.txt",
-            },
-            {
-                "id": "A3",
-                "filename": "sizeless.txt",
-                "url": "https://cdn.example/sizeless.txt",
-            },
-            {
-                "id": "A4",
-                "filename": "urlless.txt",
-                "size": 9,
-            },
-        ],
-    }]
-    with patch(
-            "mirage.core.discord.readdir.list_messages_for_day",
-            new_callable=AsyncMock,
-            return_value=messages,
-    ):
-        names = await readdir(
-            accessor,
-            PathSpec(
-                resource_path="My Server/channels/general/2024-01-15/files",
-                virtual="/My Server/channels/general/2024-01-15/files",
-                directory="/My Server/channels/general/2024-01-15/files"),
-            index)
-    assert names == [
-        "/My Server/channels/general/2024-01-15/files/kept__A1.txt"
-    ]
+    names = await readdir(accessor, spec(f"/{CHANNEL}/{DAY}/files"), index)
+    assert names == [f"/{CHANNEL}/{DAY}/files/kept__A1.txt"]
+
+
+async def test_files_dir_rides_the_day_fetch(api, accessor, index):
+    # One history fetch answers the day dir AND its files subdir: the day
+    # lister seeds the files listing, so entering it costs no second call.
+    await readdir(accessor, spec(f"/{CHANNEL}/{DAY}"), index)
+    fetches = len(api.day_fetches)
+    names = await readdir(accessor, spec(f"/{CHANNEL}/{DAY}/files"), index)
+    assert names == [f"/{CHANNEL}/{DAY}/files/kept__A1.txt"]
+    assert len(api.day_fetches) == fetches

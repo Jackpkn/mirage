@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { IOResult, OpReport } from '../io/types.ts'
-import type { PathSpec } from '../types.ts'
+import type { PathSpec, SetAttrFields } from '../types.ts'
 import type { RuntimeConfig } from './config.ts'
 import type { PolicyScript } from './policy/types.ts'
 
@@ -68,6 +68,10 @@ export type DispatchFn = (
 /**
  * The narrow bridge a sandboxed guest's file I/O rides: fixed op names,
  * string paths, positional payloads (the guest cannot build PathSpecs).
+ *
+ * `dst` carries a rename's destination and a symlink's target: both are
+ * the op's second string, and a link target is stored verbatim rather
+ * than resolved, so there is nothing a second slot would say.
  */
 export type BridgeDispatchFn = (
   op:
@@ -81,10 +85,14 @@ export type BridgeDispatchFn = (
     | 'unlink'
     | 'mkdir'
     | 'rmdir'
-    | 'rename',
+    | 'rename'
+    | 'symlink'
+    | 'readlink'
+    | 'setattr',
   path: string,
   bytes?: Uint8Array,
   dst?: string,
+  attrs?: SetAttrFields,
 ) => Promise<unknown>
 
 /**
@@ -92,6 +100,12 @@ export type BridgeDispatchFn = (
  * added or removed after construction are always picked up.
  */
 export type PrefixSource = () => string[]
+
+/**
+ * Live view of the link names one directory owns, read per listing so a
+ * link created after construction is always seen.
+ */
+export type LinkChildrenSource = (directory: string) => Set<string>
 
 /** One interpreter execution request, language-agnostic. */
 export interface RunArgs {

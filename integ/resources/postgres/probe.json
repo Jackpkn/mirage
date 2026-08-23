@@ -211,6 +211,97 @@
         "stdout": "",
         "stderr": "ls: cannot access '/pg/.hidden': No such file or directory\n"
       }
+    },
+    {
+      "id": "pg_ls_unknown_schema",
+      "seq": 610106,
+      "targets": [
+        "postgres"
+      ],
+      "command": "ls /pg/nope",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '/pg/nope': No such file or directory\n"
+      }
+    },
+    {
+      "id": "pg_test_d_unknown_schema",
+      "seq": 610107,
+      "targets": [
+        "postgres"
+      ],
+      "command": "test -d /pg/nope",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "pg_find_unknown_schema",
+      "seq": 610108,
+      "targets": [
+        "postgres"
+      ],
+      "command": "find /pg/nope",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "find: '/pg/nope': No such file or directory\n"
+      }
+    },
+    {
+      "id": "pg_stat_unknown_schema",
+      "seq": 610109,
+      "targets": [
+        "postgres"
+      ],
+      "command": "stat /pg/nope",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "stat: /pg/nope: No such file or directory\n"
+      }
+    },
+    {
+      "id": "pg_ls_kind_under_unknown_schema",
+      "seq": 610110,
+      "targets": [
+        "postgres"
+      ],
+      "command": "ls /pg/nope/tables",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '/pg/nope/tables': No such file or directory\n"
+      }
+    },
+    {
+      "id": "pg_ls_unknown_entity",
+      "seq": 610111,
+      "targets": [
+        "postgres"
+      ],
+      "command": "ls /pg/public/tables/ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '/pg/public/tables/ghost': No such file or directory\n"
+      }
+    },
+    {
+      "id": "pg_cat_file_under_unknown_entity",
+      "seq": 610112,
+      "targets": [
+        "postgres"
+      ],
+      "command": "cat /pg/public/tables/ghost/rows.jsonl",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /pg/public/tables/ghost/rows.jsonl: No such file or directory\n"
+      }
     }
   ]
 }

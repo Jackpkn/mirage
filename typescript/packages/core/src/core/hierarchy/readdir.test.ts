@@ -19,7 +19,7 @@ import { RAMIndexCacheStore } from '../../cache/index/ram.ts'
 import { FileType, PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { stripSlash } from '../../utils/slash.ts'
-import { JSON_NAME } from './codec.ts'
+import { DATE, JSON_NAME } from './codec.ts'
 import { makeReaddir, type EntryLister, type Guard, type Lister } from './readdir.ts'
 import { Slot, Scope, makeDetectScope } from './scope.ts'
 
@@ -32,6 +32,8 @@ const SCOPES: readonly Scope[] = [
     leaf: true,
     filetype: FileType.JSON,
   }),
+  new Scope({ kind: 'room_atts', segments: ['rooms', new Slot('room'), 'atts'] }),
+  new Scope({ kind: 'room_day', segments: ['rooms', new Slot('room'), new Slot('day', DATE)] }),
 ]
 
 const detectScope = makeDetectScope(SCOPES)
@@ -133,7 +135,8 @@ describe('hierarchy makeReaddir', () => {
     // The classifier refuses every dot-leading segment, so a listing must
     // not advertise one (a quoted postgres schema can be named ".foo").
     const hiddenRooms: Lister<FakeAccessor> = async (accessor, match) => {
-      const rooms = (await listRooms(accessor, match)) ?? []
+      const listed = (await listRooms(accessor, match)) ?? []
+      const rooms = Array.isArray(listed) ? listed : listed.entries
       const entry = rooms[0]?.[1]
       if (entry === undefined) throw new Error('fixture rooms empty')
       return [['.secret', entry], ...rooms]
@@ -218,6 +221,116 @@ describe('hierarchy makeReaddir entry listers', () => {
         entryListers: { room: entryNotes },
         staticRoot: ['rooms'],
       }),
-    ).toThrow('kinds in both lister tables')
+    ).toThrow('kinds in several lister tables')
+  })
+})
+
+const seedingNotes: EntryLister<FakeAccessor> = (accessor, match, own) => {
+  accessor.calls.push(`seed-notes:${match.slots.room ?? ''}`)
+  const atts = new IndexEntry({
+    id: `${own.id}:atts`,
+    name: 'atts',
+    resourceType: 'fake/atts',
+    vfsName: 'atts',
+  })
+  const blob = new IndexEntry({
+    id: 'x',
+    name: 'x.bin',
+    resourceType: 'fake/blob',
+    vfsName: 'x.bin',
+    size: 3,
+  })
+  return Promise.resolve({
+    entries: [['atts', atts]] as [string, IndexEntry][],
+    seeds: { atts: [['x.bin', blob]] as [string, IndexEntry][] },
+  })
+}
+
+const attsFallback: EntryLister<FakeAccessor> = (accessor, match) => {
+  accessor.calls.push(`atts-fallback:${match.slots.room ?? ''}`)
+  return Promise.resolve<[string, IndexEntry][]>([])
+}
+
+const SEEDED_READDIR = makeReaddir<FakeAccessor>(detectScope, {
+  listers: { rooms: listRooms },
+  entryListers: {
+    room: seedingNotes,
+    room_atts: attsFallback,
+  },
+  staticRoot: ['rooms'],
+})
+
+describe('hierarchy makeReaddir seeded listings', () => {
+  it('serves the seeded child listing without a second fetch', async () => {
+    const accessor = new FakeAccessor()
+    const index = new RAMIndexCacheStore()
+    await SEEDED_READDIR(accessor, spec('/rooms/red'), index)
+    const out = await SEEDED_READDIR(accessor, spec('/rooms/red/atts'), index)
+    expect(out).toEqual(['/h/rooms/red/atts/x.bin'])
+    // One fetch answered both directories; the atts lister never ran.
+    expect(accessor.calls).toEqual(['rooms', 'seed-notes:red'])
+  })
+
+  it('re-checks the listing after resolving the entry', async () => {
+    // A cold readdir of the seeded child resolves its own entry, which
+    // warms the seeding parent; the re-check then serves the listing the
+    // warm just wrote instead of running the fallback lister.
+    const accessor = new FakeAccessor()
+    const out = await SEEDED_READDIR(accessor, spec('/rooms/red/atts'), new RAMIndexCacheStore())
+    expect(out).toEqual(['/h/rooms/red/atts/x.bin'])
+    expect(accessor.calls).toEqual(['rooms', 'seed-notes:red'])
+  })
+})
+
+const daysByRoom: EntryLister<FakeAccessor> = (accessor, match, roomEntry) => {
+  const day = match.slots.day ?? ''
+  accessor.calls.push(`days:${roomEntry.id}:${day}`)
+  return Promise.resolve<[string, IndexEntry][]>([
+    [
+      `${day}.txt`,
+      new IndexEntry({
+        id: `${roomEntry.id}:${day}`,
+        name: `${day}.txt`,
+        resourceType: 'fake/day_note',
+        vfsName: `${day}.txt`,
+      }),
+    ],
+  ])
+}
+
+const PARENT_READDIR = makeReaddir<FakeAccessor>(detectScope, {
+  listers: { rooms: listRooms },
+  entryListers: { room: entryNotes },
+  parentEntryListers: { room_day: daysByRoom },
+  staticRoot: ['rooms'],
+})
+
+describe('hierarchy makeReaddir parent-entry listers', () => {
+  it('is proven by the parent entry, not its own', async () => {
+    // The day dir has no entry of its own (the room listing never minted
+    // one); the proof is the room entry, handed to the lister.
+    const accessor = new FakeAccessor()
+    const out = await PARENT_READDIR(accessor, spec('/rooms/red/2024-01-15'))
+    expect(out).toEqual(['/h/rooms/red/2024-01-15/2024-01-15.txt'])
+    expect(accessor.calls).toEqual(['rooms', 'days:red:2024-01-15'])
+  })
+
+  it('throws ENOENT for a bogus parent', async () => {
+    const accessor = new FakeAccessor()
+    await expect(PARENT_READDIR(accessor, spec('/rooms/ghost/2024-01-15'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(accessor.calls).toEqual(['rooms'])
+  })
+
+  it('refuses a kind named in several lister tables at build', () => {
+    expect(() =>
+      makeReaddir<FakeAccessor>(detectScope, {
+        listers: { rooms: listRooms },
+        entryListers: { room_day: attsFallback },
+        parentEntryListers: { room_day: daysByRoom },
+        staticRoot: ['rooms'],
+      }),
+    ).toThrow('kinds in several lister tables')
   })
 })

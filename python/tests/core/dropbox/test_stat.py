@@ -23,7 +23,7 @@ from mirage.core.dropbox.read import read
 from mirage.core.dropbox.readdir import readdir
 from mirage.core.dropbox.stat import stat
 from mirage.resource.dropbox.config import DropboxConfig
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 def make_accessor() -> DropboxAccessor:
@@ -64,7 +64,7 @@ async def test_stat_populates_from_parent_listing(index):
                      virtual="/note.txt",
                      directory="/"), index)
     assert out.size == 5
-    assert out.type == FileType.TEXT
+    assert out.content == ContentType.TEXT
     assert out.extra["dropbox_id"] == "id:1"
 
 

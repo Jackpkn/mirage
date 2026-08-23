@@ -161,14 +161,24 @@ describe('readdir /<guild>', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('returns the channels/members pair without index (no auto-bootstrap)', async () => {
-    const t = new FakeDiscordTransport(() => null)
+  it('returns the channels/members pair once the guild is proven', async () => {
+    const t = new FakeDiscordTransport((_m, endpoint) =>
+      endpoint === '/users/@me/guilds' ? [{ id: 'G1', name: 'Whatever' }] : null,
+    )
     const out = await readdir(
       new DiscordAccessor(t),
       spec('/mnt/discord/Whatever__G1', '/mnt/discord'),
     )
     expect(out).toEqual(['/mnt/discord/Whatever__G1/channels', '/mnt/discord/Whatever__G1/members'])
-    expect(t.calls).toHaveLength(0)
+  })
+
+  it('throws ENOENT for a bogus guild', async () => {
+    const t = new FakeDiscordTransport((_m, endpoint) =>
+      endpoint === '/users/@me/guilds' ? [{ id: 'G1', name: 'Whatever' }] : null,
+    )
+    await expect(
+      readdir(new DiscordAccessor(t), spec('/mnt/discord/Nope__G9', '/mnt/discord')),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 
@@ -409,8 +419,8 @@ describe('readdir /<guild>/channels/<ch>', () => {
     expect(out[1]).toBe('/mnt/discord/My Server__G1/channels/general__C1/2016-04-29')
     expect(out[29]).toBe('/mnt/discord/My Server__G1/channels/general__C1/2016-04-01')
     const lookup = await idx.get('/mnt/discord/My Server__G1/channels/general__C1/2016-04-30')
-    expect(lookup.entry?.id).toBe('general__C1:2016-04-30')
-    expect(lookup.entry?.resourceType).toBe('discord/date_dir')
+    expect(lookup.entry?.id).toBe('C1:2016-04-30')
+    expect(lookup.entry?.resourceType).toBe('discord/history')
     expect(t.calls).toHaveLength(0)
   })
 

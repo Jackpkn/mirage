@@ -13,47 +13,48 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
+import { resolveEntry } from '@struktoai/mirage-core/core/hierarchy/probe'
+import { makeRead } from '@struktoai/mirage-core/core/hierarchy/read'
+import type { ScopeMatch } from '@struktoai/mirage-core/core/hierarchy/scope'
 import type { PathSpec } from '@struktoai/mirage-core/types'
-import { eisdir, enoent } from '@struktoai/mirage-core/utils/errors'
-import { mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix'
-import { gnuDirname } from '@struktoai/mirage-core/utils/path'
-import { stripSlash } from '@struktoai/mirage-core/utils/slash'
+import { enoent } from '@struktoai/mirage-core/utils/errors'
 import type { EmailAccessor } from '../../accessor/email.ts'
 import { fetchAttachment, fetchMessage } from './client.ts'
+import { readdir } from './readdir.ts'
 import { messageJsonBytes } from './render.ts'
+import { detectScope } from './scope.ts'
 
-export async function read(
+async function readMessage(
   accessor: EmailAccessor,
+  match: ScopeMatch,
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<Uint8Array> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  const key = path.resourcePath
-  if (index === undefined) throw enoent(path.virtual)
-  const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  const result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) throw enoent(path.virtual)
-  const rt = result.entry.resourceType
-  if (rt === 'email/folder' || rt === 'email/date' || rt === 'email/attachment_dir') {
-    throw eisdir(path.virtual)
-  }
-  if (rt === 'email/attachment') {
-    const parentKey = gnuDirname(virtualKey)
-    const parentResult = await index.get(parentKey)
-    if (parentResult.entry === undefined || parentResult.entry === null) {
-      throw enoent(path.virtual)
-    }
-    const uid = parentResult.entry.id
-    const parts = stripSlash(virtualKey).split('/')
-    const folder = prefix !== '' ? (parts[1] ?? '') : (parts[0] ?? '')
-    const filename = result.entry.vfsName !== '' ? result.entry.vfsName : result.entry.name
-    const data = await fetchAttachment(accessor, folder, uid, filename)
-    if (data === null) throw enoent(path.virtual)
-    return data
-  }
-  const parts = stripSlash(virtualKey).split('/')
-  const folder = prefix !== '' ? (parts[1] ?? '') : (parts[0] ?? '')
-  const uid = result.entry.id
-  const msg = await fetchMessage(accessor, folder, uid)
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry === null) throw enoent(path)
+  const msg = await fetchMessage(accessor, match.slots.folder ?? '', entry.id)
   return messageJsonBytes(msg)
 }
+
+async function readAttachment(
+  accessor: EmailAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+  index?: IndexCacheStore,
+): Promise<Uint8Array> {
+  const entry = await resolveEntry(readdir, accessor, path, index)
+  if (entry === null) throw enoent(path)
+  const data = await fetchAttachment(
+    accessor,
+    match.slots.folder ?? '',
+    match.slots.uid ?? '',
+    entry.vfsName,
+  )
+  if (data === null) throw enoent(path)
+  return data
+}
+
+export const read = makeRead<EmailAccessor>(detectScope, {
+  message: readMessage,
+  attachment: readAttachment,
+})

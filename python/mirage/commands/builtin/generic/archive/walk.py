@@ -117,8 +117,15 @@ async def subtree(
     if links is not None:
         for virtual, stat in links.subtree(base):
             found[virtual.rstrip("/")] = ("link", link_target(stat))
+    # Two lists, because pruning and naming are different questions. A
+    # mount the session cannot see still shadows the parent backend's
+    # keys, so every descendant prunes; only the ones it may be told
+    # about become a member and a "different filesystem" warning, since
+    # both hand back the name a hide exists to withhold.
     crossings = mounts.descendants(base) if mounts is not None else []
-    for crossing in crossings:
+    visible_crossings = (mounts.visible_descendants(base)
+                         if mounts is not None else [])
+    for crossing in visible_crossings:
         # The mountpoint itself is still an entry, exactly as GNU's
         # --one-file-system keeps the directory and drops its contents.
         found[crossing.rstrip("/")] = ("dir", "")
@@ -134,7 +141,7 @@ async def subtree(
                   target=target,
                   read=child_spec(virtual, root) if kind == "file" else None))
     entries.sort(key=lambda entry: entry.name_path)
-    return entries, [c.rstrip("/") for c in crossings], unreadable
+    return entries, [c.rstrip("/") for c in visible_crossings], unreadable
 
 
 async def follow(

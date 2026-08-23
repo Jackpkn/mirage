@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { FileStat } from '../types.ts'
+
 // Ops with lstat semantics: they act on the entry named by the path, so
 // no stat surface (dispatch, the fs facade, FUSE) may rewrite their
 // operand through the symlink table.
@@ -45,6 +47,9 @@ export interface NamespaceLinks {
   isLink(path: string): boolean
   // The stored target for a link path, null when not a link.
   readlink(path: string): string | null
+  // The link's own stat row (lstat), null when not a link. A link has no
+  // backend inode, so this table is the only authority for one.
+  linkStatAt(path: string): FileStat | null
   // Every link path to its stored target, the whole table.
   symlinkTargets(): Map<string, string>
   // Create or overwrite a symlink entry; target is kept verbatim.

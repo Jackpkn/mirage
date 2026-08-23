@@ -62,7 +62,8 @@ async def stat_from_api(accessor: GDriveAccessor, key: str,
     return FileStat(
         name=vfs_name,
         size=size,
-        type=guess_type(vfs_name),
+        type=FileType.FILE,
+        content=guess_type(vfs_name),
         modified=modified,
         fingerprint=modified or None,
         extra={
@@ -107,7 +108,8 @@ async def stat(
     return FileStat(
         name=entry.vfs_name or entry.name,
         size=entry.size,
-        type=guess_type(entry.vfs_name),
+        type=FileType.FILE,
+        content=guess_type(entry.vfs_name),
         modified=entry.remote_time,
         fingerprint=entry.remote_time or None,
         extra={

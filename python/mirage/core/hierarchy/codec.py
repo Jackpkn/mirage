@@ -17,6 +17,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 _ASCII_DIGITS = re.compile(r"^[0-9]+$")
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def iso_date_shaped(text: str) -> bool:
+    """Whether the text is shaped like a YYYY-MM-DD date.
+
+    Shape only, not a calendar check: the dated-message backends mint
+    their date directories from real timestamps, so a shaped-but-absent
+    date resolves through the listing like any other name. A backend
+    that must refuse impossible dates (gcal, whose day dirs exist by
+    construction) validates with its own calendar-aware check instead.
+
+    Args:
+        text (str): decoded segment payload.
+    """
+    return _ISO_DATE.match(text) is not None
 
 
 def ascii_digits(text: str) -> bool:
@@ -75,3 +91,4 @@ RAW = Codec()
 JSON_NAME = Codec(suffix=".json")
 JSONL_NAME = Codec(suffix=".jsonl")
 INT_JSON = Codec(suffix=".json", validate=ascii_digits)
+DATE = Codec(validate=iso_date_shaped)

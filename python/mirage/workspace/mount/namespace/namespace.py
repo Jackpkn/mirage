@@ -96,9 +96,11 @@ def link_stat(name: str, meta: NodeMeta) -> FileStat:
 
     Size is the target string's byte length and mode is left unset so
     the formatter supplies 0777, which is what a real symlink inode
-    reports (a link carries no permission bits of its own). Ownership is
-    not in that category: a link has a real uid/gid that ``chown -h``
-    writes and ``ls -l`` shows, so both ride through from the node. The
+    reports (a link carries no permission bits of its own). Ownership
+    and the stamps are not in that category: a link has a real uid/gid
+    that ``chown -h`` writes and ``ls -l`` shows, and real times that
+    ``touch -h`` and a guest's no-follow ``utime`` write, so all four
+    ride through from the node. The
     target rides along in ``extra`` so every surface that has to name it
     (ls -l's ``name -> target``, file's "symbolic link to") reads one
     fact rather than querying the link table a second time.
@@ -115,6 +117,7 @@ def link_stat(name: str, meta: NodeMeta) -> FileStat:
         type=FileType.SYMLINK,
         uid=meta.uid,
         gid=meta.gid,
+        atime=meta.atime,
         extra={LINK_TARGET_KEY: target},
     )
 
@@ -455,13 +458,42 @@ class Namespace:
         Args:
             directory (str): absolute virtual directory path.
         """
+        return [
+            link_stat(name, meta)
+            for name, meta in self._links_under(directory)
+        ]
+
+    def link_names_under(self, directory: str) -> set[str]:
+        """The names of the links living directly under a directory.
+
+        What a readdir row's link mark needs, which is a name question
+        rather than a stat one: the door already holds every entry's
+        stat and has only to learn which of those names the node table
+        owns.
+
+        Resolves a link prefix first, because a listing does: a readdir
+        of ``/data/alias`` is dispatched at ``/data/real`` and answers
+        with that directory's entries, so the marks have to come from
+        there too or every link inside an aliased directory reads as
+        whatever its followed stat said. ``link_stats_under`` needs no
+        such resolution: it is handed the path the router already
+        rewrote.
+
+        Args:
+            directory (str): absolute virtual directory path.
+        """
+        return {name for name, _ in self._links_under(self.follow(directory))}
+
+    def _links_under(self, directory: str) -> list[tuple[str, NodeMeta]]:
+        """The links living directly under a directory, as (name, meta).
+
+        Args:
+            directory (str): absolute virtual directory path.
+        """
         base = directory.rstrip("/") + "/"
-        out: list[FileStat] = []
-        for path, meta in self._nodes.items():
-            if (meta.target is not None and path.startswith(base)
-                    and "/" not in path[len(base):]):
-                out.append(link_stat(path[len(base):], meta))
-        return out
+        return [(path[len(base):], meta) for path, meta in self._nodes.items()
+                if meta.target is not None and path.startswith(base)
+                and "/" not in path[len(base):]]
 
     async def purge_under(self, directory: str) -> int:
         """Drop every node entry under a directory (``rm -r`` semantics).

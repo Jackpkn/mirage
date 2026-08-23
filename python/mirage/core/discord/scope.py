@@ -12,237 +12,44 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import re
-from dataclasses import dataclass
+from mirage.core.hierarchy.codec import DATE, JSON_NAME
+from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
+from mirage.types import ContentType
 
-from mirage.types import PathSpec
-from mirage.utils.key_prefix import mount_prefix_of
+_GUILD = (Slot("guild", id_key="guild_id"), )
+_CHANNEL = _GUILD + ("channels", Slot("channel", id_key="channel_id"))
+_DAY = _CHANNEL + (Slot("day", DATE), )
 
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# One description of the tree: readdir, stat, read and the search
+# push-down all classify through it, so the file surface and the command
+# surface cannot disagree about what a path means. Every dynamic level
+# is a `name__id` dirname the tree itself mints, so the ids decode from
+# the path and detection needs no index or network round-trip.
+SCOPES = (
+    Scope(kind="guild", segments=_GUILD),
+    Scope(kind="channels_dir", segments=_GUILD + ("channels", )),
+    Scope(kind="members_dir", segments=_GUILD + ("members", )),
+    Scope(kind="channel", segments=_CHANNEL),
+    Scope(kind="member",
+          segments=_GUILD +
+          ("members", Slot("member", JSON_NAME, id_key="user_id")),
+          leaf=True,
+          filetype=ContentType.JSON),
+    Scope(kind="day", segments=_DAY),
+    Scope(kind="messages",
+          segments=_DAY + ("chat.jsonl", ),
+          leaf=True,
+          filetype=ContentType.TEXT),
+    Scope(kind="files", segments=_DAY + ("files", )),
+    Scope(kind="file_blob", segments=_DAY + ("files", Slot("blob")),
+          leaf=True),
+)
 
+detect_scope = make_detect_scope(SCOPES)
 
-@dataclass
-class DiscordScope:
-    """Resolved scope for a discord path.
-
-    Attributes:
-        level (str): one of ``root``, ``guild``, ``channel``, ``date``,
-            ``messages``, ``files``, ``file_blob``, ``member``.
-        use_native (bool): whether native guild search may serve this scope.
-        guild_name (str | None): display half of the guild dirname.
-        guild_id (str | None): guild snowflake parsed from the dirname.
-        channel_name (str | None): display half of the channel dirname.
-        channel_id (str | None): channel snowflake parsed from the dirname.
-        member_name (str | None): display half of the member filename.
-        member_id (str | None): user snowflake parsed from the filename.
-        container (str | None): ``channels`` or ``members``.
-        date_str (str | None): ``YYYY-MM-DD`` for date-level and below.
-        resource_path (str): resource-relative key (prefix stripped).
-    """
-
-    level: str
-    use_native: bool
-    guild_name: str | None = None
-    guild_id: str | None = None
-    channel_name: str | None = None
-    channel_id: str | None = None
-    member_name: str | None = None
-    member_id: str | None = None
-    container: str | None = None
-    date_str: str | None = None
-    resource_path: str = "/"
-
-
-def _split_dirname(dirname: str) -> tuple[str, str | None]:
-    if "__" in dirname:
-        name, _, cid = dirname.rpartition("__")
-        return name, cid or None
-    return dirname, None
-
-
-def detect_scope(path: PathSpec) -> DiscordScope:
-    """Determine scope from a path.
-
-    IDs come straight out of the ``name__id`` dirnames the tree mints, so
-    detection is pure and needs no index or network round-trip; a bare
-    name without ``__id`` yields ``None`` ids and the caller falls back
-    to the scan. Mirrors the TypeScript ``detectScope``.
-
-    Examples::
-
-        /                                              → root
-        /<guild>                                       → guild
-        /<guild>/channels                              → guild
-        /<guild>/members                               → guild
-        /<guild>/channels/<ch>                         → channel
-        /<guild>/members/<user>.json                   → member
-        /<guild>/channels/<ch>/<date>                  → date
-        /<guild>/channels/<ch>/<date>/chat.jsonl       → messages
-        /<guild>/channels/<ch>/<date>/files            → files
-        /<guild>/channels/<ch>/<date>/files/<blob>     → file_blob
-    """
-
-    prefix = mount_prefix_of(path.virtual, path.resource_path) or ""
-
-    if path.pattern and path.pattern.endswith(".jsonl"):
-        dir_key = path.directory.strip("/")
-        if prefix:
-            dir_key = dir_key.removeprefix(prefix.strip("/") + "/")
-        dp = dir_key.split("/") if dir_key else []
-        if len(dp) == 3 and dp[1] == "channels" and dp[0] and dp[2]:
-            guild_name, guild_id = _split_dirname(dp[0])
-            channel_name, channel_id = _split_dirname(dp[2])
-            return DiscordScope(
-                level="channel",
-                use_native=True,
-                guild_name=guild_name,
-                guild_id=guild_id,
-                channel_name=channel_name,
-                channel_id=channel_id,
-                container="channels",
-                resource_path=dir_key,
-            )
-        if (len(dp) == 4 and dp[1] == "channels" and dp[0] and dp[2]
-                and _DATE_RE.match(dp[3])):
-            guild_name, guild_id = _split_dirname(dp[0])
-            channel_name, channel_id = _split_dirname(dp[2])
-            return DiscordScope(
-                level="messages",
-                use_native=True,
-                guild_name=guild_name,
-                guild_id=guild_id,
-                channel_name=channel_name,
-                channel_id=channel_id,
-                container="channels",
-                date_str=dp[3],
-                resource_path=dir_key,
-            )
-
-    key = path.resource_path
-    if not key:
-        return DiscordScope(level="root", use_native=True, resource_path="/")
-
-    parts = key.split("/")
-
-    if len(parts) == 1:
-        guild_name, guild_id = _split_dirname(parts[0])
-        return DiscordScope(
-            level="guild",
-            use_native=True,
-            guild_name=guild_name,
-            guild_id=guild_id,
-            resource_path=key,
-        )
-
-    if len(parts) == 2:
-        guild_name, guild_id = _split_dirname(parts[0])
-        if parts[1] in ("channels", "members"):
-            return DiscordScope(
-                level="guild",
-                use_native=parts[1] == "channels",
-                guild_name=guild_name,
-                guild_id=guild_id,
-                container=parts[1],
-                resource_path=key,
-            )
-        return DiscordScope(
-            level="guild",
-            use_native=False,
-            guild_name=guild_name,
-            guild_id=guild_id,
-            resource_path=key,
-        )
-
-    if len(parts) == 3:
-        guild_name, guild_id = _split_dirname(parts[0])
-        if parts[1] == "channels":
-            channel_name, channel_id = _split_dirname(parts[2])
-            return DiscordScope(
-                level="channel",
-                use_native=True,
-                guild_name=guild_name,
-                guild_id=guild_id,
-                channel_name=channel_name,
-                channel_id=channel_id,
-                container="channels",
-                resource_path=key,
-            )
-        if parts[1] == "members":
-            member_name, member_id = _split_dirname(
-                parts[2].removesuffix(".json"))
-            return DiscordScope(
-                level="member",
-                use_native=False,
-                guild_name=guild_name,
-                guild_id=guild_id,
-                member_name=member_name,
-                member_id=member_id,
-                container="members",
-                resource_path=key,
-            )
-
-    # /<guild>/channels/<ch>/<date>
-    if (len(parts) == 4 and parts[1] == "channels"
-            and _DATE_RE.match(parts[3])):
-        guild_name, guild_id = _split_dirname(parts[0])
-        channel_name, channel_id = _split_dirname(parts[2])
-        return DiscordScope(
-            level="date",
-            use_native=True,
-            guild_name=guild_name,
-            guild_id=guild_id,
-            channel_name=channel_name,
-            channel_id=channel_id,
-            container="channels",
-            date_str=parts[3],
-            resource_path=key,
-        )
-
-    # /<guild>/channels/<ch>/<date>/chat.jsonl or .../files
-    if (len(parts) == 5 and parts[1] == "channels"
-            and _DATE_RE.match(parts[3])):
-        guild_name, guild_id = _split_dirname(parts[0])
-        channel_name, channel_id = _split_dirname(parts[2])
-        if parts[4] == "chat.jsonl":
-            return DiscordScope(
-                level="messages",
-                use_native=False,
-                guild_name=guild_name,
-                guild_id=guild_id,
-                channel_name=channel_name,
-                channel_id=channel_id,
-                container="channels",
-                date_str=parts[3],
-                resource_path=key,
-            )
-        if parts[4] == "files":
-            return DiscordScope(
-                level="files",
-                use_native=True,
-                guild_name=guild_name,
-                guild_id=guild_id,
-                channel_name=channel_name,
-                channel_id=channel_id,
-                container="channels",
-                date_str=parts[3],
-                resource_path=key,
-            )
-
-    # /<guild>/channels/<ch>/<date>/files/<blob>
-    if (len(parts) == 6 and parts[1] == "channels" and _DATE_RE.match(parts[3])
-            and parts[4] == "files"):
-        guild_name, guild_id = _split_dirname(parts[0])
-        channel_name, channel_id = _split_dirname(parts[2])
-        return DiscordScope(
-            level="file_blob",
-            use_native=False,
-            guild_name=guild_name,
-            guild_id=guild_id,
-            channel_name=channel_name,
-            channel_id=channel_id,
-            container="channels",
-            date_str=parts[3],
-            resource_path=key,
-        )
-
-    return DiscordScope(level="guild", use_native=False, resource_path=key)
+# Kinds the guild search push-down may answer for. A chat.jsonl operand
+# is deliberately absent: `search_guild` takes a channel but no date, so
+# serving a one-day file from a channel-wide search would report
+# messages the line did not ask for. Same doctrine for `file_blob` and
+# `member`, whose bytes the message search does not carry.
+NATIVE_KINDS = frozenset({"guild", "channels_dir", "channel", "day", "files"})

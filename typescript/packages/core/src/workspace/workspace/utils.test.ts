@@ -15,9 +15,8 @@
 import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it } from 'vitest'
 
-import { HISTORY_PREFIX } from '../../resource/history/history.ts'
 import { Session } from '../session/session.ts'
-import { commandName, forkForCall, infrastructurePrefixes } from './utils.ts'
+import { commandName, forkForCall } from './utils.ts'
 
 describe('commandName', () => {
   it.each([
@@ -54,15 +53,5 @@ describe('forkForCall', () => {
     const forked = forkForCall(session, undefined, { B: '9', C: '3' })
     expect(forked.env).toEqual({ A: '1', B: '9', C: '3', PWD: '/home' })
     expect(session.env).toEqual({ A: '1', B: '2', PWD: '/home' })
-  })
-})
-
-describe('infrastructurePrefixes', () => {
-  it('excludes a user-defined root', () => {
-    expect(infrastructurePrefixes(false)).toEqual(new Set(['/dev', HISTORY_PREFIX]))
-  })
-
-  it('includes the synthetic root anchor', () => {
-    expect(infrastructurePrefixes(true)).toEqual(new Set(['/dev', HISTORY_PREFIX, '/']))
   })
 })

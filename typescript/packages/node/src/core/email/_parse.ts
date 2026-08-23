@@ -25,13 +25,13 @@ interface EmailAddress {
   email: string
 }
 
-export interface ParsedAttachment {
+interface ParsedAttachment {
   filename: string
   content_type: string
   size: number
 }
 
-export interface ParsedAttachmentWithPayload extends ParsedAttachment {
+interface ParsedAttachmentWithPayload extends ParsedAttachment {
   payload: Uint8Array
 }
 

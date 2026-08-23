@@ -21,12 +21,14 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.commands.builtin.dropbox.pushdown import narrow_scope
 from mirage.core.dropbox.client import DropboxTokenManager
 from mirage.resource.dropbox.config import DropboxConfig
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 _NGLOBALS = narrow_scope.__globals__
 
 DIR_STAT = FileStat(name="data", type=FileType.DIRECTORY)
-FILE_STAT = FileStat(name="x.txt", type=FileType.TEXT)
+FILE_STAT = FileStat(name="x.txt",
+                     type=FileType.FILE,
+                     content=ContentType.TEXT)
 
 
 def make_accessor(content_search: bool = True) -> DropboxAccessor:

@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 const ASCII_DIGITS = /^[0-9]+$/
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
  * Whether the text is a plain ASCII integer.
@@ -23,6 +24,19 @@ const ASCII_DIGITS = /^[0-9]+$/
  */
 export function asciiDigits(text: string): boolean {
   return ASCII_DIGITS.test(text)
+}
+
+/**
+ * Whether the text is shaped like a YYYY-MM-DD date.
+ *
+ * Shape only, not a calendar check: the dated-message backends mint their
+ * date directories from real timestamps, so a shaped-but-absent date
+ * resolves through the listing like any other name. A backend that must
+ * refuse impossible dates (gcal, whose day dirs exist by construction)
+ * validates with its own calendar-aware check instead.
+ */
+export function isoDateShaped(text: string): boolean {
+  return ISO_DATE.test(text)
 }
 
 /**
@@ -63,3 +77,4 @@ export const RAW = new Codec()
 export const JSON_NAME = new Codec({ suffix: '.json' })
 export const JSONL_NAME = new Codec({ suffix: '.jsonl' })
 export const INT_JSON = new Codec({ suffix: '.json', validate: asciiDigits })
+export const DATE = new Codec({ validate: isoDateShaped })

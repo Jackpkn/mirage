@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -33,16 +32,15 @@ resource = SlackResource(config=config)
 
 async def main():
     with Workspace({"/slack/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE: open() reads from Slack transparently ===\n")
 
         print("--- os.listdir() root ---")
-        sections = vos.listdir("/slack")
+        sections = os.listdir("/slack")
         for s in sections:
             print(f"  {s}")
 
         print("\n--- os.listdir() channels ---")
-        channels = vos.listdir("/slack/channels")
+        channels = os.listdir("/slack/channels")
         for ch in channels[:5]:
             print(f"  {ch}")
 
@@ -50,7 +48,7 @@ async def main():
             ch = next((c for c in channels if "general" in c), channels[0])
             ch_dir = f"/slack/channels/{ch}"
             print("\n--- os.listdir() dates ---")
-            dates = vos.listdir(ch_dir)
+            dates = os.listdir(ch_dir)
             for d in dates[-5:]:
                 print(f"  {d}")
 
@@ -76,10 +74,9 @@ async def main():
                     print("\n  (no messages found in recent dates)")
 
                 print("\n--- os.path.exists() ---")
-                print(f"  exists: {vos.path.exists(path)}")
+                print(f"  exists: {os.path.exists(path)}")
                 print(
-                    f"  nonexistent: {vos.path.exists('/slack/channels/nope')}"
-                )
+                    f"  nonexistent: {os.path.exists('/slack/channels/nope')}")
 
         print("\n--- bash history ---")
         with open("/.bash_history") as f:

@@ -12,63 +12,43 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountPrefixOf } from '../../utils/key_prefix.ts'
-import type { PathSpec } from '../../types.ts'
-import { stripSlash } from '../../utils/slash.ts'
+import { Codec, DATE } from '../hierarchy/codec.ts'
+import { makeDetectScope, ROOT, Scope, Slot } from '../hierarchy/scope.ts'
+import { FileType } from '../../types.ts'
 
-export interface GmailScope {
-  useNative: boolean
-  labelName: string | null
-  dateStr: string | null
-  resourcePath: string
-}
+export const GMAIL_JSON = new Codec({ suffix: '.gmail.json' })
 
-export function detectScope(path: PathSpec): GmailScope {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath) || ''
+const LABEL = [new Slot('label')] as const
+const DAY = [...LABEL, new Slot('day', DATE)] as const
 
-  if (path.pattern?.endsWith('.gmail.json')) {
-    let dirKey = stripSlash(path.directory)
-    const trimmedPrefix = stripSlash(prefix)
-    if (trimmedPrefix !== '' && dirKey.startsWith(`${trimmedPrefix}/`)) {
-      dirKey = dirKey.slice(trimmedPrefix.length + 1)
-    }
-    const parts = dirKey === '' ? [] : dirKey.split('/')
-    if (parts.length === 2) {
-      return {
-        useNative: true,
-        labelName: parts[0] ?? null,
-        dateStr: parts[1] ?? null,
-        resourcePath: dirKey,
-      }
-    }
-  }
+// One description of the tree: readdir, stat, read and the search push-down
+// all classify through it, so the file surface and the command surface
+// cannot disagree about what a path means. The message scope is declared
+// before the attachment dir because only the suffix separates the two at
+// that depth.
+export const SCOPES: readonly Scope[] = [
+  new Scope({ kind: 'label', segments: LABEL }),
+  new Scope({ kind: 'day', segments: DAY }),
+  new Scope({
+    kind: 'message',
+    segments: [...DAY, new Slot('message', GMAIL_JSON, 'message_id')],
+    leaf: true,
+    filetype: FileType.JSON,
+  }),
+  new Scope({
+    kind: 'attachment_dir',
+    segments: [...DAY, new Slot('attachment_dir', undefined, 'message_id')],
+  }),
+  new Scope({
+    kind: 'attachment',
+    segments: [...DAY, new Slot('attachment_dir', undefined, 'message_id'), new Slot('filename')],
+    leaf: true,
+  }),
+]
 
-  const key = path.resourcePath
-  if (key === '') {
-    return { useNative: true, labelName: null, dateStr: null, resourcePath: '/' }
-  }
+export const detectScope = makeDetectScope(SCOPES)
 
-  const parts = key.split('/')
-  if (parts.length === 1) {
-    return {
-      useNative: true,
-      labelName: parts[0] ?? null,
-      dateStr: null,
-      resourcePath: key,
-    }
-  }
-  if (parts.length === 2) {
-    return {
-      useNative: true,
-      labelName: parts[0] ?? null,
-      dateStr: parts[1] ?? null,
-      resourcePath: key,
-    }
-  }
-  return {
-    useNative: false,
-    labelName: parts[0] ?? null,
-    dateStr: parts.length >= 2 ? (parts[1] ?? null) : null,
-    resourcePath: key,
-  }
-}
+// Kinds the Gmail search push-down may answer for: the whole account, one
+// label, or one label's day. A message file or an attachment names one
+// node, which a query over the account cannot stand in for.
+export const NATIVE_KINDS: ReadonlySet<string> = new Set([ROOT, 'label', 'day'])

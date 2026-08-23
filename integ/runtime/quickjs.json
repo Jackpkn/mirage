@@ -347,6 +347,39 @@
           }
         }
       ]
+    },
+    {
+      "id": "utimes_reaches_the_mount",
+      "world": {
+        "runtimes": [
+          "quickjs",
+          "vfs"
+        ],
+        "mounts": {
+          "/ram": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "node -e \"console.log(os.utimes('/ram/t.txt', 100000, 200000), os.utimes('/ram/nope.txt', 1, 2))\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "0 -44\n"
+          }
+        },
+        {
+          "command": "stat -c %Y /ram/t.txt",
+          "expect": {
+            "exit": 0,
+            "stdout": "200\n"
+          }
+        }
+      ]
     }
   ]
 }

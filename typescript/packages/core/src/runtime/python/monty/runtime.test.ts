@@ -19,7 +19,7 @@ import { PyodideRuntime } from '../pyodide.ts'
 import { buildRuntime } from '../../table.ts'
 import { getTestParser } from '../../../workspace/fixtures/workspace_fixture.ts'
 import { RAMResource } from '../../../resource/ram/ram.ts'
-import { MountMode } from '../../../types.ts'
+import { FileStat, FileType, MountMode } from '../../../types.ts'
 import { Workspace } from '../../../workspace/workspace/workspace.ts'
 import { PrefixResolver } from '../../resolver.ts'
 
@@ -62,13 +62,19 @@ function makeBridge(seed: Record<string, Uint8Array>): {
       mutations.push(`rename ${path} ${dst ?? ''}`)
       return Promise.resolve(undefined)
     }
-    const prefix = path
-    const entries: { path: string; size: number; isDir: boolean }[] = []
-    for (const [p, content] of files) {
-      if (p.startsWith(prefix)) {
-        const rest = p.slice(prefix.length)
-        if (!rest.includes('/')) entries.push({ path: p, size: content.length, isDir: false })
+    // The door builds each row from a name plus one stat, so the double
+    // answers both.
+    if (op === 'stat') {
+      const found = files.get(path)
+      if (found === undefined) {
+        return Promise.reject(Object.assign(new Error(path), { code: 'ENOENT' }))
       }
+      return Promise.resolve(new FileStat({ name: path, size: found.length, type: FileType.TEXT }))
+    }
+    const prefix = path
+    const entries: string[] = []
+    for (const p of files.keys()) {
+      if (p.startsWith(prefix) && !p.slice(prefix.length).includes('/')) entries.push(p)
     }
     if (entries.length === 0) return Promise.reject(new Error(`no such dir: ${prefix}`))
     return Promise.resolve(entries)

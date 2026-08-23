@@ -121,12 +121,21 @@ async def test_readdir_label(accessor, index):
 
 @pytest.mark.asyncio
 async def test_readdir_not_found(accessor, index):
-    with pytest.raises(FileNotFoundError):
-        await readdir(
-            accessor,
-            PathSpec(resource_path=mount_key("/gmail/NONEXISTENT", "/gmail"),
-                     virtual="/gmail/NONEXISTENT",
-                     directory="/gmail/NONEXISTENT"), index)
+    with patch(
+            "mirage.core.gmail.readdir.list_labels",
+            new_callable=AsyncMock,
+            return_value=[{
+                "type": "system",
+                "id": "INBOX"
+            }],
+    ):
+        with pytest.raises(FileNotFoundError):
+            await readdir(
+                accessor,
+                PathSpec(resource_path=mount_key("/gmail/NONEXISTENT",
+                                                 "/gmail"),
+                         virtual="/gmail/NONEXISTENT",
+                         directory="/gmail/NONEXISTENT"), index)
 
 
 @pytest.mark.asyncio

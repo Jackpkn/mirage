@@ -139,6 +139,7 @@
       ],
       "session": "frozen",
       "command": "find /scratch/locked -name y -delete",
+      "explain_blind": "the refusal comes from the op door during the walk, below the command plane the dry run reads",
       "expect": {
         "exit": 1,
         "stdout": "",
@@ -178,6 +179,7 @@
         "ram-commands"
       ],
       "command": "mkdir -p /scratch/private && echo k > /scratch/private/k && ln -s /scratch/private/k /scratch/k && cat /scratch/k",
+      "explain_blind": "the refusal comes from the op door during the walk, below the command plane the dry run reads",
       "expect": {
         "exit": 1,
         "stdout": "",
@@ -221,6 +223,47 @@
         "exit": 1,
         "stdout": "",
         "stderr": "grep: /scratch/private: private\n"
+      }
+    },
+    {
+      "id": "cmd_anchor_prep",
+      "seq": 923250,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "echo p > /scratch/anch.pem && echo p > /vault/anch.pem && echo k > /scratch/anch.key && echo k > /vault/anch.key",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "cmd_a_mount_sections_name_pattern_refuses_inside_that_mount",
+      "seq": 923251,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "anchored",
+      "command": "cat /scratch/anch.pem",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/anch.pem: anchored pem\n"
+      }
+    },
+    {
+      "id": "cmd_a_mount_sections_name_pattern_stops_at_that_mount",
+      "seq": 923252,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "anchored",
+      "command": "cat /vault/anch.pem",
+      "expect": {
+        "exit": 0,
+        "stdout": "p\n",
+        "stderr": ""
       }
     }
   ]

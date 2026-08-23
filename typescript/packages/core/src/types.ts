@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { IndexCacheStore } from './cache/index/store.ts'
+import type { CommandRule } from './policy/types.ts'
 import type { FindOptions } from './resource/base.ts'
 import { rstripSlash, stripSlash } from './utils/slash.ts'
 
@@ -86,8 +87,9 @@ export function weakerMode(a: MountMode, b: MountMode): MountMode {
  * A sibling of `Session.mountModes`: per-session narrowing that the
  * doors enforce, null-on-the-session means unrestricted. Hiding is
  * "does not exist", never "forbidden" — matching paths answer ENOENT
- * and drop out of listings, the same no-name-leak rule `mountAllowed`
- * applies to ungranted mounts.
+ * and drop out of listings, which is what makes a hide the way a profile
+ * keeps a session away from a mount: naming mounts only narrows their
+ * modes, and a refusal would hand back the name.
  *
  * `paths` are exact virtual paths; hiding a path hides its whole
  * subtree (a name you cannot see cannot be a parent you traverse), so
@@ -131,6 +133,13 @@ export interface HiddenVars {
  */
 export interface EntryGate {
   readonly scoped: boolean
+  /**
+   * The ask rules this line runs under a grant for. Read by the op
+   * doors, which see the same entries from below and would otherwise
+   * re-derive a verdict that knows nothing of the nod the gate already
+   * took.
+   */
+  readonly granted: readonly CommandRule[]
   check(virtual: string): void
 }
 
@@ -368,6 +377,26 @@ export type FileType = (typeof FileType)[keyof typeof FileType]
 // typed. A link has no backend inode, so this is the only place the
 // target travels with the stat row.
 export const LINK_TARGET_KEY = 'link_target'
+
+/**
+ * The metadata fields a `setattr` writes, all optional.
+ *
+ * Spelled the way the op, the CommandOpts bag and the guest bridge
+ * spell them, so one fact keeps one name from a shell line down to a
+ * guest's utime. `nofollow` is not a field but the AT_SYMLINK_NOFOLLOW
+ * bit: it writes the link entry's own attrs rather than its target's.
+ * Lives here rather than beside either consumer because the ops facade
+ * and the runtime bridge both take it and neither may import the
+ * other.
+ */
+export interface SetAttrFields {
+  mode?: number
+  uid?: number | string
+  gid?: number | string
+  atime?: string
+  mtime?: string
+  nofollow?: boolean
+}
 
 export interface FileStatInit {
   name: string

@@ -221,13 +221,17 @@ describe('treeGeneric across a nested mount', () => {
     return Promise.resolve(new FileStat({ name: key(p).split('/').pop() ?? '', type }))
   }
 
-  function crossOpts(): CommandOpts {
+  // A MountView double: ROOT is the mount, `hidden` says whether this
+  // session may be told about it.
+  function crossOpts(hidden = false): CommandOpts {
+    const under = (path: string): string[] =>
+      [ROOT].filter((r) => r.startsWith(rstripSlash(path) + '/'))
     return {
       ...opts({}),
       ns: {
         mounts: {
-          descendants: (path: string) =>
-            [ROOT].filter((r) => r.startsWith(rstripSlash(path) + '/')),
+          descendants: under,
+          visibleDescendants: (path: string) => (hidden ? [] : under(path)),
           isRoot: (path: string) => rstripSlash(path) === ROOT,
           rootOf: () => '/',
         },
@@ -267,6 +271,30 @@ describe('treeGeneric across a nested mount', () => {
         '',
       ].join('\n'),
     )
+  })
+
+  it('never draws a mount the session cannot see', async () => {
+    // A crossing row is drawn from the mount table alone, so no backend
+    // and no dispatcher gets a chance to refuse it: `tree` has to read
+    // the list of mounts it may name rather than the list it may not
+    // descend into. The parent holds no key of its own under the mount
+    // root here, so the only way `inner` could be drawn is the table.
+    const bare: Record<string, FileType> = {
+      '/base': FileType.DIRECTORY,
+      '/base/top.txt': FileType.TEXT,
+    }
+    const [out, io] = (await treeGeneric(
+      [spec('/base')],
+      crossOpts(true),
+      (p: PathSpec) => Promise.resolve(listing(bare, key(p))),
+      (p: PathSpec) => {
+        const type = bare[key(p)]
+        if (type === undefined) return Promise.reject(new Error(`ENOENT ${key(p)}`))
+        return Promise.resolve(new FileStat({ name: key(p).split('/').pop() ?? '', type }))
+      },
+    )) as [Uint8Array, { exitCode: number }]
+    expect(DEC.decode(out)).toBe(['/base', '`-- top.txt', '', '1 directory, 1 file', ''].join('\n'))
+    expect(io.exitCode).toBe(0)
   })
 
   it('stops at the mount point under -L 1', async () => {

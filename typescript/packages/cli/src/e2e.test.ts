@@ -288,8 +288,8 @@ describe('mirage CLI end-to-end', () => {
   }, 30000)
 
   it('the permissions document binds a daemon workspace', async () => {
-    // The YAML door's `permissions:` block reaches the executor through
-    // the daemon exactly as through the SDK: an unlisted tool is not a
+    // The YAML door's `profiles:` block reaches the executor through the
+    // daemon exactly as through the SDK: an unlisted tool is not a
     // command (127), a deny rule refuses with its reason (126), and the
     // process exit code follows the inner one.
     const cfgPath = join(tmp, 'perm-cfg.yaml')
@@ -300,12 +300,13 @@ describe('mirage CLI end-to-end', () => {
         '  /:',
         '    resource: ram',
         '    mode: write',
-        'permissions:',
-        '  commands:',
-        '    allow: [ls, cat, mkdir, touch, rm]',
-        '    deny:',
-        '      - reason: no deletes here',
-        '        commands: [rm]',
+        'profiles:',
+        '  default:',
+        '    commands:',
+        '      allow: [ls, cat, mkdir, touch, rm]',
+        '      deny:',
+        '        - reason: no deletes here',
+        '          commands: [rm]',
         '',
       ].join('\n'),
     )

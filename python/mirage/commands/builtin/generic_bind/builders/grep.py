@@ -30,7 +30,7 @@ async def grep(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     return await generic_grep(
         resolved,
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(ops.readdir, accessor, opts.index),
         stat=bound_op(ops.stat, accessor, opts.index),
         read_bytes=bound_op(ops.read_bytes, accessor, opts.index),

@@ -23,7 +23,7 @@ import pytest_asyncio
 from mirage.fuse.core import MountCore
 from mirage.ops.registry import op
 from mirage.resource.ram import RAMResource
-from mirage.types import FileStat, FileType, MountMode, PathSpec
+from mirage.types import ContentType, FileStat, FileType, MountMode, PathSpec
 from mirage.utils.stat_view import mtime_ns
 from mirage.workspace import Workspace
 
@@ -110,6 +110,33 @@ async def test_readlink_on_non_link_raises_einval(seeded):
     with pytest.raises(OSError) as exc:
         seeded.readlink("/a.txt")
     assert exc.value.errno == errno.EINVAL
+
+
+@pytest.mark.asyncio
+async def test_getattr_of_a_link_reports_the_nodes_own_row():
+    # A link has no backend inode, so the node table is the only place
+    # its stamps live. Built from the target string alone, getattr
+    # answered the mount's construction time for every link, so a
+    # `touch -h` through the mount was invisible right after it landed.
+    ws = Workspace({"/": RAMResource()}, mode=MountMode.WRITE)
+    await ws.execute("tee /a.txt", stdin=b"hello")
+    await ws.execute("ln -s a.txt /link")
+    core = MountCore(ws.ops)
+    await ws.dispatch("setattr",
+                      PathSpec.from_str_path("/link"),
+                      mode=None,
+                      uid=None,
+                      gid=None,
+                      atime=None,
+                      mtime="2020-01-02T03:04:05Z",
+                      nofollow=True)
+    attrs = core.getattr("/link")
+    assert attrs["st_mode"] == stat.S_IFLNK | 0o777
+    assert attrs["st_size"] == len("a.txt")
+    assert attrs["st_mtime"] == mtime_ns(
+        FileStat(name="link",
+                 type=FileType.SYMLINK,
+                 modified="2020-01-02T03:04:05Z"))
 
 
 @pytest.mark.asyncio
@@ -228,10 +255,12 @@ async def test_overlay_mtime_reads_offsetless_stamps_as_utc(
     # this is latent until a backend like nextcloud reports naive
     # stamps; the pin is what keeps it latent.
     naive = FileStat(name="f",
-                     type=FileType.TEXT,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
                      modified="2026-01-02T03:04:05")
     aware = FileStat(name="f",
-                     type=FileType.TEXT,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
                      modified="2026-01-02T03:04:05+00:00")
     entry = {"st_mode": 0o100644, "st_mtime": 0, "st_ctime": 0}
     got_naive = seeded._apply_stat_attrs(dict(entry), naive)
@@ -246,7 +275,8 @@ async def test_epoch_zero_mtime_lands_instead_of_reading_as_unknown(seeded):
     # fold keys on None, so epoch zero overwrites the construction-time
     # default instead of leaving it in place.
     epoch = FileStat(name="f",
-                     type=FileType.TEXT,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
                      modified="1970-01-01T00:00:00Z")
     entry = {"st_mode": 0o100644, "st_mtime": 12345, "st_ctime": 12345}
     got = seeded._apply_stat_attrs(dict(entry), epoch)

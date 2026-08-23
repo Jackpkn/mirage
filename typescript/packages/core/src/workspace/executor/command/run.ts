@@ -15,7 +15,6 @@
 import type { ByteSource } from '../../../io/types.ts'
 import { IOResult, materialize } from '../../../io/types.ts'
 import type { Resource } from '../../../resource/base.ts'
-import { assertMountAllowed, MountNotAllowedError } from '../../../context/session_context.ts'
 import type { PathSpec } from '../../../types.ts'
 import type { FileStat, ResourceName } from '../../../types.ts'
 import type { MountEntry } from '../../mount/mount.ts'
@@ -39,6 +38,7 @@ import type { PolicyDecision } from '../../../runtime/policy/index.ts'
 import type { Session } from '../../session/session.ts'
 import type { DispatchFn } from '../../../runtime/types.ts'
 import { applyFindActions } from '../find_action_dispatch.ts'
+import { pathAllowed } from '../../../context/session_context.ts'
 import { CommandTimeoutError } from '../../../commands/builtin/utils/limit.ts'
 import { UsageError } from '../../../commands/errors.ts'
 import { formatFsError } from '../../../utils/errors.ts'
@@ -141,10 +141,23 @@ function mountRootOf(registry: MountRegistry, virtual: string): string {
  * A command that does not read `mounts` off its context simply ignores it, so
  * there is no list of boundary-aware commands to keep in step.
  */
+function mountRootsBelow(registry: MountRegistry, path: string): string[] {
+  // Every one, unfiltered: this is the list a caller avoids a boundary
+  // with, and a mount the session cannot see still shadows the parent
+  // backend's keys under its prefix.
+  return registry.descendantMounts(path).map((m) => rstripSlash(m.prefix) || '/')
+}
+
 function mountView(registry: MountRegistry): MountView {
   return {
-    descendants: (path: string) =>
-      registry.descendantMounts(path).map((m) => rstripSlash(m.prefix) || '/'),
+    descendants: (path: string) => mountRootsBelow(registry, path),
+    // The list a caller *names* a boundary from. The mount table is not
+    // session state, so nothing below filters it: a row in a tree, a
+    // member in an archive and a "different filesystem" warning are each
+    // produced above every backend, and each one hands back a name the
+    // session's hides were meant to withhold.
+    visibleDescendants: (path: string) =>
+      mountRootsBelow(registry, path).filter((root) => pathAllowed(root)),
     isRoot: (path: string) => registry.isMountRoot(path),
     rootOf: (path: string) => mountRootOf(registry, path),
   }
@@ -218,19 +231,6 @@ export async function runOnMount(
     if (mount === null) {
       const errBytes = new TextEncoder().encode(`${cmdName}: command not found`)
       return [null, new IOResult({ exitCode: 127, stderr: errBytes })]
-    }
-    try {
-      assertMountAllowed(mount.prefix)
-      for (const ps of paths) {
-        const target = registry.tryMountFor(ps.virtual)
-        if (target !== null) assertMountAllowed(target.prefix)
-      }
-    } catch (err) {
-      if (err instanceof MountNotAllowedError) {
-        const errBytes = new TextEncoder().encode(`${cmdName}: ${err.message}\n`)
-        return [null, new IOResult({ exitCode: 1, stderr: errBytes })]
-      }
-      throw err
     }
   }
 

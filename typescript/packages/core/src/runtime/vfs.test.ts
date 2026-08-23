@@ -14,6 +14,8 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { enotsup } from '../utils/errors.ts'
+import { FileStat, FileType } from '../types.ts'
+import { DIR_MODE, FILE_MODE, LINK_MODE } from '../utils/stat_view.ts'
 import { CrossMountError } from './errors.ts'
 import type { BridgeDispatchFn } from './types.ts'
 import { RuntimeVFS } from './vfs.ts'
@@ -41,16 +43,177 @@ describe('RuntimeVFS transport', () => {
     expect(Array.from(bytes)).toEqual([9, 9])
   })
 
-  it('forwards readdir to dispatch readdir and returns entries', async () => {
-    const dispatch = vi.fn<BridgeDispatchFn>(() =>
-      Promise.resolve([
-        { path: '/ram/a.txt', size: 4, isDir: false },
-        { path: '/ram/sub', size: 0, isDir: true },
-      ]),
-    )
+  it('resolves each readdir name through stat', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/a.txt', '/ram/sub'])
+      return Promise.resolve(
+        path === '/ram/sub'
+          ? new FileStat({ name: 'sub', type: FileType.DIRECTORY })
+          : new FileStat({ name: 'a.txt', size: 4, type: FileType.TEXT }),
+      )
+    })
     const entries = await new RuntimeVFS(dispatch).readdir('/ram/')
-    expect(entries).toHaveLength(2)
-    expect(entries[0]).toEqual({ path: '/ram/a.txt', size: 4, isDir: false })
+    expect(entries).toEqual([
+      { path: '/ram/a.txt', size: 4, isDir: false, mode: FILE_MODE, mtimeMs: 0 },
+      { path: '/ram/sub', size: 0, isDir: true, mode: DIR_MODE, mtimeMs: 0 },
+    ])
+  })
+
+  // The projection is the door's, so preview1, monty and Emscripten read
+  // the same five facts instead of translating a FileStat three ways.
+  it('projects one stat struct for every surface', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() =>
+      Promise.resolve(
+        new FileStat({
+          name: 'a.txt',
+          size: 4,
+          type: FileType.TEXT,
+          mode: 0o700,
+          modified: '2026-07-15T00:00:00Z',
+        }),
+      ),
+    )
+    expect(await new RuntimeVFS(dispatch).stat('/ram/a.txt')).toEqual({
+      size: 4,
+      isDir: false,
+      mode: (FILE_MODE & ~0o7777) | 0o700,
+      mtimeMs: 1784073600000,
+    })
+  })
+
+  it('reports an unknown stamp as epoch zero', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() =>
+      Promise.resolve(new FileStat({ name: 'a.txt', size: 1, type: FileType.TEXT })),
+    )
+    expect((await new RuntimeVFS(dispatch).stat('/ram/a.txt')).mtimeMs).toBe(0)
+  })
+
+  // lstat is one door question now, not a surface reaching past it: the
+  // flag rides the dispatch, which answers a link's own row from the
+  // node table and gates it exactly as it gates readlink.
+  it('asks for the link row itself under nofollow', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() =>
+      Promise.resolve(new FileStat({ name: 'lnk', size: 8, type: FileType.SYMLINK })),
+    )
+    const st = await new RuntimeVFS(dispatch).stat('/ram/lnk', true)
+    expect(dispatch).toHaveBeenCalledWith('stat', '/ram/lnk', undefined, undefined, {
+      nofollow: true,
+    })
+    expect(st).toEqual({ size: 8, isDir: false, mode: LINK_MODE, mtimeMs: 0, isLink: true })
+  })
+
+  it('refuses an answer that is not a stat row', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve({ size: 4 }))
+    await expect(new RuntimeVFS(dispatch).stat('/ram/a.txt')).rejects.toThrow('bad shape')
+  })
+
+  // A backend that slash-marks its directories has already said what the
+  // entry is, so the door does not pay a stat to hear it again.
+  it('takes a trailing slash as the answer and skips the stat', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/sub/'])
+      throw new Error('stat should not be called')
+    })
+    expect(await new RuntimeVFS(dispatch).readdir('/ram/')).toEqual([
+      { path: '/ram/sub/', size: 0, isDir: true },
+    ])
+  })
+
+  // A dangling link, or an entry that vanished between the listing and
+  // the stat, must not fail the whole listing.
+  it('degrades a missing entry to a zero row', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/gone'])
+      return Promise.reject(Object.assign(new Error('nope'), { code: 'ENOENT' }))
+    })
+    expect(await new RuntimeVFS(dispatch).readdir('/ram/')).toEqual([
+      { path: '/ram/gone', size: 0, isDir: false },
+    ])
+  })
+
+  it('propagates a stat failure that is not a missing path', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/a.txt'])
+      return Promise.reject(new Error('401 Unauthorized'))
+    })
+    await expect(new RuntimeVFS(dispatch).readdir('/ram/')).rejects.toThrow('401 Unauthorized')
+  })
+
+  // The mark is the name plane's, since stat follows a link and no
+  // backend listing reports one.
+  it('marks the names the resolver calls links', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/lnk', '/ram/a.txt'])
+      return Promise.resolve(new FileStat({ name: 'x', size: 2, type: FileType.TEXT }))
+    })
+    const resolver = new PrefixResolver(
+      () => ['/ram/'],
+      () => new Set(['lnk']),
+    )
+    expect(await new RuntimeVFS(dispatch, resolver).readdir('/ram/')).toEqual([
+      { path: '/ram/lnk', size: 2, isDir: false, mode: FILE_MODE, mtimeMs: 0, isLink: true },
+      { path: '/ram/a.txt', size: 2, isDir: false, mode: FILE_MODE, mtimeMs: 0 },
+    ])
+  })
+
+  // Every shape a backend answers in reaches the same mark: the name is
+  // the part they agree on.
+  it('marks a link whatever shape the entry arrived in', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['lnk', '/ram/dirlink/'])
+      return Promise.reject(Object.assign(new Error('nope'), { code: 'ENOENT' }))
+    })
+    const resolver = new PrefixResolver(
+      () => ['/ram/'],
+      () => new Set(['lnk', 'dirlink']),
+    )
+    expect(await new RuntimeVFS(dispatch, resolver).readdir('/ram/')).toEqual([
+      { path: 'lnk', size: 0, isDir: false, isLink: true },
+      { path: '/ram/dirlink/', size: 0, isDir: true, isLink: true },
+    ])
+  })
+
+  it('marks nothing when no link source was supplied', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op) => {
+      if (op === 'readdir') return Promise.resolve(['/ram/lnk'])
+      return Promise.resolve(new FileStat({ name: 'lnk', size: 0, type: FileType.TEXT }))
+    })
+    const entries = await new RuntimeVFS(dispatch, new PrefixResolver(() => ['/ram/'])).readdir(
+      '/ram/',
+    )
+    expect(entries).toEqual([
+      { path: '/ram/lnk', size: 0, isDir: false, mode: FILE_MODE, mtimeMs: 0 },
+    ])
+  })
+
+  // The target rides the `dst` slot: it is the op's second string and a
+  // link stores it verbatim, so there is nothing a separate slot would
+  // say.
+  it('forwards symlink to dispatch symlink with the target', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
+    await new RuntimeVFS(dispatch).symlink('/ram/link', '../t.txt')
+    expect(dispatch).toHaveBeenCalledWith('symlink', '/ram/link', undefined, '../t.txt')
+  })
+
+  it('forwards readlink and returns the target', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve('../t.txt'))
+    const out = await new RuntimeVFS(dispatch).readlink('/ram/link')
+    expect(dispatch).toHaveBeenCalledWith('readlink', '/ram/link')
+    expect(out).toBe('../t.txt')
+  })
+
+  it('refuses a readlink answer that is not a string', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(7))
+    await expect(new RuntimeVFS(dispatch).readlink('/ram/link')).rejects.toThrow(/expected string/)
+  })
+
+  it('forwards setattr with the fields it was given', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
+    await new RuntimeVFS(dispatch).setattr('/ram/f', { mode: 0o600, nofollow: true })
+    expect(dispatch).toHaveBeenCalledWith('setattr', '/ram/f', undefined, undefined, {
+      mode: 0o600,
+      nofollow: true,
+    })
   })
 
   it('rethrows dispatch errors', async () => {
@@ -72,7 +235,7 @@ describe('RuntimeVFS transport', () => {
     await expect(new RuntimeVFS(dispatch).readdir('/x')).rejects.toThrow(TypeError)
   })
 
-  it('throws TypeError when readdir entry has bad shape', async () => {
+  it('throws TypeError when a readdir entry is not a name', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>(() =>
       Promise.resolve([{ path: '/x' }] as unknown as never[]),
     )

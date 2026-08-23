@@ -12,10 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, ClassVar, Literal, Protocol
+from typing import Any, ClassVar, Protocol
 
+from mirage.runtime.types import ScriptSource
 from mirage.types import Limit, PathSpec, Producer
 
 
@@ -47,6 +49,22 @@ class DenyScope(StrEnum):
     OPERAND = "operand"
 
 
+class Outcome(StrEnum):
+    """What the profile's rules say about one line: the document's own
+    three verbs and nothing else.
+
+    ALLOW is silence as well as consent, since a line no rule speaks
+    about runs. DENY covers both refusals, and ``Ruling.rule`` tells
+    them apart: a rule refused it, or, with no rule, the allow list did.
+    Both exit 126; only the wording differs, because one has an
+    operator's reason to print and the other has none.
+    """
+
+    ALLOW = "allow"
+    ASK = "ask"
+    DENY = "deny"
+
+
 @dataclass(frozen=True, slots=True)
 class Deny:
     """Refuse the command, op or session write, with a reason.
@@ -74,23 +92,23 @@ class CommandRule:
     about) matching commands, on matching paths when it names any.
 
     It is the compiled element of ``commands.deny`` and ``commands.ask``
-    at every tier and reaches the workspace only inside that document;
-    the internal RulePolicy is what evaluates it. The document writes a
-    rule in one of three shapes, and each compiles to rules of this
-    class: a list of command patterns (a whole-line rule on each, no
-    paths), a mapping of command pattern to its paths (one command to
-    many paths, one rule per command, so a path is never stated beside
-    a command it was not meant for), or paths alone (a rule on every
-    command, at the op door too). A command entry is a token-prefix
-    pattern over the line as the door normalizes it (``rm`` is every rm
-    line, ``git push`` every ``git push ...``, a ``*`` token any one
-    token). Path entries use the document's one grammar: an entry with
-    ``*``, ``?`` or ``[`` is a pattern (repo fnmatch dialect, ``*``
-    crossing ``/``, a slashless pattern matching any name component),
-    anything else is an exact path and its subtree. An entry holds a
-    token (a blank one would be the root), and at the workspace and
-    profile tiers it is absolute or a name pattern; only the mount
-    tier's entries are relative, to the mount root.
+    wherever the profile writes one, and reaches the workspace only inside
+    that document; the internal RulePolicy is what evaluates it. The
+    document writes a rule in one of three shapes, and each compiles to
+    rules of this class: a list of command patterns (a whole-line rule
+    on each, no paths), a mapping of command pattern to its paths (one
+    command to many paths, one rule per command, so a path is never
+    stated beside a command it was not meant for), or paths alone (a
+    rule on every command, at the op door too). A command entry is a
+    token-prefix pattern over the line as the door normalizes it (``rm``
+    is every rm line, ``git push`` every ``git push ...``, a ``*`` token
+    any one token). Path entries use the document's one grammar: an
+    entry with ``*``, ``?`` or ``[`` is a pattern (repo fnmatch dialect,
+    ``*`` crossing ``/``, a slashless pattern matching any name
+    component), anything else is an exact path and its subtree. Every
+    entry is absolute or a name pattern, holds a token (a blank one
+    would be the root), and inside a mount section must name something
+    under that mount root.
 
     Args:
         reason (str): why the command is refused, shown on stderr.
@@ -99,10 +117,11 @@ class CommandRule:
             exactly one.
         paths (tuple[str, ...]): path entries; empty refuses the
             command regardless of its operands.
-        mount (str): set by the compiler for a mount-tier rule, the
-            mount root the rule is scoped to: it applies only to a line
-            whose cwd or paths lie under it. Empty for the workspace
-            and profile tiers; never typed in the document.
+        mount (str): set by the compiler for a rule written under a
+            ``mounts.<prefix>`` section, the mount root it is scoped to:
+            it applies only to a line whose cwd or paths lie under it.
+            Empty for a rule written at the top level; never typed in
+            the document.
     """
 
     reason: str
@@ -112,12 +131,45 @@ class CommandRule:
 
 
 @dataclass(frozen=True, slots=True)
+class Ruling:
+    """The profile's answer about one line, and what produced it.
+
+    Args:
+        outcome (Outcome): which verb spoke.
+        rule (CommandRule | None): the rule that spoke; None on ALLOW,
+            and on the DENY the allow list produces, which is not a
+            rule and so has no reason of its own to print.
+        matched_path (str | None): the operand a path-scoped rule
+            matched, as typed, which the GNU voice prints
+            (``rm: letters.txt: <reason>``); None when the rule reaches
+            the whole line.
+        source (str): where in the document the rule was written, for a
+            host reading a decision: ``top`` or ``mounts./repo``. Empty
+            on ALLOW, and ``commands.allow`` on the DENY the allow list
+            produces, which is the one place a source names no rule.
+        asks (tuple[CommandRule, ...]): every ask that won at a subject
+            of its own, ``rule`` among them, in the order the subjects
+            were read. Only ASK fills it, and the line runs only once
+            each has been answered: one nod covers the subject it was
+            given for and no other, so a deeper ask on a destination
+            cannot carry a source past the ask written for it. One
+            entry is the ordinary case.
+    """
+
+    outcome: Outcome
+    rule: CommandRule | None = None
+    matched_path: str | None = None
+    source: str = ""
+    asks: tuple[CommandRule, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Ask:
     """Admit the command only with a host approval.
 
     A pre_command answer: ``PermissionsPolicy`` returns one for a
     ``commands.ask`` rule, a custom policy for a coded condition, and
-    both route to the workspace's approval door (``Approvals``). A Deny
+    both route to the workspace's decision ledger (``Decisions``). A Deny
     from any policy outranks it: the chain keeps looking past an Ask
     for a Deny, so an approval can never re-open a refusal. Command
     plane only: the op doors cannot wait on a host.
@@ -127,14 +179,22 @@ class Ask:
             in the requires-approval voice and to the host in the
             request.
         rule (CommandRule | None): the document rule that asked; None
-            for a coded condition, for which the door keys a session
-            grant on the program that asked.
+            for a coded condition, for which the ledger keys a session
+            answer on the program that asked.
+        rules (tuple[CommandRule, ...]): every rule the line has to be
+            granted, ``rule`` among them and usually alone: a line whose
+            operands were each asked about by a different rule carries
+            them all. The door asks about them one at a time and runs
+            the line only once each is answered, so a nod given for one
+            operand cannot carry another. Empty for a coded Ask, whose
+            one rule the door synthesizes.
     """
 
     kind: ClassVar[str] = "ask"
 
     reason: str
     rule: CommandRule | None = None
+    rules: tuple[CommandRule, ...] = ()
 
 
 # The closed vocabulary of policy answers: a hook returns an Action to
@@ -145,63 +205,51 @@ class Ask:
 # enforced loud.
 Action = Deny | Limit | Ask
 
-# The host's answer to an approval request. ``allow_once`` admits the
-# exact line one time, ``allow_session`` admits every line the rule
-# covers for the rest of the session, ``deny`` refuses the retry with
-# the ask's reason in the deny voice.
-ApprovalDecision = Literal["allow_once", "allow_session", "deny"]
 
-# How far a host grant reaches through ``Approvals.grant``: ``once`` is
-# ``allow_once``, ``session`` is ``allow_session``.
-GrantScope = Literal["once", "session"]
+class Scope(StrEnum):
+    """How far an answer reaches.
 
-
-@dataclass(frozen=True, slots=True)
-class Grant:
-    """The host's standing answer to an asked line, held on the session
-    until the run it answers.
-
-    ``allow_once`` and ``deny`` answer one retry of the exact line (the
-    expanded words and the cwd of the request) and are consumed by it;
-    ``allow_session`` answers every line the rule covers for the rest
-    of the session and stays. Session state like functions and cwd:
-    persisted with the session record, read through the session
-    manager so a fork or a background copy shares it, never inherited
-    by another session. Consulted only after the deny arm, so a grant
-    never re-opens a deny.
-
-    Args:
-        decision (ApprovalDecision): the host's answer.
-        rule (CommandRule): the rule the answer is for; for a coded Ask
-            the door synthesizes one over the program that asked.
-        argv (tuple[str, ...]): the line as expanded, command name
-            first, for the exact-line decisions.
-        cwd (str): the working directory of the request.
+    ONCE answers the one line that asked and is consumed by it, so the
+    next identical line asks again. SESSION answers every line the same
+    rule covers for the rest of the session. Nothing reaches further:
+    an answer is never inherited by another session, and never
+    re-opens a deny rule, which is consulted first.
     """
 
-    decision: ApprovalDecision
-    rule: CommandRule
-    argv: tuple[str, ...]
-    cwd: str
+    ONCE = "once"
+    SESSION = "session"
 
 
 @dataclass(frozen=True, slots=True)
-class ApprovalRequest:
-    """One asked line, as the approver sees it.
+class Decision:
+    """One asked line, and the answer to it once a host gives one.
+
+    The ledger's entry, and the only shape the permissions layer keeps
+    about an ask. It is written when a rule asks and rewritten when a
+    host answers, so listing what is waiting and reading what was
+    settled are the same query over the same records rather than two
+    stores that can disagree.
+
+    A retry is matched by comparing ``command``, ``argv`` and ``cwd``
+    against what was recorded, not by re-deriving an id, so two lines
+    that differ only where the recorded fields differ can never collide.
 
     Args:
-        id (str): stable for the exact line in the session (a digest
-            of session, cwd and words), so a retry asks the same
-            question and the host answers it once.
+        id (str): names this record, for a host to answer it by.
         session_id (str): the session running the line.
         agent_id (str): the agent the workspace attributes the line to.
         command (str): the command name.
         argv (tuple[str, ...]): the words after the name, as expanded.
         cwd (str): the session working directory.
         paths (tuple[str, ...]): the virtual paths the line names.
-        reason (str): the ask's reason.
+        reason (str): the ask's reason, as the rule worded it.
         rule (CommandRule): the rule that asked, synthesized for a
             coded Ask.
+        outcome (Outcome | None): the host's answer, ALLOW or DENY;
+            None while nobody has answered. ASK is not an answer, it is
+            the question.
+        scope (Scope): how far the answer reaches.
+        note (str): what the host said when answering, if anything.
     """
 
     id: str
@@ -213,6 +261,9 @@ class ApprovalRequest:
     paths: tuple[str, ...]
     reason: str
     rule: CommandRule
+    outcome: Outcome | None = None
+    scope: Scope = Scope.ONCE
+    note: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,29 +280,34 @@ class Pending:
     reason: str
 
 
-class SessionGrantsQuery(Protocol):
-    """The session questions the approval door asks.
+class SessionDecisionsQuery(Protocol):
+    """The session questions the decision ledger asks.
 
-    The SessionManager satisfies it structurally, so the door reads and
-    writes a session's grants by id without this package importing the
-    workspace, and always on the registered session rather than the
+    The SessionManager satisfies it structurally, so the ledger reads
+    and writes a session's records by id without this package importing
+    the workspace, and always on the registered session rather than the
     fork a line may be running in.
     """
 
-    def grants_of(self, session_id: str) -> tuple[Grant, ...]:
-        """The grants a session holds, oldest first.
+    def decision_sessions(self) -> tuple[str, ...]:
+        """Every session id holding records, oldest first."""
+        ...
+
+    def decisions_of(self, session_id: str) -> tuple[Decision, ...]:
+        """The records a session holds, oldest first.
 
         Args:
             session_id (str): the session.
         """
         ...
 
-    def set_grants(self, session_id: str, grants: tuple[Grant, ...]) -> None:
-        """Replace a session's grants.
+    def set_decisions(self, session_id: str, records: tuple[Decision,
+                                                            ...]) -> None:
+        """Replace a session's records.
 
         Args:
             session_id (str): the session.
-            grants (tuple[Grant, ...]): the new list.
+            records (tuple[Decision, ...]): the new list.
         """
         ...
 
@@ -261,18 +317,20 @@ class SessionGrantsQuery(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class CommandsSpec:
-    """One tier's ``commands`` block, compiled.
+class AdmissionRules:
+    """One profile's admission rules, compiled: the whole permission
+    document a session runs under.
 
-    A session is evaluated over a tuple of these: the mount tiers in
-    registration order, the workspace tier, then the session's own
-    (profile tightened by the inline document). ``allow`` intersects
-    across tiers (a line must match one pattern in every tier that has
-    a list), ``ask`` and ``deny`` union, in tier order for the message.
+    A session is evaluated against exactly one of these. It holds the
+    profile's allow list, its ask and deny rules, and the rules its mount
+    entries carry, each stamped with the mount it was written under so
+    it applies to a line working inside that mount. There is nothing
+    above it and nothing beside it: two rules that both match are
+    resolved by anchor depth, then by verb (``policy/match/decide``).
 
     Args:
-        allow (tuple[str, ...] | None): the tier's allow patterns; None
-            when the tier states no list (everything visible).
+        allow (tuple[str, ...] | None): the profile's allow patterns; None
+            when it states no list (everything visible).
         ask (tuple[CommandRule, ...]): rules admitted only with an
             approval.
         deny (tuple[CommandRule, ...]): rules refused with a reason.
@@ -283,6 +341,36 @@ class CommandsSpec:
     deny: tuple[CommandRule, ...] = ()
 
 
+# The rules that apply to one line, each with the verb it carries, deny
+# before ask and in the order written. Built once per line by ``decide``
+# and read again at every subject of it.
+LiveRules = Sequence[tuple[Outcome, CommandRule]]
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileScript:
+    """One profile's script, as a session carries it: the program, the
+    engine it runs on, and the profile it speaks for.
+
+    Compiled off ``SessionProfile.script`` beside the admission rules,
+    and evaluated per command by ``ScriptPolicy`` with the command's
+    facts as ``ctx``; its answer is allow (no opinion), deny or ask.
+
+    Args:
+        profile (str): the profile's name, which the script reads as
+            ``ctx["profile"]`` and every refusal about it prints; empty
+            for a profile document passed to ``create_session`` without
+            a name.
+        script (ScriptSource): the program, as the config door loaded
+            it.
+        runtime (str): the engine the profile named for it.
+    """
+
+    profile: str
+    script: ScriptSource
+    runtime: str
+
+
 class SessionCommandsQuery(Protocol):
     """The one session question the permissions policy asks.
 
@@ -291,10 +379,29 @@ class SessionCommandsQuery(Protocol):
     workspace.
     """
 
-    def commands_of(self, session_id: str) -> tuple[CommandsSpec, ...]:
-        """The compiled command layers of one session, bound tiers
-        first; the bound tiers alone for an id the manager does not
-        know, so an unbound door still fails toward refusal.
+    def commands_of(self, session_id: str) -> "AdmissionRules | None":
+        """The compiled admission rules of one session; the default
+        profile's for an id the manager does not know, the empty id of an
+        unbound door included.
+
+        Args:
+            session_id (str): the session, empty when none is bound.
+        """
+        ...
+
+
+class SessionScriptsQuery(Protocol):
+    """The one session question the script policy asks.
+
+    The SessionManager satisfies it structurally, the same way it
+    satisfies ``SessionCommandsQuery``, so the policy reads a session's
+    script by the id the door put in the context.
+    """
+
+    def script_of(self, session_id: str) -> "ProfileScript | None":
+        """The script of the profile one session runs under; the
+        default profile's for an id the manager does not know, None for
+        a profile that states none.
 
         Args:
             session_id (str): the session, empty when none is bound.
@@ -334,12 +441,13 @@ class CommandContext:
             words; for anything else the name and the raw argv.
         program (tuple[str, ...]): the head of ``tokens`` that names
             what runs: the name plus a CLI's verb path.
-        tool (bool): whether the word is a tool the allow lists govern.
-            The door clears it for the shell's own grammar (the
-            grammar-tier builtins), the agent's own function where the
-            function is what runs, and an executed path: none of those
-            is tool use, so an allow list never refuses them, though a
-            deny rule still can.
+        tool (bool): whether the word is a tool the allow lists govern,
+            which every named command is, shell builtins included. The
+            door clears it for the agent's own function where the
+            function is what runs, and for an executed path: neither is
+            a name a list could hold, and every line either runs passes
+            the gate itself, so an allow list never refuses them,
+            though a deny rule still can.
         walks (bool): whether the command descends its directory
             operands (``find``, ``du``, ``tree``, ``rg``, ``grep -r``,
             ``ls -R``), so a mount whose root sits under one of its
@@ -457,3 +565,48 @@ VALIDITY: dict[str, frozenset[str]] = {
     "post_execute": frozenset({Limit.kind}),
     "pre_session": frozenset({Deny.kind}),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class Explanation:
+    """What one command of a line would do, without doing it.
+
+    Produced by the same gate the dispatcher runs, so a host reading
+    this and an agent typing the line cannot be told different things.
+    Everything the agent would see is here as it would arrive:
+    ``exit_code`` and ``stderr`` come out of the one outcome table, so
+    an explanation of a refused line is byte-identical to the refusal.
+
+    ``outcome`` is the document's answer and ``rule`` says who gave it.
+    The two refusals the allow list produces both arrive as ``DENY``
+    with no rule, and ``exit_code`` separates them: 127 for a head word
+    the session cannot see, which reads as bash's "command not found"
+    so an unlisted tool never leaks that it exists, and 126 for a line
+    whose head was visible but which no allow entry covers.
+
+    Args:
+        command (str): the head word, as the gate read it.
+        argv (tuple[str, ...]): the words after it.
+        outcome (Outcome): what the profile's rules say.
+        rule (CommandRule | None): the rule that spoke, None when the
+            allow list did or when nothing did.
+        reason (str): the rule's reason, empty when there is no rule.
+        source (str): where in the document the rule was written.
+        matched_path (str | None): the operand a path-scoped rule
+            matched, as typed.
+        paths (tuple[str, ...]): the paths the rules were shown, after
+            the session's hides dropped what it cannot see.
+        exit_code (int): what the line would exit with, 0 to run.
+        stderr (str): what the agent would read, empty to run.
+    """
+
+    command: str
+    argv: tuple[str, ...] = ()
+    outcome: Outcome = Outcome.ALLOW
+    rule: CommandRule | None = None
+    reason: str = ""
+    source: str = ""
+    matched_path: str | None = None
+    paths: tuple[str, ...] = ()
+    exit_code: int = 0
+    stderr: str = ""

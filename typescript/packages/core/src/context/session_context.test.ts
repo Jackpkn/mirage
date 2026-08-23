@@ -14,13 +14,11 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  assertMountAllowed,
   effectiveMountMode,
   getAdmission,
   getCurrentSession,
   getCurrentSessionFor,
   hiddenPathsActive,
-  MountNotAllowedError,
   pathAllowed,
   pathRulesActive,
   runWithAdmission,
@@ -32,7 +30,7 @@ import { MountMode, weakerMode } from '../types.ts'
 import { SessionManager } from '../workspace/session/manager.ts'
 import { Session } from '../workspace/session/session.ts'
 
-function grantedSession(): Session {
+function narrowedSession(): Session {
   return new Session({
     sessionId: 'agent',
     mountModes: new Map([
@@ -52,52 +50,28 @@ describe('weakerMode', () => {
   })
 })
 
-describe('session grants', () => {
+describe('a profile narrows the mounts it names', () => {
   it('no bound session is unrestricted', () => {
-    expect(() => {
-      assertMountAllowed('/anything')
-    }).not.toThrow()
     expect(effectiveMountMode('/anything', MountMode.WRITE)).toBe(MountMode.WRITE)
   })
 
-  it('unrestricted session keeps the mount mode', async () => {
+  it('a profile naming no mount keeps every mode', async () => {
     await runWithSession(new Session({ sessionId: 'free' }), () => {
-      expect(() => {
-        assertMountAllowed('/s3')
-      }).not.toThrow()
       expect(effectiveMountMode('/s3', MountMode.EXEC)).toBe(MountMode.EXEC)
       return Promise.resolve()
     })
   })
 
-  it('missing grant denies visibility', async () => {
-    await runWithSession(grantedSession(), () => {
-      expect(() => {
-        assertMountAllowed('/other')
-      }).toThrow(MountNotAllowedError)
-      return Promise.resolve()
-    })
-  })
-
-  it('root mount is governed', async () => {
-    await runWithSession(grantedSession(), () => {
-      expect(() => {
-        assertMountAllowed('/')
-      }).toThrow(MountNotAllowedError)
-      return Promise.resolve()
-    })
-  })
-
-  it('grant narrows the mount mode', async () => {
-    await runWithSession(grantedSession(), () => {
+  it('narrows the mount mode', async () => {
+    await runWithSession(narrowedSession(), () => {
       expect(effectiveMountMode('/ro', MountMode.WRITE)).toBe(MountMode.READ)
       expect(effectiveMountMode('/rw', MountMode.EXEC)).toBe(MountMode.WRITE)
       return Promise.resolve()
     })
   })
 
-  it('grant cannot widen the mount mode', async () => {
-    await runWithSession(grantedSession(), () => {
+  it('cannot widen the mount mode', async () => {
+    await runWithSession(narrowedSession(), () => {
       expect(effectiveMountMode('/ex', MountMode.READ)).toBe(MountMode.READ)
       expect(effectiveMountMode('/rw', MountMode.READ)).toBe(MountMode.READ)
       return Promise.resolve()
@@ -105,21 +79,20 @@ describe('session grants', () => {
   })
 
   it('normalizes prefixes before lookup', async () => {
-    await runWithSession(grantedSession(), () => {
-      expect(() => {
-        assertMountAllowed('/ro/')
-      }).not.toThrow()
-      expect(() => {
-        assertMountAllowed('ro')
-      }).not.toThrow()
+    await runWithSession(narrowedSession(), () => {
       expect(effectiveMountMode('/ro/', MountMode.WRITE)).toBe(MountMode.READ)
       return Promise.resolve()
     })
   })
 
-  it('missing grant defaults effective mode to READ', async () => {
-    await runWithSession(grantedSession(), () => {
-      expect(effectiveMountMode('/other', MountMode.EXEC)).toBe(MountMode.READ)
+  it('a mount the profile does not name keeps its own mode', async () => {
+    // Naming three mounts is not an allowlist: a fourth is reachable at
+    // whatever the workspace gave it. A profile that must not touch a
+    // mount hides it, which reads as ENOENT rather than as a permission
+    // error naming something the profile cannot see.
+    await runWithSession(narrowedSession(), () => {
+      expect(effectiveMountMode('/other', MountMode.EXEC)).toBe(MountMode.EXEC)
+      expect(effectiveMountMode('/', MountMode.WRITE)).toBe(MountMode.WRITE)
       return Promise.resolve()
     })
   })
@@ -174,10 +147,18 @@ describe('a binding belongs to the workspace that published it', () => {
   })
 })
 
-describe('bound hides', () => {
-  it("join the session's own hides in the predicate", async () => {
-    const sess = new Session({ sessionId: 'agent', hiddenPaths: { paths: ['/a/secrets'] } })
-    sess.boundHidden = { paths: ['/shared/finance'], patterns: ['/repo/*.pem'] }
+describe('hides', () => {
+  it("a profile's hides reach the predicate as paths and patterns", async () => {
+    // One list per session, built by the compiler from the profile's own
+    // `paths.hide` and every mount section's, exact entries and glob
+    // patterns told apart once by `classifyPaths`.
+    const sess = new Session({
+      sessionId: 'agent',
+      hiddenPaths: {
+        paths: ['/a/secrets', '/shared/finance'],
+        patterns: ['/repo/*.pem'],
+      },
+    })
     await runWithSession(sess, () => {
       expect(hiddenPathsActive()).toBe(true)
       expect(pathAllowed('/a/secrets/x')).toBe(false)
@@ -193,8 +174,10 @@ describe('bound hides', () => {
     // A door that holds the session (the admission gate) asks it
     // directly; the bound form is the same answer for the bound
     // session, and no session bound means nothing is hidden.
-    const sess = new Session({ sessionId: 'agent', hiddenPaths: { paths: ['/a/secrets'] } })
-    sess.boundHidden = { patterns: ['*.pem'] }
+    const sess = new Session({
+      sessionId: 'agent',
+      hiddenPaths: { paths: ['/a/secrets'], patterns: ['*.pem'] },
+    })
     expect(getCurrentSession()).toBeNull()
     expect(sessionPathAllowed(sess, '/a/secrets/x')).toBe(false)
     expect(sessionPathAllowed(sess, '/repo/k.pem')).toBe(false)
@@ -207,11 +190,9 @@ describe('bound hides', () => {
     })
   })
 
-  it('alone activate the gate', async () => {
-    const sess = new Session({ sessionId: 'agent' })
-    sess.boundHidden = { paths: ['/repo/.env'] }
+  it('a hide activates the gate and a profile without one does not', async () => {
+    const sess = new Session({ sessionId: 'agent', hiddenPaths: { paths: ['/repo/.env'] } })
     await runWithSession(sess, () => {
-      expect(sess.hiddenPaths).toBeNull()
       expect(hiddenPathsActive()).toBe(true)
       expect(pathAllowed('/repo/.env')).toBe(false)
       expect(pathAllowed('/repo/.envrc')).toBe(true)
@@ -227,7 +208,7 @@ describe('bound hides', () => {
 
 describe('the admission binding', () => {
   it('is scoped to one command and hands the outer one back', async () => {
-    const gate = (scoped: boolean) => ({ scoped, check: () => undefined })
+    const gate = (scoped: boolean) => ({ scoped, granted: [], check: () => undefined })
     expect(getAdmission()).toBeNull()
     expect(pathRulesActive()).toBe(false)
     const outer = gate(true)

@@ -15,12 +15,19 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from mirage.policy.errors import PolicyError
+
 router = APIRouter(prefix="/v1/workspaces/{workspace_id}/sessions")
 
 
 class CreateSessionRequest(BaseModel):
     session_id: str | None = None
-    mounts: dict[str, str] | list[str] | None = None
+    # A mapping of prefix to mode, never a bare list: a list of prefixes
+    # used to mean "only these mounts" and now means nothing at all, so
+    # it is refused here rather than accepted as a no-op that reads like
+    # confinement.
+    mounts: dict[str, str] | None = None
+    profile: str | None = None
 
 
 class SessionResponse(BaseModel):
@@ -50,8 +57,14 @@ async def create_session(workspace_id: str, req: CreateSessionRequest,
         raise HTTPException(status_code=409,
                             detail=f"session id already exists: {sid!r}")
     try:
-        sess = entry.runner.ws.create_session(sid, mounts=req.mounts or None)
-    except ValueError as exc:
+        sess = entry.runner.ws.create_session(sid,
+                                              mounts=req.mounts or None,
+                                              profile=req.profile)
+    except (ValueError, PolicyError) as exc:
+        # An unknown profile name and a refused inline document are
+        # both the caller's mistake, and PolicyError is not a
+        # ValueError, so naming it here is what keeps them 422 rather
+        # than 500.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await entry.runner.call(entry.runner.ws.flush_sessions())
     return SessionResponse(session_id=sess.session_id, cwd=sess.cwd)

@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.runtime.types import VFSEntry
+from mirage.runtime.types import VFSEntry, VFSStat
 from mirage.runtime.vfs import RuntimeVFS
 
 
@@ -59,6 +59,55 @@ class MontyVFS:
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError,
                 ValueError):
             return None
+
+    def stat(self, virtual: str) -> VFSStat | None:
+        """The path's row, or None when the mount does not have it.
+
+        There is no TypeScript twin, and not for want of one: that
+        binding converts whatever its os callback returns structurally,
+        so a stat comes back to the guest as a dict and `st.st_size`
+        raises AttributeError. Python's binding hands over an `OSAccess`
+        subclass instead, which can build monty's own `StatResult`.
+
+        Args:
+            virtual (str): the path to stat.
+        """
+        if self._core is None or virtual in self._missing:
+            return None
+        try:
+            return self._core.stat(virtual)
+        except (FileNotFoundError, NotADirectoryError, ValueError):
+            self._missing.add(virtual)
+            return None
+
+    def is_link(self, virtual: str) -> bool:
+        """Whether the mount's name plane holds a symlink at `virtual`.
+
+        Answered through the readlink op, not through the parent's
+        listing, even though a readdir row now carries the mark. Two
+        reasons, and both are about this tier rather than about the
+        mark. The predicate arrives for one path with no listing in
+        hand, and every other predicate here materializes that path
+        alone, so reading the parent would trade one dispatch for a
+        readdir plus a stat per sibling (the TS twin reads the row
+        because its own `exists` and `is_file` already go through that
+        listing). And readlink is the gated channel: the node table has
+        no session, so a mark read outside an admitted listing would
+        answer for a path the door hides.
+
+        Args:
+            virtual (str): the path to test.
+        """
+        if self._core is None:
+            return False
+        try:
+            self._core.readlink(virtual)
+        except OSError:
+            # EINVAL for a path that is not a link, ENOENT for one that
+            # is not there: `is_symlink` is False either way, which is
+            # what pathlib answers for both.
+            return False
+        return True
 
     def write(self, virtual: str, data: bytes) -> None:
         if self._core is None:

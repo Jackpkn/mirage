@@ -1,0 +1,213 @@
+{
+  "cases": [
+    {
+      "id": "script_silence_runs_the_command",
+      "seq": 923080,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "scripted",
+      "command": "echo judged-and-passed",
+      "expect": {
+        "exit": 0,
+        "stdout": "judged-and-passed\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "script_only_profile_installs_every_command",
+      "seq": 923081,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "scripted",
+      "command": "touch /scratch/z && rm /scratch/z",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "script_denies_with_a_reason_it_computed",
+      "seq": 923082,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "scripted",
+      "command": "cat /repo/sealed/k",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cat: policy denied: written by scripted\n"
+      }
+    },
+    {
+      "id": "script_leaves_other_sessions_alone",
+      "seq": 923083,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "echo unscripted",
+      "expect": {
+        "exit": 0,
+        "stdout": "unscripted\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "scriptjs_silence_runs_the_command",
+      "seq": 923258,
+      "targets": [
+        "ram-scripted"
+      ],
+      "session": "scriptedjs",
+      "command": "echo judged-by-js",
+      "expect": {
+        "exit": 0,
+        "stdout": "judged-by-js\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "scriptjs_only_profile_installs_every_command",
+      "seq": 923259,
+      "targets": [
+        "ram-scripted"
+      ],
+      "session": "scriptedjs",
+      "command": "touch /scratch/z && rm /scratch/z",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "scriptjs_denies_with_a_reason_it_computed",
+      "seq": 923260,
+      "targets": [
+        "ram-scripted"
+      ],
+      "session": "scriptedjs",
+      "command": "cat /repo/sealed/k",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cat: policy denied: sealed by scriptedjs\n"
+      }
+    },
+    {
+      "id": "scriptjs_deny_follows_the_cwd",
+      "seq": 923261,
+      "targets": [
+        "ram-scripted"
+      ],
+      "session": "scriptedjs",
+      "command": "cd /repo && cat sealed/k",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cat: policy denied: sealed by scriptedjs\n"
+      }
+    },
+    {
+      "id": "scriptjs_silence_reaches_a_pipeline",
+      "seq": 923262,
+      "targets": [
+        "ram-scripted"
+      ],
+      "session": "scriptedjs",
+      "command": "echo alpha | head -1",
+      "expect": {
+        "exit": 0,
+        "stdout": "alpha\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "script_deny_follows_the_cwd",
+      "seq": 923263,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "scripted",
+      "command": "cd /repo && cat sealed/k",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cat: policy denied: written by scripted\n"
+      }
+    },
+    {
+      "id": "script_deny_reaches_a_pipeline",
+      "seq": 923264,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "scripted",
+      "command": "cat /repo/sealed/k | head -1",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cat: policy denied: written by scripted\n"
+      }
+    },
+    {
+      "id": "script_deny_reaches_a_substitution",
+      "seq": 923265,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "scripted",
+      "command": "echo start $(cat /repo/sealed/k) end",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "cat: policy denied: written by scripted\n"
+      }
+    },
+    {
+      "id": "scriptask_prep",
+      "seq": 923266,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/askme && touch /scratch/askme/a /scratch/askme/b",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "scriptask_rule_refuses_for_now",
+      "seq": 923267,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "scriptedask",
+      "command": "rm /scratch/askme/a",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "rm: requires approval: scripted sign-off (approval a288d3df2ca1)\n"
+      }
+    },
+    {
+      "id": "scriptask_grant_passes_one_retry",
+      "seq": 923268,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "scriptedask",
+      "answer": "allow_once",
+      "command": "rm /scratch/askme/a && ls /scratch/askme",
+      "expect": {
+        "exit": 0,
+        "stdout": "b\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

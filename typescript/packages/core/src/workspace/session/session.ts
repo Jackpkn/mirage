@@ -17,14 +17,17 @@ import type { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import type { ShellArray } from '../../shell/array.ts'
 import type { ShellVar } from '../../shell/variable.ts'
 import { attrsFromLetters, makeVar, storedAttrs, VarAttr, withValue } from '../../shell/variable.ts'
-import type { CommandsSpec, Grant } from '../../policy/types.ts'
+import type { AdmissionRules, Decision, ProfileScript } from '../../policy/types.ts'
 import {
   commandsFromJSON,
   commandsToJSON,
-  grantFromJSON,
-  grantToJSON,
+  decisionFromJSON,
+  decisionToJSON,
+  scriptFromJSON,
+  scriptToJSON,
   type CommandsJSON,
-  type GrantJSON,
+  type DecisionJSON,
+  type ScriptJSON,
 } from './serialize.ts'
 import type { HiddenPaths, HiddenVars, MountMode } from '../../types.ts'
 
@@ -135,13 +138,19 @@ export interface SessionInit {
    * by the inline document): allow patterns, ask and deny rules. A
    * durable restriction like hiddenPaths, so it persists.
    */
-  commands?: CommandsSpec | null
+  commands?: AdmissionRules | null
+  /**
+   * The profile's per-command script, evaluated by ScriptPolicy at the
+   * admission gate. A durable restriction like commands, so it
+   * persists.
+   */
+  script?: ProfileScript | null
   /**
    * The host's standing answers to asked lines (design 3.9): session
    * state like functions and cwd, persisted, read and written through
    * the manager by id so a fork shares them, never another session's.
    */
-  grants?: readonly Grant[]
+  decisions?: readonly Decision[]
   generation?: number
   pipelineTimeoutSeconds?: number | null
   lastBgJobId?: number | null
@@ -263,19 +272,6 @@ export class Session {
   // one channel. Python needs no equivalent: kill cancels the asyncio
   // task and cancellation is ambient.
   abortSignal: AbortSignal | null = null
-  // What the workspace and its mounts hide from every session
-  // (`permissions.paths.hide`, `mounts.<p>.permissions.paths.hide`),
-  // stamped by the SessionManager on create and hydrate and joined with
-  // hiddenPaths in the predicate. Deliberately NOT part of SessionInit
-  // and never persisted: it derives from the workspace's own
-  // configuration, so a restart or a config change never leaves a
-  // stale fold in the store. fork() carries it (a fork binds the same
-  // workspace).
-  boundHidden: HiddenPaths | null = null
-  // The workspace-bound command tiers (mounts in registration order,
-  // then the workspace), stamped and carried exactly like boundHidden,
-  // never persisted.
-  boundCommands: readonly CommandsSpec[] = []
   // Command-substitution tracking for assignment statements: how many
   // substitutions have run in this session, and the status of the
   // most recent one. An assignment statement snapshots the count
@@ -311,8 +307,9 @@ export class Session {
   mountModes: ReadonlyMap<string, MountMode> | null
   hiddenPaths: HiddenPaths | null
   hiddenVars: HiddenVars | null
-  commands: CommandsSpec | null
-  grants: readonly Grant[]
+  commands: AdmissionRules | null
+  script: ProfileScript | null
+  decisions: readonly Decision[]
   generation: number
   pipelineTimeoutSeconds: number | null
   lastBgJobId: number | null
@@ -334,7 +331,8 @@ export class Session {
     this.hiddenPaths = init.hiddenPaths ?? null
     this.hiddenVars = init.hiddenVars ?? null
     this.commands = init.commands ?? null
-    this.grants = init.grants ?? []
+    this.script = init.script ?? null
+    this.decisions = init.decisions ?? []
     this.generation = init.generation ?? 0
     this.pipelineTimeoutSeconds = init.pipelineTimeoutSeconds ?? null
     this.lastBgJobId = init.lastBgJobId ?? null
@@ -386,7 +384,8 @@ export class Session {
       hiddenPaths: overrides.hiddenPaths ?? this.hiddenPaths,
       hiddenVars: overrides.hiddenVars ?? this.hiddenVars,
       commands: overrides.commands ?? this.commands,
-      grants: overrides.grants ?? this.grants,
+      script: overrides.script ?? this.script,
+      decisions: overrides.decisions ?? this.decisions,
       generation: overrides.generation ?? this.generation,
       pipelineTimeoutSeconds: overrides.pipelineTimeoutSeconds ?? this.pipelineTimeoutSeconds,
       lastBgJobId: overrides.lastBgJobId ?? this.lastBgJobId,
@@ -394,8 +393,6 @@ export class Session {
     forked.getoptsPos = this.getoptsPos
     forked.getoptsOptind = this.getoptsOptind
     forked.abortSignal = this.abortSignal
-    forked.boundHidden = this.boundHidden
-    forked.boundCommands = this.boundCommands
     forked.cmdsubSeq = this.cmdsubSeq
     forked.cmdsubStatus = this.cmdsubStatus
     forked.shopts = { ...this.shopts }
@@ -573,16 +570,9 @@ export class Session {
       }
     }
     if (this.commands !== null) data.commands = commandsToJSON(this.commands)
-    if (this.grants.length > 0) data.grants = this.grants.map(grantToJSON)
+    if (this.script !== null) data.script = scriptToJSON(this.script)
+    if (this.decisions.length > 0) data.decisions = this.decisions.map(decisionToJSON)
     return data
-  }
-
-  /**
-   * The command tiers this session runs under: the bound ones (mounts,
-   * then workspace), then its own.
-   */
-  get commandLayers(): readonly CommandsSpec[] {
-    return this.commands === null ? this.boundCommands : [...this.boundCommands, this.commands]
   }
 
   static fromJSON(data: {
@@ -595,7 +585,8 @@ export class Session {
     hidden_paths?: { paths?: string[]; patterns?: string[] } | null
     hidden_vars?: { names?: string[]; patterns?: string[] } | null
     commands?: CommandsJSON | null
-    grants?: GrantJSON[] | null
+    script?: ScriptJSON | null
+    decisions?: DecisionJSON[] | null
     generation?: number
   }): Session {
     return new Session({
@@ -626,7 +617,8 @@ export class Session {
           ? { names: data.hidden_vars.names ?? [], patterns: data.hidden_vars.patterns ?? [] }
           : null,
       commands: data.commands != null ? commandsFromJSON(data.commands) : null,
-      grants: data.grants != null ? data.grants.map(grantFromJSON) : [],
+      script: data.script != null ? scriptFromJSON(data.script) : null,
+      decisions: data.decisions != null ? data.decisions.map(decisionFromJSON) : [],
     })
   }
 }

@@ -14,7 +14,6 @@
 
 from typing import Any
 
-from mirage.resource.history import HISTORY_PREFIX
 from mirage.workspace.session import Session
 from mirage.workspace.session.session import vars_from_env
 
@@ -55,23 +54,3 @@ def fork_for_call(session: Session, cwd: str | None,
     if env is not None:
         overrides["vars"] = {**session.vars, **vars_from_env(env)}
     return session.fork(**overrides)
-
-
-def infrastructure_prefixes(implicit_root: bool) -> set[str]:
-    """Mount prefixes a session is always allowed to touch.
-
-    The implicit scratch root (where text-processing commands like
-    ``wc`` without a path argument resolve), the device mount, and the
-    history view are infrastructure: they hold no user credentials, and
-    rejecting them would break common shell idioms or the history
-    builtin. A user-defined root mount is NOT infrastructure; sessions
-    must be granted ``/`` explicitly to touch it.
-
-    Args:
-        implicit_root (bool): whether the root mount was synthesized
-            because no resource claimed ``/``.
-    """
-    prefixes = {"/dev", HISTORY_PREFIX}
-    if implicit_root:
-        prefixes.add("/")
-    return prefixes

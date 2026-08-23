@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { BridgeDispatchFn } from '../../types.ts'
+import { FileStat, FileType } from '../../../types.ts'
 import { RuntimeVFS } from '../../vfs.ts'
 import { MirageOSAccess } from './index.ts'
 import { MontyVFS } from './vfs.ts'
@@ -25,12 +26,40 @@ function accessOn(
   dispatch: BridgeDispatchFn,
   env: Record<string, string> = {},
   mounts: string[] = ['/ram'],
+  links: string[] = [],
 ): MirageOSAccess {
   return new MirageOSAccess(
     NOT_HANDLED,
     env,
-    new MontyVFS(new RuntimeVFS(dispatch, new PrefixResolver(() => mounts))),
+    new MontyVFS(
+      new RuntimeVFS(
+        dispatch,
+        new PrefixResolver(
+          () => mounts,
+          () => new Set(links),
+        ),
+      ),
+    ),
   )
+}
+
+// The door builds each row from a name plus one stat, so a double
+// standing in for the bridge answers both; a name it did not list stats
+// as a missing path.
+function listing(names: string[], dirs: string[] = []): Mock<BridgeDispatchFn> {
+  return vi.fn<BridgeDispatchFn>((op, path) => {
+    if (op === 'readdir') return Promise.resolve(names)
+    if (op === 'stat' && names.includes(path)) {
+      return Promise.resolve(
+        new FileStat({
+          name: path,
+          size: 1,
+          type: dirs.includes(path) ? FileType.DIRECTORY : FileType.TEXT,
+        }),
+      )
+    }
+    return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
+  })
 }
 
 const noop = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
@@ -93,12 +122,7 @@ describe('MirageOSAccess path operations', () => {
   })
 
   it('iterdir yields the entry paths', async () => {
-    const dispatch = vi.fn<BridgeDispatchFn>(() =>
-      Promise.resolve([
-        { path: '/ram/d/a', size: 1, isDir: false },
-        { path: '/ram/d/sub', size: 0, isDir: true },
-      ]),
-    )
+    const dispatch = listing(['/ram/d/a', '/ram/d/sub'], ['/ram/d/sub'])
     expect(await accessOn(dispatch).handle('Path.iterdir', ['/ram/d'])).toEqual([
       '/ram/d/a',
       '/ram/d/sub',
@@ -107,8 +131,9 @@ describe('MirageOSAccess path operations', () => {
 
   it('answers the exists family as booleans, never as a rejection', async () => {
     const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
-      if (op === 'readdir' && path === '/ram/d/') {
-        return Promise.resolve([{ path: '/ram/d/a', size: 1, isDir: false }])
+      if (op === 'readdir' && path === '/ram/d/') return Promise.resolve(['/ram/d/a'])
+      if (op === 'stat' && path === '/ram/d/a') {
+        return Promise.resolve(new FileStat({ name: path, size: 1, type: FileType.TEXT }))
       }
       return Promise.reject(Object.assign(new Error('gone'), { code: 'ENOENT' }))
     })
@@ -118,5 +143,21 @@ describe('MirageOSAccess path operations', () => {
     expect(await access.handle('Path.exists', ['/ram/d/a'])).toBe(true)
     expect(await access.handle('Path.is_file', ['/ram/d/nope'])).toBe(false)
     expect(await access.handle('Path.exists', ['/ram/nope/deep'])).toBe(false)
+  })
+
+  // Monty's own tree holds no links, so declining this verb answered
+  // False for a link the shell made.
+  it('answers is_symlink from the parent listing mark', async () => {
+    const dispatch = listing(['/ram/d/l', '/ram/d/f'])
+    const access = accessOn(dispatch, {}, ['/ram'], ['l'])
+    expect(await access.handle('Path.is_symlink', ['/ram/d/l'])).toBe(true)
+    expect(await access.handle('Path.is_symlink', ['/ram/d/f'])).toBe(false)
+  })
+
+  // A path under no mount reaches monty's own tree, links included.
+  it('declines is_symlink outside every mount', () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
+    const access = accessOn(dispatch)
+    expect(access.handle('Path.is_symlink', ['/tmp/l'])).toBe(NOT_HANDLED)
   })
 })

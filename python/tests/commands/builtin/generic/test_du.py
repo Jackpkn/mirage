@@ -620,9 +620,12 @@ def test_depth_counts_segments_below_the_base():
 
 
 def _mounts_view(descendants: tuple[str, ...]) -> MountView:
+    visible = [d for d in descendants if not d.endswith("/hidden")]
     return MountView(
         descendants=lambda p:
         [d for d in descendants if d.startswith(p.rstrip("/") + "/")],
+        visible_descendants=lambda p:
+        [d for d in visible if d.startswith(p.rstrip("/") + "/")],
         is_root=lambda p: False,
         root_of=lambda p: "/")
 
@@ -834,7 +837,7 @@ async def test_du_on_a_directory_implied_only_by_a_link_below_it():
 
 
 @pytest.mark.asyncio
-async def test_du_still_reports_absence_when_the_descendant_is_ungranted():
+async def test_du_still_reports_absence_when_the_descendant_is_hidden():
     """A session that may not see the mount must not learn it is there.
 
     ``registry.descendant_mounts`` is not session-filtered, so proving
@@ -847,7 +850,7 @@ async def test_du_still_reports_absence_when_the_descendant_is_ungranted():
         "/empty/hole": RAMResource()
     },
                    mode=MountMode.WRITE)
-    ws.create_session("scoped", {"/": "rw"})
+    ws.create_session("scoped", profile={"paths": {"hide": ["/empty/hole"]}})
     result = await ws.execute("du /empty", session_id="scoped")
     assert await result.stdout_str() == ""
     assert (await result.stderr_str()) == (

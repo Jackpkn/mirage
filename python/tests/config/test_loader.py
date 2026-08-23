@@ -37,9 +37,8 @@ from mirage.workspace.store import (DiskWorkspaceStateStore,
                                     RAMWorkspaceStateStore,
                                     RedisWorkspaceStateStore)
 
-from mirage.workspace.session.permissions import (  # isort: skip
-    CommandsBlock, MountPermissions, PathsBlock, SessionProfile, VarsBlock,
-    WorkspacePermissions)
+from mirage.policy.profile import (  # isort: skip
+    CommandsBlock, PathsBlock, ProfileMount, SessionProfile, VarsBlock)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -388,34 +387,40 @@ policy: policy.js
 
 
 def test_permissions_document_maps_to_workspace_kwargs(tmp_path):
+    # `mounts:` is infrastructure and `profiles:` is every permission
+    # the deployment states, including the per-mount ones; there is no
+    # workspace `permissions:` block and no `permissions:` on a mount.
     cfg_file = tmp_path / "ws.yaml"
     cfg_file.write_text("""\
 mounts:
   /repo:
     resource: ram
-    permissions:
-      paths:
-        hide: ["*.pem", ".env"]
   /scratch:
     resource: ram
     mode: rwx
-permissions:
-  commands:
-    deny:
-      - reason: production data is protected
-        commands:
-          rm: ["/repo/prod/*"]
-          mv: ["/repo/prod/*"]
-      - python3
-  paths:
-    hide: ["/scratch/finance"]
+profile: reviewer
 profiles:
   default:
     cwd: /scratch
     env: {PAGER: cat}
-    mounts: {/repo: r, /scratch: rwx}
+    mounts:
+      /repo: r
+      /scratch: rwx
+    commands:
+      deny:
+        - reason: production data is protected
+          commands:
+            rm: ["/repo/prod/*"]
+            mv: ["/repo/prod/*"]
+        - python3
+    paths:
+      hide: ["/scratch/finance"]
   reviewer:
-    extends: default
+    mounts:
+      /repo:
+        mode: r
+        paths:
+          hide: ["/repo/*.pem", "/repo/.env"]
     paths:
       hide: ["/repo/docs/internal"]
     vars:
@@ -423,7 +428,15 @@ profiles:
 """)
     cfg = load_config(cfg_file)
     kwargs = cfg.to_workspace_kwargs()
-    assert kwargs["permissions"] == WorkspacePermissions(
+    assert "permissions" not in kwargs
+    assert kwargs["profile"] == "reviewer"
+    assert kwargs["profiles"]["default"] == SessionProfile(
+        cwd="/scratch",
+        env={"PAGER": "cat"},
+        mounts={
+            "/repo": ProfileMount(mode=MountMode.READ),
+            "/scratch": ProfileMount(mode=MountMode.EXEC),
+        },
         commands=CommandsBlock(deny=(
             CommandRule(reason="production data is protected",
                         commands=("rm", ),
@@ -435,22 +448,15 @@ profiles:
         )),
         paths=PathsBlock(hide=("/scratch/finance", )),
     )
-    assert kwargs["profiles"] == {
-        "default":
-        SessionProfile(cwd="/scratch",
-                       env={"PAGER": "cat"},
-                       mounts={
-                           "/repo": MountMode.READ,
-                           "/scratch": MountMode.EXEC
-                       }),
-        "reviewer":
-        SessionProfile(extends="default",
-                       paths=PathsBlock(hide=("/repo/docs/internal", )),
-                       vars=VarsBlock(hide=("AWS_*", "SLACK_TOKEN"))),
-    }
-    assert kwargs["resources"]["/repo"].permissions == MountPermissions(
-        paths=PathsBlock(hide=("*.pem", ".env")))
-    assert kwargs["resources"]["/scratch"].permissions is None
+    assert kwargs["profiles"]["reviewer"] == SessionProfile(
+        mounts={
+            "/repo":
+            ProfileMount(mode=MountMode.READ,
+                         paths=PathsBlock(hide=("/repo/*.pem", "/repo/.env")))
+        },
+        paths=PathsBlock(hide=("/repo/docs/internal", )),
+        vars=VarsBlock(hide=("AWS_*", "SLACK_TOKEN")),
+    )
 
 
 def test_permissions_document_end_to_end_from_yaml(tmp_path):
@@ -461,16 +467,17 @@ mounts:
   /repo:
     resource: ram
     mode: rwx
-    permissions:
-      paths:
-        hide: [".env"]
-permissions:
-  commands:
-    deny:
-      - reason: no deletes in the repo
-        commands:
-          rm: ["/repo"]
 profiles:
+  default:
+    mounts:
+      /repo:
+        paths:
+          hide: ["/repo/.env"]
+    commands:
+      deny:
+        - reason: no deletes in the repo
+          commands:
+            rm: ["/repo"]
   reviewer:
     cwd: /repo
     mounts: {/repo: r}
@@ -510,14 +517,31 @@ def test_unknown_profile_fields_fail_loud(tmp_path):
                 }
             },
         })
+    # A mount states infrastructure only, and there is no workspace
+    # permissions block: both used to be a second place to write a rule.
+    for bad in ({
+            "permissions": {
+                "commands": {
+                    "allow": ["ls"]
+                }
+            }
+    }, {
+            "profiles": {
+                "a": {
+                    "extends": "default"
+                }
+            }
+    }):
+        with pytest.raises(ValueError):
+            load_config({"mounts": {"/data": {"resource": "ram"}}, **bad})
     with pytest.raises(ValueError):
         load_config({
             "mounts": {
                 "/data": {
                     "resource": "ram",
                     "permissions": {
-                        "commands": {
-                            "allow": ["ls"]
+                        "paths": {
+                            "hide": ["/data/x"]
                         }
                     }
                 }
@@ -525,17 +549,18 @@ def test_unknown_profile_fields_fail_loud(tmp_path):
         })
 
 
-def test_profile_chain_is_resolved_at_load(tmp_path):
-    with pytest.raises(ValueError, match="extends unknown profile 'gone'"):
+def test_a_named_default_profile_must_exist(tmp_path):
+    with pytest.raises(ValueError, match="unknown profile 'gone'"):
         load_config({
             "mounts": {
                 "/data": {
                     "resource": "ram"
                 }
             },
+            "profile": "gone",
             "profiles": {
-                "orphan": {
-                    "extends": "gone"
+                "a": {
+                    "cwd": "/data"
                 }
             },
         })
@@ -660,6 +685,56 @@ clis:
 
 
 @pytest.mark.asyncio
+async def test_mounts_path_form_resource_rebases_on_the_config_dir(
+        tmp_path, monkeypatch):
+    # `resource: ./wiki.py:WikiResource` reads the same way `cli:` does,
+    # so it follows the same build-context rule.
+    (tmp_path / "wiki.py").write_text("""\
+from mirage.resource.ram.ram import RAMResource
+
+
+class WikiResource(RAMResource):
+    pass
+""")
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /wiki:
+    resource: ./wiki.py:WikiResource
+""")
+    monkeypatch.chdir(tmp_path.parent)
+    cfg = load_config(cfg_file)
+    assert cfg.mounts[
+        "/wiki"].resource == f"{tmp_path / 'wiki.py'}:WikiResource"
+    mount = cfg.to_workspace_kwargs()["resources"]["/wiki"]
+    assert type(mount.resource).__name__ == "WikiResource"
+
+
+@pytest.mark.asyncio
+async def test_mounts_module_dotpath_resource_is_left_alone(tmp_path):
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /wiki:
+    resource: mypkg.backends:WikiResource
+""")
+    cfg = load_config(cfg_file)
+    assert cfg.mounts["/wiki"].resource == "mypkg.backends:WikiResource"
+
+
+@pytest.mark.asyncio
+async def test_mounts_registry_name_is_left_alone(tmp_path):
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /data:
+    resource: ram
+""")
+    cfg = load_config(cfg_file)
+    assert cfg.mounts["/data"].resource == "ram"
+
+
+@pytest.mark.asyncio
 async def test_clis_module_dotpath_reference_is_left_alone(tmp_path):
     # importlib resolves a dotpath, not the filesystem, so rebasing it
     # would break the import.
@@ -768,11 +843,16 @@ def test_clis_block_refuses_unknown_keys():
         })
 
 
+# The accepted half of the shared contract, one file per subject:
+# every config block that is not a permission verb, then a verb each.
+ACCEPTED_FIXTURES = ("blocks", "allow", "ask", "deny")
+
+
 def _shared_fixture_cases(name: str) -> list[dict]:
-    # integ/fixtures/config/{rejected,accepted}.json are the contract: the
-    # TypeScript suite (packages/server/src/config.test.ts) reads the same
-    # two files, so a config that loads in one language and not the other
-    # fails a test until both loaders agree.
+    # integ/fixtures/config/*.json are the contract: the TypeScript suite
+    # (packages/node/src/config.test.ts) reads the same files, so a
+    # config that loads in one language and not the other fails a test
+    # until both loaders agree.
     fixture = (Path(__file__).parents[3] / "integ" / "fixtures" / "config" /
                f"{name}.json")
     cases = json.loads(fixture.read_text())["cases"]
@@ -831,8 +911,48 @@ def test_shared_rejection_fixture_is_refused():
             load_config(case["config"])
 
 
-def test_shared_acceptance_fixture_is_accepted():
+@pytest.mark.parametrize("fixture", ACCEPTED_FIXTURES)
+def test_shared_acceptance_fixture_is_accepted(fixture: str):
     # Every key of every block, so a field added to a model here and
     # never mirrored into the TypeScript key tables fails there.
-    for case in _shared_fixture_cases("accepted"):
+    for case in _shared_fixture_cases(fixture):
         load_config(case["config"])
+
+
+def test_profile_script_path_rebases_on_the_config_dir(tmp_path, monkeypatch):
+    # `script: roles/x.py` means "next to the config file", the same
+    # build-context rule the cli path form follows; without rebasing it
+    # resolves against the process cwd and only works by luck.
+    (tmp_path / "roles").mkdir()
+    (tmp_path / "roles" / "x.py").write_text("None\n")
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /data:
+    resource: ram
+profiles:
+  release: {script: roles/x.py, runtime: monty}
+""")
+    monkeypatch.chdir(tmp_path.parent)
+    cfg = load_config(cfg_file)
+    release = cfg.to_workspace_kwargs()["profiles"]["release"]
+    assert isinstance(release.script, ScriptSource)
+    assert release.script.source == "None\n"
+    assert release.runtime == "monty"
+
+
+def test_profile_script_states_its_runtime(tmp_path):
+    # There is no default engine: a script the config does not pin to an
+    # engine is refused at load, not guessed at the gate.
+    (tmp_path / "roles").mkdir()
+    (tmp_path / "roles" / "x.py").write_text("None\n")
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /data:
+    resource: ram
+profiles:
+  release: {script: roles/x.py}
+""")
+    with pytest.raises(ValueError, match="set runtime beside script"):
+        load_config(cfg_file)

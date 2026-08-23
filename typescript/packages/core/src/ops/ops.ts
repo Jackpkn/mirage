@@ -16,7 +16,7 @@ import { OpReport } from '../io/types.ts'
 import { OpRecord } from '../observe/record.ts'
 import { NO_FOLLOW_OPS, type NamespaceLinks } from './config.ts'
 import type { OpKwargs } from './registry.ts'
-import type { FileStat } from '../types.ts'
+import type { FileStat, SetAttrFields } from '../types.ts'
 import { FileType, PathSpec } from '../types.ts'
 import { exdev, isMissingPath } from '../utils/errors.ts'
 import type { DispatchFn } from '../runtime/types.ts'
@@ -137,7 +137,11 @@ export class Ops {
     kwargs: OpKwargs = {},
   ): Promise<unknown> {
     const start = Date.now()
-    const followed = this.links !== null && !NO_FOLLOW_OPS.has(op) ? this.links.follow(path) : path
+    // `nofollow` is the caller's AT_SYMLINK_NOFOLLOW and suppresses
+    // both follows, so an op meant for a link entry itself (chmod -h, a
+    // guest's lchown) still records the link's own path.
+    const skipFollow = NO_FOLLOW_OPS.has(op) || kwargs.nofollow === true
+    const followed = this.links !== null && !skipFollow ? this.links.follow(path) : path
     const owner = this.ownerOf(followed)
     const report = new OpReport()
     let result: unknown
@@ -275,12 +279,15 @@ export class Ops {
   }
 
   /**
-   * Create or overwrite a namespace symlink at `path`.
+   * Create a namespace symlink at `path`.
    *
    * Routed through the door like every write: session grants and
    * admission policies fire on the link's turf, and the write lands on
-   * the ledger. The target is stored verbatim as typed. Mirrors
-   * Python's Ops.symlink.
+   * the ledger. The target is stored verbatim as typed. Throws EEXIST
+   * when something is already at `path` (a file, a directory, another
+   * link, a mount root): symlink(2) never overwrites, and the door is
+   * the layer that can see both planes to tell. Mirrors Python's
+   * Ops.symlink.
    */
   async symlink(path: string, target: string): Promise<void> {
     await this.through('symlink', path, [], { target })
@@ -289,6 +296,25 @@ export class Ops {
   /** The stored target of the link at `path`; EINVAL when not a link. */
   async readlink(path: string): Promise<string> {
     return (await this.through('readlink', path)) as string
+  }
+
+  /**
+   * Write metadata fields, natively where the backend can hold them.
+   *
+   * Every field is passed, unset ones as undefined, because the door
+   * reads the whole set and stores in the namespace overlay whatever
+   * the backend cannot keep. A mount with no setattr op therefore still
+   * answers: a chmod on an s3 or dropbox mount lands in the name plane
+   * and stat reports it back. Stored, not enforced; the mount mode is
+   * the access control. Returns what the backend could not keep.
+   * Mirrors Python's Ops.setattr.
+   */
+  async setattr(path: string, attrs: SetAttrFields = {}): Promise<Record<string, number | string>> {
+    const { nofollow = false, ...fields } = attrs
+    return (await this.through('setattr', path, [], { ...fields, nofollow })) as Record<
+      string,
+      number | string
+    >
   }
 
   async truncate(path: string, length: number): Promise<void> {

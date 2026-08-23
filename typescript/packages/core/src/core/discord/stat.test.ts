@@ -23,10 +23,13 @@ import { stat } from './stat.ts'
 
 class FakeDiscordTransport implements DiscordTransport {
   public readonly calls: { method: DiscordMethod; endpoint: string }[] = []
-  constructor(private readonly responder: () => DiscordResponse = () => null) {}
+  constructor(
+    private readonly responder: (method: DiscordMethod, endpoint: string) => DiscordResponse = () =>
+      null,
+  ) {}
   call(method: DiscordMethod, endpoint: string): Promise<DiscordResponse> {
     this.calls.push({ method, endpoint })
-    return Promise.resolve(this.responder())
+    return Promise.resolve(this.responder(method, endpoint))
   }
 }
 
@@ -85,26 +88,35 @@ describe('stat guild dir', () => {
   })
 })
 
-describe('stat virtual containers under guild', () => {
-  it('returns DIRECTORY for /<g>/channels (no index lookup)', async () => {
-    const t = new FakeDiscordTransport()
+describe('stat containers under guild', () => {
+  const guilds = new FakeDiscordTransport((_m, endpoint) =>
+    endpoint === '/users/@me/guilds' ? [{ id: 'G1', name: 'My Server' }] : null,
+  )
+
+  it('returns DIRECTORY for /<g>/channels once the guild is proven', async () => {
     const out = await stat(
-      new DiscordAccessor(t),
+      new DiscordAccessor(guilds),
       spec('/mnt/discord/My Server__G1/channels', '/mnt/discord'),
     )
     expect(out.type).toBe(FileType.DIRECTORY)
     expect(out.name).toBe('channels')
-    expect(t.calls).toHaveLength(0)
   })
 
-  it('returns DIRECTORY for /<g>/members (no index lookup)', async () => {
-    const t = new FakeDiscordTransport()
+  it('returns DIRECTORY for /<g>/members once the guild is proven', async () => {
     const out = await stat(
-      new DiscordAccessor(t),
+      new DiscordAccessor(guilds),
       spec('/mnt/discord/My Server__G1/members', '/mnt/discord'),
     )
     expect(out.type).toBe(FileType.DIRECTORY)
     expect(out.name).toBe('members')
+  })
+
+  it('throws ENOENT for a container under a bogus guild', async () => {
+    // The containers exist per guild, so a guild the listing does not
+    // prove takes its children with it.
+    await expect(
+      stat(new DiscordAccessor(guilds), spec('/mnt/discord/Nope__G9/channels', '/mnt/discord')),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 
@@ -207,19 +219,47 @@ describe('stat member file', () => {
 })
 
 describe('stat history chat.jsonl', () => {
-  it('returns TEXT with chat.jsonl name (no index lookup)', async () => {
-    const t = new FakeDiscordTransport()
+  it('returns TEXT with the rendered size once the day is fetched', async () => {
+    const t = new FakeDiscordTransport((_m, endpoint) => {
+      if (endpoint === '/users/@me/guilds') return [{ id: 'G1', name: 'My Server' }]
+      if (endpoint === '/guilds/G1/channels') return [{ id: 'C1', name: 'general', type: 0 }]
+      if (endpoint === '/channels/C1/messages')
+        return [{ id: '1196300000000000000', content: 'hello' }]
+      return null
+    })
     const out = await stat(
       new DiscordAccessor(t),
       spec('/mnt/discord/My Server__G1/channels/general__C1/2024-01-15/chat.jsonl', '/mnt/discord'),
     )
     expect(out.type).toBe(FileType.TEXT)
     expect(out.name).toBe('chat.jsonl')
-    expect(t.calls).toHaveLength(0)
+    expect(out.size).not.toBeNull()
   })
 
-  it('returns DIRECTORY for date dir', async () => {
-    const t = new FakeDiscordTransport()
+  it('throws ENOENT for chat.jsonl under a bogus channel', async () => {
+    const t = new FakeDiscordTransport((_m, endpoint) => {
+      if (endpoint === '/users/@me/guilds') return [{ id: 'G1', name: 'My Server' }]
+      if (endpoint === '/guilds/G1/channels') return []
+      return null
+    })
+    await expect(
+      stat(
+        new DiscordAccessor(t),
+        spec(
+          '/mnt/discord/My Server__G1/channels/general__C1/2024-01-15/chat.jsonl',
+          '/mnt/discord',
+        ),
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('returns DIRECTORY for a date dir under a real channel', async () => {
+    const t = new FakeDiscordTransport((_m, endpoint) => {
+      if (endpoint === '/users/@me/guilds') return [{ id: 'G1', name: 'My Server' }]
+      if (endpoint === '/guilds/G1/channels') return [{ id: 'C1', name: 'general', type: 0 }]
+      if (endpoint === '/channels/C1/messages') return []
+      return null
+    })
     const out = await stat(
       new DiscordAccessor(t),
       spec('/mnt/discord/My Server__G1/channels/general__C1/2024-01-15', '/mnt/discord'),
@@ -268,7 +308,7 @@ describe('discord stat parent-listing failures', () => {
     await expect(
       stat(
         new DiscordAccessor(new FailingTransport(boom)),
-        spec('/mnt/discord/guild-a', '/mnt/discord'),
+        spec('/mnt/discord/guild-a__G7', '/mnt/discord'),
         new RAMIndexCacheStore(),
       ),
     ).rejects.toThrow('401 Unauthorized')
@@ -279,7 +319,7 @@ describe('discord stat parent-listing failures', () => {
     await expect(
       stat(
         new DiscordAccessor(new FailingTransport(gone)),
-        spec('/mnt/discord/guild-a', '/mnt/discord'),
+        spec('/mnt/discord/guild-a__G7', '/mnt/discord'),
         new RAMIndexCacheStore(),
       ),
     ).rejects.toMatchObject({ code: 'ENOENT' })

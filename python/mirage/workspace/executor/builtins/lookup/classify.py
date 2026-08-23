@@ -15,9 +15,9 @@
 from mirage.workspace.executor.builtins.lookup.constants import (
     DESCRIPTIONS, KIND_BY_CONSUMER)
 from mirage.workspace.executor.builtins.lookup.types import NameKind
+from mirage.workspace.lookup import lookup, lookup_all
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.names import KEYWORDS
-from mirage.workspace.route import route, route_all
 from mirage.workspace.session import Session
 
 
@@ -34,7 +34,7 @@ def classify(name: str, session: Session,
         return NameKind.ALIAS
     if name in KEYWORDS:
         return NameKind.KEYWORD
-    return KIND_BY_CONSUMER.get(route(name, session, registry))
+    return KIND_BY_CONSUMER.get(lookup(name, session, registry))
 
 
 def classify_all(name: str, session: Session,
@@ -64,7 +64,7 @@ def classify_all(name: str, session: Session,
     kinds: list[NameKind] = [NameKind.ALIAS] if name in session.aliases else []
     if name in KEYWORDS:
         kinds.append(NameKind.KEYWORD)
-    for consumer in route_all(name, session, registry):
+    for consumer in lookup_all(name, session, registry):
         kind = KIND_BY_CONSUMER[consumer]
         if kind not in kinds:
             kinds.append(kind)

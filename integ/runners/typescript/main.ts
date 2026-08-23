@@ -14,7 +14,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { ConsistencyPolicy } from '@struktoai/mirage-node'
-import { parseSessionProfile } from '@struktoai/mirage-core/workspace/session/permissions'
+import { parseSessionProfile } from '@struktoai/mirage-core/policy/profile'
 import { ADAPTERS, openConsistency } from './adapters.ts'
 import type { Case, Target } from './harness.ts'
 import {
@@ -27,6 +27,7 @@ import {
   missingEnv,
   parseAllowSkip,
   bindMount,
+  ruleReasons,
   runCase,
   runScenario,
   seedFixture,
@@ -34,7 +35,6 @@ import {
 } from './harness.ts'
 
 const TS_HOSTS = ['typescript-node', 'typescript-browser']
-const PROFILE_KEYS = ['extends', 'cwd', 'env', 'mounts', 'paths', 'vars', 'commands']
 
 interface EmitRow {
   target: string
@@ -81,13 +81,16 @@ async function runTarget(
   if (target.console !== undefined && target.mounts[0].resource !== 'ram') {
     throw new Error(`target ${target.id}: console targets ride ram mounts`)
   }
-  // The permissions document is only wired into the ram and disk
-  // openers, for the same reason: a target that declares one on any
-  // other resource would run unbound and read as covered.
-  const declaresPermissions =
-    target.permissions !== undefined || target.mounts.some((m) => m.permissions !== undefined)
-  if (declaresPermissions && !['ram', 'disk'].includes(target.mounts[0].resource)) {
-    throw new Error(`target ${target.id}: permissions targets ride ram or disk mounts`)
+  // Profiles reach the workspace only through the openers that pass them
+  // on, for the same reason: a target that declares one on an opener
+  // that drops it would run unbound and read as covered. Python needs no
+  // such list because it builds every target's workspace in one place.
+  const PROFILE_OPENERS = ['ram', 'disk', 'email']
+  const declaresProfiles = target.profiles !== undefined || target.profile !== undefined
+  if (declaresProfiles && !PROFILE_OPENERS.includes(target.mounts[0].resource)) {
+    throw new Error(
+      `target ${target.id}: profiles ride ${PROFILE_OPENERS.join(', ')} mounts`,
+    )
   }
   const { ws, cleanup } = await ADAPTERS[target.mounts[0].resource](target)
   try {
@@ -104,29 +107,38 @@ async function runTarget(
       await seedFixture(ws, mount.fixture, mount.path, root)
       if (mount.seed_root) await seedMountRoot(ws, mount.path)
     }
-    // Sessions a case can name via its `session` field. Mount grants take
-    // either the mapping form ({ '/data': 'read' }) or the list form
-    // (['/data'], which inherits the mount's own mode). A profile form is
-    // the permissions document itself ({ mounts, paths: { hide }, vars:
-    // { hide }, env, cwd }), validated by the same parser the YAML door
-    // uses; it is told apart by its keys, which never start with '/'.
+    // Sessions a case can name via its `session` field, through the two
+    // doors a host really has. A string names one of the target's profiles
+    // (`profile`), which is the whole document that session runs under.
+    // A mapping is an inline document added to the default profile
+    // (`permissions`): it may add ask and deny rules and hides, never an
+    // allow list, so a session that needs its own allow list has to be a
+    // profile. An empty mapping is the default profile with nothing added.
+    // A profile written by a script is ready only after hydration, which
+    // every embedding program already awaits before it creates a
+    // session; the battery is a program like any other.
+    await ws.ensureSessionsLoaded()
     for (const [sessionId, spec] of Object.entries(target.sessions ?? {})) {
-      const profileShaped =
-        spec !== null &&
-        typeof spec === 'object' &&
-        !Array.isArray(spec) &&
-        PROFILE_KEYS.some((k) => k in spec)
-      if (profileShaped) {
-        ws.createSession(sessionId, { profile: parseSessionProfile(spec, `session ${sessionId}`) })
+      if (typeof spec === 'string') {
+        ws.createSession(sessionId, { profile: spec })
+      } else if (spec !== null && Object.keys(spec).length > 0) {
+        ws.createSession(sessionId, {
+          permissions: parseSessionProfile(spec, `session ${sessionId}`),
+        })
       } else {
-        ws.createSession(sessionId, { mounts: spec as Record<string, string> | string[] })
+        ws.createSession(sessionId, {})
       }
     }
+    // Only a target carrying a permissions document has a verdict for
+    // `explain` to predict, and only there is the extra dry run per case
+    // worth its time. The reasons double as the tell that a refusal came
+    // from the policy layer rather than from the command itself.
+    const reasons = ruleReasons({ profiles: target.profiles, sessions: target.sessions })
     for (const c of cases) {
       if (!c.targets.includes(target.id)) continue
       if (c.consistency !== undefined) continue
       const bound = bindMount(c, target.mounts[0].path)
-      const { exitCode, out, err, elapsed, checkOut } = await runCase(ws, bound)
+      const { exitCode, out, err, elapsed, checkOut, notes } = await runCase(ws, bound, reasons)
       if (emit !== null) {
         emit.push({
           target: target.id,
@@ -137,7 +149,11 @@ async function runTarget(
           check: checkOut,
         })
       } else if (report !== null) {
-        report.record(target.id, bound.id, compare(bound, exitCode, out, err, elapsed, checkOut))
+        report.record(
+          target.id,
+          bound.id,
+          compare(bound, exitCode, out, err, elapsed, checkOut, notes),
+        )
       }
     }
   } finally {

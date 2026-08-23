@@ -156,7 +156,12 @@ function cwdSpec(cwd: string, mountPrefix?: string): PathSpec {
 async function duHasContent(computeEntries: ComputeEntries, path: PathSpec): Promise<boolean> {
   try {
     const [entries] = await computeEntries(path)
-    return entries.length > 0
+    // The visibility filter is what makes this safe to ask after the
+    // dispatcher already said no: `computeEntries` runs on the bound
+    // accessor, which knows nothing of hides, so counting its raw answer
+    // would confirm a walled-off subtree's parent. Entries are lifted onto
+    // virtual paths first, since that is the space a hide is written in.
+    return toVirtual(entries, path).some(([leaf]) => pathAllowed(leaf))
   } catch {
     // This runs only after stat already failed, to tell an implicit
     // directory from an absent path. Backends raise their own error types
@@ -182,11 +187,40 @@ async function duHasContent(computeEntries: ComputeEntries, path: PathSpec): Pro
  * filtering rides along with it: a mount the session may not see contributes
  * no directory here, so absence stays the answer for it.
  *
- * `hasContent` is the last resort behind that, for a backend that never
+ * `hasContent` is the second channel behind that, for a backend that never
  * materialises a directory entry for its own mount root (redis is one) while
- * the subtree below it is full.
+ * the subtree below it is full. It counts only what the session may see, so
+ * it cannot re-open what the first channel closed.
  */
 const ENOENT_TEXT = 'No such file or directory'
+
+/**
+ * Whether one operand is there at all, before anything is measured.
+ *
+ * A point lookup alone cannot decide, so this asks both channels a
+ * backend can answer on, the way `find` classifies its start point: on a
+ * prefix store a directory is not an object, it is the set of keys under
+ * it, so `stat` misses what a listing would show (redis never
+ * materialises an entry for its own mount root). Absence takes both
+ * coming back empty.
+ *
+ * Where a dispatcher is wired it replaces the bound backend's stat,
+ * because that stat sees one accessor and knows nothing of hides:
+ * trusting it answered `0 <path>` for a hidden directory and confirmed
+ * to the agent what the profile was not meant to show it. The content probe
+ * behind it counts only what the session may see, so it cannot re-open
+ * what the first channel closed.
+ */
+async function duOperandExists(
+  path: PathSpec,
+  stattable: boolean,
+  hasContent: ((p: PathSpec) => Promise<boolean>) | undefined,
+  statPath: StatPath | null,
+): Promise<boolean> {
+  if (statPath === null && stattable) return true
+  if (statPath !== null && (await statPath(path.virtual)) !== null) return true
+  return hasContent !== undefined && (await hasContent(path))
+}
 
 async function duOperands(
   paths: PathSpec[],
@@ -231,11 +265,7 @@ async function duOperands(
       if (!isMissingPath(err)) throw err
       stattable = false
     }
-    if (!stattable && statPath !== null && (await statPath(path.virtual)) !== null) {
-      present.push(path)
-      continue
-    }
-    if (!stattable && !(hasContent !== undefined && (await hasContent(path)))) {
+    if (!(await duOperandExists(path, stattable, hasContent, statPath))) {
       missing.push([path.rawPath, ENOENT_TEXT])
       continue
     }

@@ -18,7 +18,7 @@ import pytest
 
 from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.hierarchy.readdir import make_readdir
+from mirage.core.hierarchy.readdir import DirListing, make_readdir
 from mirage.core.hierarchy.scope import ScopeMatch
 from tests.core.hierarchy.conftest import (FakeAccessor, detect_scope,
                                            list_notes, list_rooms, room_guard,
@@ -42,6 +42,13 @@ def test_static_root_lists_without_any_call(accessor):
 
 def test_dynamic_level_joins_names_under_the_virtual_key(accessor):
     out = asyncio.run(READDIR(accessor, spec("/rooms")))
+    assert out == ["/h/rooms/red", "/h/rooms/blue"]
+
+
+def test_a_none_index_gets_a_call_local_store(accessor):
+    # Bare commands built outside a workspace bind index=None; the kit
+    # substitutes a call-local store exactly as it does for NULL_INDEX.
+    out = asyncio.run(READDIR(accessor, spec("/rooms"), index=None))
     assert out == ["/h/rooms/red", "/h/rooms/blue"]
 
 
@@ -142,4 +149,103 @@ def test_a_kind_in_both_lister_tables_fails_at_build():
         make_readdir(detect_scope,
                      listers={"room": list_notes},
                      entry_listers={"room": _entry_notes},
+                     static_root=("rooms", ))
+
+
+def _room_entry(room: str) -> IndexEntry:
+    return IndexEntry(id=room,
+                      name=room,
+                      resource_type="fake/room",
+                      vfs_name=room)
+
+
+async def _seeding_notes(accessor, match, own):
+    accessor.calls.append(f"seed-notes:{match.slots['room']}")
+    atts = IndexEntry(id=f"{own.id}:atts",
+                      name="atts",
+                      resource_type="fake/atts",
+                      vfs_name="atts")
+    blob = IndexEntry(id="x",
+                      name="x.bin",
+                      resource_type="fake/blob",
+                      vfs_name="x.bin",
+                      size=3)
+    return DirListing(entries=[("atts", atts)],
+                      seeds={"atts": [("x.bin", blob)]})
+
+
+async def _atts_fallback(accessor, match, own):
+    accessor.calls.append(f"atts-fallback:{match.slots['room']}")
+    return []
+
+
+SEEDED_READDIR = make_readdir(
+    detect_scope,
+    listers={"rooms": list_rooms},
+    entry_listers={
+        "room": _seeding_notes,
+        "room_atts": _atts_fallback,
+    },
+    static_root=("rooms", ),
+)
+
+
+def test_seeds_serve_the_child_listing_without_a_second_fetch(accessor):
+    index = RAMIndexCacheStore()
+    asyncio.run(SEEDED_READDIR(accessor, spec("/rooms/red"), index=index))
+    out = asyncio.run(
+        SEEDED_READDIR(accessor, spec("/rooms/red/atts"), index=index))
+    assert out == ["/h/rooms/red/atts/x.bin"]
+    # One fetch answered both directories; the atts lister never ran.
+    assert accessor.calls == ["rooms", "seed-notes:red"]
+
+
+def test_entry_branch_rechecks_the_listing_after_resolving(accessor):
+    # A cold readdir of the seeded child resolves its own entry, which
+    # warms the seeding parent; the re-check then serves the listing the
+    # warm just wrote instead of running the fallback lister.
+    out = asyncio.run(SEEDED_READDIR(accessor, spec("/rooms/red/atts")))
+    assert out == ["/h/rooms/red/atts/x.bin"]
+    assert accessor.calls == ["rooms", "seed-notes:red"]
+
+
+async def _days_by_room(accessor, match, room_entry):
+    accessor.calls.append(f"days:{room_entry.id}:{match.slots['day']}")
+    day = match.slots["day"]
+    return [(f"{day}.txt",
+             IndexEntry(id=f"{room_entry.id}:{day}",
+                        name=f"{day}.txt",
+                        resource_type="fake/day_note",
+                        vfs_name=f"{day}.txt"))]
+
+
+PARENT_READDIR = make_readdir(
+    detect_scope,
+    listers={"rooms": list_rooms},
+    entry_listers={"room": _entry_notes},
+    parent_entry_listers={"room_day": _days_by_room},
+    static_root=("rooms", ),
+)
+
+
+def test_parent_entry_lister_is_proven_by_the_parent(accessor):
+    # The day dir has no entry of its own (the room listing never minted
+    # one); the proof is the room entry, handed to the lister.
+    out = asyncio.run(PARENT_READDIR(accessor, spec("/rooms/red/2024-01-15")))
+    assert out == ["/h/rooms/red/2024-01-15/2024-01-15.txt"]
+    assert accessor.calls == ["rooms", "days:red:2024-01-15"]
+
+
+def test_parent_entry_lister_bogus_parent_is_enoent(accessor):
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(PARENT_READDIR(accessor, spec("/rooms/ghost/2024-01-15")))
+    assert accessor.calls == ["rooms"]
+
+
+def test_a_kind_in_several_lister_tables_fails_at_build():
+    with pytest.raises(ValueError):
+        make_readdir(detect_scope,
+                     listers={"rooms": list_rooms},
+                     entry_listers={"room_day": _atts_fallback},
+                     parent_entry_listers={"room_day": _days_by_room},
                      static_root=("rooms", ))

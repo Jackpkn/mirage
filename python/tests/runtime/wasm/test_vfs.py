@@ -20,13 +20,17 @@ import pytest
 
 from mirage.ops.namespace_view import merge_readdir
 from mirage.runtime.resolver import PrefixResolver
+from mirage.runtime.types import VFSStat
 from mirage.runtime.vfs import RuntimeVFS
-from mirage.runtime.wasm.abi import FT_DIR, FT_REG
+from mirage.runtime.wasm.abi import FT_DIR, FT_REG, FT_SYMLINK
 from mirage.runtime.wasm.config import WasmFsConfig
-from mirage.runtime.wasm.types import GuestStat
 from mirage.runtime.wasm.vfs import WasmVFS
-from mirage.types import FileStat, FileType
-from mirage.utils.stat_view import mtime_ns
+from mirage.types import ContentType, FileStat, FileType
+from mirage.utils.stat_view import FILE_MODE, mtime_ns
+
+# The stamp a link's own row carries, deliberately not the stamp the
+# double gives a file, so a test can tell which row it was answered.
+LINK_MTIME = "2026-07-16T00:00:00Z"
 
 
 class FakeVFS(RuntimeVFS):
@@ -40,23 +44,56 @@ class FakeVFS(RuntimeVFS):
                  files=None,
                  dirs=None,
                  prefixes=(),
+                 links=None,
                  modified="2026-07-15T00:00:00Z"):
         super().__init__(dispatch=None,
                          loop=None,
-                         resolver=PrefixResolver(lambda: list(prefixes)))
+                         resolver=PrefixResolver(lambda: list(prefixes),
+                                                 self._link_names_under))
         self.files = dict(files or {})
         self.dirs = set(dirs or ())
+        self.links = dict(links or {})
         self.modified = modified
+        self.attrs = []
         self.calls = []
+
+    def _link_names_under(self, directory):
+        """The link names the node table owes a directory (the workspace's
+        own answer, over the double's link map).
+
+        Args:
+            directory (str): absolute virtual directory path.
+        """
+        base = directory.rstrip("/") + "/"
+        return {
+            path[len(base):]
+            for path in self.links
+            if path.startswith(base) and "/" not in path[len(base):]
+        }
 
     def _raw(self, op, path, **kwargs):
         self.calls.append((op, path, kwargs))
         if op == "stat":
+            # The door answers a no-follow stat of a link from the node
+            # table, with the link's own row: its stamp, and its size in
+            # target bytes.
+            if kwargs.get("nofollow") and path in self.links:
+                target = self.links[path]
+                return FileStat(name=path,
+                                size=len(target.encode()),
+                                modified=LINK_MTIME,
+                                type=FileType.SYMLINK)
+            # A following stat is the door's default, so a link answers
+            # for its target: the row says nothing about the link and the
+            # mark is the only thing that can.
+            if path in self.links:
+                return self._raw("stat", self.links[path], **kwargs)
             if path in self.files:
                 return FileStat(name=path,
                                 size=len(self.files[path]),
                                 modified=self.modified,
-                                type=FileType.TEXT)
+                                type=FileType.FILE,
+                                content=ContentType.TEXT)
             # The real door answers a directory for a structure-only
             # path (a mount prefix with no backend object behind it).
             roots = {p.rstrip("/") or "/" for p in self.prefixes()}
@@ -93,11 +130,25 @@ class FakeVFS(RuntimeVFS):
             prefix = path.rstrip("/") + "/"
             out = [p for p in self.files if p.startswith(prefix)]
             out += [d + "/" for d in self.dirs if d.startswith(prefix)]
+            out += [p for p in self.links if p.startswith(prefix)]
             if not out and path not in self.dirs and path != "/":
                 raise FileNotFoundError(path)
             # The real door merges child-mount names into readdir; the
             # double rides the same helper so it cannot drift from it.
             return sorted(merge_readdir(out, self.prefixes(), None, path))
+        if op == "symlink":
+            self.links[path] = kwargs["target"]
+            return None
+        if op == "readlink":
+            found = self.links.get(path)
+            if found is None:
+                # The door's own answer for a path the node table holds
+                # no link for, whether or not anything else is there.
+                raise OSError(host_errno.EINVAL, "not a symbolic link", path)
+            return found
+        if op == "setattr":
+            self.attrs.append((path, kwargs))
+            return {}
         raise NotImplementedError(op)
 
 
@@ -149,8 +200,9 @@ def test_stat_maps_filestat_fields():
                      prefixes=["/data/"])
     fs = WasmVFS(core=bridge)
     st = fs.stat("/data/f.txt")
-    assert st == GuestStat(is_dir=False, size=5,
-                           mtime_ns=st.mtime_ns) and st.mtime_ns > 0
+    assert st == VFSStat(
+        size=5, is_dir=False, mode=FILE_MODE,
+        mtime_ns=st.mtime_ns) and st.mtime_ns > 0
     assert fs.stat("/data/sub").is_dir is True
     assert fs.stat_or_none("/data/nope") is None
 
@@ -164,6 +216,28 @@ def test_readdir_bridge_resolves_kind_from_slash_or_stat():
                      prefixes=["/data/"])
     fs = WasmVFS(core=bridge)
     assert fs.readdir("/data") == [("f.txt", FT_REG), ("sub", FT_DIR)]
+
+
+def test_readdir_reports_a_link_as_a_link():
+    # preview1 has the filetype and the door marks the row, so a guest
+    # that reads d_type (CPython's scandir does) answers is_symlink
+    # without a call of its own. A link to a file stats as that file, so
+    # only the mark can tell them apart.
+    bridge = FakeVFS(files={"/data/f.txt": b""},
+                     links={"/data/l": "/data/f.txt"},
+                     prefixes=["/data/"])
+    fs = WasmVFS(core=bridge)
+    assert fs.readdir("/data") == [("f.txt", FT_REG), ("l", FT_SYMLINK)]
+
+
+def test_readdir_reports_a_link_to_a_directory_as_a_link():
+    # The one that used to read as a plain directory, which is how a
+    # guest walk followed it.
+    bridge = FakeVFS(dirs={"/data/sub"},
+                     links={"/data/dl": "/data/sub"},
+                     prefixes=["/data/"])
+    fs = WasmVFS(core=bridge)
+    assert fs.readdir("/data") == [("dl", FT_SYMLINK), ("sub", FT_DIR)]
 
 
 def test_readdir_root_merges_host_bridge_and_mounts(tmp_path):
@@ -238,7 +312,8 @@ def test_stat_reads_offsetless_stamps_as_utc():
         assert got_naive == got_aware
         assert got_naive == mtime_ns(
             FileStat(name="f",
-                     type=FileType.TEXT,
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
                      modified="2026-01-02T03:04:05"))
     finally:
         if previous is None:
@@ -246,3 +321,93 @@ def test_stat_reads_offsetless_stamps_as_utc():
         else:
             os.environ["TZ"] = previous
         time.tzset()
+
+
+def test_lstat_reports_a_link_as_a_link_sized_by_its_target():
+    bridge = FakeVFS(files={"/data/t.txt": b"x" * 40},
+                     links={"/data/l": "t.txt"},
+                     prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    st = fs.lstat("/data/l")
+    assert st.is_link is True
+    assert st.is_dir is False
+    assert st.size == len("t.txt")
+    # The row the node table holds, asked for as an lstat: a version
+    # that rebuilt it here from the target string reported epoch zero
+    # for every link, so a no-follow utime persisted and stayed
+    # invisible to the guest that wrote it.
+    assert st.mtime_ns == mtime_ns(
+        FileStat(name="l", type=FileType.SYMLINK, modified=LINK_MTIME))
+    assert ("stat", "/data/l", {"nofollow": True}) in bridge.calls
+
+
+def test_lstat_of_a_plain_path_answers_exactly_as_stat():
+    bridge = FakeVFS(files={"/data/f.txt": b"1234"}, prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    assert fs.lstat("/data/f.txt") == fs.stat("/data/f.txt")
+
+
+def test_stat_follows_a_link_because_the_door_resolves_it():
+    # The dispatcher resolves link prefixes for a following op, so the
+    # core never sees the link path: `stat` is the target's row.
+    bridge = FakeVFS(files={"/data/l": b"target-bytes"}, prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    st = fs.stat("/data/l")
+    assert st.is_link is False
+    assert st.size == len(b"target-bytes")
+
+
+def test_symlink_and_readlink_round_trip_the_target_verbatim():
+    bridge = FakeVFS(prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    fs.symlink("/data/l", "../up/t.txt")
+    assert bridge.links == {"/data/l": "../up/t.txt"}
+    assert fs.readlink("/data/l") == "../up/t.txt"
+
+
+def test_readlink_of_a_plain_path_is_einval():
+    bridge = FakeVFS(files={"/data/f.txt": b"x"}, prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    with pytest.raises(OSError) as caught:
+        fs.readlink("/data/f.txt")
+    assert caught.value.errno == host_errno.EINVAL
+
+
+def test_readlink_on_a_build_path_is_einval_not_read_only(tmp_path):
+    # Reading is not the mutation `_deny_build` guards, and the build
+    # holds no links, so the refusal is readlink's own.
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "os.py").write_text("stdlib")
+    fs = WasmVFS(WasmFsConfig(host_root=str(tmp_path)), FakeVFS())
+    with pytest.raises(OSError) as caught:
+        fs.readlink("/lib/os.py")
+    assert caught.value.errno == host_errno.EINVAL
+
+
+def test_setattr_passes_every_field_including_nofollow():
+    bridge = FakeVFS(files={"/data/f.txt": b"x"}, prefixes=["/data/"])
+    fs = WasmVFS(None, bridge)
+    fs.setattr("/data/f.txt",
+               atime="1970-01-01T00:01:40+00:00",
+               mtime=None,
+               nofollow=True)
+    assert bridge.attrs == [("/data/f.txt", {
+        "mode": None,
+        "uid": None,
+        "gid": None,
+        "atime": "1970-01-01T00:01:40+00:00",
+        "mtime": None,
+        "nofollow": True,
+    })]
+
+
+def test_a_mutation_of_a_build_file_stays_refused(tmp_path):
+    # Only a path the build actually holds is refused; a new name under
+    # the build tree routes to the bridge, exactly as a new file does.
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "os.py").write_text("stdlib")
+    fs = WasmVFS(WasmFsConfig(host_root=str(tmp_path)), FakeVFS())
+    with pytest.raises(PermissionError):
+        fs.symlink("/lib/os.py", "elsewhere.py")
+    with pytest.raises(PermissionError):
+        fs.setattr("/lib/os.py", atime=None, mtime="x", nofollow=False)

@@ -15,6 +15,7 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { PyodideRuntime } from './pyodide.ts'
 import type { BridgeDispatchFn } from '../types.ts'
+import { FileStat, FileType } from '../../types.ts'
 import { PrefixResolver } from '../resolver.ts'
 
 // The vitest pool runs every fork with --experimental-wasm-jspi, which no
@@ -67,13 +68,17 @@ describe('PyodideRuntime without JSPI', () => {
       await new Promise((resolve) => setTimeout(resolve, 1))
       if (op === 'read') return files.get(path) ?? new Uint8Array()
       if (op === 'readdir') {
-        const entries = []
-        for (const [p, content] of files) {
-          if (p.startsWith(path) && !p.slice(path.length).includes('/')) {
-            entries.push({ path: p, size: content.length, isDir: false })
-          }
-        }
-        return entries
+        return [...files.keys()].filter(
+          (p) => p.startsWith(path) && !p.slice(path.length).includes('/'),
+        )
+      }
+      if (op === 'stat') {
+        const found = files.get(path)
+        if (found === undefined)
+          throw Object.assign(new Error(`no such file: ${path}`), {
+            code: 'ENOENT',
+          })
+        return new FileStat({ name: path, size: found.length, type: FileType.TEXT })
       }
       return undefined
     }
@@ -144,8 +149,14 @@ describe('PyodideRuntime without JSPI', () => {
         if (found === undefined) throw new Error(`no such file: ${path}`)
         return found
       }
-      if (op === 'readdir') {
-        return [...files].map(([p, v]) => ({ path: p, size: v.length, isDir: false }))
+      if (op === 'readdir') return [...files.keys()]
+      if (op === 'stat') {
+        const listed = files.get(path)
+        if (listed === undefined)
+          throw Object.assign(new Error(`no such file: ${path}`), {
+            code: 'ENOENT',
+          })
+        return new FileStat({ name: path, size: listed.length, type: FileType.TEXT })
       }
       if (op === 'write' && bytes !== undefined) {
         files.set(path, new Uint8Array(bytes))

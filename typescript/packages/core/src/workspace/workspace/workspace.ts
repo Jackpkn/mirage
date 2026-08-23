@@ -12,15 +12,13 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { checkCliVerbs } from '../session/validate.ts'
 import type { FileCache } from '../../cache/file/mixin.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { IOResult } from '../../io/types.ts'
 import { type EventDict, Observer } from '../../observe/observer.ts'
 import type { OpRecord } from '../../observe/record.ts'
 import { type OpKwargs, OpsRegistry } from '../../ops/registry.ts'
-import { assertMountAllowed } from '../../context/session_context.ts'
-import { isMissingPath } from '../../utils/errors.ts'
-import { contentSize, isDir as statIsDir, mtimeMs } from '../../utils/stat_view.ts'
 import type { Resource } from '../../resource/base.ts'
 import { HISTORY_PREFIX, HistoryViewResource } from '../../resource/history/history.ts'
 import { resourceStateRequiresOverride } from '../../resource/secrets.ts'
@@ -31,7 +29,8 @@ import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import type { CLIInstall } from '../cli/types.ts'
 import { resolveLimit } from '../../policy/index.ts'
 import { PermissionsPolicy } from '../../policy/builtin/permissions.ts'
-import { Approvals } from '../../policy/approvals.ts'
+import { PolicyError } from '../../policy/errors.ts'
+import { Decisions } from '../../policy/decisions.ts'
 import { JobTable } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import { buildFileCache } from './cache.ts'
@@ -47,9 +46,9 @@ import {
 } from '../snapshot/state.ts'
 import { readSnapshotTar } from '../snapshot/tar_io.ts'
 import type { WorkspaceStateDict } from '../snapshot/types.ts'
-import type { FileEvent, FileStat } from '../../types.ts'
+import type { FileEvent } from '../../types.ts'
 import { ConsistencyPolicy, DriftPolicy, MountMode, PathSpec } from '../../types.ts'
-import type { Policies } from '../../policy/index.ts'
+import type { Explanation, Policies } from '../../policy/index.ts'
 import type { PolicyFn } from '../../runtime/policy/index.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import type { ExecuteFn } from '../expand/node.ts'
@@ -57,7 +56,6 @@ import type { ProvisionResult } from '../../provision/types.ts'
 import { Ops } from '../../ops/ops.ts'
 import type { MountEntry } from '../mount/mount.ts'
 import { MountRegistry } from '../mount/registry.ts'
-import type { VFSEntry } from '../../runtime/vfs.ts'
 import { PrefixResolver } from '../../runtime/resolver.ts'
 import type { BridgeDispatchFn } from '../../runtime/types.ts'
 import { MontyUnavailableError } from '../../runtime/python/monty/index.ts'
@@ -67,21 +65,15 @@ import type { EvalResult } from '../../runtime/types.ts'
 import { PyodideUnavailableError } from '../../runtime/python/types.ts'
 import { Dispatcher } from '../dispatcher/index.ts'
 import { Namespace } from '../mount/namespace/namespace.ts'
+import { explainLine } from '../node/explain.ts'
 import { provisionNode } from '../node/provision_node.ts'
 import { buildFilePrompt } from '../file_prompt.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
-import type { SessionProfile, WorkspacePermissions } from '../session/permissions.ts'
-import {
-  applyProfile,
-  boundCommands,
-  boundHidden,
-  compileProfile,
-  inherit,
-  resolveProfile,
-  tighten,
-} from '../session/resolve.ts'
+import { parseProfileMounts, type SessionProfile } from '../../policy/profile.ts'
+import { applyProfile, compileProfile, resolveProfile, withInline } from '../session/resolve.ts'
+import { ScriptPolicy } from '../../policy/script.ts'
 import { newSessionId, newWorkspaceId } from '../../utils/ids.ts'
 import type { WatchRuntime } from '../../watch/base.ts'
 import { resolveControlStores } from './build.ts'
@@ -93,7 +85,7 @@ import { PolicyRouter } from './policy.ts'
 import { Runtimes } from './runtimes.ts'
 import type { ExecuteResult } from './types.ts'
 import { type ExecuteOptions, type MountSpec, type WorkspaceOptions } from './types.ts'
-import { commandName, infrastructurePrefixes } from './utils.ts'
+import { commandName } from './utils.ts'
 import { WatchManager } from './watch.ts'
 
 export { ExecuteResult } from './types.ts'
@@ -126,8 +118,9 @@ export class Workspace {
   private readonly runtimes: Runtimes
   private readonly policyRouter: PolicyRouter
   private readonly policy: PolicyFn | null
-  private readonly permissions: WorkspacePermissions | null
+  private readonly scriptPolicy: ScriptPolicy
   private readonly profiles: Record<string, SessionProfile>
+  private readonly defaultProfileName: string | null
   // True when the workspace auto-added an empty `/` anchor (no user `/` mount).
   // The anchor is internal and is not forwarded into the Pyodide filesystem.
   private syntheticRootAnchor = false
@@ -169,7 +162,10 @@ export class Workspace {
     this.shellParserFactory = options.shellParserFactory ?? null
     this.agentId = options.agentId ?? null
     this.watchManager = new WatchManager(this.registry)
-    const sandboxResolver = new PrefixResolver(() => this.sandboxVisibleMounts())
+    const sandboxResolver = new PrefixResolver(
+      () => this.sandboxVisibleMounts(),
+      (directory) => this.namespace.linkNamesUnder(directory),
+    )
     this.runtimes = new Runtimes({
       registry: this.registry,
       entries: options.runtimes,
@@ -182,33 +178,49 @@ export class Workspace {
     })
     rejectConfigScript('policy', options.policy)
     this.policy = options.policy ?? null
-    // The permissions document, workspace tier: `permissions` binds
-    // every session, `profiles` are the named templates a session is
-    // created from. Every named profile resolves once here so an
-    // unknown `extends` or a cycle fails at construction, not at the
-    // first createSession.
-    this.permissions = options.permissions ?? null
+    // The permission profiles: one per name, and the one a session
+    // gets when it names none. A profile is the whole document a
+    // session runs under, so there is no workspace-wide block above it.
     this.profiles = { ...(options.profiles ?? {}) }
-    for (const name of Object.keys(this.profiles)) inherit(this.profiles, name)
-    // What the workspace and its mounts hide from every session,
-    // stamped onto the default session now and onto every session
-    // created or hydrated later.
-    const mountPermissions = new Map(Object.entries(options.mountPermissions ?? {}))
-    this.sessionManager.boundHidden = boundHidden(this.permissions, mountPermissions)
-    this.sessionManager.boundCommands = boundCommands(this.permissions, mountPermissions)
+    this.defaultProfileName = options.profile ?? null
+    if (this.defaultProfileName !== null && !(this.defaultProfileName in this.profiles)) {
+      throw new PolicyError(`unknown profile ${JSON.stringify(this.defaultProfileName)}`)
+    }
+    // The config door validates the pairing too, but a typed caller
+    // does not pass that door, and the python host refuses the same
+    // profiles at construction.
+    for (const [name, profile] of Object.entries(this.profiles)) {
+      if (profile.script != null && profile.runtime == null) {
+        throw new PolicyError(
+          `profile '${name}': a profile script states the engine it runs on; ` +
+            `set runtime beside script`,
+        )
+      }
+      if (profile.script == null && profile.runtime != null) {
+        throw new PolicyError(
+          `profile '${name}': runtime names the engine a script runs on, ` +
+            `and this profile states no script`,
+        )
+      }
+    }
     // Admission policies, consulted in registration order after the
     // built-ins the registry seeds: the document's command tiers
     // (PermissionsPolicy, reading each session's compiled layers from
-    // the manager by the id the door puts in the context), then Policy
-    // instances, then anything added later through ws.policies.add().
-    // The runtime policy (policy option) is the line-level counterpart
-    // until it is absorbed as a hook.
+    // the manager by the id the door puts in the context), the
+    // profile's script (ScriptPolicy, evaluated per command through the
+    // same manager), then Policy instances, then anything added later
+    // through ws.policies.add(). The runtime policy (policy option) is
+    // the line-level counterpart until it is absorbed as a hook.
     this.registry.policies.add(new PermissionsPolicy(this.sessionManager))
+    this.scriptPolicy = new ScriptPolicy(this.sessionManager, () =>
+      this.mounts().map((entry) => entry.prefix),
+    )
+    this.registry.policies.add(this.scriptPolicy)
     for (const entry of options.policies ?? []) this.registry.policies.add(entry)
     // The approval door an Ask is taken to (design 3.9): grants live on
-    // the sessions, the host answers through `approver` (the recording
-    // one when none is wired) and reads `ws.approvals`.
-    this.registry.approvals = new Approvals(this.sessionManager, options.approver ?? null)
+    // the sessions, the host answers through `onAsk` (or just records
+    // the question when none is wired) and reads `ws.decisions`.
+    this.registry.decisions = new Decisions(this.sessionManager, options.onAsk ?? null)
     // Installed CLIs, fully separate from mounts: a spec name resolves
     // against the named registry and every entry installs through the
     // same fail-loud path as registerCli.
@@ -256,11 +268,9 @@ export class Workspace {
     // The workspace's own session is a session created without a name,
     // so `profiles.default` shapes it too (design 3.4): the primary
     // agent is not the one agent the document cannot reach.
-    const defaultProfile = resolveProfile(this.profiles, null)
+    const defaultBase = this.baseProfile(null)
     this.sessionManager.defaultProfile =
-      defaultProfile === null
-        ? null
-        : compileProfile(defaultProfile, infrastructurePrefixes(this.syntheticRootAnchor))
+      defaultBase === null ? null : compileProfile(defaultBase, this.profileName(null))
     for (const resource of [...this.registry.allMounts().map((m) => m.resource), this.cache]) {
       const resourceOps = resource.ops?.()
       if (resourceOps === undefined) continue
@@ -383,7 +393,7 @@ export class Workspace {
   // by the current session all come from the Dispatcher. Reads are raw
   // bytes (no filetype rendering), matching the Python WasmVFS.
   private buildWorkspaceBridge(): BridgeDispatchFn {
-    return async (op, path, bytes, dst) => {
+    return async (op, path, bytes, dst, attrs) => {
       switch (op) {
         case 'read':
           return (await this.dispatch('read', path)) as Uint8Array
@@ -401,18 +411,18 @@ export class Workspace {
           await this.dispatch('append', path, [buf])
           return undefined
         }
-        case 'stat': {
-          const st = (await this.dispatch('stat', path)) as FileStat
-          // One translator: bare Date.parse read an offset-less stamp
-          // as LOCAL time here while the fuse fold read it as UTC.
-          // VFSStat has no validity channel, so an unknown mtime and
-          // epoch zero both encode as 0 on this wire.
-          return {
-            size: contentSize(st),
-            isDir: statIsDir(st),
-            mtimeMs: mtimeMs(st) ?? 0,
-          }
-        }
+        case 'stat':
+          // The mount's own row, nothing projected: the runtime door
+          // builds the one VFSStat both languages read, so the two
+          // tiers cannot drift into two translations of one fact.
+          // `nofollow` is the only attrs field a stat carries, and it
+          // is the caller's lstat; the dispatcher consumes it.
+          return await this.dispatch(
+            'stat',
+            path,
+            [],
+            attrs?.nofollow === true ? { nofollow: true } : undefined,
+          )
         case 'create':
           await this.dispatch('create', path)
           return undefined
@@ -433,37 +443,27 @@ export class Workspace {
           await this.dispatch('rename', path, [PathSpec.fromStrPath(dst)])
           return undefined
         }
-        case 'readdir': {
-          const entries = ((await this.dispatch('readdir', path)) as string[] | null) ?? []
-          return await Promise.all(
-            entries.map(async (entry): Promise<VFSEntry> => {
-              // Backends that mark directories with a trailing slash
-              // skip the stat; unmarked entries (e.g. RAM) need one to
-              // learn dir-ness.
-              if (entry.endsWith('/')) return { path: entry, size: 0, isDir: true }
-              const isLink = this.namespace.isLink(entry)
-              let stat: FileStat
-              try {
-                stat = (await this.dispatch('stat', entry)) as FileStat
-              } catch (err) {
-                // A dangling link, or an entry that vanished between
-                // list and stat, must not fail the whole listing; the
-                // guest's own open reports the miss. Anything else
-                // (authorization, a timeout, a backend bug) propagates,
-                // or pyodide's syncMounts would replace a healthy
-                // snapshot with a silently degraded one.
-                if (!isMissingPath(err)) throw err
-                return { path: entry, size: 0, isDir: false, ...(isLink ? { isLink } : {}) }
-              }
-              return {
-                path: entry,
-                size: contentSize(stat),
-                isDir: statIsDir(stat),
-                ...(isLink ? { isLink } : {}),
-              }
-            }),
-          )
+        case 'symlink': {
+          // The target is not a PathSpec: a link stores what was typed,
+          // relative or dangling, and resolving it here would record a
+          // different link than the guest asked for.
+          if (dst === undefined) throw new Error('symlink op requires dst')
+          await this.dispatch('symlink', path, [], { target: dst })
+          return undefined
         }
+        case 'readlink':
+          return (await this.dispatch('readlink', path)) as string
+        case 'setattr': {
+          if (attrs === undefined) throw new Error('setattr op requires attrs')
+          await this.dispatch('setattr', path, [], attrs as Record<string, unknown>)
+          return undefined
+        }
+        case 'readdir':
+          // The names as the door merged them, nothing resolved: the
+          // runtime door (`RuntimeVFS.readdir`) stats each entry and
+          // marks the links, so a row is built in one tier and in one
+          // shape in both languages.
+          return ((await this.dispatch('readdir', path)) as string[] | null) ?? []
       }
     }
   }
@@ -496,8 +496,8 @@ export class Workspace {
    * `grant(id, scope)` or `deny(id)` one, and the agent's retry passes
    * or is refused.
    */
-  get approvals(): Approvals {
-    return this.registry.approvals
+  get decisions(): Decisions {
+    return this.registry.decisions
   }
 
   get ops(): OpsRegistry {
@@ -521,37 +521,80 @@ export class Workspace {
   }
 
   /**
-   * Create a session from a profile, optionally tightened inline.
+   * The base profile a session is created under, which the inline
+   * `permissions`/`mounts` options then layer onto: the profile as
+   * named, else the workspace default.
+   */
+  private baseProfile(profile: string | SessionProfile | null): SessionProfile | null {
+    if (profile === null && this.defaultProfileName !== null) {
+      return this.profiles[this.defaultProfileName] ?? null
+    }
+    return resolveProfile(this.profiles, profile)
+  }
+
+  /**
+   * The name of the profile `baseProfile` resolves, which its script
+   * reads as `ctx.profile`; empty for a profile document passed without
+   * one.
+   */
+  private profileName(profile: string | SessionProfile | null): string {
+    if (typeof profile === 'string') return profile
+    if (profile === null && this.defaultProfileName !== null) return this.defaultProfileName
+    return ''
+  }
+
+  /**
+   * Create a session under one profile, with an optional inline
+   * document of its own.
    *
-   * The profile is a name from the workspace's `profiles` (or the
-   * `default` one when none is named and one exists), or a
-   * SessionProfile object; `permissions` and `mounts` narrow it further
-   * (mounts intersect at the weaker mode, hides union; design 3.4).
-   * Nothing here can widen what the profile grants. `mounts` is sugar
-   * for `permissions.mounts`: a map assigns each prefix a mode ceiling
-   * ('read', 'write', 'exec', or the filesystem aliases 'r', 'rw',
-   * 'rwx'); an array of prefixes keeps each mount at its own configured
-   * mode. Throws PolicyError on an unknown profile name or a broken
-   * chain.
+   * The profile is a name from the workspace's `profiles`, or the
+   * workspace default when none is named, or a profile document. The
+   * inline `permissions` and `mounts` may add ask and deny rules, hides
+   * and weaker modes; they may never add an allow entry, which is the
+   * one rule about combining two documents. `mounts` is sugar for
+   * `permissions.mounts`: a mapping assigns each prefix a mode ('read',
+   * 'write', 'exec', or the filesystem aliases 'r', 'rw', 'rwx'), which
+   * may only be weaker than the mount's own. A mount the mapping omits
+   * keeps its own mode, so this narrows and never confines; a profile
+   * that must keep a session away from a mount hides it. Throws
+   * PolicyError on an unknown profile name, or on an inline document
+   * with an allow list.
    */
   createSession(
     sessionId: string,
     options: {
-      mounts?: ReadonlyMap<string, string> | Record<string, string> | readonly string[] | null
+      mounts?: ReadonlyMap<string, unknown> | Record<string, unknown> | null
       profile?: string | SessionProfile | null
       permissions?: SessionProfile | null
     } = {},
   ): Session {
-    const base = resolveProfile(this.profiles, options.profile)
+    const base = this.baseProfile(options.profile ?? null)
     let inline: SessionProfile | null = options.permissions ?? null
-    if (options.mounts != null) inline = tighten(inline, { mounts: options.mounts })
+    if (options.mounts != null) {
+      inline = withInline(inline, { mounts: parseProfileMounts(options.mounts) })
+    }
     const compiled = compileProfile(
-      tighten(base, inline),
-      infrastructurePrefixes(this.syntheticRootAnchor),
+      withInline(base, inline),
+      this.profileName(options.profile ?? null),
     )
+    checkCliVerbs(compiled.commands, this.cliVerbs())
     const session = this.sessionManager.create(sessionId)
     applyProfile(session, compiled)
     return session
+  }
+
+  /**
+   * The verbs each installed CLI declares, keyed by head word.
+   *
+   * Read at `createSession` rather than at compile time because a CLI is
+   * registered on the workspace after it is built.
+   */
+  private cliVerbs(): ReadonlyMap<string, ReadonlySet<string>> {
+    const out = new Map<string, ReadonlySet<string>>()
+    for (const [name, install] of this.registry.clis.items()) {
+      out.set(name, new Set(install.spec.subcommands.map((child) => child.name)))
+    }
+    return out
   }
 
   getSession(sessionId: string): Session {
@@ -578,6 +621,28 @@ export class Workspace {
   async ensureSessionsLoaded(): Promise<void> {
     await this.meta.ensure()
     await this.sessionManager.ensureLoaded()
+  }
+
+  /**
+   * What a line would do under a session's profile, without running any
+   * it: one Explanation per command the gate reads, in gate order,
+   * nested lines included.
+   *
+   * The dry run of the gate every command passes through, so this and
+   * the refusal an agent would read come out of one place and cannot
+   * disagree. It runs no command, expands nothing, spends no grant and
+   * puts no question to a host, which is what makes it safe to call
+   * about a line nobody typed.
+   *
+   * Host-side only. The structure of a profile's rules is an operator's
+   * business, so there is no builtin an agent can type to read it.
+   */
+  async explain(line: string, sessionId = ''): Promise<Explanation[]> {
+    await this.ensureSessionsLoaded()
+    const session = this.getSession(sessionId === '' ? this.defaultSessionId : sessionId)
+    const parser = await this.getShellParser()
+    const reparse = (text: string): TSNodeLike => parser.parse(text)
+    return explainLine(parser.parse(line), session, this.registry, this.namespace, '', reparse)
   }
 
   get workspaceId(): string {
@@ -782,9 +847,6 @@ export class Workspace {
     }
     const result = this.registry.resolve(path)
     const [resource] = result
-    // resolve() above already threw for a path outside every mount.
-    const mount = this.registry.mountFor(path)
-    assertMountAllowed(mount.prefix)
     await this.ensureOpen(resource)
     return result
   }
@@ -1003,6 +1065,7 @@ export class Workspace {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    await this.scriptPolicy.close()
     await closeWorkspace({
       watch: this.watchManager,
       cache: this.cache,

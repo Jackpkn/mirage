@@ -22,7 +22,7 @@ from mirage.commands.cli.builtin.git.add import (EXECUTABLE, REGULAR, SYMLINK,
                                                  entry_mode, keep_addable,
                                                  staged_entry)
 from mirage.commands.cli.builtin.git.ignore import IgnoreStack
-from mirage.types import LINK_TARGET_KEY, FileStat, FileType
+from mirage.types import LINK_TARGET_KEY, ContentType, FileStat, FileType
 
 
 def stat(mode: int | None) -> FileStat:
@@ -31,7 +31,12 @@ def stat(mode: int | None) -> FileStat:
     Args:
         mode (int | None): permission bits, None when it has none.
     """
-    return FileStat(name="x", path="x", type=FileType.TEXT, size=4, mode=mode)
+    return FileStat(name="x",
+                    path="x",
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    size=4,
+                    mode=mode)
 
 
 async def run(git_rw, line: str) -> tuple[int, bytes, bytes]:

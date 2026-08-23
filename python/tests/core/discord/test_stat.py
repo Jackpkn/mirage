@@ -12,176 +12,136 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
-
 import pytest
 
-from mirage.accessor.discord import DiscordAccessor
-from mirage.cache.index import IndexEntry
-from mirage.cache.index.ram import RAMIndexCacheStore
+from mirage.core.discord.entry import snowflake_to_iso
+from mirage.core.discord.render import history_jsonl_bytes
 from mirage.core.discord.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
+from tests.core.discord.conftest import CHANNELS, DAY, MESSAGES, SEALED_DAY
+
+pytestmark = pytest.mark.asyncio
+
+GUILD_DIR = "My Server__G001"
+CHANNEL = f"{GUILD_DIR}/channels/general__C001"
 
 
-@pytest.fixture
-def index():
-    store = RAMIndexCacheStore()
-    asyncio.run(
-        store.put(
-            "/My Server",
-            IndexEntry(
-                id="G001",
-                name="My Server",
-                resource_type="discord/guild",
-                vfs_name="My Server",
-            ),
-        ))
-    asyncio.run(
-        store.put(
-            "/My Server/channels/general",
-            IndexEntry(
-                id="C001",
-                name="general",
-                resource_type="discord/channel",
-                remote_time="794354201395200000",
-                vfs_name="general",
-            ),
-        ))
-    asyncio.run(
-        store.put(
-            "/My Server/members/alice.json",
-            IndexEntry(
-                id="U001",
-                name="alice",
-                resource_type="discord/member",
-                vfs_name="alice.json",
-                size=42,
-            ),
-        ))
-    asyncio.run(
-        store.put(
-            "/My Server/channels/general/2024-01-15/chat.jsonl",
-            IndexEntry(
-                id="C001:2024-01-15:chat",
-                name="chat.jsonl",
-                resource_type="discord/chat_jsonl",
-                vfs_name="chat.jsonl",
-                size=17,
-            ),
-        ))
-    return store
+def spec(virtual: str) -> PathSpec:
+    return PathSpec(virtual=virtual,
+                    directory=virtual,
+                    resource_path=virtual.lstrip("/"))
 
 
-@pytest.fixture
-def accessor():
-    return DiscordAccessor(config=object())
+async def test_stat_root(api, accessor, index):
+    row = await stat(accessor, spec("/"), index)
+    assert row.type is FileType.DIRECTORY
 
 
-@pytest.mark.asyncio
-async def test_stat_root(accessor, index):
-    result = await stat(accessor,
-                        PathSpec(resource_path="", virtual="/", directory="/"),
-                        index)
-    assert result.type == FileType.DIRECTORY
-    assert result.name == "/"
+async def test_stat_guild(api, accessor, index):
+    row = await stat(accessor, spec(f"/{GUILD_DIR}"), index)
+    assert row.type is FileType.DIRECTORY
+    assert row.name == GUILD_DIR
+    assert row.extra["guild_id"] == "G001"
 
 
-@pytest.mark.asyncio
-async def test_stat_guild(accessor, index):
-    result = await stat(
-        accessor,
-        PathSpec(resource_path="My Server",
-                 virtual="/My Server",
-                 directory="/My Server"), index)
-    assert result.type == FileType.DIRECTORY
-    assert result.extra["guild_id"] == "G001"
-
-
-@pytest.mark.asyncio
-async def test_stat_channel(accessor, index):
-    result = await stat(
-        accessor,
-        PathSpec(resource_path="My Server/channels/general",
-                 virtual="/My Server/channels/general",
-                 directory="/My Server/channels/general"), index)
-    assert result.type == FileType.DIRECTORY
-    assert result.extra["channel_id"] == "C001"
-    assert result.modified == "2021-01-01T00:00:00Z"
-
-
-@pytest.mark.asyncio
-async def test_stat_member(accessor, index):
-    result = await stat(
-        accessor,
-        PathSpec(resource_path="My Server/members/alice.json",
-                 virtual="/My Server/members/alice.json",
-                 directory="/My Server/members/alice.json"), index)
-    assert result.type == FileType.JSON
-    assert result.extra["user_id"] == "U001"
-    assert result.size == 42
-
-
-@pytest.mark.asyncio
-async def test_stat_date_dir(accessor, index):
-    path = "/My Server/channels/general/2024-01-15"
-    result = await stat(
-        accessor,
-        PathSpec(virtual=path, directory=path, resource_path=path.strip("/")),
-        index)
-    assert result.type == FileType.DIRECTORY
-    assert result.name == "2024-01-15"
-
-
-@pytest.mark.asyncio
-async def test_stat_chat_jsonl(accessor, index):
-    path = "/My Server/channels/general/2024-01-15/chat.jsonl"
-    result = await stat(
-        accessor,
-        PathSpec(virtual=path, directory=path, resource_path=path.strip("/")),
-        index)
-    assert result.type == FileType.TEXT
-    assert result.name == "chat.jsonl"
-    assert result.size == 17
-
-
-@pytest.mark.asyncio
-async def test_stat_files_dir(accessor, index):
-    path = "/My Server/channels/general/2024-01-15/files"
-    result = await stat(
-        accessor,
-        PathSpec(virtual=path, directory=path, resource_path=path.strip("/")),
-        index)
-    assert result.type == FileType.DIRECTORY
-    assert result.name == "files"
-
-
-@pytest.mark.asyncio
-async def test_stat_non_date_chat_jsonl_not_found(accessor, index):
-    path = "/My Server/channels/general/notadate/chat.jsonl"
+async def test_stat_bogus_guild_is_enoent(api, accessor, index):
     with pytest.raises(FileNotFoundError):
-        await stat(
-            accessor,
-            PathSpec(virtual=path,
-                     directory=path,
-                     resource_path=path.strip("/")), index)
+        await stat(accessor, spec("/Nope__G9"), index)
 
 
-@pytest.mark.asyncio
-async def test_stat_non_date_files_dir_not_found(accessor, index):
-    path = "/My Server/channels/general/notadate/files"
+async def test_stat_containers(api, accessor, index):
+    for name in ("channels", "members"):
+        row = await stat(accessor, spec(f"/{GUILD_DIR}/{name}"), index)
+        assert row.type is FileType.DIRECTORY
+        assert row.name == name
+
+
+async def test_stat_container_under_bogus_guild_is_enoent(
+        api, accessor, index):
+    # The containers exist per guild, so a guild the listing does not
+    # prove takes its children with it.
     with pytest.raises(FileNotFoundError):
-        await stat(
-            accessor,
-            PathSpec(virtual=path,
-                     directory=path,
-                     resource_path=path.strip("/")), index)
+        await stat(accessor, spec("/Nope__G9/channels"), index)
 
 
-@pytest.mark.asyncio
-async def test_stat_not_found(accessor, index):
+async def test_stat_channel(api, accessor, index):
+    row = await stat(accessor, spec(f"/{CHANNEL}"), index)
+    assert row.type is FileType.DIRECTORY
+    assert row.extra["channel_id"] == "C001"
+    assert row.modified == snowflake_to_iso(CHANNELS[0]["last_message_id"])
+
+
+async def test_stat_member(api, accessor, index):
+    row = await stat(accessor, spec(f"/{GUILD_DIR}/members/alice__U001.json"),
+                     index)
+    assert row.content is ContentType.JSON
+    assert row.extra["user_id"] == "U001"
+    assert row.size is not None and row.size > 0
+
+
+async def test_stat_day_dir(api, accessor, index):
+    row = await stat(accessor, spec(f"/{CHANNEL}/{DAY}"), index)
+    assert row.type is FileType.DIRECTORY
+    assert row.name == DAY
+
+
+async def test_stat_day_outside_the_window_is_a_directory(
+        api, accessor, index):
+    # The channel listing synthesizes a bounded window of recent days, but
+    # the history API answers a range query for any date.
+    row = await stat(accessor, spec(f"/{CHANNEL}/1999-01-01"), index)
+    assert row.type is FileType.DIRECTORY
+    assert row.name == "1999-01-01"
+
+
+async def test_stat_day_under_bogus_channel_is_enoent(api, accessor, index):
     with pytest.raises(FileNotFoundError):
-        await stat(
-            accessor,
-            PathSpec(resource_path="nonexistent/path",
-                     virtual="/nonexistent/path",
-                     directory="/nonexistent/path"), index)
+        await stat(accessor, spec(f"/{GUILD_DIR}/channels/nope__C9/{DAY}"),
+                   index)
+
+
+async def test_stat_chat_jsonl(api, accessor, index):
+    row = await stat(accessor, spec(f"/{CHANNEL}/{DAY}/chat.jsonl"), index)
+    assert row.content is ContentType.TEXT
+    assert row.size == len(history_jsonl_bytes(MESSAGES))
+
+
+async def test_stat_chat_jsonl_sealed_day_has_unknown_size(
+        api, accessor, index):
+    # A day whose history could not be listed (403/404/429) seals an empty
+    # date dir; the file still stats, with the size left unknown.
+    row = await stat(accessor, spec(f"/{CHANNEL}/{SEALED_DAY}/chat.jsonl"),
+                     index)
+    assert row.content is ContentType.TEXT
+    assert row.size is None
+
+
+async def test_stat_chat_jsonl_under_bogus_channel_is_enoent(
+        api, accessor, index):
+    with pytest.raises(FileNotFoundError):
+        await stat(accessor,
+                   spec(f"/{GUILD_DIR}/channels/nope__C9/{DAY}/chat.jsonl"),
+                   index)
+
+
+async def test_stat_files_dir(api, accessor, index):
+    row = await stat(accessor, spec(f"/{CHANNEL}/{DAY}/files"), index)
+    assert row.type is FileType.DIRECTORY
+
+
+async def test_stat_files_under_a_sealed_day_is_enoent(api, accessor, index):
+    with pytest.raises(FileNotFoundError):
+        await stat(accessor, spec(f"/{CHANNEL}/{SEALED_DAY}/files"), index)
+
+
+async def test_stat_file_blob(api, accessor, index):
+    row = await stat(accessor, spec(f"/{CHANNEL}/{DAY}/files/kept__A1.txt"),
+                     index)
+    assert row.size == 5
+    assert row.extra["attachment_id"] == "A1"
+    assert row.extra["content_type"] == "text/plain"
+
+
+async def test_stat_unknown_shape_is_enoent(api, accessor, index):
+    with pytest.raises(FileNotFoundError):
+        await stat(accessor, spec(f"/{GUILD_DIR}/nope"), index)

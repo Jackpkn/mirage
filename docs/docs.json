@@ -581,7 +581,8 @@
                 "pages": [
                   "typescript/setup/trello"
                 ]
-              }
+              },
+              "typescript/resource/new"
             ]
           },
           {

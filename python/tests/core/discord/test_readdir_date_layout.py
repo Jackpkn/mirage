@@ -12,142 +12,49 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from unittest.mock import AsyncMock, patch
-
 import aiohttp
 import pytest
 
-from mirage.accessor.discord import DiscordAccessor
-from mirage.cache.index import IndexEntry
-from mirage.cache.index.ram import RAMIndexCacheStore
-from mirage.core.discord.config import DiscordConfig
 from mirage.core.discord.readdir import readdir
 from mirage.types import PathSpec
+from tests.core.discord.conftest import BROKEN_DAY, DAY, SEALED_DAY
+
+pytestmark = pytest.mark.asyncio
+
+CHANNEL = "My Server__G001/channels/general__C001"
 
 
-@pytest.fixture
-def index():
-    return RAMIndexCacheStore()
+def spec(virtual: str) -> PathSpec:
+    return PathSpec(virtual=virtual,
+                    directory=virtual,
+                    resource_path=virtual.lstrip("/"))
 
 
-@pytest.fixture
-def accessor():
-    return DiscordAccessor(config=DiscordConfig(token="t"))
+async def test_date_dir_contents_lists_chat_and_files(api, accessor, index):
+    result = await readdir(accessor, spec(f"/{CHANNEL}/{DAY}"), index)
+    assert result == [
+        f"/{CHANNEL}/{DAY}/chat.jsonl",
+        f"/{CHANNEL}/{DAY}/files",
+    ]
 
 
-async def _seed_channel(idx):
-    await idx.put(
-        "/G",
-        IndexEntry(id="G1",
-                   name="G",
-                   resource_type="discord/guild",
-                   vfs_name="G"),
-    )
-    await idx.put(
-        "/G/channels/ch",
-        IndexEntry(id="C1",
-                   name="ch",
-                   resource_type="discord/channel",
-                   vfs_name="ch"),
-    )
+async def test_files_dir_lists_attachments(api, accessor, index):
+    result = await readdir(accessor, spec(f"/{CHANNEL}/{DAY}/files"), index)
+    assert result == [f"/{CHANNEL}/{DAY}/files/kept__A1.txt"]
 
 
-@pytest.mark.asyncio
-async def test_date_dir_contents_lists_chat_and_files(accessor, index):
-    fake_messages = [{
-        "id":
-        "100",
-        "content":
-        "hi",
-        "attachments": [{
-            "id": "A1",
-            "filename": "pic.png",
-            "url": "https://cdn.example/A1/pic.png",
-            "proxy_url": "https://media.example/A1/pic.png",
-            "content_type": "image/png",
-            "size": 1234,
-        }],
-    }]
-    await _seed_channel(index)
-    with patch("mirage.core.discord.readdir.list_messages_for_day",
-               new_callable=AsyncMock,
-               return_value=fake_messages):
-        result = await readdir(
-            accessor,
-            PathSpec(resource_path="G/channels/ch/2024-04-04",
-                     virtual="/G/channels/ch/2024-04-04",
-                     directory="/G/channels/ch/2024-04-04"),
-            index,
-        )
-    assert "/G/channels/ch/2024-04-04/chat.jsonl" in result
-    assert "/G/channels/ch/2024-04-04/files" in result
-
-
-@pytest.mark.asyncio
-async def test_files_dir_lists_attachments(accessor, index):
-    fake_messages = [{
-        "id":
-        "100",
-        "attachments": [{
-            "id": "A1",
-            "filename": "pic.png",
-            "url": "https://cdn.example/A1/pic.png",
-            "content_type": "image/png",
-            "size": 1234,
-        }],
-    }]
-    await _seed_channel(index)
-    with patch("mirage.core.discord.readdir.list_messages_for_day",
-               new_callable=AsyncMock,
-               return_value=fake_messages):
-        result = await readdir(
-            accessor,
-            PathSpec(resource_path="G/channels/ch/2024-04-04/files",
-                     virtual="/G/channels/ch/2024-04-04/files",
-                     directory="/G/channels/ch/2024-04-04/files"),
-            index,
-        )
-    assert any(r.endswith("pic__A1.png") for r in result)
-
-
-@pytest.mark.asyncio
-async def test_fetch_day_swallows_soft_errors(accessor, index):
-    await _seed_channel(index)
-    err = aiohttp.ClientResponseError(
-        request_info=None,  # type: ignore[arg-type]
-        history=(),
-        status=403,
-    )
-    with patch("mirage.core.discord.readdir.list_messages_for_day",
-               new_callable=AsyncMock,
-               side_effect=err):
-        result = await readdir(
-            accessor,
-            PathSpec(resource_path="G/channels/ch/2024-04-04",
-                     virtual="/G/channels/ch/2024-04-04",
-                     directory="/G/channels/ch/2024-04-04"),
-            index,
-        )
-    # empty day on soft error → sealed listing (no chat.jsonl/files entries)
+async def test_fetch_day_swallows_soft_errors(api, accessor, index):
+    # A 403/404/429 seals an empty day rather than failing the listing.
+    result = await readdir(accessor, spec(f"/{CHANNEL}/{SEALED_DAY}"), index)
     assert result == []
 
 
-@pytest.mark.asyncio
-async def test_fetch_day_propagates_hard_errors(accessor, index):
-    await _seed_channel(index)
-    err = aiohttp.ClientResponseError(
-        request_info=None,  # type: ignore[arg-type]
-        history=(),
-        status=500,
-    )
-    with patch("mirage.core.discord.readdir.list_messages_for_day",
-               new_callable=AsyncMock,
-               side_effect=err):
-        with pytest.raises(aiohttp.ClientResponseError):
-            await readdir(
-                accessor,
-                PathSpec(resource_path="G/channels/ch/2024-04-04",
-                         virtual="/G/channels/ch/2024-04-04",
-                         directory="/G/channels/ch/2024-04-04"),
-                index,
-            )
+async def test_fetch_day_propagates_hard_errors(api, accessor, index):
+    with pytest.raises(aiohttp.ClientResponseError):
+        await readdir(accessor, spec(f"/{CHANNEL}/{BROKEN_DAY}"), index)
+
+
+async def test_files_under_a_sealed_day_is_enoent(api, accessor, index):
+    # The sealed day lists nothing, so its files subdir does not exist.
+    with pytest.raises(FileNotFoundError):
+        await readdir(accessor, spec(f"/{CHANNEL}/{SEALED_DAY}/files"), index)

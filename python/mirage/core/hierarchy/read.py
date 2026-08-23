@@ -19,12 +19,19 @@ from mirage.core.hierarchy.probe import A
 from mirage.core.hierarchy.scope import ROOT, DetectFn, ScopeMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
+from mirage.utils.ranges import slice_window
 
 Reader = Callable[[A, ScopeMatch, PathSpec, IndexCacheStore], Awaitable[bytes]]
 
 WindowedReader = Callable[
     [A, ScopeMatch, PathSpec, IndexCacheStore, int | None, int | None],
     Awaitable[bytes]]
+
+RangedReader = Callable[
+    [A, ScopeMatch, PathSpec, IndexCacheStore, int, int | None],
+    Awaitable[bytes]]
+
+ReadFn = Callable[..., Awaitable[bytes]]
 
 
 def make_read(
@@ -75,3 +82,40 @@ def make_read(
         return await reader(accessor, match, path, index)
 
     return read
+
+
+def make_read_range(
+    detect: DetectFn,
+    read: ReadFn,
+    *,
+    ranged: Mapping[str, RangedReader[A]],
+) -> ReadFn:
+    """Build a byte-ranged read over a hierarchy read.
+
+    A rendered file has no remote range to ask for — its bytes do not
+    exist until the read renders them — so the window is sliced after
+    the fact. A stored blob does (discord and slack attachments serve
+    HTTP range requests), and downloading the whole file to keep a
+    slice would defeat the ranged read; those kinds name a ranged
+    reader here and push the window to the source.
+
+    Args:
+        detect (DetectFn): the backend's scope classifier.
+        read (ReadFn): the backend's full read, usually ``make_read``'s.
+        ranged (Mapping[str, RangedReader]): per-kind readers that push
+            the byte window to the source.
+    """
+
+    async def read_range(accessor: A,
+                         path: PathSpec,
+                         index: IndexCacheStore = NULL_INDEX,
+                         offset: int = 0,
+                         size: int | None = None) -> bytes:
+        match = detect(path)
+        fn = ranged.get(match.kind)
+        if fn is not None:
+            return await fn(accessor, match, path, index, offset, size)
+        data = await read(accessor, path, index)
+        return slice_window(data, offset, size)
+
+    return read_range

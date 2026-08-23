@@ -343,6 +343,215 @@
           }
         }
       ]
+    },
+    {
+      "id": "symlink_roundtrip",
+      "hosts": [
+        "typescript"
+      ],
+      "world": {
+        "runtimes": [
+          "pyodide",
+          "vfs"
+        ],
+        "mounts": {
+          "/data": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"import os; os.symlink('t.txt', '/data/made')\"",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "readlink /data/made",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\n"
+          }
+        },
+        {
+          "command": "cat /data/made",
+          "expect": {
+            "exit": 0,
+            "stdout": "hello\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "readlink_a_shell_link",
+      "hosts": [
+        "typescript"
+      ],
+      "world": {
+        "runtimes": [
+          "pyodide",
+          "vfs"
+        ],
+        "mounts": {
+          "/data": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "ln -s t.txt /data/l",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "python3 -c \"import os\nprint(os.readlink('/data/l'))\nprint(os.path.islink('/data/l'), os.path.islink('/data/t.txt'))\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\nTrue False\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "metadata_reaches_the_mount",
+      "hosts": [
+        "typescript"
+      ],
+      "world": {
+        "runtimes": [
+          "pyodide",
+          "vfs"
+        ],
+        "mounts": {
+          "/data": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"import os; os.utime('/data/t.txt', (100.0, 200.0))\"",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "stat -c %Y /data/t.txt",
+          "expect": {
+            "exit": 0,
+            "stdout": "200\n"
+          }
+        },
+        {
+          "command": "python3 -c \"import os; os.chmod('/data/t.txt', 0o600)\"",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "stat -c %a /data/t.txt",
+          "expect": {
+            "exit": 0,
+            "stdout": "600\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rename_a_link_moves_the_name",
+      "hosts": [
+        "typescript"
+      ],
+      "world": {
+        "runtimes": [
+          "pyodide",
+          "vfs"
+        ],
+        "mounts": {
+          "/data": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "python3 -c \"import os\nos.symlink('t.txt', '/data/made')\nos.rename('/data/made', '/data/moved')\nprint(os.readlink('/data/moved'))\nprint(os.path.islink('/data/made'))\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\nFalse\n"
+          }
+        },
+        {
+          "command": "readlink /data/moved",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\n"
+          }
+        },
+        {
+          "command": "readlink /data/made",
+          "expect": {
+            "exit": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "rename_a_shell_link",
+      "hosts": [
+        "typescript"
+      ],
+      "world": {
+        "runtimes": [
+          "pyodide",
+          "vfs"
+        ],
+        "mounts": {
+          "/data": {
+            "resource": "ram",
+            "files": {
+              "t.txt": "hello\n"
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "command": "ln -s t.txt /data/lk",
+          "expect": {
+            "exit": 0
+          }
+        },
+        {
+          "command": "python3 -c \"import os\nos.rename('/data/lk', '/data/lk2')\nprint(os.readlink('/data/lk2'))\"",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\n"
+          }
+        },
+        {
+          "command": "readlink /data/lk2",
+          "expect": {
+            "exit": 0,
+            "stdout": "t.txt\n"
+          }
+        }
+      ]
     }
   ]
 }

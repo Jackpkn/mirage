@@ -18,7 +18,9 @@ from mirage.accessor.base import NOOPAccessor
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           dir_aware_stat,
                                                           dir_aware_stream)
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.commands.config import CommandOpts
+from mirage.ops.types import NamespaceView
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES
 
 TREE = {
@@ -94,7 +96,7 @@ def _probe_ops(missing: set[str],
             raise FileNotFoundError(path.virtual)
         if path.virtual in typed:
             return FileStat(name=path.virtual, type=FileType.DIRECTORY)
-        return FileStat(name=path.virtual, size=0)
+        return FileStat(type=FileType.FILE, name=path.virtual, size=0)
 
     async def readdir(_accessor, path, _index):
         target = path.virtual.rstrip("/") or "/"
@@ -116,10 +118,49 @@ def _probe_ops(missing: set[str],
                      is_mounted=lambda _a: True)
 
 
+# No namespace facts, which is what a command bound outside a workspace
+# gets: only the two probes below the backend can fire.
+NO_NS = CommandOpts()
+
+
+def _ns_dir(directory: str) -> CommandOpts:
+    """A bag whose namespace owes one path a child name and nothing else."""
+
+    def child_mounts(parent: str) -> list[str]:
+        return ["alpha"] if parent == directory else []
+
+    return CommandOpts(ns=NamespaceView(child_mounts=child_mounts))
+
+
+@pytest.mark.asyncio
+async def test_dir_aware_stat_refuses_a_namespace_only_mount_parent():
+    # No backend knows the path: its keys live in a mount nested under it,
+    # so neither the stat nor the parent-listing probe can see it, and the
+    # name plane is the only thing that can call it a directory.
+    stat = dir_aware_stat(_probe_ops({"/ghost"}), None, _ns_dir("/ghost"))
+    with pytest.raises(IsADirectoryError):
+        await stat(PathSpec.from_str_path("/ghost"))
+
+
+@pytest.mark.asyncio
+async def test_dir_aware_stat_keeps_enoent_when_the_namespace_agrees():
+    stat = dir_aware_stat(_probe_ops({"/ghost"}), None, _ns_dir("/elsewhere"))
+    with pytest.raises(FileNotFoundError):
+        await stat(PathSpec.from_str_path("/ghost"))
+
+
+@pytest.mark.asyncio
+async def test_dir_aware_stream_refuses_a_namespace_only_mount_parent():
+    read = dir_aware_stream(_probe_ops({"/ghost"}), None, _ns_dir("/ghost"))
+    with pytest.raises(IsADirectoryError):
+        async for _ in read(PathSpec.from_str_path("/ghost")):
+            raise AssertionError("no data expected")
+
+
 @pytest.mark.asyncio
 async def test_dir_aware_stat_refines_implicit_dir_to_eisdir():
     stat = dir_aware_stat(_probe_ops(set(), implicit_dirs={"/sub"}), None,
-                          None)
+                          NO_NS)
     with pytest.raises(IsADirectoryError):
         await stat(PathSpec.from_str_path("/sub"))
 
@@ -127,14 +168,14 @@ async def test_dir_aware_stat_refines_implicit_dir_to_eisdir():
 @pytest.mark.asyncio
 async def test_dir_aware_stat_refuses_explicit_dirs():
     stat = dir_aware_stat(_probe_ops(set(), explicit_dirs={"/sub"}), None,
-                          None)
+                          NO_NS)
     with pytest.raises(IsADirectoryError):
         await stat(PathSpec.from_str_path("/sub"))
 
 
 @pytest.mark.asyncio
 async def test_dir_aware_stat_keeps_enoent_for_missing_files():
-    stat = dir_aware_stat(_probe_ops({"/nope.txt"}), None, None)
+    stat = dir_aware_stat(_probe_ops({"/nope.txt"}), None, NO_NS)
     with pytest.raises(FileNotFoundError):
         await stat(PathSpec.from_str_path("/nope.txt"))
 
@@ -162,7 +203,7 @@ async def test_dir_aware_stat_ignores_fabricated_children():
                     read_stream=unused,
                     stat=stat,
                     is_mounted=lambda _a: True)
-    bound = dir_aware_stat(ops, None, None)
+    bound = dir_aware_stat(ops, None, NO_NS)
     with pytest.raises(FileNotFoundError):
         await bound(PathSpec.from_str_path("/nope.txt"))
 
@@ -187,7 +228,7 @@ async def test_dir_aware_stat_probe_swallows_driver_errors():
                     read_stream=unused,
                     stat=stat,
                     is_mounted=lambda _a: True)
-    bound = dir_aware_stat(ops, None, None)
+    bound = dir_aware_stat(ops, None, NO_NS)
     with pytest.raises(FileNotFoundError):
         await bound(PathSpec.from_str_path("/nope.txt"))
 
@@ -195,7 +236,7 @@ async def test_dir_aware_stat_probe_swallows_driver_errors():
 @pytest.mark.asyncio
 async def test_dir_aware_stream_raises_eisdir_for_dirs():
     read = dir_aware_stream(_probe_ops(set(), implicit_dirs={"/sub"}), None,
-                            None)
+                            NO_NS)
     with pytest.raises(IsADirectoryError):
         async for _ in read(PathSpec.from_str_path("/sub")):
             raise AssertionError("no data expected")
@@ -203,7 +244,7 @@ async def test_dir_aware_stream_raises_eisdir_for_dirs():
 
 @pytest.mark.asyncio
 async def test_dir_aware_stream_streams_files():
-    read = dir_aware_stream(_probe_ops(set()), None, None)
+    read = dir_aware_stream(_probe_ops(set()), None, NO_NS)
     chunks = [c async for c in read(PathSpec.from_str_path("/f.txt"))]
     assert chunks == [b"data"]
 
@@ -241,7 +282,10 @@ async def test_rule_guard_asks_the_bound_gate_and_leaves_stat_alone():
 
     async def stat(accessor, path, index=None):
         calls.append(("stat", path.virtual))
-        return FileStat(name="k", type=FileType.TEXT, size=1)
+        return FileStat(name="k",
+                        type=FileType.FILE,
+                        content=ContentType.TEXT,
+                        size=1)
 
     async def readdir(accessor, path, index=None):
         calls.append(("readdir", path.virtual))

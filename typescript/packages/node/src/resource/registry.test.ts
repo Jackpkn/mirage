@@ -12,9 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { normalizeOneDriveConfig } from '@struktoai/mirage-core/accessor/onedrive'
 import { tokenUrl } from '@struktoai/mirage-core/core/google/client'
@@ -313,5 +314,110 @@ describe('ResourceName coverage', () => {
   it('every built-in registry factory has a ResourceName', () => {
     const names = new Set<string>(Object.values(ResourceName))
     expect(BUILTIN_RESOURCES.filter((n) => !names.has(n))).toEqual([])
+  })
+})
+
+// A colon reference names a class rather than a registry key, so it is
+// exercised through a real file on disk: that is the path a deployment
+// takes, and it is the only way the loader's own module resolution is
+// covered. The fixture is `.mjs` because Node strips types without
+// compiling them, so a `.ts` fixture using a parameter property would be
+// refused at load.
+describe('buildResource colon reference', () => {
+  const CORE = pathToFileURL(
+    resolve(fileURLToPath(import.meta.url), '../../../../core/dist/index.js'),
+  ).href
+  const BACKEND =
+    `import {RAMResource} from ${JSON.stringify(CORE)}\n` +
+    'export class WikiResource extends RAMResource {\n' +
+    '  constructor(config) { super(); this.config = config }\n' +
+    '}\n' +
+    'export class LateResource extends RAMResource {\n' +
+    '  static async create(config) { const r = new LateResource(); r.config = config; return r }\n' +
+    '}\n' +
+    'export class NotAResource {}\n' +
+    'export class HalfResource {\n' +
+    '  get kind() { return "half" }\n' +
+    '  async open() {}\n' +
+    '  async close() {}\n' +
+    '}\n' +
+    'export class NamelessResource {\n' +
+    '  kind = ""\n' +
+    '  async open() {}\n' +
+    '  async close() {}\n' +
+    '  getState() { return {type: ""} }\n' +
+    '  loadState() {}\n' +
+    '}\n' +
+    'export const NOT_A_CLASS = {name: "wiki"}\n'
+
+  function fixture(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-resref-'))
+    writeFileSync(join(dir, 'wiki.mjs'), BACKEND)
+    return dir
+  }
+
+  it('builds from the class the ref names', async () => {
+    const dir = fixture()
+    const built = await buildResource(`${join(dir, 'wiki.mjs')}:WikiResource`, { root: '/ref' })
+    expect(built.constructor.name).toBe('WikiResource')
+    expect((built as unknown as { config: unknown }).config).toEqual({ root: '/ref' })
+    await built.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('prefers a static create over the constructor', async () => {
+    const dir = fixture()
+    const built = await buildResource(`${join(dir, 'wiki.mjs')}:LateResource`, { root: '/late' })
+    expect(built.constructor.name).toBe('LateResource')
+    expect((built as unknown as { config: unknown }).config).toEqual({ root: '/late' })
+    await built.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('never lets a ref shadow a registry name', async () => {
+    // A registry name always wins, so a name cannot be reread as code.
+    const built = await buildResource('ram')
+    expect(built.constructor.name).toBe('RAMResource')
+    await built.close()
+  })
+
+  it('refuses a ref that names something other than a class', async () => {
+    const dir = fixture()
+    await expect(buildResource(`${join(dir, 'wiki.mjs')}:NOT_A_CLASS`)).rejects.toThrow(
+      'must name a class',
+    )
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('refuses a class that does not build a resource', async () => {
+    const dir = fixture()
+    await expect(buildResource(`${join(dir, 'wiki.mjs')}:NotAResource`)).rejects.toThrow(
+      'is missing open, close, getState, loadState',
+    )
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('names the members a half-built resource left out', async () => {
+    // open/close alone used to pass, and the class reached installMounts and
+    // then crashed Workspace.save() on the getState it never declared.
+    const dir = fixture()
+    await expect(buildResource(`${join(dir, 'wiki.mjs')}:HalfResource`)).rejects.toThrow(
+      'is missing getState, loadState',
+    )
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('refuses a resource whose kind is empty', async () => {
+    // kind is how a command or op registered for this backend is found, so
+    // an empty one registers nothing and fails nowhere.
+    const dir = fixture()
+    await expect(buildResource(`${join(dir, 'wiki.mjs')}:NamelessResource`)).rejects.toThrow(
+      'has no kind',
+    )
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('still reports an unknown bare name as unknown', async () => {
+    await expect(buildResource('nope')).rejects.toThrow('unknown resource')
   })
 })

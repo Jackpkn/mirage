@@ -13,11 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { isMissingOp, isMissingPath } from '../utils/errors.ts'
+import { contentSize, isDir, isLink, mtimeMs, posixMode } from '../utils/stat_view.ts'
 import { CrossMountError } from './errors.ts'
-import { normDir } from '../utils/slash.ts'
+import { normDir, rstripSlash } from '../utils/slash.ts'
 import { planFlush } from './handles/index.ts'
 import { PrefixResolver, type MountResolver } from './resolver.ts'
 import type { BridgeDispatchFn } from './types.ts'
+import type { FileStat, SetAttrFields } from '../types.ts'
 
 /** One directory entry as the mounts report it. */
 export interface VFSEntry {
@@ -28,13 +30,66 @@ export interface VFSEntry {
   // stat follows links, so a directory link would otherwise read as a
   // plain directory and a cyclic one would recurse the walk forever.
   isLink?: boolean
+  // The stat's mode and stamp, absent on a row that carries no stat.
+  // A backend that slash-marks its directories is listed without one,
+  // which is the whole point of the mark, so the row says "not known"
+  // rather than inventing a default the guest cannot tell from an
+  // answer. A row that did stat carries both, so a guest seeding a
+  // whole tree from one listing needs no second stat per file.
+  mode?: number
+  mtimeMs?: number
 }
 
 /** One path's metadata, in the shape every guest encoder needs. */
 export interface VFSStat {
   size: number
   isDir: boolean
+  // Milliseconds here and nanoseconds in python, on purpose: epoch
+  // nanoseconds are past 2**53, so a number cannot hold them exactly.
   mtimeMs: number
+  // The full st_mode, type bits included, so a chmod the shell made is
+  // what a guest's stat reports. A guest that has no mode field on its
+  // own wire (preview1's filestat carries only a filetype) reads the
+  // type bits and drops the rest. `isDir` and `isLink` are this
+  // field's type bits spelled out; mode is the authority.
+  mode: number
+  // Only ever set for a stat the caller asked not to follow, since
+  // every other answer is the target's.
+  isLink?: boolean
+}
+
+/**
+ * Translate one mirage stat row into the guest-facing struct.
+ *
+ * The projection lives at the door rather than in each surface so both
+ * languages build one struct in one tier: preview1 reads the type bits
+ * out of `mode` and drops the rest, monty fills a `StatResult`,
+ * Emscripten fills an `FSAttr`. Mirrors python's `RuntimeVFS._row`.
+ */
+function statRow(st: FileStat): VFSStat {
+  const ms = mtimeMs(st)
+  return {
+    size: contentSize(st),
+    isDir: isDir(st),
+    // A guest wire has no validity channel for a timestamp, so an
+    // unknown mtime and epoch zero both encode as 0 from here on.
+    mtimeMs: ms ?? 0,
+    mode: posixMode(st),
+    ...(isLink(st) ? { isLink: true } : {}),
+  }
+}
+
+/**
+ * An entry's final path segment.
+ *
+ * What a link mark is compared on, because backends disagree on entry
+ * shape (bare names, trailing-slash names, full paths) and the name is
+ * the part they agree on. The same normalization `mergeReaddir`
+ * dedupes on.
+ */
+function baseName(entry: string): string {
+  const trimmed = rstripSlash(entry)
+  return trimmed.slice(trimmed.lastIndexOf('/') + 1)
 }
 
 export function concatBytes(head: Uint8Array, tail: Uint8Array): Uint8Array {
@@ -48,8 +103,11 @@ export function concatBytes(head: Uint8Array, tail: Uint8Array): Uint8Array {
  * The mount-facing op vocabulary a sandboxed runtime encodes into.
  *
  * One instruction set (read/write/append/stat/readdir/create/truncate/
- * unlink/mkdir/rmdir/rename), one routing table, one place that knows
- * an append may have to become a whole-file write. Encoders hold one of these; they
+ * unlink/mkdir/rmdir/rename/symlink/readlink/setattr), one routing
+ * table, one place that knows an append may have to become a
+ * whole-file write. The last three reach the name plane rather than a
+ * backend, which is what lets a guest create a link or stamp a time on
+ * a mount whose store has neither. Encoders hold one of these; they
  * never inherit it, because a monty encoder is the binding's own `os`
  * callback and a quickjs encoder is a table of host functions.
  *
@@ -109,38 +167,92 @@ export class RuntimeVFS {
     }
   }
 
-  async stat(path: string): Promise<VFSStat> {
-    const out = await this.dispatch('stat', path)
-    const st = out as VFSStat | null
-    if (
-      st === null ||
-      typeof st !== 'object' ||
-      typeof st.size !== 'number' ||
-      typeof st.isDir !== 'boolean' ||
-      typeof st.mtimeMs !== 'number'
-    ) {
+  /**
+   * One path's metadata, projected for a guest encoder.
+   *
+   * @param path guest-absolute virtual path.
+   * @param nofollow report a trailing symlink itself rather than its
+   *   target (a guest's lstat). The row is then the node table's own,
+   *   so it carries the target string's length as the size, the link's
+   *   mtime, and whatever a `chown -h` wrote; the dispatcher consumes
+   *   the flag and gates that read exactly as it gates `readlink`.
+   */
+  async stat(path: string, nofollow = false): Promise<VFSStat> {
+    const out = await this.dispatch(
+      'stat',
+      path,
+      undefined,
+      undefined,
+      nofollow ? { nofollow: true } : undefined,
+    )
+    if (out === null || typeof out !== 'object' || typeof (out as FileStat).name !== 'string') {
       throw new TypeError(`runtime vfs: stat ${path} bad shape`)
     }
-    return st
+    return statRow(out as FileStat)
   }
 
+  /**
+   * List a directory as resolved entries (Python's `readdir` shape).
+   *
+   * A backend that slash-marks directories skips the stat; every other
+   * entry is classified by the stat the readdir just populated the
+   * index with, so the lookup is RAM, not another API call. An entry
+   * that vanished between list and stat (or a dangling link) rides as
+   * a size-0 file instead of failing the whole listing: the guest's
+   * own open reports the miss.
+   *
+   * A row that did stat carries its mode and stamp too, since the
+   * struct is already in hand: a guest that seeds a whole tree from
+   * one listing (Emscripten does) then needs no second stat per file.
+   * The two slash-marked rows report neither, which is the honest
+   * answer for a listing that never asked.
+   *
+   * The link mark comes from the name plane, since stat follows and no
+   * backend listing reports a link. One table read per listing, and it
+   * only ever marks a name the listing itself returned, so a link the
+   * session hides stays hidden: the dispatcher filtered it out of the
+   * entries above and an unmatched mark marks nothing.
+   */
   async readdir(path: string): Promise<VFSEntry[]> {
     const out = await this.dispatch('readdir', path)
     if (!Array.isArray(out)) {
       throw new TypeError(`runtime vfs: readdir ${path} expected array`)
     }
-    for (const e of out) {
-      if (
-        e === null ||
-        typeof e !== 'object' ||
-        typeof (e as VFSEntry).path !== 'string' ||
-        typeof (e as VFSEntry).size !== 'number' ||
-        typeof (e as VFSEntry).isDir !== 'boolean'
-      ) {
-        throw new TypeError(`runtime vfs: readdir ${path} bad entry shape`)
-      }
-    }
-    return out as VFSEntry[]
+    // After the listing, not before: a directory that will not list
+    // (ENOENT, or a link cycle the namespace refuses to resolve) must
+    // fail as readdir, not as the mark read.
+    const links = this.resolver.linkChildren(path)
+    return await Promise.all(
+      out.map(async (raw): Promise<VFSEntry> => {
+        if (typeof raw !== 'string') {
+          throw new TypeError(`runtime vfs: readdir ${path} bad entry shape`)
+        }
+        const linked = links.has(baseName(raw)) ? { isLink: true } : {}
+        // Backends that mark directories with a trailing slash skip the
+        // stat; unmarked entries (e.g. RAM) need one to learn dir-ness.
+        if (raw.endsWith('/')) return { path: raw, size: 0, isDir: true, ...linked }
+        let st: VFSStat
+        try {
+          st = await this.stat(raw)
+        } catch (err) {
+          // A dangling link, or an entry that vanished between list and
+          // stat, must not fail the whole listing; the guest's own open
+          // reports the miss. Anything else (authorization, a timeout, a
+          // backend bug) propagates, or pyodide's syncMounts would
+          // replace a healthy snapshot with a silently degraded one.
+          if (!isMissingPath(err)) throw err
+          return { path: raw, size: 0, isDir: false, ...linked }
+        }
+        return {
+          path: raw,
+          size: st.size,
+          isDir: st.isDir,
+          mode: st.mode,
+          mtimeMs: st.mtimeMs,
+          ...linked,
+        }
+      }),
+    )
   }
 
   /**
@@ -186,6 +298,54 @@ export class RuntimeVFS {
   async rename(src: string, dst: string): Promise<void> {
     if (this.mountOf(src) !== this.mountOf(dst)) throw new CrossMountError(src, dst)
     await this.dispatch('rename', src, undefined, dst)
+  }
+
+  /**
+   * Create a namespace symlink at `path` pointing at `target`.
+   *
+   * A link is namespace state, so no backend stores one and the target
+   * is kept verbatim as the guest typed it. The dispatcher answers this
+   * op from the node table itself, which is why a runtime can serve
+   * `os.symlink` at all: the door a surface already holds reaches the
+   * name plane, not just a mount.
+   *
+   * Args:
+   *   path: guest-absolute path of the link to create.
+   *   target: link target, stored as typed.
+   */
+  async symlink(path: string, target: string): Promise<void> {
+    await this.dispatch('symlink', path, undefined, target)
+  }
+
+  /**
+   * The target of the symlink at `path`.
+   *
+   * Throws EINVAL when `path` is not a link, which is what the node
+   * table answers and what POSIX readlink says.
+   */
+  async readlink(path: string): Promise<string> {
+    const out = await this.dispatch('readlink', path)
+    if (typeof out !== 'string') {
+      throw new TypeError(`runtime vfs: readlink ${path} expected string, got ${typeof out}`)
+    }
+    return out
+  }
+
+  /**
+   * Write metadata fields, natively where the backend can hold them.
+   *
+   * The door reads the whole set and stores in the namespace overlay
+   * whatever the backend cannot keep, so a mount with no setattr op
+   * still answers: a utime on an s3 or dropbox mount lands in the name
+   * plane and stat reports it back. Stored, not enforced; the mount
+   * mode is the access control.
+   *
+   * Args:
+   *   path: guest-absolute virtual path.
+   *   attrs: the fields to write, unset ones omitted.
+   */
+  async setattr(path: string, attrs: SetAttrFields): Promise<void> {
+    await this.dispatch('setattr', path, undefined, undefined, attrs)
   }
 
   /**

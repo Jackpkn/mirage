@@ -15,7 +15,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from types import ModuleType, TracebackType
+from types import TracebackType
 from typing import Any, Literal, overload
 
 from mirage.bridge.sync import run_async_from_sync
@@ -30,13 +30,15 @@ from mirage.observe.observer import Observer
 from mirage.observe.record import OpRecord
 from mirage.observe.store import ObserverStore
 from mirage.ops import Ops
-from mirage.policy import (Approvals, Approver, PermissionsPolicy, Policies,
-                           Policy)
+from mirage.policy import (AskHandler, Decisions, Explanation,
+                           PermissionsPolicy, Policies, Policy, PolicyError,
+                           ScriptPolicy, SessionProfile)
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.policy import PolicyDecision, PolicyFn
 from mirage.runtime.resolver import PrefixResolver
+from mirage.shell import parse
 from mirage.shell.job_table import ConsoleFactory, JobTable
 from mirage.types import (ConsistencyPolicy, DriftPolicy, FileEvent, FileStat,
                           JsonValue, MountBackend, MountMode, PathSpec)
@@ -47,12 +49,11 @@ from mirage.workspace.file_prompt import build_file_prompt
 from mirage.workspace.mount import MountEntry, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
-from mirage.workspace.session import (Session, SessionManager, SessionProfile,
-                                      SessionStore, WorkspacePermissions)
-from mirage.workspace.session.resolve import (apply_profile, bound_commands,
-                                              bound_hidden, compile_profile,
-                                              inherit, resolve_profile,
-                                              tighten)
+from mirage.workspace.node.explain import explain_line
+from mirage.workspace.session import Session, SessionManager, SessionStore
+from mirage.workspace.session.resolve import (apply_profile, compile_profile,
+                                              resolve_profile, with_inline)
+from mirage.workspace.session.validate import check_cli_verbs
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
                                        read_tar)
@@ -76,7 +77,6 @@ from mirage.workspace.workspace.mounts import (install_mounts, kernel_targets,
                                                normalize_resources)
 from mirage.workspace.workspace.mounts import unmount as unmount_prefix
 from mirage.workspace.workspace.types import ResourceMount
-from mirage.workspace.workspace.utils import infrastructure_prefixes
 from mirage.workspace.workspace.watch import WatchDelegate, WatchManager
 
 logger = logging.getLogger(__name__)
@@ -108,30 +108,28 @@ class Workspace:
         console_factory: ConsoleFactory | None = None,
         runtimes: list[Runtime | str] | None = None,
         policy: PolicyFn | None = None,
-        permissions: WorkspacePermissions | Mapping[str, Any] | None = None,
         profiles: Mapping[str, SessionProfile | Mapping[str, Any]]
         | None = None,
+        profile: str | None = None,
         policies: list[Policy] | None = None,
-        approver: Approver | None = None,
+        on_ask: AskHandler | None = None,
         clis: dict[str, tuple[str | CLISpec, dict[str, Any] | None]]
         | None = None,
     ) -> None:
         self._registry = MountRegistry()
-        # The permissions document, workspace tier: `permissions` binds
-        # every session, `profiles` are the named templates a session is
-        # created from. Both accept the plain document a YAML file or the
-        # TypeScript constructor would hold; model_validate is a no-op on
-        # an already-built model. Every named profile resolves once here
-        # so an unknown `extends` or a cycle fails at construction, not
-        # at the first create_session.
-        self._permissions = (WorkspacePermissions.model_validate(permissions)
-                             if permissions is not None else None)
+        # The permission profiles: one per name, and the one a session
+        # gets when it names none. A profile is the whole document a
+        # session runs under, so there is no workspace-wide block
+        # above it. Both accept the plain mapping a YAML file or the
+        # TypeScript constructor would hold; model_validate is a no-op
+        # on an already-built model.
         self._profiles: dict[str, SessionProfile] = {
             name: SessionProfile.model_validate(doc)
             for name, doc in (profiles or {}).items()
         }
-        for name in self._profiles:
-            inherit(self._profiles, name)
+        self._default_profile_name = profile
+        if profile is not None and profile not in self._profiles:
+            raise PolicyError(f"unknown profile {profile!r}")
         # One provider scopes every control-plane store by workspace id;
         # the per-plane params (observe / namespace_store / session_store)
         # remain as direct overrides that win over the provider.
@@ -160,19 +158,24 @@ class Workspace:
         self._default_agent_id = agent_id
         self._session_mgr = SessionManager(session_id, store=stores.sessions)
         # Admission policies, consulted in registration order after the
-        # built-ins the registry seeds: the document's command tiers
-        # (PermissionsPolicy, reading each session's compiled layers
-        # from the manager by the id the door puts in the context), then
-        # Policy instances, then anything added later through
-        # ws.policies.add(). The runtime policy (policy=) is the
-        # line-level counterpart until it is absorbed as a hook.
+        # built-ins the registry seeds: the profile's admission rules
+        # (PermissionsPolicy, reading each session's compiled rules
+        # from the manager by the id the door puts in the context), the
+        # profile's script (ScriptPolicy, evaluated per command through
+        # the same manager), then Policy instances, then anything added
+        # later through ws.policies.add(). The runtime policy (policy=)
+        # is the line-level counterpart until it is absorbed as a hook.
         self._registry.policies.add(PermissionsPolicy(self._session_mgr))
+        self._script_policy = ScriptPolicy(self._session_mgr,
+                                           self._mount_prefixes)
+        self._registry.policies.add(self._script_policy)
         for entry in policies or []:
             self._registry.policies.add(entry)
-        # The approval door an Ask is taken to (design 3.9): grants live
-        # on the sessions, the host answers through `approver` (the
-        # recording one when none is wired) and reads `ws.approvals`.
-        self._registry.approvals = Approvals(self._session_mgr, approver)
+        # The ledger an Ask is taken to (design 3.9): records live on
+        # the sessions, the host answers through `on_ask` (or just
+        # records the question when none is wired) and reads
+        # `ws.decisions`.
+        self._registry.decisions = Decisions(self._session_mgr, on_ask)
         self._meta = WorkspaceMeta(self._workspace_id, self._state_store,
                                    self._session_mgr, session_id,
                                    session_id_explicit)
@@ -197,21 +200,13 @@ class Workspace:
         # What the workspace and its mounts hide from every session,
         # stamped onto the default session now and onto every session
         # created or hydrated later.
-        self._session_mgr.bound_hidden = bound_hidden(
-            self._permissions,
-            {spec.prefix: spec.permissions
-             for spec in specs})
-        self._session_mgr.bound_commands = bound_commands(
-            self._permissions,
-            {spec.prefix: spec.permissions
-             for spec in specs})
         # The workspace's own session is a session created without a
-        # name, so `profiles.default` shapes it too (design 3.4): the
-        # primary agent is not the one agent the document cannot reach.
-        default_profile = resolve_profile(self._profiles, None)
+        # name, so the default profile shapes it too: the primary agent
+        # is not the one agent the document cannot reach.
+        default_base = self._base_profile(None)
         self._session_mgr.default_profile = (compile_profile(
-            default_profile, infrastructure_prefixes(
-                self._implicit_root)) if default_profile is not None else None)
+            default_base, self._profile_name(None)) if default_base is not None
+                                             else None)
 
         self.observer = Observer(store=stores.observe)
         self._registry.mount(HISTORY_PREFIX,
@@ -232,12 +227,14 @@ class Workspace:
         # invented by assignment, so an unpatch without a patch raised
         # AttributeError instead of restoring nothing.
         self._original_open: Callable[..., Any] | None = None
-        self._original_os: ModuleType | None = None
+        self._original_io_open: Callable[..., Any] | None = None
+        self._original_os_names: dict[str, Callable[..., Any]] | None = None
         self._vfs_loop: asyncio.AbstractEventLoop | None = None
 
         self._runtimes, self._policy_router = wire_runtime_world(
             self._registry, self.dispatch,
-            PrefixResolver(self._ops.mount_prefixes), runtimes)
+            PrefixResolver(self._ops.mount_prefixes,
+                           self._namespace.link_names_under), runtimes)
         reject_config_script("policy", policy)
         self._policy = policy
 
@@ -262,6 +259,36 @@ class Workspace:
         """
         return await self.observer.command_events()
 
+    async def explain(self,
+                      line: str,
+                      session_id: str = "") -> list[Explanation]:
+        """What a line would do under a session's profile, without
+        running any of it.
+
+        The dry run of the gate every command passes through, so this
+        and the refusal an agent would read come out of one place and
+        cannot disagree. It runs no command, expands nothing, spends no
+        grant and puts no question to a host, which is what makes it
+        safe to call about a line nobody typed.
+
+        Host-side only. The structure of a profile's rules is an
+        operator's business, so there is no builtin an agent can type
+        to read it.
+
+        Args:
+            line (str): the line to judge, as an agent would type it.
+            session_id (str): whose profile to judge it under; the
+                default session when empty.
+
+        Returns:
+            list[Explanation]: one per command the gate reads, in gate
+            order, nested lines included.
+        """
+        await self.ensure_sessions_loaded()
+        session = self.get_session(session_id or self.default_session_id)
+        return await explain_line(parse(line), session, self._registry,
+                                  self._namespace)
+
     @property
     def ops(self) -> Ops:
         return self._ops
@@ -278,18 +305,18 @@ class Workspace:
     def policies(self) -> Policies:
         """The workspace's admission policies; add() registers more.
 
-        Ordered, built-ins first; on a pre hook the first Deny wins,
-        and adding a policy can only tighten the workspace.
+        Ordered, built-ins first; on a pre hook the first Deny wins, so
+        adding a policy can only restrict the workspace.
         """
         return self._registry.policies
 
     @property
-    def approvals(self) -> Approvals:
-        """The host's door on asked commands: ``list()`` the requests
-        waiting, ``grant(id, scope)`` or ``deny(id)`` one, and the
-        agent's retry passes or is refused.
+    def decisions(self) -> Decisions:
+        """The host's door on asked commands: ``list()`` every record,
+        ``pending()`` the ones waiting, ``answer(id, outcome, scope)``
+        one, and the agent's retry passes or is refused.
         """
-        return self._registry.approvals
+        return self._registry.decisions
 
     @property
     def max_drain_bytes(self) -> int | None:
@@ -667,51 +694,101 @@ class Workspace:
     def create_session(
         self,
         session_id: str,
-        mounts: Mapping[str, MountMode | str] | Sequence[str] | None = None,
+        mounts: Mapping[str, MountMode | str] | None = None,
         *,
         profile: str | SessionProfile | Mapping[str, Any] | None = None,
         permissions: SessionProfile | Mapping[str, Any] | None = None,
     ) -> Session:
-        """Create a session from a profile, optionally tightened inline.
+        """Create a session under one profile, with an optional inline
+        document of its own.
 
-        The profile is a name from the workspace's ``profiles`` (or the
-        ``default`` one when none is named and one exists), or a profile
-        document; ``permissions`` and ``mounts`` narrow it further
-        (mounts intersect at the weaker mode, hides union; design 3.4).
-        Nothing here can widen what the profile grants.
+        The profile is a name from the workspace's ``profiles``, or the
+        workspace default when none is named, or a profile document.
+        The inline ``permissions`` and ``mounts`` may add ask and deny
+        rules, hides and weaker modes; they may never add an allow
+        entry, which is the one rule about combining two documents.
 
         Args:
             session_id (str): unique id for the session.
-            mounts (Mapping[str, MountMode | str] | Sequence[str] | None):
-                sugar for ``permissions.mounts``: a mapping assigns each
-                prefix a mode ceiling ("read", "write", "exec", or the
-                filesystem aliases "r", "rw", "rwx"); a list of prefixes
-                (or one bare prefix) keeps each mount at its own
-                configured mode. A set or a generator is refused, so
-                the same grant reads the same way in TypeScript.
+            mounts (Mapping[str, MountMode | str] | None): sugar for
+                ``permissions.mounts``: a mapping assigns each prefix a
+                mode ("read", "write", "exec", or the filesystem aliases
+                "r", "rw", "rwx"), which may only be weaker than the
+                mount's own. A mount the mapping omits keeps its own
+                mode, so this narrows and never confines; a profile
+                that must keep a session away from a mount hides it.
             profile (str | SessionProfile | Mapping[str, Any] | None):
-                the role to create the session from: a name, a
+                the profile to create the session under: a name, a
                 SessionProfile, or its plain document.
             permissions (SessionProfile | Mapping[str, Any] | None): an
-                inline document that tightens the profile.
+                inline document of ask and deny rules and hides.
 
         Raises:
-            PolicyError: an unknown profile name or a broken chain.
+            PolicyError: an unknown profile name, or an inline document
+                that states an allow list or a script.
         """
         if isinstance(profile, Mapping):
             profile = SessionProfile.model_validate(profile)
-        base = resolve_profile(self._profiles, profile)
+        base = self._base_profile(profile)
         inline = (SessionProfile.model_validate(permissions)
                   if permissions is not None else None)
         if mounts is not None:
-            inline = tighten(inline,
-                             SessionProfile.model_validate({"mounts": mounts}))
-        compiled = compile_profile(
-            tighten(base, inline),
-            infrastructure_prefixes(self._implicit_root))
+            inline = with_inline(
+                inline, SessionProfile.model_validate({"mounts": mounts}))
+        compiled = compile_profile(with_inline(base, inline),
+                                   self._profile_name(profile))
+        check_cli_verbs(compiled.commands, self._cli_verbs())
         session = self._session_mgr.create(session_id)
         apply_profile(session, compiled)
         return session
+
+    def _cli_verbs(self) -> dict[str, frozenset[str]]:
+        """The verbs each installed CLI declares, keyed by head word.
+
+        Read at ``create_session`` rather than at compile time because a
+        CLI is registered on the workspace after it is built.
+        """
+        return {
+            name:
+            frozenset(child.name for child in (install.spec.subcommands or ()))
+            for name, install in self._registry.clis.items().items()
+        }
+
+    def _base_profile(
+            self,
+            profile: str | SessionProfile | None) -> SessionProfile | None:
+        """The base profile a session is created under, which the
+        inline ``permissions``/``mounts`` arguments then layer onto:
+        the profile as named, else the workspace default.
+
+        Args:
+            profile (str | SessionProfile | None): what the caller
+                named, None for the workspace default.
+        """
+        if profile is None and self._default_profile_name is not None:
+            return self._profiles[self._default_profile_name]
+        return resolve_profile(self._profiles, profile)
+
+    def _profile_name(self, profile: str | SessionProfile | None) -> str:
+        """The name of the profile ``_base_profile`` resolves, which its
+        script reads as ``ctx["profile"]``; empty for a profile document
+        passed without one.
+
+        Args:
+            profile (str | SessionProfile | None): what the caller
+                named, None for the workspace default.
+        """
+        if isinstance(profile, str):
+            return profile
+        if profile is None and self._default_profile_name is not None:
+            return self._default_profile_name
+        return ""
+
+    def _mount_prefixes(self) -> list[str]:
+        """The mount prefixes a profile script reads as
+        ``ctx["mounts"]``, read per evaluation so a later mount shows.
+        """
+        return [entry.prefix for entry in self._registry.mounts()]
 
     def get_session(self, session_id: str) -> Session:
         return self._session_mgr.get(session_id)

@@ -23,15 +23,11 @@ import type { Resource } from '../../resource/base.ts'
 import type { ConsoleFactory } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import type { Limit, ConsistencyPolicy, DriftPolicy, MountMode } from '../../types.ts'
-import type { Approver, Policy } from '../../policy/index.ts'
+import type { AskHandler, Policy } from '../../policy/index.ts'
 import type { PolicyDecision, PolicyFn } from '../../runtime/policy/index.ts'
 import type { RuntimeEntry } from '../../runtime/base.ts'
 import type { NamespaceStore } from '../mount/namespace/store.ts'
-import type {
-  MountPermissions,
-  SessionProfile,
-  WorkspacePermissions,
-} from '../session/permissions.ts'
+import type { SessionProfile } from '../../policy/profile.ts'
 import type { SessionStore } from '../session/store.ts'
 import type { WorkspaceStateStore } from '../store/base.ts'
 
@@ -119,26 +115,22 @@ export interface WorkspaceOptions {
    */
   policy?: PolicyFn
   /**
-   * The permissions document, workspace tier (`permissions:` in YAML):
-   * deny rules and hides that bind every session, absolute paths. The
-   * deny rules compile to policies checked after the built-in POSIX
-   * mount-root rules, before flag parsing, mount resolution, runtime
-   * placement and backend I/O; the hides join every session's own.
-   */
-  permissions?: WorkspacePermissions | null
-  /**
-   * Named session profiles (`profiles:` in YAML), the templates
-   * `createSession` picks by name; `default` applies when none is
-   * named. Every `extends` chain resolves at construction, so an
-   * unknown parent or a cycle fails here, not at the first session.
+   * The profiles (`profiles:` in YAML). A profile is the whole permission
+   * document a session runs under, so there is no workspace-wide block
+   * and no mount-owned block above it. Each is a parsed profile, not the
+   * document as written: run the document through `parseSessionProfile`
+   * first (the config loader already does). Python validates here
+   * instead, because pydantic can tell a built model from a document and
+   * a plain interface cannot; parsing twice is not a no-op, since a
+   * mapping-form rule compiles to commands beside paths, which the
+   * document grammar refuses.
    */
   profiles?: Readonly<Record<string, SessionProfile>> | null
   /**
-   * Mount-owned permissions by mount prefix (`mounts.<p>.permissions`
-   * in YAML): relative to the mount root, rebased here, binding every
-   * session. The node Workspace fills it from `Mount(permissions)`.
+   * Which profile shapes a session created without one, the workspace's own
+   * session included. A name this document does not define is an error.
    */
-  mountPermissions?: Readonly<Record<string, MountPermissions | null>>
+  profile?: string | null
   /**
    * Admission policies registered after the document's deny rules.
    * Code only: each defines the lifecycle hooks it cares about; on a
@@ -148,10 +140,10 @@ export interface WorkspaceOptions {
   policies?: readonly Policy[]
   /**
    * How the host answers an asked line (design 3.9): a blocking
-   * `CallbackApprover`, or nothing for the recording default the host
-   * reads through `ws.approvals`.
+   * a coroutine over the ledger's own record, or nothing for the
+   * recording default the host reads through `ws.decisions`.
    */
-  approver?: Approver
+  onAsk?: AskHandler
   /**
    * Installed CLIs, fully separate from mounts: key = installed head
    * word, value = a registered CLISpec name (the YAML `cli:` key) or a

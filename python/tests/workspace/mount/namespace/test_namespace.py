@@ -417,6 +417,27 @@ async def test_link_stats_under_is_one_level_only(namespace):
 
 
 @pytest.mark.asyncio
+async def test_link_names_under_is_one_level_of_names(namespace):
+    # What a readdir row's mark needs: the names, one level, no stats.
+    await namespace.symlink("/data/a", "/t1", 1.0)
+    await namespace.symlink("/data/sub/b", "/t2", 1.0)
+    assert namespace.link_names_under("/data") == {"a"}
+    assert namespace.link_names_under("/other") == set()
+
+
+@pytest.mark.asyncio
+async def test_link_names_under_answers_for_the_directory_a_link_names(
+        namespace):
+    # A readdir of an alias is dispatched at its target and answers with
+    # that directory's entries, so the marks come from there. Asking the
+    # typed path left every link inside an aliased directory unmarked,
+    # and a dir link inside it then read as a directory a walk recurses.
+    await namespace.symlink("/data/real/lk", "/data/real/t.txt", 1.0)
+    await namespace.symlink("/data/alias", "/data/real", 1.0)
+    assert namespace.link_names_under("/data/alias") == {"lk"}
+
+
+@pytest.mark.asyncio
 async def test_link_stats_below_spans_the_whole_subtree(namespace):
     await namespace.symlink("/data/a", "/t1", 1.0)
     await namespace.symlink("/data/sub/b", "/t2", 1.0)

@@ -12,171 +12,99 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.core.slack.scope import detect_scope
-from mirage.types import PathSpec
-from mirage.utils.key_prefix import mount_key
+from mirage.core.hierarchy.scope import INVALID, ROOT
+from mirage.core.slack.scope import (NATIVE_KINDS, SearchTarget, detect_scope,
+                                     search_target)
 
 
-def _gs(path: str,
-        prefix: str = "",
-        pattern: str | None = None,
-        directory: str | None = None) -> PathSpec:
-    return PathSpec(
-        resource_path=mount_key(path, prefix),
-        virtual=path,
-        directory=directory
-        or (path.rsplit("/", 1)[0] + "/" if "/" in path else "/"),
-        pattern=pattern,
-    )
+def test_root():
+    match = detect_scope("/")
+    assert match.kind == ROOT
+    assert ROOT in NATIVE_KINDS
 
 
-def test_root_empty():
-    scope = detect_scope(PathSpec.from_str_path("/"))
-    assert scope.use_native is True
-    assert scope.channel_name is None
-
-
-def test_root_with_prefix():
-    scope = detect_scope(_gs("/slack/", prefix="/slack"))
-    assert scope.use_native is True
-
-
-def test_channels_root():
-    scope = detect_scope(_gs("/slack/channels", prefix="/slack"))
-    assert scope.use_native is True
-    assert scope.container == "channels"
-    assert scope.channel_name is None
+def test_containers():
+    assert detect_scope("/channels").kind == "channels_root"
+    assert detect_scope("/dms").kind == "dms_root"
+    assert detect_scope("/users").kind == "users_root"
 
 
 def test_channel_dir():
-    scope = detect_scope(_gs("/slack/channels/general__C1", prefix="/slack"))
-    assert scope.use_native is True
-    assert scope.container == "channels"
-    assert scope.channel_name == "general"
-    assert scope.channel_id == "C1"
+    match = detect_scope("/channels/general__C001")
+    assert match.kind == "channel"
+    assert match.slots == {
+        "container": "channels",
+        "channel": "general",
+        "channel_id": "C001",
+    }
 
 
-def test_channel_dm_dir():
-    scope = detect_scope(_gs("/slack/dms/alice__D1", prefix="/slack"))
-    assert scope.use_native is True
-    assert scope.container == "dms"
-    assert scope.channel_name == "alice"
-    assert scope.channel_id == "D1"
+def test_dm_dir():
+    match = detect_scope("/dms/alice__D001")
+    assert match.kind == "channel"
+    assert match.slots["container"] == "dms"
+    assert match.slots["channel_id"] == "D001"
 
 
-def test_channel_glob_jsonl():
-    spec = PathSpec(
-        resource_path=mount_key("/slack/channels/general__C1/*/chat.jsonl",
-                                "/slack"),
-        virtual="/slack/channels/general__C1/*/chat.jsonl",
-        directory="/slack/channels/general__C1/",
-        pattern="*/chat.jsonl",
-        resolved=False,
-    )
-    scope = detect_scope(spec)
-    assert scope.use_native is True
-    assert scope.channel_name == "general"
-    assert scope.channel_id == "C1"
+def test_channel_bare_name_is_invalid():
+    # The tree mints every dirname as `name__id`, so a bare name can
+    # never be a listed channel and classifies as invalid outright.
+    assert detect_scope("/channels/general").kind == INVALID
 
 
-def test_specific_chat_jsonl():
-    scope = detect_scope(
-        _gs("/slack/channels/general__C1/2026-04-10/chat.jsonl",
-            prefix="/slack"))
-    assert scope.use_native is False
-    assert scope.date_str == "2026-04-10"
-    assert scope.channel_name == "general"
-    assert scope.channel_id == "C1"
+def test_user_file():
+    match = detect_scope("/users/alice__U001.json")
+    assert match.kind == "user"
+    assert match.slots == {"user": "alice", "user_id": "U001"}
+    assert "user" not in NATIVE_KINDS
 
 
-def test_users_dir_not_native():
-    scope = detect_scope(_gs("/slack/users", prefix="/slack"))
-    assert scope.use_native is False
+def test_day_dir():
+    match = detect_scope("/channels/general__C001/2024-04-10")
+    assert match.kind == "day"
+    assert match.slots["day"] == "2024-04-10"
+    assert "day" in NATIVE_KINDS
 
 
-def test_users_file_not_native():
-    scope = detect_scope(_gs("/slack/users/alice__U1.json", prefix="/slack"))
-    assert scope.use_native is False
+def test_non_date_under_channel_is_invalid():
+    assert detect_scope("/channels/general__C001/notadate").kind == INVALID
 
 
-def test_unknown_root_not_native():
-    scope = detect_scope(_gs("/slack/whatever", prefix="/slack"))
-    assert scope.use_native is False
+def test_chat_jsonl():
+    match = detect_scope("/channels/general__C001/2024-04-10/chat.jsonl")
+    assert match.kind == "messages"
+    assert "messages" not in NATIVE_KINDS
 
 
-def test_dirname_without_id():
-    scope = detect_scope(_gs("/slack/channels/general", prefix="/slack"))
-    assert scope.use_native is True
-    assert scope.channel_name == "general"
-    assert scope.channel_id is None
+def test_files_dir_is_not_native():
+    match = detect_scope("/channels/general__C001/2024-04-10/files")
+    assert match.kind == "files"
+    # search.files has no per-day filter, so the files dir takes the scan.
+    assert "files" not in NATIVE_KINDS
 
 
-def _spec(path: str, prefix: str = "/slack") -> PathSpec:
-    return PathSpec(resource_path=mount_key(path, prefix),
-                    virtual=path,
-                    directory=path)
+def test_file_blob():
+    match = detect_scope("/dms/bob__D001/2024-04-10/files/report__F1.pdf")
+    assert match.kind == "file_blob"
+    assert match.slots["blob"] == "report__F1.pdf"
+    assert "file_blob" not in NATIVE_KINDS
 
 
-def test_date_dir():
-    scope = detect_scope(
-        _gs("/slack/channels/general__C1/2026-04-10", prefix="/slack"))
-    assert scope.use_native is True
-    assert scope.date_str == "2026-04-10"
-    assert scope.channel_name == "general"
-    assert scope.channel_id == "C1"
-    assert scope.target == "date"
+def test_unknown_root_is_invalid():
+    assert detect_scope("/nope").kind == INVALID
+    assert detect_scope("/nope/deeper").kind == INVALID
 
 
-def test_files_dir():
-    scope = detect_scope(
-        _gs("/slack/channels/general__C1/2026-04-10/files", prefix="/slack"))
-    assert scope.use_native is True
-    assert scope.date_str == "2026-04-10"
-    assert scope.target == "files"
+def test_search_target_from_channel():
+    match = detect_scope("/channels/general__C001/2024-04-10")
+    assert search_target(match) == SearchTarget(container="channels",
+                                                channel_name="general",
+                                                channel_id="C001")
 
 
-def test_specific_file_blob():
-    scope = detect_scope(
-        _gs("/slack/channels/general__C1/2026-04-10/files/report__F1.pdf",
-            prefix="/slack"))
-    assert scope.use_native is False
-    assert scope.date_str == "2026-04-10"
-    assert scope.target == "files"
-    assert scope.channel_name == "general"
-    assert scope.channel_id == "C1"
+def test_search_target_from_container_root():
+    assert search_target(detect_scope("/dms")) == SearchTarget(container="dms")
 
 
-def test_glob_files_in_day():
-    spec = PathSpec(
-        resource_path=mount_key(
-            "/slack/channels/general__C1/2026-04-10/files/*.pdf", "/slack"),
-        virtual="/slack/channels/general__C1/2026-04-10/files/*.pdf",
-        directory="/slack/channels/general__C1/2026-04-10/files/",
-        pattern="*.pdf",
-        resolved=False,
-    )
-    scope = detect_scope(spec)
-    assert scope.use_native is True
-    assert scope.target == "files"
-
-
-def test_chat_jsonl_target():
-    scope = detect_scope(
-        _gs("/slack/channels/general__C1/2026-04-10/chat.jsonl",
-            prefix="/slack"))
-    assert scope.target == "messages"
-
-
-def test_depth3_non_date_falls_through():
-    scope = detect_scope(
-        _gs("/slack/channels/general__C1/notadate", prefix="/slack"))
-    assert scope.use_native is False
-    assert scope.target is None
-
-
-def test_depth4_unknown_leaf_under_date_not_native():
-    scope = detect_scope(
-        _gs("/slack/channels/general__C1/2026-04-10/random.txt",
-            prefix="/slack"))
-    assert scope.use_native is False
-    assert scope.target is None
+def test_search_target_from_root_is_workspace_wide():
+    assert search_target(detect_scope("/")) == SearchTarget()

@@ -15,20 +15,20 @@
 from mirage.core.hierarchy.stat import entry_stat, make_stat
 from mirage.core.linear.readdir import readdir
 from mirage.core.linear.scope import detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType, FileType
 
 stat = make_stat(
     detect_scope,
     readdir,
     entry_stats={
         "team": entry_stat("team_id", FileType.DIRECTORY),
-        "team_json": entry_stat("team_id", FileType.JSON),
-        "member": entry_stat("user_id", FileType.JSON),
+        "team_json": entry_stat("team_id", ContentType.JSON),
+        "member": entry_stat("user_id", ContentType.JSON),
         "issue": entry_stat("issue_id", FileType.DIRECTORY),
-        "issue_json": entry_stat("issue_id", FileType.JSON),
-        "comments_jsonl": entry_stat("issue_id", FileType.TEXT),
-        "project": entry_stat("project_id", FileType.JSON),
-        "cycle": entry_stat("cycle_id", FileType.JSON),
-        "document": entry_stat("document_id", FileType.JSON),
+        "issue_json": entry_stat("issue_id", ContentType.JSON),
+        "comments_jsonl": entry_stat("issue_id", ContentType.TEXT),
+        "project": entry_stat("project_id", ContentType.JSON),
+        "cycle": entry_stat("cycle_id", ContentType.JSON),
+        "document": entry_stat("document_id", ContentType.JSON),
     },
 )

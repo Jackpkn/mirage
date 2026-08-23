@@ -12,92 +12,60 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountKey, mountPrefixOf } from '../../utils/key_prefix.ts'
 import type { GmailAccessor } from '../../accessor/gmail.ts'
-import type { IndexCacheStore } from '../../cache/index/store.ts'
-import { FileStat, FileType, PathSpec } from '../../types.ts'
-import { readdir as coreReaddir } from './readdir.ts'
-import { listLabels } from './labels.ts'
-import { enoent } from '../../utils/errors.ts'
+import type { IndexEntry } from '../../cache/index/config.ts'
+import type { PathSpec } from '../../types.ts'
+import { FileStat, FileType } from '../../types.ts'
 import { guessType } from '../../utils/filetype.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
+import { makeStat } from '../hierarchy/stat.ts'
+import { readdir } from './readdir.ts'
+import { detectScope } from './scope.ts'
 
-export async function stat(
-  accessor: GmailAccessor,
-  path: PathSpec,
-  index?: IndexCacheStore,
-): Promise<FileStat> {
-  const prefix = mountPrefixOf(path.virtual, path.resourcePath)
-  const key = path.resourcePath
-  if (key === '') return new FileStat({ name: '/', type: FileType.DIRECTORY })
-
-  if (index === undefined) throw enoent(path.virtual)
-  const virtualKey = prefix !== '' ? `${prefix}/${key}` : `/${key}`
-  let result = await index.get(virtualKey)
-  if (result.entry === undefined || result.entry === null) {
-    if (!key.includes('/')) {
-      const labels = await listLabels(accessor.tokenManager)
-      const names = new Set(labels.map((lb) => (lb.type === 'system' ? lb.id : (lb.name ?? lb.id))))
-      if (names.has(key)) return new FileStat({ name: key, type: FileType.DIRECTORY })
-      throw enoent(path.virtual)
-    }
-    const parentVirtual = virtualKey.slice(0, virtualKey.lastIndexOf('/')) || '/'
-    try {
-      await coreReaddir(
-        accessor,
-        new PathSpec({
-          virtual: parentVirtual,
-          directory: parentVirtual,
-          resolved: false,
-          resourcePath: mountKey(parentVirtual, prefix),
-        }),
-        index,
-      )
-    } catch {
-      // parent listing failed — fall through
-    }
-    result = await index.get(virtualKey)
-    if (result.entry === undefined || result.entry === null) {
-      throw enoent(path.virtual)
-    }
-  }
-  const rt = result.entry.resourceType
-  const vfsName = result.entry.vfsName !== '' ? result.entry.vfsName : result.entry.name
-  if (rt === 'gmail/label') {
-    return new FileStat({
-      name: vfsName,
-      type: FileType.DIRECTORY,
-      extra: { label_id: result.entry.id },
-    })
-  }
-  if (rt === 'gmail/date') {
-    return new FileStat({ name: vfsName, type: FileType.DIRECTORY })
-  }
-  if (rt === 'gmail/message') {
-    return new FileStat({
-      name: vfsName,
-      type: FileType.JSON,
-      size: result.entry.size,
-      extra: { message_id: result.entry.id, ...result.entry.extra },
-    })
-  }
-  if (rt === 'gmail/attachment_dir') {
-    return new FileStat({
-      name: vfsName,
-      type: FileType.DIRECTORY,
-      extra: { message_id: result.entry.id },
-    })
-  }
-  if (rt === 'gmail/attachment') {
-    return new FileStat({
-      name: vfsName,
-      type: guessType(vfsName),
-      size: result.entry.size,
-      extra: { attachment_id: result.entry.id },
-    })
-  }
+function labelStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
   return new FileStat({
-    name: vfsName,
-    type: FileType.JSON,
-    extra: { message_id: result.entry.id },
+    name: entry.vfsName,
+    type: FileType.DIRECTORY,
+    extra: { label_id: entry.id },
   })
 }
+
+function dayStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({ name: entry.vfsName, type: FileType.DIRECTORY })
+}
+
+function messageStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName,
+    type: FileType.JSON,
+    size: entry.size,
+    extra: { message_id: entry.id, ...entry.extra },
+  })
+}
+
+function attachmentDirStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName,
+    type: FileType.DIRECTORY,
+    extra: { message_id: entry.id },
+  })
+}
+
+function attachmentStat(_match: ScopeMatch, _path: PathSpec, entry: IndexEntry): FileStat {
+  return new FileStat({
+    name: entry.vfsName,
+    type: guessType(entry.vfsName),
+    size: entry.size,
+    extra: { attachment_id: entry.id },
+  })
+}
+
+export const stat = makeStat<GmailAccessor>(detectScope, readdir, {
+  entryStats: {
+    label: labelStat,
+    day: dayStat,
+    message: messageStat,
+    attachment_dir: attachmentDirStat,
+    attachment: attachmentStat,
+  },
+})

@@ -21,7 +21,7 @@ import { DISCORD_IO } from './io.ts'
 import { read as discordRead } from '../../../core/discord/read.ts'
 import { readdir as discordReaddir } from '../../../core/discord/readdir.ts'
 import { stat as discordStat } from '../../../core/discord/stat.ts'
-import { detectScope } from '../../../core/discord/scope.ts'
+import { detectScope, NATIVE_KINDS } from '../../../core/discord/scope.ts'
 import { listChannels } from '../../../core/discord/channels.ts'
 import { formatGrepResults, searchGuild } from '../../../core/discord/search.ts'
 import { IOResult } from '../../../io/types.ts'
@@ -65,20 +65,27 @@ async function rgCommand(
   // operand with no reshaping flag may be answered by the search API.
   const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
   if (operand !== null && fl.asBool('w')) {
-    const scope = detectScope(operand)
-    if (scope.useNative && scope.guildId !== undefined) {
+    const match = detectScope(operand)
+    if (NATIVE_KINDS.has(match.kind)) {
+      const guildId = match.slots.guild_id ?? ''
+      const channelId = match.slots.channel_id
       try {
         const count = SEARCH_MAX_RESULTS
-        const raw = await searchGuild(accessor, scope.guildId, pattern, scope.channelId, count)
+        const raw = await searchGuild(accessor, guildId, pattern, channelId, count)
         const channelMap = new Map<string, string>()
-        if (scope.channelId === undefined) {
-          for (const ch of await listChannels(accessor, scope.guildId)) {
+        if (channelId === undefined) {
+          for (const ch of await listChannels(accessor, guildId)) {
             if (ch.name !== undefined) channelMap.set(ch.id, ch.name)
           }
         }
+        const target = {
+          guildId,
+          ...(match.slots.guild !== undefined ? { guildName: match.slots.guild } : {}),
+          ...(match.slots.channel !== undefined ? { channelName: match.slots.channel } : {}),
+        }
         const lines = formatGrepResults(
           raw,
-          scope,
+          target,
           mountPrefixOf(operand.virtual, operand.resourcePath),
           channelMap,
         )

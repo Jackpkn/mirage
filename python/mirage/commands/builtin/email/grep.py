@@ -29,7 +29,7 @@ from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
 from mirage.core.email.read import read as email_read
 from mirage.core.email.readdir import readdir as _readdir
-from mirage.core.email.scope import EmailScope, detect_scope
+from mirage.core.email.scope import NATIVE_KINDS, detect_scope
 from mirage.core.email.search import search_and_format
 from mirage.core.email.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
@@ -77,10 +77,10 @@ async def grep(accessor: EmailAccessor, paths: list[PathSpec],
     operand = pushdown_operand(paths, opts.flags, pattern, SEARCH_HONORED)
     if (pattern is not None and operand is not None
             and (fl.as_bool("r") or fl.as_bool("R"))):
-        scope = detect_scope(operand)
-        if scope.use_native and scope.folder:
+        match = detect_scope(operand)
+        if match.kind in NATIVE_KINDS:
             return await _grep_server_side(accessor,
-                                           scope.folder,
+                                           match.slots["folder"],
                                            pattern,
                                            operand,
                                            i=fl.as_bool("i"),
@@ -95,7 +95,7 @@ async def grep(accessor: EmailAccessor, paths: list[PathSpec],
     return await generic_grep(
         resolved,
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(_readdir, accessor, opts.index),
         stat=bound_op(_stat, accessor, opts.index),
         read_bytes=bound_op(email_read, accessor, opts.index),
@@ -120,7 +120,7 @@ async def _grep_server_side(
     file_prefix = mount_prefix_of(operand.virtual, operand.resource_path)
     pairs = await search_and_format(
         accessor,
-        EmailScope(use_native=True, folder=folder),
+        folder,
         pattern,
         file_prefix,
         max_results=accessor.config.max_messages,

@@ -20,7 +20,7 @@ from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.mongodb.stat import stat
 from mirage.resource.mongodb.config import MongoDBConfig
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 @pytest.fixture
@@ -109,7 +109,7 @@ async def test_stat_documents_collection_full_metadata(accessor, index):
         result = await stat(
             accessor,
             _path("/sample_mflix/collections/movies/documents.jsonl"), index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.name == "documents.jsonl"
     assert result.extra["kind"] == "collection"
     assert result.extra["document_count"] == 42
@@ -132,7 +132,7 @@ async def test_stat_documents_view_skips_indexes(accessor, index):
         result = await stat(
             accessor, _path("/sample_mflix/views/my_view/documents.jsonl"),
             index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.extra["kind"] == "view"
     assert result.extra["indexes"] == []
     assert result.extra["document_count"] == 17
@@ -143,7 +143,7 @@ async def test_stat_schema_json(accessor, index):
     result = await stat(accessor,
                         _path("/sample_mflix/collections/movies/schema.json"),
                         index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.name == "schema.json"
     assert result.extra["kind"] == "collection"
     assert result.extra["name"] == "movies"
@@ -152,7 +152,7 @@ async def test_stat_schema_json(accessor, index):
 @pytest.mark.asyncio
 async def test_stat_database_json(accessor, index):
     result = await stat(accessor, _path("/sample_mflix/database.json"), index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.name == "database.json"
     assert result.extra["database"] == "sample_mflix"
 

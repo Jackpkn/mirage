@@ -28,7 +28,7 @@ from mirage.core.ram.read import read
 from mirage.core.ram.readdir import readdir
 from mirage.core.ram.stat import stat
 from mirage.core.ram.write import write_bytes as _async_write_bytes
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 from mirage.commands.builtin.grep_helper import (  # isort: skip
     NEVER_MATCH, classify_pattern, compile_pattern, extract_required_literal,
@@ -163,7 +163,9 @@ async def test_grep_files_only_recursive_scans_file_operands():
         raise FileNotFoundError(path)
 
     async def stat_fn(path):
-        return FileStat(name=path, type=FileType.TEXT)
+        return FileStat(name=path,
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
 
     async def read_bytes_fn(path):
         return b"alpha beta\n"

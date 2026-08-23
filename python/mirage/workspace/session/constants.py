@@ -16,12 +16,6 @@
 # workspace defines one of this name.
 DEFAULT_PROFILE = "default"
 
-# The profile fields inheritance copies: a stated field replaces the
-# parent's, an absent (None) one is inherited. `extends` itself is not
-# a field a child inherits.
-PROFILE_INHERITED_FIELDS: tuple[str, ...] = ("cwd", "env", "mounts", "paths",
-                                             "vars", "commands")
-
 # What a fork of a session carries over. Written down once because
 # `Session.fork` builds a copy from it and
 # `tests/workspace/session/test_session.py` asserts that every dataclass
@@ -44,10 +38,9 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "mount_modes",
     "hidden_paths",
     "hidden_vars",
-    "bound_hidden",
     "commands",
-    "bound_commands",
-    "grants",
+    "script",
+    "decisions",
     "generation",
     "pipeline_timeout_seconds",
     "last_bg_job_id",

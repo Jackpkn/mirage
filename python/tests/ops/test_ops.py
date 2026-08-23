@@ -22,7 +22,7 @@ from mirage.ops import Ops
 from mirage.policy import (Action, Deny, OpsContext, OpsResultContext, Policy,
                            PolicyDenied)
 from mirage.resource.ram import RAMResource
-from mirage.types import FileType, MountMode
+from mirage.types import FileType, HiddenPaths, MountMode
 from mirage.workspace.session import Session
 
 from .conftest import make_ops, run
@@ -168,9 +168,9 @@ class UngrantedRemote(RAMResource):
 
 @pytest.fixture
 def deep_only_session():
-    """Bind a session granted only /m/inner/deep."""
+    """Bind a session whose role hides the parent mount's own content."""
     session = Session(session_id="agent",
-                      mount_modes={"/m/inner/deep": MountMode.EXEC})
+                      hidden_paths=HiddenPaths(patterns=("/m/*.txt", )))
     token = set_current_session(session)
     yield session
     reset_current_session(token)
@@ -178,10 +178,9 @@ def deep_only_session():
 
 @pytest.mark.asyncio
 async def test_a_namespace_answer_is_not_a_backend_op(deep_only_session):
-    # /m/inner is served by no backend: the parent mount is ungranted
-    # and the answer exists only because a granted mount sits below it.
-    # Attributing it to the lexical owner invents a network op against
-    # that backend for every such lookup.
+    # /m/inner is served by no backend: the answer exists only because
+    # a mount sits below it. Attributing it to the lexical owner invents
+    # a network op against that backend for every such lookup.
     ws = Workspace({
         "/m/": UngrantedRemote(),
         "/m/inner/deep/": RAMResource()
@@ -242,6 +241,55 @@ class TestCreateTruncate:
         run(ops.write("/data/dir/f.txt", b"hello world"))
         run(ops.truncate("/data/dir/f.txt", 5))
         assert run(ops.read("/data/dir/f.txt")) == b"hello"
+
+
+class TestSetattr:
+
+    def test_setattr_lands_where_stat_reads_it(self):
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        run(ops.setattr("/data/dir/f.txt", mode=0o600, uid=4242))
+        st = run(ops.stat("/data/dir/f.txt"))
+        assert st.mode == 0o600
+        assert st.uid == 4242
+
+    def test_setattr_returns_what_the_backend_could_not_keep(self):
+        # RAM holds attrs itself, so nothing is left for the overlay and
+        # the residual is empty; a mount with no setattr op gets every
+        # field back from the door instead.
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        assert run(ops.setattr("/data/dir/f.txt", mode=0o640)) == {}
+        assert run(ops.stat("/data/dir/f.txt")).mode == 0o640
+
+    def test_setattr_on_a_link_entry_lands_in_the_overlay(self):
+        # A link has no backend inode, so the door keeps its attrs
+        # whatever the owning mount can do.
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        run(ops.symlink("/link", "/data/dir/f.txt"))
+        assert run(ops.setattr("/link", mode=0o640, nofollow=True)) == {
+            "mode": 0o640
+        }
+
+    def test_setattr_writes_a_link_entry_under_nofollow(self):
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        run(ops.symlink("/data/dir/link", "f.txt"))
+        run(ops.setattr("/data/dir/link", uid=7, nofollow=True))
+        assert run(ops.stat("/data/dir/f.txt")).uid is None
+
+    def test_setattr_follows_a_link_by_default(self):
+        ops, _ = make_ops()
+        run(ops.mkdir("/data/dir"))
+        run(ops.write("/data/dir/f.txt", b"hello"))
+        run(ops.symlink("/data/dir/link", "f.txt"))
+        run(ops.setattr("/data/dir/link", uid=9))
+        assert run(ops.stat("/data/dir/f.txt")).uid == 9
 
 
 class TestIsMounted:
@@ -350,20 +398,22 @@ def _granted_child_ops() -> Ops:
 
 @pytest.fixture
 def deep_scoped_session():
-    """Bind a session granted only /data/inner/deep."""
+    """Bind a session whose role hides everything /data holds itself,
+    leaving the nested mount below it reachable."""
     session = Session(session_id="agent",
-                      mount_modes={"/data/inner/deep": MountMode.EXEC})
+                      hidden_paths=HiddenPaths(paths=("/data/other",
+                                                      "/data/f.txt")))
     token = set_current_session(session)
     yield session
     reset_current_session(token)
 
 
-class TestUngrantedParentStructure:
+class TestStructureOnlyParent:
 
-    def test_walking_down_to_the_grant_answers(self, deep_scoped_session):
-        # /data is real but ungranted; the granted mount below it
-        # already put "data" in the root listing, so readdir and stat
-        # must answer with the granted structure and nothing else.
+    def test_walking_down_to_the_nested_mount_answers(self,
+                                                      deep_scoped_session):
+        # /data is real; the mount below it already put "data" in the
+        # root listing, so readdir and stat answer with the structure.
         ops = _granted_child_ops()
         assert run(ops.readdir("/data")) == ["/data/inner"]
         st = run(ops.stat("/data"))
@@ -371,8 +421,11 @@ class TestUngrantedParentStructure:
 
     def test_paths_the_structure_does_not_owe_still_deny(
             self, deep_scoped_session):
+        # A structure answer for the parent opens nothing below it: a
+        # hidden path reads as absent and refuses to be created, which
+        # is the one pair of answers a hide gives everywhere.
         ops = _granted_child_ops()
-        with pytest.raises(PermissionError):
+        with pytest.raises(FileNotFoundError):
             run(ops.readdir("/data/other"))
         with pytest.raises(PermissionError):
             run(ops.write("/data/f.txt", b"x"))

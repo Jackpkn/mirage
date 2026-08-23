@@ -118,8 +118,14 @@ async function subtree(
     }
   }
   const mounts = deps.mounts ?? null
+  // Two lists, because pruning and naming are different questions. A
+  // mount the session cannot see still shadows the parent backend's
+  // keys, so every descendant prunes; only the ones it may be told
+  // about become a member and a "different filesystem" warning, since
+  // both hand back the name a hide exists to withhold.
   const crossings = mounts !== null ? mounts.descendants(base) : []
-  for (const crossing of crossings) {
+  const visibleCrossings = mounts !== null ? mounts.visibleDescendants(base) : []
+  for (const crossing of visibleCrossings) {
     // The mountpoint itself is still an entry, exactly as GNU's
     // --one-file-system keeps the directory and drops its contents.
     found.set(rstripSlash(crossing), ['dir', ''])
@@ -137,7 +143,7 @@ async function subtree(
     })
   }
   entries.sort((a, b) => compareCodePoints(a.namePath, b.namePath))
-  return [entries, crossings.map((c) => rstripSlash(c)), unreadable]
+  return [entries, visibleCrossings.map((c) => rstripSlash(c)), unreadable]
 }
 
 // What dereferencing puts in the archive in place of one symlink.

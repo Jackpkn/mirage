@@ -15,7 +15,7 @@
 import { classify } from '../../errors/index.ts'
 import { isMissingPath } from '../../utils/errors.ts'
 import { WASI } from './wasi.ts'
-import { DIR_MODE, FILE_MODE } from '../../utils/stat_view.ts'
+import { epochToIso } from '../../utils/dates.ts'
 import { FileHandle, FileTable, parseMode, type OpenMode } from '../handles/index.ts'
 import type { RuntimeVFS, VFSStat } from '../vfs.ts'
 import type { QuickJSAsyncContext, QuickJSHandle } from 'quickjs-emscripten'
@@ -76,9 +76,11 @@ os.stat = (path) => __mirage_stat(String(path));
 os.remove = (path) => __mirage_remove(String(path));
 os.mkdir = (path) => __mirage_mkdir(String(path));
 os.rename = (a, b) => __mirage_rename(String(a), String(b));
+os.utimes = (path, atime, mtime) => __mirage_utimes(String(path), atime, mtime);
 os.S_IFMT = 61440;
 os.S_IFDIR = 16384;
 os.S_IFREG = 32768;
+os.S_IFLNK = 40960;
 `
 
 /**
@@ -284,6 +286,21 @@ export function installMirageFs(ctx: QuickJSAsyncContext, vfs: RuntimeVFS | null
     }
   })
 
+  defineAsync('__mirage_utimes', async (pathH, atimeH, mtimeH) => {
+    const path = ctx.getString(pathH)
+    if (vfs === null || !underMount(path)) return ctx.newNumber(-ENOENT)
+    // The engine's stamps are milliseconds (qjs-libc splits them into
+    // tv_sec/tv_nsec at 1000), and the op takes ISO text.
+    const atime = epochToIso(ctx.getNumber(atimeH) / 1000)
+    const mtime = epochToIso(ctx.getNumber(mtimeH) / 1000)
+    try {
+      await vfs.setattr(path, { atime, mtime })
+      return ctx.newNumber(0)
+    } catch (err) {
+      return ctx.newNumber(-wasiErrno(err))
+    }
+  })
+
   defineAsync('__mirage_rename', async (srcH, dstH) => {
     const src = ctx.getString(srcH)
     const dst = ctx.getString(dstH)
@@ -326,7 +343,7 @@ export function installMirageFs(ctx: QuickJSAsyncContext, vfs: RuntimeVFS | null
       }
       setNum('dev', 0)
       setNum('ino', 0)
-      setNum('mode', st.isDir ? DIR_MODE : FILE_MODE)
+      setNum('mode', st.mode)
       setNum('nlink', 1)
       setNum('uid', 0)
       setNum('gid', 0)

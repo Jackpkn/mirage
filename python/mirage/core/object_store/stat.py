@@ -68,7 +68,8 @@ def make_stat(driver: ObjectStoreDriver[A, C]) -> StatFn[A]:
                 name=entry.name,
                 size=entry.size,
                 modified=entry.remote_time or None,
-                type=guess_type(entry.name),
+                type=FileType.FILE,
+                content=guess_type(entry.name),
             )
         # If the parent directory was already listed by readdir() but
         # this path is not among its children, it does not exist.
@@ -94,7 +95,8 @@ def make_stat(driver: ObjectStoreDriver[A, C]) -> StatFn[A]:
                         name=path.rstrip("/").rsplit("/", 1)[-1],
                         size=meta.size,
                         modified=meta.modified,
-                        type=guess_type(path),
+                        type=FileType.FILE,
+                        content=guess_type(path),
                         fingerprint=meta.fingerprint,
                         revision=meta.revision,
                         extra=dict(meta.extra),

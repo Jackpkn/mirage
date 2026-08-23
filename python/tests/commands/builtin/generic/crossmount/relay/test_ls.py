@@ -17,7 +17,7 @@ import errno
 
 from mirage.commands.builtin.generic.crossmount.relay.ls import run_ls
 from mirage.ops.types import MountView, NamespaceView
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 # Two mounts, /a/ and /b/, as a plain virtual-path tree. The relayed
 # primitives route by full virtual path, so one table stands for both,
@@ -62,7 +62,8 @@ def make_dispatch(calls: Calls, roots: frozenset[str] = frozenset()):
         own = "/" if virtual in roots else virtual.rsplit("/", 1)[-1]
         return FileStat(name=own,
                         size=0 if is_dir else 3,
-                        type=FileType.DIRECTORY if is_dir else FileType.TEXT,
+                        type=FileType.DIRECTORY if is_dir else FileType.FILE,
+                        content=None if is_dir else ContentType.TEXT,
                         mode=0o755 if is_dir else 0o644), None
 
     return dispatch
@@ -168,6 +169,7 @@ def test_a_full_namespace_does_not_stop_the_relay_at_a_mount_root():
     nested = frozenset({"/a/one"})
     ns = NamespaceView(mounts=MountView(
         descendants=lambda p: [],
+        visible_descendants=lambda p: [],
         is_root=lambda p: p.rstrip("/") in nested,
         root_of=lambda p: "/"),
                        child_mounts=lambda p: ["one"] if p == "/a" else [])

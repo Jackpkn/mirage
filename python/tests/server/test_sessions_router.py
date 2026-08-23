@@ -102,7 +102,11 @@ async def test_delete_unknown_session_404():
 
 
 @pytest.mark.asyncio
-async def test_create_session_with_mount_list():
+async def test_create_session_refuses_a_bare_mount_list():
+    # A list of prefixes used to mean "only these mounts". A profile now
+    # narrows the mounts it names and never decides whether one exists,
+    # so the list would be a silent no-op that still reads like
+    # confinement: the door refuses it instead.
     app = build_app(idle_grace_seconds=10.0)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport,
@@ -115,12 +119,7 @@ async def test_create_session_with_mount_list():
                 "mounts": ["/"],
             },
         )
-        assert r.status_code == 201, r.text
-
-        registry = app.state.registry
-        sess = registry.get(wid).runner.ws.get_session("agent_a")
-        assert sess.mount_modes is not None
-        assert sess.mount_modes.get("/") == MountMode.EXEC
+        assert r.status_code == 422, r.text
 
 
 @pytest.mark.asyncio
@@ -148,7 +147,7 @@ async def test_create_session_with_mount_modes():
 
 
 @pytest.mark.asyncio
-async def test_create_session_rejects_bad_role():
+async def test_create_session_rejects_bad_profile():
     app = build_app(idle_grace_seconds=10.0)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport,
@@ -164,6 +163,26 @@ async def test_create_session_rejects_bad_role():
             },
         )
         assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_an_unknown_profile():
+    # PolicyError is not a ValueError, so naming an unknown profile used to
+    # escape the handler as a 500: the caller's typo read as our bug.
+    app = build_app(idle_grace_seconds=10.0)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as client:
+        wid = await _create_workspace(client)
+        r = await client.post(
+            f"/v1/workspaces/{wid}/sessions",
+            json={
+                "session_id": "agent_d",
+                "profile": "nope",
+            },
+        )
+        assert r.status_code == 422, r.text
+        assert "nope" in r.text
 
 
 @pytest.mark.asyncio

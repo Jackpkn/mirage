@@ -14,7 +14,7 @@
 
 from mirage.core.hierarchy.codec import JSON_NAME
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType
 
 _TEAM = ("teams", Slot("team", id_key="team_id"))
 _ISSUE = _TEAM + ("issues", Slot("issue", id_key="issue_id"))
@@ -30,41 +30,41 @@ SCOPES = (
     Scope(kind="team_json",
           segments=_TEAM + ("team.json", ),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="members", segments=_TEAM + ("members", )),
     Scope(kind="member",
           segments=_TEAM +
           ("members", Slot("member", JSON_NAME, id_key="member_id")),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="issues", segments=_TEAM + ("issues", )),
     Scope(kind="issue", segments=_ISSUE),
     Scope(kind="issue_json",
           segments=_ISSUE + ("issue.json", ),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="comments_jsonl",
           segments=_ISSUE + ("comments.jsonl", ),
           leaf=True,
-          filetype=FileType.TEXT),
+          filetype=ContentType.TEXT),
     Scope(kind="projects", segments=_TEAM + ("projects", )),
     Scope(kind="project",
           segments=_TEAM +
           ("projects", Slot("project", JSON_NAME, id_key="project_id")),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="cycles", segments=_TEAM + ("cycles", )),
     Scope(kind="cycle",
           segments=_TEAM +
           ("cycles", Slot("cycle", JSON_NAME, id_key="cycle_id")),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="documents", segments=_TEAM + ("documents", )),
     Scope(kind="document",
           segments=_TEAM +
           ("documents", Slot("document", JSON_NAME, id_key="document_id")),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
 )
 
 detect_scope = make_detect_scope(SCOPES)

@@ -12,145 +12,143 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
-import re
-
 from mirage.accessor.discord import DiscordAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore, IndexEntry
 from mirage.core.discord.entry import snowflake_to_iso
-from mirage.core.discord.readdir import readdir as _readdir
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.core.discord.readdir import readdir
+from mirage.core.discord.scope import detect_scope
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.stat import entry_stat, make_stat
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.filetype import filetype_from_mimetype
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
-logger = logging.getLogger(__name__)
 
-VIRTUAL_DIRS = {"", "channels", "members"}
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
-
-async def _populate_via_parent(
-    accessor: DiscordAccessor,
-    virtual_key: str,
-    prefix: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> None:
-    parent_virtual = virtual_key.rsplit("/", 1)[0] or "/"
-    try:
-        await _readdir(
-            accessor,
-            PathSpec(virtual=parent_virtual,
-                     directory=parent_virtual,
-                     resource_path=mount_key(parent_virtual, prefix)),
-            index=index,
-        )
-    except FileNotFoundError as exc:
-        logger.debug("stat populate failed for %s: %s", virtual_key, exc)
+def _dir_stat(match: ScopeMatch, path: PathSpec,
+              entry: IndexEntry) -> FileStat:
+    return FileStat(name=entry.vfs_name, type=FileType.DIRECTORY)
 
 
-async def stat(
-    accessor: DiscordAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> FileStat:
-    virtual = path.virtual
+def _guild_stat(match: ScopeMatch, path: PathSpec,
+                entry: IndexEntry) -> FileStat:
+    return FileStat(
+        name=entry.vfs_name or entry.name,
+        type=FileType.DIRECTORY,
+        extra={"guild_id": entry.id},
+    )
+
+
+def _channel_stat(match: ScopeMatch, path: PathSpec,
+                  entry: IndexEntry) -> FileStat:
+    return FileStat(
+        name=entry.vfs_name or entry.name,
+        type=FileType.DIRECTORY,
+        modified=snowflake_to_iso(entry.remote_time),
+        extra={"channel_id": entry.id},
+    )
+
+
+def _file_blob_stat(match: ScopeMatch, path: PathSpec,
+                    entry: IndexEntry) -> FileStat:
+    mimetype = entry.extra.get("content_type", "")
+    return FileStat(
+        name=entry.vfs_name or entry.name,
+        size=entry.size,
+        type=FileType.FILE,
+        content=filetype_from_mimetype(mimetype),
+        extra={
+            "content_type": mimetype,
+            "attachment_id": entry.id,
+        },
+    )
+
+
+async def _channel_proven(accessor: DiscordAccessor, path: PathSpec,
+                          index: IndexCacheStore, up: int) -> None:
+    """Raise ENOENT unless the path's channel ancestor exists.
+
+    Args:
+        accessor (DiscordAccessor): discord accessor.
+        path (PathSpec): the day or chat.jsonl path being stat'd.
+        index (IndexCacheStore): index cache.
+        up (int): how many trailing segments to drop to reach the
+            channel (1 for a day dir, 2 for its children).
+    """
+    virtual = path.virtual.rstrip("/")
+    for _ in range(up):
+        virtual = virtual.rsplit("/", 1)[0]
     prefix = mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
+    spec = PathSpec(virtual=virtual,
+                    directory=virtual,
+                    resource_path=mount_key(virtual, prefix))
+    if await resolve_entry(readdir, accessor, spec, index) is None:
+        raise enoent(path.virtual)
 
-    if not key:
-        return FileStat(name="/", type=FileType.DIRECTORY)
 
-    parts = key.split("/")
-    virtual_key = prefix + "/" + key
+async def _stat_day(accessor: DiscordAccessor, match: ScopeMatch,
+                    path: PathSpec, index: IndexCacheStore) -> FileStat:
+    """Stat a day directory, which resolves beyond the listed window.
 
-    if len(parts) == 1:
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-            if lookup.entry is None:
-                raise enoent(virtual)
-        return FileStat(
-            name=lookup.entry.vfs_name or lookup.entry.name,
-            type=FileType.DIRECTORY,
-            extra={"guild_id": lookup.entry.id},
-        )
+    The channel listing synthesizes a bounded window of recent days,
+    but the history API answers a range query for any date, so a
+    well-formed day under a channel that exists is a directory whether
+    or not the window lists it. A bogus channel chain is ENOENT.
 
-    if len(parts) == 2 and parts[1] in VIRTUAL_DIRS:
-        return FileStat(name=parts[1], type=FileType.DIRECTORY)
+    Args:
+        accessor (DiscordAccessor): discord accessor.
+        match (ScopeMatch): a match holding ``guild``/``channel``/``day``.
+        path (PathSpec): the path to stat.
+        index (IndexCacheStore): index cache.
+    """
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is not None:
+        return FileStat(name=entry.vfs_name, type=FileType.DIRECTORY)
+    await _channel_proven(accessor, path, index, up=1)
+    return FileStat(name=match.slots["day"], type=FileType.DIRECTORY)
 
-    if len(parts) == 3 and parts[1] == "channels":
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-            if lookup.entry is None:
-                raise enoent(virtual)
-        return FileStat(
-            name=lookup.entry.vfs_name or lookup.entry.name,
-            type=FileType.DIRECTORY,
-            modified=snowflake_to_iso(lookup.entry.remote_time),
-            extra={"channel_id": lookup.entry.id},
-        )
 
-    if len(parts) == 3 and parts[1] == "members":
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-            if lookup.entry is None:
-                raise enoent(virtual)
-        return FileStat(
-            name=lookup.entry.vfs_name or lookup.entry.name,
-            size=lookup.entry.size,
-            type=FileType.JSON,
-            extra={"user_id": lookup.entry.id},
-        )
+async def _stat_chat(accessor: DiscordAccessor, match: ScopeMatch,
+                     path: PathSpec, index: IndexCacheStore) -> FileStat:
+    """Stat chat.jsonl, which survives a sealed day.
 
-    # <guild>/channels/<ch>/<date>
-    if (len(parts) == 4 and parts[1] == "channels"
-            and _DATE_RE.match(parts[3])):
-        return FileStat(name=parts[3], type=FileType.DIRECTORY)
+    A day whose history could not be listed (403/404/429) seals an
+    empty date dir; the file still stats, with the size left unknown.
 
-    # <guild>/channels/<ch>/<date>/chat.jsonl
-    if (len(parts) == 5 and parts[1] == "channels" and _DATE_RE.match(parts[3])
-            and parts[4] == "chat.jsonl"):
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-        # A day whose history could not be listed (403/404/429) seals an
-        # empty date dir; the file still stats, with the size left unknown.
-        return FileStat(
-            name="chat.jsonl",
-            size=lookup.entry.size if lookup.entry is not None else None,
-            type=FileType.TEXT,
-        )
+    Args:
+        accessor (DiscordAccessor): discord accessor.
+        match (ScopeMatch): a match holding the day chain.
+        path (PathSpec): the path to stat.
+        index (IndexCacheStore): index cache.
+    """
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is not None:
+        return FileStat(name="chat.jsonl",
+                        type=FileType.FILE,
+                        content=ContentType.TEXT,
+                        size=entry.size)
+    await _channel_proven(accessor, path, index, up=2)
+    return FileStat(name="chat.jsonl",
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    size=None)
 
-    # <guild>/channels/<ch>/<date>/files
-    if (len(parts) == 5 and parts[1] == "channels" and _DATE_RE.match(parts[3])
-            and parts[4] == "files"):
-        return FileStat(name="files", type=FileType.DIRECTORY)
 
-    # <guild>/channels/<ch>/<date>/files/<blob>
-    if (len(parts) == 6 and parts[1] == "channels" and _DATE_RE.match(parts[3])
-            and parts[4] == "files"):
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-            if lookup.entry is None:
-                raise enoent(virtual)
-        mimetype = (lookup.entry.extra or {}).get("content_type", "")
-        return FileStat(
-            name=lookup.entry.vfs_name or lookup.entry.name,
-            size=lookup.entry.size,
-            type=filetype_from_mimetype(mimetype),
-            extra={
-                "content_type": mimetype,
-                "attachment_id": lookup.entry.id,
-            },
-        )
-
-    raise enoent(virtual)
+stat = make_stat(
+    detect_scope,
+    readdir,
+    entry_stats={
+        "guild": _guild_stat,
+        "channels_dir": _dir_stat,
+        "members_dir": _dir_stat,
+        "channel": _channel_stat,
+        "member": entry_stat("user_id", ContentType.JSON),
+        "files": _dir_stat,
+        "file_blob": _file_blob_stat,
+    },
+    overrides={
+        "day": _stat_day,
+        "messages": _stat_chat,
+    },
+)

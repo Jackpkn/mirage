@@ -12,14 +12,43 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { BridgeDispatchFn } from '../../types.ts'
+import { FileStat, FileType } from '../../../types.ts'
 import { RuntimeVFS } from '../../vfs.ts'
 import { MontyVFS } from './index.ts'
 import { PrefixResolver } from '../../resolver.ts'
 
-function viewOn(dispatch: BridgeDispatchFn, mounts: string[] = ['/ram']): MontyVFS {
-  return new MontyVFS(new RuntimeVFS(dispatch, new PrefixResolver(() => mounts)))
+function viewOn(
+  dispatch: BridgeDispatchFn,
+  mounts: string[] = ['/ram'],
+  links: string[] = [],
+): MontyVFS {
+  return new MontyVFS(
+    new RuntimeVFS(
+      dispatch,
+      new PrefixResolver(
+        () => mounts,
+        () => new Set(links),
+      ),
+    ),
+  )
+}
+
+// The door builds each row from a name plus one stat, so a double
+// standing in for the bridge answers both; a name it did not list stats
+// as a missing path.
+function listingOf(names: string[]): Mock<BridgeDispatchFn> {
+  return vi.fn<BridgeDispatchFn>((op, path) => {
+    if (op === 'readdir') return Promise.resolve(names)
+    if (op === 'stat') {
+      if (!names.includes(path)) {
+        return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
+      }
+      return Promise.resolve(new FileStat({ name: path, size: 1, type: FileType.TEXT }))
+    }
+    return Promise.resolve(undefined)
+  })
 }
 
 describe('MontyVFS scoping', () => {
@@ -85,30 +114,21 @@ describe('MontyVFS values', () => {
   })
 
   it('lists a directory through its slash-terminated prefix', async () => {
-    const dispatch = vi.fn<BridgeDispatchFn>(() =>
-      Promise.resolve([{ path: '/ram/d/a', size: 1, isDir: false }]),
-    )
+    const dispatch = listingOf(['/ram/d/a'])
     const entries = await viewOn(dispatch).readdir('/ram/d')
     expect(dispatch).toHaveBeenCalledWith('readdir', '/ram/d/')
     expect(entries).toHaveLength(1)
   })
 
   it('finds a path through its parent listing, and answers null for a miss', async () => {
-    const dispatch = vi.fn<BridgeDispatchFn>(() =>
-      Promise.resolve([{ path: '/ram/a', size: 1, isDir: false }]),
-    )
-    const vfs = viewOn(dispatch)
+    const vfs = viewOn(listingOf(['/ram/a']))
     expect(await vfs.entryFor('/ram/a')).toMatchObject({ isDir: false })
     expect(await vfs.entryFor('/ram/nope')).toBeNull()
   })
 })
 
 describe('MontyVFS negative cache', () => {
-  const listing = () =>
-    vi.fn<BridgeDispatchFn>((op) => {
-      if (op === 'readdir') return Promise.resolve([{ path: '/ram/a', size: 1, isDir: false }])
-      return Promise.resolve(undefined)
-    })
+  const listing = () => listingOf(['/ram/a'])
 
   it('remembers an absence, so a repeated probe costs no second listing', async () => {
     // Monty asks whether a path exists on nearly every guest
@@ -152,9 +172,13 @@ describe('MontyVFS negative cache', () => {
     // attached once, so the runtime resets it at the top of each
     // command. Without that a shell command's file stays invisible.
     let created = false
-    const dispatch = vi.fn<BridgeDispatchFn>(() =>
-      Promise.resolve(created ? [{ path: '/ram/late.txt', size: 1, isDir: false }] : []),
-    )
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir') return Promise.resolve(created ? ['/ram/late.txt'] : [])
+      if (op === 'stat' && path === '/ram/late.txt') {
+        return Promise.resolve(new FileStat({ name: path, size: 1, type: FileType.TEXT }))
+      }
+      return Promise.resolve(undefined)
+    })
     const vfs = viewOn(dispatch)
     expect(await vfs.entryFor('/ram/late.txt')).toBeNull()
     created = true
@@ -176,5 +200,26 @@ describe('MontyVFS negative cache', () => {
     await expect(vfs.read('/ram/x')).rejects.toThrow(/transport down/)
     down = false
     expect(await vfs.read('/ram/x')).toEqual(new TextEncoder().encode('back'))
+  })
+})
+
+// The link mark rides the parent's listing, which the door already
+// resolved, so a predicate the guest asks per path adds no dispatch of
+// its own. Monty's own tree holds no links, so declining would answer
+// False for one the shell made.
+describe('MontyVFS.isLink', () => {
+  it('reads the mark off the parent listing', async () => {
+    const vfs = viewOn(listingOf(['/ram/link']), ['/ram'], ['link'])
+    expect(await vfs.isLink('/ram/link')).toBe(true)
+  })
+
+  it('answers false for an entry with no mark', async () => {
+    const vfs = viewOn(listingOf(['/ram/f']))
+    expect(await vfs.isLink('/ram/f')).toBe(false)
+  })
+
+  it('answers false when the parent will not list', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.reject(new Error('no such dir')))
+    expect(await viewOn(dispatch).isLink('/ram/gone/l')).toBe(false)
   })
 })

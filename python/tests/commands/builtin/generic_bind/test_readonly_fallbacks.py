@@ -25,7 +25,7 @@ from mirage.commands.builtin.generic_bind.builders.shuf import \
 from mirage.commands.builtin.utils.wrap import stream_from_bytes
 from mirage.commands.config import CommandOpts
 from mirage.io.types import materialize
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 _FILES = {
     "/g/a.txt": b"alpha\n",
@@ -52,7 +52,8 @@ async def _stat(accessor, path, index=None):
     if p in _FILES:
         return FileStat(name=p.rsplit("/", 1)[-1],
                         size=len(_FILES[p]),
-                        type=FileType.TEXT)
+                        type=FileType.FILE,
+                        content=ContentType.TEXT)
     raise FileNotFoundError(p)
 
 

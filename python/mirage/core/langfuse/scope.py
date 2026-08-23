@@ -14,7 +14,7 @@
 
 from mirage.core.hierarchy.codec import INT_JSON, JSON_NAME, JSONL_NAME
 from mirage.core.hierarchy.scope import Scope, Slot, make_detect_scope
-from mirage.types import FileType
+from mirage.types import ContentType
 
 TOP_LEVEL_DIRS = ["traces", "sessions", "prompts", "datasets"]
 
@@ -27,14 +27,14 @@ SCOPES = (
     Scope(kind="trace",
           segments=("traces", Slot("trace_id", JSON_NAME)),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="sessions", segments=("sessions", ), probed=False),
     Scope(kind="session", segments=("sessions", Slot("session_id"))),
     Scope(kind="session_trace",
           segments=("sessions", Slot("session_id"),
                     Slot("trace_id", JSON_NAME)),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="prompts", segments=("prompts", ), probed=False),
     Scope(kind="prompt", segments=("prompts", Slot("prompt_name"))),
     # A version that is not a plain ASCII integer cannot name a prompt
@@ -43,19 +43,19 @@ SCOPES = (
     Scope(kind="prompt_version",
           segments=("prompts", Slot("prompt_name"), Slot("version", INT_JSON)),
           leaf=True,
-          filetype=FileType.JSON),
+          filetype=ContentType.JSON),
     Scope(kind="datasets", segments=("datasets", ), probed=False),
     Scope(kind="dataset", segments=("datasets", Slot("dataset_name"))),
     Scope(kind="dataset_items",
           segments=("datasets", Slot("dataset_name"), "items.jsonl"),
           leaf=True,
-          filetype=FileType.TEXT),
+          filetype=ContentType.TEXT),
     Scope(kind="runs", segments=("datasets", Slot("dataset_name"), "runs")),
     Scope(kind="dataset_run",
           segments=("datasets", Slot("dataset_name"), "runs",
                     Slot("run_name", JSONL_NAME)),
           leaf=True,
-          filetype=FileType.TEXT),
+          filetype=ContentType.TEXT),
 )
 
 detect_scope = make_detect_scope(SCOPES)

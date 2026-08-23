@@ -16,7 +16,7 @@ import asyncio
 import json
 import os
 import re
-import sys
+import stat as stat_mod
 
 from dotenv import load_dotenv
 
@@ -31,11 +31,10 @@ resource = DiscordResource(config=config)
 
 async def main():
     with Workspace({"/discord/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE: open() reads from Discord transparently ===\n")
 
         print("--- os.listdir() guilds ---")
-        guilds = vos.listdir("/discord")
+        guilds = os.listdir("/discord")
         for g in guilds:
             print(f"  {g}")
 
@@ -45,12 +44,12 @@ async def main():
         guild = guilds[0]
         guild_dir = f"/discord/{guild}"
         print(f"\n--- os.listdir() {guild_dir} ---")
-        for s in vos.listdir(guild_dir):
+        for s in os.listdir(guild_dir):
             print(f"  {s}")
 
         ch_root = f"{guild_dir}/channels"
         print(f"\n--- os.listdir() {ch_root} ---")
-        channels = vos.listdir(ch_root)
+        channels = os.listdir(ch_root)
         for ch in channels[:5]:
             print(f"  {ch}")
 
@@ -60,7 +59,7 @@ async def main():
         ch = channels[0]
         ch_dir = f"{ch_root}/{ch}"
         print(f"\n--- os.listdir() {ch_dir} (last 5 dates) ---")
-        dates = vos.listdir(ch_dir)
+        dates = os.listdir(ch_dir)
         for d in dates[-5:]:
             print(f"  {d}")
 
@@ -87,7 +86,7 @@ async def main():
                     # also list attachments in that day's files dir
                     files_dir = f"{ch_dir}/{d}/files"
                     try:
-                        atts = vos.listdir(files_dir)
+                        atts = os.listdir(files_dir)
                     except FileNotFoundError:
                         atts = []
                     if atts:
@@ -97,31 +96,36 @@ async def main():
 
                     print("\n--- os.path.isfile / isdir / exists ---")
                     print(f"  isfile(chat.jsonl): "
-                          f"{vos.path.isfile(chat_path)}")
+                          f"{os.path.isfile(chat_path)}")
                     print(f"  isdir(files/): "
-                          f"{vos.path.isdir(files_dir)}")
+                          f"{os.path.isdir(files_dir)}")
                     print(f"  exists(bogus): "
-                          f"{vos.path.exists(f'{ch_dir}/{d}/nope.txt')}")
+                          f"{os.path.exists(f'{ch_dir}/{d}/nope.txt')}")
 
                     print(f"\n--- os.stat {d}/chat.jsonl ---")
-                    st = vos.stat(chat_path)
-                    print(f"  type={st.type} size={st.size}")
+                    st = os.stat(chat_path)
+                    print(f"  regular={stat_mod.S_ISREG(st.st_mode)} "
+                          f"size={st.st_size}")
 
                     if atts:
                         att_path = f"{files_dir}/{atts[0]}"
                         print(f"\n--- os.stat {atts[0]} ---")
-                        ast = vos.stat(att_path)
-                        print(f"  type={ast.type} size={ast.size}")
+                        ast = os.stat(att_path)
+                        print(f"  regular={stat_mod.S_ISREG(ast.st_mode)} "
+                              f"size={ast.st_size}")
 
                         print(f"\n--- open({atts[0]}, 'rb') ---")
                         with open(att_path, "rb") as f:
                             blob = f.read()
-                        print(f"  bytes={len(blob)} expected={ast.size} "
-                              f"match={len(blob) == ast.size}")
-                        if ast.size is not None and len(blob) != ast.size:
+                        # st_size is 0 when the backend cannot report a
+                        # size before the file is read.
+                        known = ast.st_size or None
+                        print(f"  bytes={len(blob)} expected={known} "
+                              f"match={known is None or len(blob) == known}")
+                        if known is not None and len(blob) != known:
                             raise AssertionError(
                                 f"regression: open('rb') got {len(blob)} "
-                                f"bytes, expected {ast.size}")
+                                f"bytes, expected {known}")
 
                     print("\n--- json.loads + regex search on chat.jsonl ---")
                     pattern = re.compile(r"\S+")

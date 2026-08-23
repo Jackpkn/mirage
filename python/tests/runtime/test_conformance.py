@@ -26,7 +26,7 @@ from mirage.runtime.python.wasi import WASI_HOME_ENV
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.table import build_runtime
 from mirage.runtime.types import RunArgs
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 
 def _wasi_available() -> bool:
@@ -153,7 +153,8 @@ class CountingDispatch:
         if virtual in self.files:
             return FileStat(name=virtual.rsplit("/", 1)[-1],
                             size=len(self.files[virtual]),
-                            type=FileType.TEXT)
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
         trimmed = virtual.rstrip("/")
         is_dir = trimmed in self.dirs or any(
             p.startswith(trimmed + "/") for p in self.files)
@@ -238,6 +239,12 @@ MONTY_ROWS = (
         "f.write('Z'); f.close()\"",
         setup=("echo -n a > /data/keep.txt", ),
         checks=(("cat /data/keep.txt", "aZ"), )),
+    Row("lstat",
+        "Path.is_symlink", "python3 -c \"from pathlib import Path; "
+        "print(Path('/data/l').is_symlink(), "
+        "Path('/data/t.txt').is_symlink())\"",
+        setup=("echo -n x > /data/t.txt", "ln -s t.txt /data/l"),
+        line_out="True False"),
 )
 
 WASI_ROWS = (
@@ -338,6 +345,42 @@ WASI_ROWS = (
         "f.write('Z'); f.close()\"",
         setup=("echo -n a > /data/keep.txt", ),
         checks=(("cat /data/keep.txt", "aZ"), )),
+    Row("symlink",
+        "os.symlink",
+        "python3 -c \"import os; os.symlink('t.txt', '/data/made')\"",
+        setup=("echo -n hi > /data/t.txt", ),
+        checks=(("readlink /data/made", "t.txt"), ("cat /data/made", "hi"))),
+    Row("readlink",
+        "os.readlink",
+        "python3 -c \"import os; print(os.readlink('/data/l'))\"",
+        setup=("echo -n x > /data/t.txt", "ln -s t.txt /data/l"),
+        line_out="t.txt"),
+    Row("lstat",
+        "os.path.islink", "python3 -c \"import os; "
+        "print(os.path.islink('/data/l'), os.path.islink('/data/t.txt'))\"",
+        setup=("echo -n x > /data/t.txt", "ln -s t.txt /data/l"),
+        line_out="True False"),
+    Row("lstat",
+        "os.lstat", "python3 -c \"import os, stat; st = os.lstat('/data/l'); "
+        "print(stat.S_ISLNK(st.st_mode), st.st_size)\"",
+        setup=("echo -n longer-than-target > /data/t.txt",
+               "ln -s t.txt /data/l"),
+        line_out="True 5"),
+    Row("utime",
+        "os.utime",
+        "python3 -c \"import os; os.utime('/data/t.txt', (100.0, 200.0))\"",
+        setup=("echo -n x > /data/t.txt", ),
+        checks=(("stat -c %Y /data/t.txt", "200"), )),
+    # A hard link is a second name for one inode and nothing above a
+    # mount holds that, so it is refused rather than faked. EPERM is
+    # what link(2) documents for a filesystem that cannot make one.
+    Row("link-refused",
+        "os.link", "python3 -c \"import errno, os\ntry:\n"
+        "    os.link('/data/t.txt', '/data/hard')\n"
+        "except OSError as exc:\n    print(exc.errno == errno.EPERM)\"",
+        setup=("echo -n x > /data/t.txt", ),
+        line_out="True",
+        checks=(("ls /data", "!hard"), )),
 )
 
 QUICKJS_ROWS = (
@@ -398,6 +441,16 @@ QUICKJS_ROWS = (
         "w.puts('Z'); w.close()\"",
         setup=("echo -n a > /data/keep.txt", ),
         checks=(("cat /data/keep.txt", "aZ"), )),
+    # The only metadata verb this engine has: qjs-wasi's `os` module
+    # ships no symlink, readlink or lstat at all (probed live), so a
+    # link is not addressable from a quickjs guest and utimes is the
+    # whole setattr surface. Stamps are milliseconds both ways.
+    Row("utime",
+        "os.utimes", "node -e \"const rc = "
+        "os.utimes('/data/t.txt', 100000, 200000); "
+        "if (rc !== 0) throw new Error('rc ' + rc)\"",
+        setup=("echo -n x > /data/t.txt", ),
+        checks=(("stat -c %Y /data/t.txt", "200"), )),
 )
 
 

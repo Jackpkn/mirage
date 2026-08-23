@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -30,16 +29,15 @@ resource = NotionResource(config=config)
 
 async def main():
     with Workspace({"/notion/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE ===\n")
 
         print("--- os.listdir() root ---")
-        entries = vos.listdir("/notion")
+        entries = os.listdir("/notion")
         for e in entries:
             print(f"  {e}")
 
         print("\n--- os.listdir() pages ---")
-        pages = vos.listdir("/notion/pages")
+        pages = os.listdir("/notion/pages")
         for p in pages[:5]:
             print(f"  {p}")
 
@@ -47,7 +45,7 @@ async def main():
             page_path = f"/notion/pages/{pages[0]}"
 
             print(f"\n--- os.listdir() {page_path} ---")
-            contents = vos.listdir(page_path)
+            contents = os.listdir(page_path)
             for c in contents:
                 print(f"  {c}")
 

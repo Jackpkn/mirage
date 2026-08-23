@@ -15,12 +15,10 @@
 import asyncio
 
 import pytest
-from pydantic import ValidationError
 
 from mirage.resource.ram import RAMResource
 from mirage.types import Limit, MountBackend, MountMode
 from mirage.workspace.mount.spec import Mount
-from mirage.workspace.session.permissions import MountPermissions
 from mirage.workspace.workspace.mounts import (kernel_targets,
                                                normalize_resources)
 
@@ -66,20 +64,11 @@ def test_mount_carries_backend_and_mountpoint():
     assert specs[0].mountpoint == "/tmp/mp"
 
 
-def test_a_plain_permissions_document_narrows_to_the_model():
-    mount = Mount(resource=RAMResource(),
-                  permissions={"paths": {
-                      "hide": ["*.pem"]
-                  }})
-    specs = normalize_resources({"/a": mount}, MountMode.READ)
-    assert isinstance(specs[0].permissions, MountPermissions)
-    assert specs[0].permissions.paths.hide == ("*.pem", )
-
-
-def test_a_misspelled_permissions_document_is_refused():
-    mount = Mount(resource=RAMResource(), permissions={"pathz": {}})
-    with pytest.raises(ValidationError):
-        normalize_resources({"/a": mount}, MountMode.READ)
+def test_a_mount_carries_no_permissions():
+    # Permissions live in one document, the profile, so a mount states
+    # infrastructure only: what it is, where it is, how it is served.
+    with pytest.raises(TypeError):
+        Mount(resource=RAMResource(), permissions={"paths": {"hide": ["x"]}})
 
 
 def test_wrong_length_tuple_is_rejected():

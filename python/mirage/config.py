@@ -27,7 +27,7 @@ from mirage.accessor.s3 import S3Config
 from mirage.cache.file.config import CacheConfig, RedisCacheConfig
 from mirage.cache.index.config import IndexConfig, RedisIndexConfig
 from mirage.commands.cli.types import CLISpec
-from mirage.policy.errors import PolicyError
+from mirage.policy.profile import SessionProfile
 from mirage.resource.registry import build_resource
 from mirage.runtime.base import Runtime
 from mirage.runtime.table import build_runtime
@@ -37,10 +37,6 @@ from mirage.shell.job_table import ConsoleFactory
 from mirage.types import (KERNEL_BACKENDS, ConsistencyPolicy, Limit,
                           MountBackend, MountMode, parse_mount_mode)
 from mirage.workspace.mount.spec import Mount
-from mirage.workspace.session.permissions import (MountPermissions,
-                                                  SessionProfile,
-                                                  WorkspacePermissions)
-from mirage.workspace.session.resolve import inherit
 from mirage.workspace.store import (DEFAULT_STATE_ROOT,
                                     DiskWorkspaceStateStore,
                                     RAMWorkspaceStateStore,
@@ -325,9 +321,6 @@ class MountBlock(BaseModel):
     # fuse, or fskit. mountpoint is honored by the kernel backends.
     backend: MountBackend = MountBackend.VFS
     mountpoint: str | None = None
-    # The mount-owned permissions block: relative to the mount root,
-    # binding every session.
-    permissions: MountPermissions | None = None
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -401,7 +394,17 @@ def _absolutize_scripts(raw: dict[str, Any], base: Path) -> None:
         for block in clis.values():
             if isinstance(block, dict):
                 _absolutize_script_key(block, base)
-                _absolutize_cli_ref(block, base)
+                _absolutize_code_ref(block, "cli", base)
+    mounts = raw.get("mounts")
+    if isinstance(mounts, dict):
+        for block in mounts.values():
+            if isinstance(block, dict):
+                _absolutize_code_ref(block, "resource", base)
+    profiles = raw.get("profiles")
+    if isinstance(profiles, dict):
+        for block in profiles.values():
+            if isinstance(block, dict):
+                _absolutize_script_key(block, base)
 
 
 def _absolutize_script_key(entry: dict[str, Any], base: Path) -> None:
@@ -418,23 +421,25 @@ def _absolutize_script_key(entry: dict[str, Any], base: Path) -> None:
         entry["script"] = str(base / script.strip())
 
 
-def _absolutize_cli_ref(entry: dict[str, Any], base: Path) -> None:
-    """Rebase one ``clis`` entry's path-form ``cli`` reference.
+def _absolutize_code_ref(entry: dict[str, Any], key: str, base: Path) -> None:
+    """Rebase a path-form colon reference under ``key``.
 
-    ``cli: ./tool.py:TREE`` means "next to the config file", the same
-    build-context rule ``script:`` follows; without this the pointer
-    reaches ``load_attr`` relative and resolves against the server
-    process's cwd. A module dotpath (``pkg.mod:TREE``) is left alone:
-    importlib resolves it, not the filesystem. The split matches
-    ``load_attr``'s own test, so the two cannot disagree about what a
-    path is.
+    ``cli: ./tool.py:TREE`` and ``resource: ./wiki.py:WikiResource`` both
+    mean "next to the config file", the same build-context rule
+    ``script:`` follows; without this the pointer reaches ``load_attr``
+    relative and resolves against the server process's cwd. A module
+    dotpath (``pkg.mod:TREE``) is left alone: importlib resolves it, not
+    the filesystem. The split matches ``load_attr``'s own test, so the
+    two cannot disagree about what a path is.
 
     Args:
-        entry (dict[str, Any]): a ``clis`` mapping entry, mutated in
-            place.
+        entry (dict[str, Any]): a ``clis`` or ``mounts`` mapping entry,
+            mutated in place.
+        key (str): the field holding the reference, ``cli`` or
+            ``resource``.
         base (Path): directory containing the config file.
     """
-    ref = entry.get("cli")
+    ref = entry.get(key)
     if not isinstance(ref, str) or ":" not in ref:
         return
     source, attr = ref.rsplit(":", 1)
@@ -442,7 +447,7 @@ def _absolutize_cli_ref(entry: dict[str, Any], base: Path) -> None:
         return
     if Path(source).is_absolute():
         return
-    entry["cli"] = f"{base / source}:{attr}"
+    entry[key] = f"{base / source}:{attr}"
 
 
 def _build_runtime_entries(
@@ -512,16 +517,13 @@ class WorkspaceConfig(BaseModel):
     # load. Its last expression names the runtime for the line, or
     # None to fall to entry scripts.
     policy: str | None = None
-    # The permissions document, workspace tier: deny rules and hides
-    # that bind every session (absolute paths), checked after the
-    # built-in POSIX mount-root rules; the policy script is the
-    # line-level counterpart.
-    permissions: WorkspacePermissions | None = None
-    # Named session profiles, the templates create_session picks by
-    # name; `default` applies when none is named. Every `extends`
-    # chain is resolved at load so an unknown parent or a cycle fails
-    # here, not at the first session.
+    # The permission documents: one profile per name. A profile is the whole
+    # document a session runs under, so there is no workspace-wide
+    # block; the policy script is the line-level counterpart.
     profiles: dict[str, SessionProfile] | None = None
+    # The profile a session gets when it names none; `default` when unset
+    # and a profile of that name exists.
+    profile: str | None = None
     mode: MountMode = MountMode.WRITE
     consistency: ConsistencyPolicy = ConsistencyPolicy.LAZY
     default_session_id: str | None = None
@@ -546,15 +548,12 @@ class WorkspaceConfig(BaseModel):
         return _coerce_consistency(v)
 
     @model_validator(mode="after")
-    def _v_profiles(self) -> "WorkspaceConfig":
-        # Every chain resolves at load; the loader's contract is a
-        # ValueError (pydantic's ValidationError) for a bad document,
-        # so the resolver's PolicyError is re-raised as one.
-        for name in self.profiles or {}:
-            try:
-                inherit(self.profiles or {}, name)
-            except PolicyError as exc:
-                raise ValueError(str(exc)) from exc
+    def _v_profile(self) -> "WorkspaceConfig":
+        # The workspace's default profile must be one it defines; the
+        # loader's contract is a ValueError for a bad document.
+        if self.profile is not None and self.profile not in (self.profiles
+                                                             or {}):
+            raise ValueError(f"unknown profile {self.profile!r}")
         return self
 
     def to_workspace_kwargs(self) -> dict[str, Any]:
@@ -580,7 +579,6 @@ class WorkspaceConfig(BaseModel):
                 resource=prov,
                 mode=mode,
                 command_limits=block.command_limits,
-                permissions=block.permissions,
             )
         kwargs: dict[str, Any] = {
             "resources": resources,
@@ -604,10 +602,17 @@ class WorkspaceConfig(BaseModel):
             kwargs["runtimes"] = _build_runtime_entries(self.runtimes)
         if self.policy is not None:
             kwargs["policy"] = _load_script_source(self.policy)
-        if self.permissions is not None:
-            kwargs["permissions"] = self.permissions
         if self.profiles is not None:
-            kwargs["profiles"] = dict(self.profiles)
+            kwargs["profiles"] = {
+                name:
+                (profile if profile.script is None else profile.model_copy(
+                    update={
+                        "script": _load_script_source(str(profile.script))
+                    }))
+                for name, profile in self.profiles.items()
+            }
+        if self.profile is not None:
+            kwargs["profile"] = self.profile
 
         if self.clis is not None:
             kwargs["clis"] = {

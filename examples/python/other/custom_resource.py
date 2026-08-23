@@ -19,7 +19,7 @@ from mirage import MountMode, Workspace
 from mirage.sdk import (NULL_INDEX, Accessor, CommandIO, CommandSpec, FileStat,
                         GenericResource, IndexCacheStore, IOResult, PathSpec,
                         command, register_resource, stream_from_bytes)
-from mirage.types import FileType
+from mirage.types import ContentType, FileType
 
 # A whole custom backend in one script: three async core functions over
 # your data source, one CommandIO table, one GenericResource. Every
@@ -84,7 +84,10 @@ async def stat(
     name = path.virtual.rstrip("/").rsplit("/", 1)[-1] or "/"
     if isinstance(node, dict):
         return FileStat(name=name, size=None, type=FileType.DIRECTORY)
-    return FileStat(name=name, size=len(node.encode()), type=FileType.TEXT)
+    return FileStat(name=name,
+                    size=len(node.encode()),
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 # Optional: a bespoke domain verb, registered alongside the generics.
@@ -98,8 +101,8 @@ async def wiki_titles(accessor, *texts: str, **flags: object):
     return ("\n".join(titles) + "\n").encode(), IOResult()
 
 
-def make_wiki_resource(pages: dict | None = None) -> GenericResource:
-    io = CommandIO(
+def make_io() -> CommandIO:
+    return CommandIO(
         readdir=readdir,
         read_bytes=read_bytes,
         read_stream=partial(stream_from_bytes, read_bytes),
@@ -107,25 +110,23 @@ def make_wiki_resource(pages: dict | None = None) -> GenericResource:
         is_mounted=lambda a: True,
         local=False,
     )
-    return GenericResource(
-        name="wiki",
-        accessor=WikiAccessor(pages or PAGES),
-        io=io,
-        prompt="A team wiki rendered as markdown files.",
-        commands=[wiki_titles],
-    )
 
 
 class WikiResource(GenericResource):
-    """Class form, so the backend is constructible by registry name."""
+    """The backend as a class, so the registry can build it by name."""
 
     def __init__(self, pages: dict | None = None) -> None:
-        wired = make_wiki_resource(pages)
-        self.__dict__.update(wired.__dict__)
+        super().__init__(
+            name="wiki",
+            accessor=WikiAccessor(pages or PAGES),
+            io=make_io(),
+            prompt="A team wiki rendered as markdown files.",
+            commands=[wiki_titles],
+        )
 
 
 async def main():
-    ws = Workspace({"/wiki/": make_wiki_resource()}, mode=MountMode.READ)
+    ws = Workspace({"/wiki/": WikiResource()}, mode=MountMode.READ)
 
     for line in (
             "ls /wiki/guides",

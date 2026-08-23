@@ -31,6 +31,7 @@ export {
   type RedisNamespaceStoreOptions,
 } from './workspace/namespace/redis.ts'
 export { DiskRecordClient } from './workspace/record/disk.ts'
+export { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
 export { DiskSessionStore } from './workspace/session/disk.ts'
 export { RedisSessionStore, type RedisSessionStoreOptions } from './workspace/session/redis.ts'
 export {

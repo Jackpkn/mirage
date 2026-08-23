@@ -17,7 +17,6 @@ import { concatBytes } from '../../core/jq/format.ts'
 import type { ByteSource } from '../../io/types.ts'
 import { IOResult, materialize } from '../../io/types.ts'
 import type { Resource } from '../../resource/base.ts'
-import { assertMountAllowed, MountNotAllowedError } from '../../context/session_context.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import type { JobTable } from '../../shell/job_table/index.ts'
 import { PathSpec } from '../../types.ts'
@@ -25,7 +24,7 @@ import type { MountEntry } from '../mount/mount.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import { MountCommandUnsupported, type MountRegistry } from '../mount/registry.ts'
 import { makeStorageKey } from '../mount/storage.ts'
-import { Consumer, JOB_BUILTINS, route } from '../route/index.ts'
+import { Consumer, JOB_BUILTINS, lookup } from '../lookup/index.ts'
 import { type Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import type { Session } from '../session/session.ts'
@@ -69,7 +68,7 @@ import { compareCodePoints } from '../../utils/sort.ts'
 
 export { ReturnSignal } from './control.ts'
 
-// One handler per JOB_BUILTINS member; route already narrowed the name.
+// One handler per JOB_BUILTINS member; lookup already narrowed the name.
 const JOB_HANDLERS: Record<
   string,
   (
@@ -183,7 +182,7 @@ export async function handleCommand(
   // backend work. The admission policies (fired upstream at the
   // dispatch chokepoint) stay ahead of this so
   // protective refusals keep their specific messages.
-  if (route(cmdName, session, registry) === Consumer.UNKNOWN) {
+  if (lookup(cmdName, session, registry) === Consumer.UNKNOWN) {
     const errBytes = new TextEncoder().encode(`${cmdName}: command not found\n`)
     return [
       null,
@@ -372,20 +371,6 @@ export async function handleCommand(
       new ExecutionNode({ command: cmdStr, exitCode: 127 }),
     ]
   }
-  try {
-    assertMountAllowed(mount.prefix)
-  } catch (err) {
-    if (err instanceof MountNotAllowedError) {
-      const errBytes = new TextEncoder().encode(`${cmdName}: ${err.message}\n`)
-      return [
-        null,
-        new IOResult({ exitCode: 1, stderr: errBytes }),
-        new ExecutionNode({ command: cmdStr, stderr: errBytes, exitCode: 1 }),
-      ]
-    }
-    throw err
-  }
-
   const parsedLine = parseFlags(parts.slice(1), mount.specFor(cmdName), cmdName, session.cwd)
   const { paths, flagKwargs, warnings: parseWarnings } = parsedLine
   const textsRaw = parsedLine.texts

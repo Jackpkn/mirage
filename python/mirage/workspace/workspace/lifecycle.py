@@ -14,11 +14,12 @@
 
 import asyncio
 import builtins
-import sys
+import io
+import os
 from typing import TYPE_CHECKING, Any, cast
 
 from mirage.ops.open import make_open
-from mirage.ops.os_patch import make_os_module
+from mirage.ops.os_patch import os_routing
 from mirage.shell.job_table import cancel_job
 
 if TYPE_CHECKING:
@@ -27,6 +28,17 @@ if TYPE_CHECKING:
 
 def patch_process(ws: "Workspace", ) -> None:
     """Point ``open`` and ``os`` at the workspace for a ``with`` block.
+
+    Each door is installed as an attribute on the module that owns the
+    name, never as a replacement module in ``sys.modules``, because a
+    module imported before the block holds its own reference to the
+    real one: a script whose ``import os`` sits at the top of the file
+    would never have seen a swapped entry, and neither would
+    ``pathlib``, ``shutil`` or ``glob``. Patching the attribute reaches
+    all of them, and ``os.path`` comes along for free because
+    ``posixpath`` reads ``os.stat`` off that same module at call time.
+    ``open`` needs the same treatment twice: it is also ``io.open``,
+    which is the one ``pathlib`` calls.
 
     The block gets ONE event loop, driven a call at a time, that every
     patched call and the closing ``close()`` share. Without it each call
@@ -39,10 +51,15 @@ def patch_process(ws: "Workspace", ) -> None:
         ws: the workspace entering context-manager scope.
     """
     ws._original_open = builtins.open
-    ws._original_os = sys.modules["os"]
+    ws._original_io_open = io.open
     ws._vfs_loop = asyncio.new_event_loop()
-    builtins.open = cast(Any, make_open(ws._ops, ws._vfs_loop))
-    sys.modules["os"] = make_os_module(ws._ops, ws._vfs_loop)
+    opener = cast(Any, make_open(ws._ops, ws._vfs_loop))
+    builtins.open = opener
+    io.open = opener
+    routing = os_routing(ws._ops, ws._vfs_loop)
+    ws._original_os_names = {name: getattr(os, name) for name in routing}
+    for name, fn in routing.items():
+        setattr(os, name, fn)
 
 
 def unpatch_process(ws: "Workspace", ) -> None:
@@ -53,8 +70,11 @@ def unpatch_process(ws: "Workspace", ) -> None:
     """
     if ws._original_open is not None:
         builtins.open = ws._original_open
-    if ws._original_os is not None:
-        sys.modules["os"] = ws._original_os
+    if ws._original_io_open is not None:
+        io.open = ws._original_io_open
+    for name, fn in (ws._original_os_names or {}).items():
+        setattr(os, name, fn)
+    ws._original_os_names = None
 
 
 def stop_vfs_loop(ws: "Workspace", ) -> None:
@@ -121,6 +141,7 @@ async def close_async(ws: "Workspace", ) -> None:
         await ws.job_table.kill_all()
         await ws.job_table.close_consoles()
         drain_tasks = list(ws._cache._drain_tasks.values())
+        await ws._script_policy.close()
         for line_runtime in ws._runtimes.entries:
             await line_runtime.close()
         resources = {

@@ -29,7 +29,7 @@ async def unexpand(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
                    opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
     resolved = await resolve_or_empty(ops, accessor, paths, opts.index)
     return await unexpand_generic(
-        resolved, list(texts), opts, dir_aware_stat(ops, accessor, opts.index),
+        resolved, list(texts), opts, dir_aware_stat(ops, accessor, opts),
         bound_op(ops.read_bytes, accessor, opts.index))
 
 

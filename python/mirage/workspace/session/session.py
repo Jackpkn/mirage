@@ -20,7 +20,7 @@ from typing import Any
 
 from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.types import ByteSource
-from mirage.policy.types import CommandsSpec, Grant
+from mirage.policy.types import AdmissionRules, Decision, ProfileScript
 from mirage.shell.array import ShellArray
 from mirage.shell.constants import SHELL_ARGV0
 from mirage.shell.types import FunctionBody
@@ -29,9 +29,10 @@ from mirage.shell.variable import (ShellVar, VarAttr, attrs_from_letters,
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace.session.constants import (CHILD_SHELL_FIELDS,
                                                 INHERITED_FIELDS)
-from mirage.workspace.session.serialize import (commands_from_dict,
-                                                commands_to_dict,
-                                                grant_from_dict, grant_to_dict)
+
+from mirage.workspace.session.serialize import (  # isort: skip
+    commands_from_dict, commands_to_dict, decision_from_dict, decision_to_dict,
+    script_from_dict, script_to_dict)
 
 
 def copy_state(value: Any) -> Any:
@@ -147,24 +148,19 @@ class Session:
     # session door for vars), fork carries them, to_dict serializes.
     hidden_paths: HiddenPaths | None = None
     hidden_vars: HiddenVars | None = None
-    # What the workspace and its mounts hide from every session
-    # (`permissions.paths.hide`, `mounts.<p>.permissions.paths.hide`),
-    # stamped by the SessionManager on create and hydrate and joined
-    # with hidden_paths in the predicate. Deliberately NOT persisted:
-    # it derives from the workspace's own configuration, so a restart
-    # or a config change never leaves a stale fold in the store.
-    bound_hidden: HiddenPaths | None = None
-    # The session's own command tier (`profiles.<n>.commands` tightened
-    # by the inline document): allow patterns, ask and deny rules. A
-    # durable restriction like hidden_paths, so it persists; the
-    # workspace-bound tiers ride `bound_commands` the way bound_hidden
-    # does, stamped on create and hydrate and never persisted.
-    commands: CommandsSpec | None = None
-    bound_commands: tuple[CommandsSpec, ...] = ()
+    # The profile's admission rules, compiled: its allow list, its ask and
+    # deny rules, and every rule its mount entries carry. One document,
+    # so there is nothing above it to join with. A durable restriction
+    # like hidden_paths, so it persists with the session record.
+    commands: AdmissionRules | None = None
+    # The profile's per-command script, evaluated by ScriptPolicy at the
+    # admission gate. A durable restriction like commands, so it
+    # persists with the session record.
+    script: ProfileScript | None = None
     # The host's standing answers to asked lines (design 3.9): session
     # state like functions and cwd, persisted, read and written through
     # the manager by id so a fork shares them, never another session's.
-    grants: tuple[Grant, ...] = ()
+    decisions: tuple[Decision, ...] = ()
     generation: int = 0
     pipeline_timeout_seconds: float | None = None
     last_bg_job_id: int | None = None
@@ -278,8 +274,10 @@ class Session:
             }
         if self.commands is not None:
             data["commands"] = commands_to_dict(self.commands)
-        if self.grants:
-            data["grants"] = [grant_to_dict(g) for g in self.grants]
+        if self.script is not None:
+            data["script"] = script_to_dict(self.script)
+        if self.decisions:
+            data["decisions"] = [decision_to_dict(d) for d in self.decisions]
         return data
 
     @classmethod
@@ -300,9 +298,11 @@ class Session:
         paths = data.get("hidden_paths")
         vars_ = data.get("hidden_vars")
         commands = data.get("commands")
-        grants = data.get("grants")
+        script = data.get("script")
+        decisions = data.get("decisions")
         if (modes is not None or paths is not None or vars_ is not None
-                or commands is not None or grants is not None):
+                or commands is not None or script is not None
+                or decisions is not None):
             data = dict(data)
         if modes is not None:
             data["mount_modes"] = {
@@ -319,17 +319,11 @@ class Session:
                 patterns=tuple(vars_.get("patterns", ())))
         if commands is not None:
             data["commands"] = commands_from_dict(commands)
-        if grants is not None:
-            data["grants"] = tuple(grant_from_dict(g) for g in grants)
+        if script is not None:
+            data["script"] = script_from_dict(script)
+        if decisions is not None:
+            data["decisions"] = tuple(decision_from_dict(d) for d in decisions)
         return cls(**data)
-
-    @property
-    def command_layers(self) -> tuple[CommandsSpec, ...]:
-        """The command tiers this session runs under: the bound ones
-        (mounts, then workspace), then its own."""
-        if self.commands is None:
-            return self.bound_commands
-        return (*self.bound_commands, self.commands)
 
     @property
     def argv0(self) -> str:

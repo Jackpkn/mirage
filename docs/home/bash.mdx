@@ -248,13 +248,15 @@ The daemon's `--background` flag detaches a job and returns a job id. It is not 
 
 ## Per-session mount modes
 
-A session can be created with its own per-mount modes, like a container that mounts the same volume `ro` while another mounts it `rw`. Each listed prefix carries a mode ceiling on the `read < write < exec` ladder, written as the words `read`/`write`/`exec` or the cumulative filesystem aliases `r`/`rw`/`rwx` (exec implies write implies read, so bit-style forms like a bare `w` are rejected). A command touching a mount the session was not given is rejected with `mirage: session 'agent' not allowed to access mount '/X'` and exit code 1; a command exceeding the session's mode fails exactly like it would on a read-only mount.
+A session can be created with its own per-mount modes, like a container that mounts the same volume `ro` while another mounts it `rw`. Each named prefix carries a mode on the `read < write < exec` ladder, written as the words `read`/`write`/`exec` or the cumulative filesystem aliases `r`/`rw`/`rwx` (exec implies write implies read, so bit-style forms like a bare `w` are rejected). A command exceeding the session's mode fails exactly like it would on a read-only mount.
 
-If a session is created without `mounts`, it is unrestricted: every mount behaves per its own configured mode. A list of prefixes (instead of a mapping) restricts the session to those mounts but keeps each at its own mode, and a bare `-m /data` on the CLI does the same for one mount. A session's mode can only narrow, never widen: the effective permission is the weaker of the mount's own mode and the session's mode, so `rw` on a `READ` mount is still read-only.
+**Naming a mount narrows it; it is not an allowlist.** A mount a session does not name keeps its own configured mode, and a session's mode can only narrow, never widen: the effective permission is the weaker of the mount's own mode and the session's, so `rw` on a `READ` mount is still read-only.
 
-This is a soft boundary, enforced inside the daemon process, not an OS or process-level isolation. Use it to shrink the blast radius of prompt-injection in multi-agent workspaces: a Slack-only agent cannot pivot to read `/linear`, `/github`, or any other mount it was not given. Note that FUSE mounts are not scoped by session modes: a FUSE mount is a host-level surface served under the default unrestricted view (mount modes still apply, session narrowing does not).
+Keeping a session away from a mount entirely is a **hide**, written in the role the session runs under. A hidden path answers `No such file or directory` rather than a permission error, so a refusal never names something the agent was not meant to know is there. Creating under a hidden path is the one case that answers out loud (`Permission denied`), because silently succeeding would leave a file the session cannot see.
 
-The check fires for every code path that reaches a mount: shell commands (`cat`, `ls`, ...), redirects (`>`, `<`), cross-mount `cp`/`mv`, `wget -O`, `curl -o`, command substitution `$(...)`, subshells `(...)`, pipes, `&&`/`||` chains, background jobs, and the programmatic `ws.ops.read/write/...` API. Infrastructure prefixes are always accessible: the history view (`/.bash_history`, which the `history` builtin and the GNU histfile render from) and the implicit scratch root (`/`, where stateless text-processing commands like `wc` resolve when given no path). A user-defined `/` mount is not infrastructure; sessions must be given `/` explicitly to touch it.
+This is a soft boundary, enforced inside the daemon process, not an OS or process-level isolation. Use it to shrink the blast radius of prompt-injection in multi-agent workspaces: a Slack-only agent cannot pivot to read `/linear`, `/github`, or any other mount its role hides. Note that FUSE mounts are not scoped by session views: a FUSE mount is a host-level surface served under the default unrestricted view (mount modes still apply, session narrowing does not).
+
+Both halves fire for every code path that reaches a mount: shell commands (`cat`, `ls`, ...), redirects (`>`, `<`), cross-mount `cp`/`mv`, `wget -O`, `curl -o`, command substitution `$(...)`, subshells `(...)`, pipes, `&&`/`||` chains, background jobs, and the programmatic `ws.ops.read/write/...` API. The history view (`/.bash_history`, which the `history` builtin and the GNU histfile render from) and the implicit scratch root (`/`, where stateless text-processing commands like `wc` resolve when given no path) stay reachable unless a role hides them.
 
 <Tabs>
   <Tab title="Python" icon="/images/python-logo.svg">
@@ -265,25 +267,30 @@ The check fires for every code path that reaches a mount: shell commands (`cat`,
         "/linear": linear,
     })
 
-    ws.create_session("slack-agent", mounts=["/slack"])
+    # A role is the whole permission document a session runs under.
+    ws.create_session("slack-agent",
+                      profile={"paths": {"hide": ["/linear", "/s3"]}})
     ws.create_session("data-agent", mounts={"/s3": "rw", "/github": "r"})
 
     await ws.execute("ls /slack", session_id="slack-agent")  # ok
     await ws.execute("cat /linear/issues/SEC-42",
                      session_id="slack-agent")
-    # exit_code=1, stderr=b"session 'slack-agent' not allowed to "
-    #                     b"access mount '/linear'\n"
+    # exit_code=1, stderr=b"cat: /linear/issues/SEC-42: "
+    #                     b"No such file or directory\n"
     ```
   </Tab>
   <Tab title="CLI" icon="terminal">
     ```bash
-    # Repeat --mount (or -m) per allowed prefix; cap the mode with
+    # Repeat --mount (or -m) to narrow a mount's mode; cap it with
     # :read/:write/:exec or the aliases :r/:rw/:rwx
-    mirage session create demo --id slack-agent --mount /slack
-    mirage session create demo --id data-agent  -m /s3:rw -m /github:r
+    mirage session create demo --id data-agent -m /s3:rw -m /github:r
+
+    # Confinement is a role, named with --profile (roles live in the
+    # workspace's `profiles:` block)
+    mirage session create demo --id slack-agent --profile slack-only
 
     mirage execute -w demo -s slack-agent -c "cat /linear/issues/SEC-42"
-    # mirage: session 'slack-agent' not allowed to access mount '/linear'
+    # mirage: cat: /linear/issues/SEC-42: No such file or directory
     ```
   </Tab>
 </Tabs>

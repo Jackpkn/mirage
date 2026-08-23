@@ -71,6 +71,11 @@ async function cliWs(): Promise<Workspace> {
           description: 'Manage issues',
           fn: () => [null, new IOResult()],
         }),
+        new CLISpec({
+          name: 'team',
+          description: 'Manage one',
+          fn: () => [null, new IOResult()],
+        }),
       ],
     }),
   )
@@ -170,6 +175,24 @@ describe('--help and man through the executor', () => {
     expect(stdoutStr(await ws.execute('which linear'))).toBe('linear\n')
     expect(stdoutStr(await ws.execute('man linear'))).toContain('Usage: linear')
     expect(stdoutStr(await ws.execute('man'))).toContain('# clis')
+  })
+
+  it('man lists only the CLI verbs the profile can reach', async () => {
+    const ws = await cliWs()
+    ws.createSession('narrow', {
+      profile: { commands: { allow: ['man', 'linear issue', 'which'], ask: [], deny: [] } },
+    })
+    const page = stdoutStr(await ws.execute('man linear', { sessionId: 'narrow' }))
+    expect(page).toContain('issue')
+    expect(page).not.toContain('team')
+    // The head word still routes, because one line of the tree runs.
+    expect(stdoutStr(await ws.execute('which linear', { sessionId: 'narrow' }))).toBe('linear\n')
+    // A verb the list does not reach has no page.
+    const io = await ws.execute('man linear team', { sessionId: 'narrow' })
+    expect(io.exitCode).toBe(1)
+    expect(stderrStr(io)).toBe('man: no entry for linear team\n')
+    // The host's own view is unnarrowed.
+    expect(stdoutStr(await ws.execute('man linear'))).toContain('team')
   })
 
   it('which reports a missing name through the status only', async () => {

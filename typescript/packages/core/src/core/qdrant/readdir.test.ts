@@ -43,6 +43,7 @@ function accessor(): QdrantAccessor {
   return {
     config,
     listTables: () => Promise.resolve(['animals']),
+    tableExists: (name: string) => Promise.resolve(name === 'animals'),
     distinct: () => Promise.resolve(['big']),
     rowsMatching: () => Promise.resolve([ROW]),
   } as unknown as QdrantAccessor
@@ -85,6 +86,7 @@ describe('qdrant readdir sizes', () => {
     const acc = {
       config,
       listTables: () => Promise.resolve(['animals']),
+      tableExists: (name: string) => Promise.resolve(name === 'animals'),
       distinct: () => Promise.resolve(['big']),
       rowsMatching: () => Promise.resolve([broken]),
     } as unknown as QdrantAccessor

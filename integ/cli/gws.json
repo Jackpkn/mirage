@@ -222,6 +222,84 @@
       }
     },
     {
+      "id": "gw_drive_permissions_create",
+      "seq": 563076,
+      "targets": [
+        "cli-gws"
+      ],
+      "command": "F=$(gws drive files create --json '{\"name\": \"Perm Create\", \"mimeType\": \"text/plain\"}' | jq -r .id) && gws drive permissions create --params \"{\\\"fileId\\\": \\\"$F\\\"}\" --json '{\"role\": \"reader\", \"type\": \"anyone\"}' | jq -c '{permissionId: (.id | length > 0), role, type}'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"permissionId\":true,\"role\":\"reader\",\"type\":\"anyone\"}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gw_drive_permissions_list",
+      "seq": 563077,
+      "targets": [
+        "cli-gws"
+      ],
+      "command": "F=$(gws drive files create --json '{\"name\": \"Perm List\", \"mimeType\": \"text/plain\"}' | jq -r .id) && gws drive permissions create --params \"{\\\"fileId\\\": \\\"$F\\\"}\" --json '{\"role\": \"reader\", \"type\": \"anyone\"}' > /dev/null && gws drive permissions list --params \"{\\\"fileId\\\": \\\"$F\\\"}\" | jq -c '.permissions | map({role, type})'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[{\"role\":\"reader\",\"type\":\"anyone\"}]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gw_drive_permissions_delete",
+      "seq": 563078,
+      "targets": [
+        "cli-gws"
+      ],
+      "command": "F=$(gws drive files create --json '{\"name\": \"Perm Delete\", \"mimeType\": \"text/plain\"}' | jq -r .id) && P=$(gws drive permissions create --params \"{\\\"fileId\\\": \\\"$F\\\"}\" --json '{\"role\": \"reader\", \"type\": \"anyone\"}' | jq -r .id) && gws drive permissions delete --params \"{\\\"fileId\\\": \\\"$F\\\", \\\"permissionId\\\": \\\"$P\\\"}\" && gws drive permissions list --params \"{\\\"fileId\\\": \\\"$F\\\"}\" | jq -r '.permissions | length'",
+      "expect": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gw_slides_get_seeded",
+      "seq": 563017,
+      "targets": [
+        "cli-gws"
+      ],
+      "command": "gws slides presentations get --params '{\"presentationId\": \"pres0001\"}' | jq -c '{presentationId, title, slides: (.slides | length)}'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"presentationId\":\"pres0001\",\"title\":\"Launch Deck\",\"slides\":1}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gw_slides_create",
+      "seq": 563018,
+      "targets": [
+        "cli-gws"
+      ],
+      "command": "gws slides presentations create --json '{\"title\": \"CLI Deck\"}' | jq -c '{presentationId: (.presentationId | length > 0), title, slides: (.slides | length)}'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"presentationId\":true,\"title\":\"CLI Deck\",\"slides\":1}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gw_slides_batch_update",
+      "seq": 563019,
+      "targets": [
+        "cli-gws"
+      ],
+      "command": "P=$(gws slides presentations create --json '{\"title\": \"CLI Deck\"}' | jq -r .presentationId) && gws slides presentations batchUpdate --params \"{\\\"presentationId\\\": \\\"$P\\\"}\" --json '{\"requests\": [{\"createSlide\": {}}]}' | jq -c --arg p \"$P\" '{presentationId: (.presentationId == $p), createdSlides: (.replies | length)}' && gws slides presentations get --params \"{\\\"presentationId\\\": \\\"$P\\\"}\" | jq -c --arg p \"$P\" '{presentationId: (.presentationId == $p), slides: (.slides | length)}'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"presentationId\":true,\"createdSlides\":1}\n{\"presentationId\":true,\"slides\":2}\n",
+        "stderr": ""
+      }
+    },
+    {
       "id": "gw_gmail_triage",
       "seq": 563020,
       "targets": [
@@ -388,6 +466,19 @@
       "expect": {
         "exit": 0,
         "stdout": "marcus@example.com\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gw_gmail_messages_trash_passthrough",
+      "seq": 563079,
+      "targets": [
+        "cli-gws"
+      ],
+      "command": "gws gmail users messages trash --params '{\"userId\": \"me\", \"id\": \"msg0002\"}' > /dev/null && gws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"msg0002\"}' | jq -c '.labelIds'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[\"TRASH\"]\n",
         "stderr": ""
       }
     },

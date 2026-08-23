@@ -29,7 +29,7 @@ from mirage.core.email.client import fetch_message
 from mirage.core.email.read import read as email_read
 from mirage.core.email.readdir import readdir as _readdir
 from mirage.core.email.render import message_json_text
-from mirage.core.email.scope import detect_scope
+from mirage.core.email.scope import NATIVE_KINDS, detect_scope
 from mirage.core.email.search import _build_vfs_path, search_messages
 from mirage.core.email.stat import stat as _stat
 from mirage.io.types import ByteSource, IOResult
@@ -60,10 +60,10 @@ async def rg(accessor: EmailAccessor, paths: list[PathSpec], texts: list[str],
     # It used to return exit 1 instead, reporting "nothing matched" for a
     # search it had not run.
     operand = pushdown_operand(paths, opts.flags, pattern_str, SEARCH_HONORED)
-    scope = detect_scope(operand) if operand is not None else None
-    if (operand is not None and scope is not None and scope.use_native
-            and scope.folder):
-        folder = scope.folder
+    match = detect_scope(operand) if operand is not None else None
+    if (operand is not None and match is not None
+            and match.kind in NATIVE_KINDS):
+        folder = match.slots["folder"]
         uids = await search_messages(accessor,
                                      folder,
                                      text=pattern_str,
@@ -104,7 +104,7 @@ async def rg(accessor: EmailAccessor, paths: list[PathSpec], texts: list[str],
     return await generic_rg(
         resolved,
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(_readdir, accessor, opts.index),
         stat=bound_op(_stat, accessor, opts.index),
         read_bytes=bound_op(email_read, accessor, opts.index),

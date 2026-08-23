@@ -15,7 +15,6 @@
 import asyncio
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 
@@ -34,11 +33,10 @@ resource = PostgresResource(config=config)
 
 async def main():
     with Workspace({"/pg/": resource}, mode=MountMode.READ) as ws:
-        vos = sys.modules["os"]
         print("=== VFS MODE: open() reads from Postgres ===\n")
 
         print("--- os.listdir(/pg) — root entries ---")
-        for e in vos.listdir("/pg"):
+        for e in os.listdir("/pg"):
             print(f"  {e}")
 
         print("\n--- read /pg/database.json ---")
@@ -55,11 +53,11 @@ async def main():
             return
 
         print("\n--- os.listdir(/pg/public) ---")
-        for e in vos.listdir("/pg/public"):
+        for e in os.listdir("/pg/public"):
             print(f"  {e}")
 
         print("\n--- os.listdir(/pg/public/tables) ---")
-        tables = vos.listdir("/pg/public/tables")
+        tables = os.listdir("/pg/public/tables")
         for t in tables[:5]:
             print(f"  {t}")
         if len(tables) > 5:
@@ -73,7 +71,7 @@ async def main():
         entity_dir = f"/pg/public/tables/{target}"
 
         print(f"\n--- os.listdir({entity_dir}) ---")
-        for e in vos.listdir(entity_dir):
+        for e in os.listdir(entity_dir):
             print(f"  {e}")
 
         sch_path = f"{entity_dir}/schema.json"

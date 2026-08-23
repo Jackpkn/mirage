@@ -59,6 +59,15 @@ async function structureWorld(): Promise<Workspace> {
   return ws
 }
 
+/**
+ * Two mounts, a profile that hides the second.
+ *
+ * `/open` (`pub.txt`) is reachable by session `agent`; `/closed`
+ * (`sec.txt`) is hidden from it. A hide, not an omitted mount: a profile
+ * narrows what it names and a mount it never names keeps its own mode,
+ * so hiding is how a deployment puts a mount out of reach, and it
+ * answers ENOENT rather than a refusal naming what the profile cannot see.
+ */
 async function scopedWorld(): Promise<Workspace> {
   const parser = await getTestParser()
   const ops = new OpsRegistry()
@@ -74,7 +83,7 @@ async function scopedWorld(): Promise<Workspace> {
   ws.addMount('/closed', closed, MountMode.WRITE)
   await ws.fs.writeFile('/open/pub.txt', 'public')
   await ws.fs.writeFile('/closed/sec.txt', 'SECRET-xyz')
-  ws.createSession('agent', { mounts: ['/open'] })
+  ws.createSession('agent', { profile: { paths: { hide: ['/closed'] } } })
   return ws
 }
 
@@ -243,19 +252,23 @@ describe('scoped world', () => {
     'grep -r SECRET /closed',
     'find /closed',
     'du /closed',
-  ])('an explicit operand at the boundary is denied: %s', async (line) => {
+  ])('an explicit operand at the boundary reads as absent: %s', async (line) => {
+    // The wording is the whole point: "not allowed" would confirm that
+    // something is there, so a hide answers what an agent would see for
+    // any path that was never mounted.
     const ws = await scopedWorld()
     try {
       const [code, , err] = await run(ws, line, 'agent')
       expect(code).not.toBe(0)
-      expect(err).toContain('not allowed')
+      expect(err).toContain('No such file or directory')
       expect(err).toContain('/closed')
+      expect(err).not.toContain('not allowed')
     } finally {
       await ws.close()
     }
   })
 
-  it('a scoped session cannot learn an ungranted name from the root listing', async () => {
+  it('a scoped session cannot learn a hidden name from the root listing', async () => {
     const ws = await scopedWorld()
     try {
       const [code, out] = await run(ws, 'ls /', 'agent')
@@ -267,9 +280,9 @@ describe('scoped world', () => {
     }
   })
 
-  it('a link below an ungranted mount stays out of a scoped listing', async () => {
+  it('a link below a hidden mount stays out of a scoped listing', async () => {
     // The link's path discloses the same name childMountNames already
-    // filters, so the same grant filters it; the unrestricted view
+    // filters, so the same hide filters it; the unrestricted view
     // keeps the link.
     const ws = await scopedWorld()
     try {
@@ -303,13 +316,13 @@ describe('scoped world', () => {
   it.each([
     ['find /base', 'leftover'],
     ['grep -r SHADOWED /base', 'SHADOWED-xyz'],
-  ])('a fan-out hides shadowed keys when no descendant is granted: %s', async (line, needle) => {
-    // The parent backend holds a key under the ungranted mount's
-    // prefix (seeded before that mount exists, so dispatch lands it
-    // in the parent). With no allowed descendant the fan-out must
-    // still engage: skipping it hands the walk to single-mount
-    // dispatch, which serves the shadowed key that path dispatch
-    // itself refuses.
+  ])('a fan-out hides shadowed keys when the descendant is hidden: %s', async (line, needle) => {
+    // The parent backend holds a key under the hidden mount's prefix
+    // (seeded before that mount exists, so dispatch lands it in the
+    // parent). With no visible descendant the fan-out must still
+    // engage: skipping it hands the walk to single-mount dispatch,
+    // which serves the shadowed key that path dispatch itself
+    // refuses.
     const parser = await getTestParser()
     const ops = new OpsRegistry()
     const base = new RAMResource()
@@ -326,7 +339,7 @@ describe('scoped world', () => {
     await ws.fs.writeFile('/base/inner/leftover.txt', 'SHADOWED-xyz')
     ws.addMount('/base/inner', inner, MountMode.WRITE)
     await ws.fs.writeFile('/base/inner/deep.txt', 'needle')
-    ws.createSession('agent', { mounts: ['/base'] })
+    ws.createSession('agent', { profile: { paths: { hide: ['/base/inner'] } } })
     try {
       const [, out] = await run(ws, line, 'agent')
       expect(out).not.toContain(needle)
@@ -336,7 +349,7 @@ describe('scoped world', () => {
     }
   })
 
-  it('a confined guest cannot read an ungranted mount', async () => {
+  it('a confined guest cannot read a hidden mount', async () => {
     const ws = await scopedWorld()
     try {
       const [code, out] = await run(
@@ -351,7 +364,7 @@ describe('scoped world', () => {
     }
   })
 
-  it('a confined guest cannot write an ungranted mount', async () => {
+  it('a confined guest cannot write a hidden mount', async () => {
     const ws = await scopedWorld()
     try {
       await run(
@@ -359,6 +372,8 @@ describe('scoped world', () => {
         `python3 -c "from pathlib import Path; Path('/closed/planted.txt').write_text('X')"`,
         'agent',
       )
+      // Read back through the unrestricted default session: the
+      // confined one cannot see the mount at all.
       const [code, out] = await run(ws, 'ls /closed')
       expect(code).toBe(0)
       expect(out).not.toContain('planted.txt')

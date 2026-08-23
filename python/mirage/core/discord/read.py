@@ -13,104 +13,113 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.discord import DiscordAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.cache.index import IndexCacheStore, IndexEntry
 from mirage.core.discord.files import download_file
 from mirage.core.discord.history import get_history_jsonl
 from mirage.core.discord.members import list_members
-from mirage.core.discord.readdir import readdir as _readdir
+from mirage.core.discord.readdir import readdir
 from mirage.core.discord.render import member_json_bytes
+from mirage.core.discord.scope import detect_scope
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.read import make_read, make_read_range
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-from mirage.utils.ranges import slice_window
 
 
-async def _ensure_channel(
-    index: IndexCacheStore,
-    prefix: str,
-    ch_key: str,
-    virtual: str,
-):
-    ch_virtual = prefix + "/" + ch_key
-    lookup = await index.get(ch_virtual)
-    if lookup.entry is None:
-        raise enoent(virtual)
-    return lookup
+async def _ancestor_entry(accessor: DiscordAccessor, path: PathSpec,
+                          index: IndexCacheStore,
+                          up: int) -> IndexEntry | None:
+    virtual = path.virtual.rstrip("/")
+    for _ in range(up):
+        virtual = virtual.rsplit("/", 1)[0]
+    prefix = mount_prefix_of(path.virtual, path.resource_path)
+    spec = PathSpec(virtual=virtual,
+                    directory=virtual,
+                    resource_path=mount_key(virtual, prefix))
+    return await resolve_entry(readdir, accessor, spec, index)
 
 
-async def read(
-    accessor: DiscordAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-    offset: int = 0,
-    size: int | None = None,
-) -> bytes:
-    """Read a Discord path, optionally only a byte range of it.
+async def _read_chat(accessor: DiscordAccessor, match: ScopeMatch,
+                     path: PathSpec, index: IndexCacheStore) -> bytes:
+    """Render one day's history; the channel id comes from the listing.
 
-    Only an attachment has a remote range to ask for. A channel's
-    history and a member profile are rendered here into JSON, so their
-    bytes do not exist until we make them and the window can only be
-    taken afterwards.
+    The typed ``name__id`` dirname is only trusted once the listing
+    proves it, so a fabricated channel id is ENOENT rather than a raw
+    API error.
 
     Args:
-        accessor (DiscordAccessor): Discord accessor.
-        path (PathSpec): the path to read.
-        index (IndexCacheStore): listing cache, consulted for the entry.
-        offset (int): first byte to read.
-        size (int | None): how many bytes, or None for the rest.
+        accessor (DiscordAccessor): discord accessor.
+        match (ScopeMatch): a match holding the day chain.
+        path (PathSpec): the chat.jsonl path.
+        index (IndexCacheStore): index cache.
     """
-    virtual = path.virtual if isinstance(path, PathSpec) else path
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
-    parts = key.split("/")
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is not None:
+        channel_id = entry.id.split(":", 1)[0]
+    else:
+        # A sealed day lists nothing but the file still reads through
+        # the channel, reproducing the API's own answer for the fetch.
+        channel = await _ancestor_entry(accessor, path, index, up=2)
+        if channel is None:
+            raise enoent(path.virtual)
+        channel_id = channel.id
+    return await get_history_jsonl(accessor.config, channel_id,
+                                   match.slots["day"])
 
-    # <guild>/channels/<ch>/<date>/chat.jsonl
-    if (len(parts) == 5 and parts[1] == "channels"
-            and parts[4] == "chat.jsonl"):
-        ch_key = f"{parts[0]}/{parts[1]}/{parts[2]}"
-        ch_lookup = await _ensure_channel(index, prefix, ch_key, virtual)
-        history = await get_history_jsonl(accessor.config, ch_lookup.entry.id,
-                                          parts[3])
-        return slice_window(history, offset, size)
 
-    # <guild>/channels/<ch>/<date>/files/<blob>
-    if (len(parts) == 6 and parts[1] == "channels" and parts[4] == "files"):
-        virtual_key = prefix + "/" + key
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            # Hydrate via date dir readdir, which triggers _fetch_day
-            date_key = "/".join(parts[:4])
-            date_spec = PathSpec(
-                virtual=prefix + "/" + date_key,
-                directory=prefix + "/" + date_key,
-                resource_path=mount_key(prefix + "/" + date_key, prefix),
-            )
-            await _readdir(accessor, date_spec, index)
-            lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            raise enoent(virtual)
-        url = (lookup.entry.extra
-               or {}).get("url") or (lookup.entry.extra
-                                     or {}).get("proxy_url") or ""
-        if not url:
-            raise enoent(virtual)
-        return await download_file(url, offset, size)
+async def _read_member(accessor: DiscordAccessor, match: ScopeMatch,
+                       path: PathSpec, index: IndexCacheStore) -> bytes:
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is None:
+        raise enoent(path.virtual)
+    members = await list_members(accessor.config, match.slots["guild_id"])
+    for m in members:
+        user = m.get("user", {})
+        if user.get("id") == entry.id:
+            return member_json_bytes(m)
+    raise enoent(path.virtual)
 
-    # <guild>/members/<user>.json
-    if len(parts) == 3 and parts[1] == "members":
-        virtual_key = prefix + "/" + key
-        entry_lookup = await index.get(virtual_key)
-        if entry_lookup.entry is None:
-            raise enoent(virtual)
-        guild_virtual = prefix + "/" + parts[0]
-        guild_lookup = await index.get(guild_virtual)
-        if guild_lookup.entry is None:
-            raise enoent(virtual)
-        members = await list_members(accessor.config, guild_lookup.entry.id)
-        for m in members:
-            user = m.get("user", {})
-            if user.get("id") == entry_lookup.entry.id:
-                return slice_window(member_json_bytes(m), offset, size)
-        raise enoent(virtual)
 
-    raise enoent(virtual)
+async def _blob_url(accessor: DiscordAccessor, path: PathSpec,
+                    index: IndexCacheStore) -> str:
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is None:
+        raise enoent(path.virtual)
+    url = entry.extra.get("url") or entry.extra.get("proxy_url") or ""
+    if not url:
+        raise enoent(path.virtual)
+    return url
+
+
+async def _read_blob(accessor: DiscordAccessor, match: ScopeMatch,
+                     path: PathSpec, index: IndexCacheStore) -> bytes:
+    return await download_file(await _blob_url(accessor, path, index), 0, None)
+
+
+async def _read_blob_range(accessor: DiscordAccessor, match: ScopeMatch,
+                           path: PathSpec, index: IndexCacheStore, offset: int,
+                           size: int | None) -> bytes:
+    return await download_file(await _blob_url(accessor, path, index), offset,
+                               size)
+
+
+read = make_read(
+    detect_scope,
+    readers={
+        "messages": _read_chat,
+        "member": _read_member,
+        "file_blob": _read_blob,
+    },
+)
+
+# Only an attachment has a remote range to ask for. A channel's history
+# and a member profile are rendered here into JSON, so their bytes do
+# not exist until we make them and the window can only be taken
+# afterwards.
+read_range = make_read_range(
+    detect_scope,
+    read,
+    ranged={"file_blob": _read_blob_range},
+)

@@ -103,7 +103,10 @@ async def test_read_is_directory(accessor, index):
              vfs_name="INBOX",
          )),
     ])
-    with pytest.raises(IsADirectoryError):
+    # A directory kind has no reader, and a matched shape alone is no
+    # existence proof, so the kit answers "No such file" (the same rule
+    # gcal, notion and the database mounts pin).
+    with pytest.raises(FileNotFoundError):
         await read(
             accessor,
             PathSpec(resource_path=mount_key("/gmail/INBOX", "/gmail"),

@@ -19,7 +19,7 @@ import pytest
 
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.formatters import channel_dirname, format_grep_results
-from mirage.core.slack.scope import SlackScope
+from mirage.core.slack.scope import SearchTarget
 from mirage.core.slack.search import search_messages
 from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len
 
@@ -69,12 +69,10 @@ def test_format_grep_results_path_uses_chat_jsonl():
         },
     }
     raw = json.dumps(raw_payload).encode()
-    scope = SlackScope(
-        use_native=True,
+    scope = SearchTarget(
         container="channels",
         channel_name="general",
         channel_id="C001",
-        target="messages",
     )
     lines = format_grep_results(raw, scope, "/slack")
     assert len(lines) == 1
@@ -103,13 +101,9 @@ def test_a_long_channel_name_reports_the_path_readdir_emits():
             }],
         },
     }).encode()
-    scope = SlackScope(
-        use_native=True,
-        container="channels",
-        channel_name=name,
-        channel_id="C001",
-        target="messages",
-    )
+    scope = SearchTarget(container="channels",
+                         channel_name=name,
+                         channel_id="C001")
     line = format_grep_results(raw, scope, "/slack")[0]
     dirname = line.split("/slack/channels/")[1].split("/")[0]
 

@@ -15,7 +15,16 @@
 import { describe, expect, it } from 'vitest'
 
 import { FileStat, FileType } from '../types.ts'
-import { contentSize, DIR_MODE, FILE_MODE, isDir, mtimeMs } from './stat_view.ts'
+import {
+  contentSize,
+  DIR_MODE,
+  FILE_MODE,
+  isDir,
+  isLink,
+  LINK_MODE,
+  mtimeMs,
+  posixMode,
+} from './stat_view.ts'
 
 const NAIVE = '2026-01-02T03:04:05'
 // Date.UTC is TZ-independent, so this pin fails under a local-time
@@ -72,5 +81,33 @@ describe('mode constants', () => {
   it('carry the POSIX type bits', () => {
     expect(DIR_MODE).toBe(0o040755)
     expect(FILE_MODE).toBe(0o100644)
+  })
+})
+
+describe('posixMode', () => {
+  it('keeps the default pair when the backend reports no mode', () => {
+    const dir = new FileStat({ name: 'd', type: FileType.DIRECTORY })
+    const file = new FileStat({ name: 'f', type: FileType.TEXT })
+    expect(posixMode(dir)).toBe(DIR_MODE)
+    expect(posixMode(file)).toBe(FILE_MODE)
+  })
+
+  it('takes the permission bits from the overlay and the type bits from the kind', () => {
+    const st = new FileStat({ name: 'f', type: FileType.TEXT, mode: 0o600 })
+    expect(posixMode(st)).toBe((FILE_MODE & ~0o7777) | 0o600)
+  })
+
+  // No POSIX system consults the bits on a symlink, so a chmod -h that
+  // stored some is not what a stat consumer is told.
+  it('reports a link as lrwxrwxrwx whatever the overlay holds', () => {
+    const st = new FileStat({ name: 'l', type: FileType.SYMLINK, mode: 0o600 })
+    expect(posixMode(st)).toBe(LINK_MODE)
+  })
+})
+
+describe('isLink', () => {
+  it('reads the kind', () => {
+    expect(isLink(new FileStat({ name: 'l', type: FileType.SYMLINK }))).toBe(true)
+    expect(isLink(new FileStat({ name: 'f', type: FileType.TEXT }))).toBe(false)
   })
 })

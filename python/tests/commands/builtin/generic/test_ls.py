@@ -9,8 +9,8 @@ from mirage.commands.builtin.generic.ls import (LS_FAILURE, LS_MINOR_PROBLEM,
                                                 exit_status_for, format_simple,
                                                 ls, walk)
 from mirage.ops.types import LinkView, MountView
-from mirage.types import (LINK_TARGET_KEY, FileStat, FileType, LsSortBy,
-                          PathSpec)
+from mirage.types import (LINK_TARGET_KEY, ContentType, FileStat, FileType,
+                          LsSortBy, PathSpec)
 
 
 def _spec(path: str) -> PathSpec:
@@ -74,7 +74,8 @@ def _file(name: str, size: int = 0, modified: str | None = None) -> FileStat:
     return FileStat(name=name,
                     size=size,
                     modified=modified,
-                    type=FileType.TEXT)
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 def _dir(name: str) -> FileStat:
@@ -696,6 +697,8 @@ def _mount_view(*roots: str) -> MountView:
     namespace merely owes children, which -R must still descend.
     """
     return MountView(descendants=lambda p:
+                     [r for r in roots if r.startswith(p.rstrip("/") + "/")],
+                     visible_descendants=lambda p:
                      [r for r in roots if r.startswith(p.rstrip("/") + "/")],
                      is_root=lambda p: p.rstrip("/") in roots,
                      root_of=lambda p: "/")

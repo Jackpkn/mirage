@@ -34,7 +34,7 @@ import type { EmailAccessor } from '../../../accessor/email.ts'
 import { read as emailRead } from '../../../core/email/read.ts'
 import { readdir as emailReaddir } from '../../../core/email/readdir.ts'
 import { stat as emailStat } from '../../../core/email/stat.ts'
-import { detectScope } from '../../../core/email/scope.ts'
+import { detectScope, NATIVE_KINDS } from '../../../core/email/scope.ts'
 import { searchAndFormat } from '../../../core/email/search.ts'
 import { EMAIL_IO } from './io.ts'
 import { SEARCH_HONORED, messageLines } from './grep.ts'
@@ -80,12 +80,12 @@ async function rgCommand(
   // same way: a line the push-down cannot answer takes the generic scan.
   const operand = pushdownOperand(paths, opts.flags, pattern, SEARCH_HONORED)
   if (operand !== null) {
-    const scope = detectScope(operand)
-    if (scope.useNative && scope.folder !== null && scope.folder !== '') {
+    const match = detectScope(operand)
+    if (NATIVE_KINDS.has(match.kind)) {
       const filePrefix = mountPrefixOf(operand.virtual, operand.resourcePath)
       const pairs = await searchAndFormat(
         accessor,
-        scope,
+        match.slots.folder ?? '',
         pattern,
         filePrefix,
         accessor.config.maxMessages,

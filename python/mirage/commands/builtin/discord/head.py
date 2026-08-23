@@ -30,9 +30,29 @@ from mirage.core.discord.history import date_to_snowflake
 from mirage.core.discord.read import read as discord_read
 from mirage.core.discord.render import history_jsonl_bytes
 from mirage.core.discord.scope import detect_scope
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.io.types import ByteSource, IOResult
 from mirage.provision.types import ProvisionResult
 from mirage.types import PathSpec
+
+
+def _chat_match(path: PathSpec) -> ScopeMatch | None:
+    """The day chain a chat.jsonl operand names, or None.
+
+    A literal ``.../<day>/chat.jsonl`` names the day itself; a
+    ``.../<day>/*.jsonl`` glob names the day dir plus a pattern only
+    chat.jsonl can satisfy. Both address one day's messages.
+
+    Args:
+        path (PathSpec): the head operand, glob or literal.
+    """
+    match = detect_scope(path.dir if path.pattern else path)
+    if path.pattern is not None:
+        if not path.pattern.endswith(".jsonl") or match.kind != "day":
+            return None
+    elif match.kind != "messages":
+        return None
+    return match
 
 
 async def head_provision(accessor: DiscordAccessor, paths: list[PathSpec],
@@ -56,21 +76,21 @@ async def head(accessor: DiscordAccessor, paths: list[PathSpec],
         return None, IOResult(exit_code=1, stderr=str(exc).encode())
     lines = parsed.lines if parsed.lines is not None else 10
     if paths:
-        scope = detect_scope(paths[0])
+        match = _chat_match(paths[0]) if len(paths) == 1 else None
 
         # Smart head: fetch only first N messages for a single date. Only
         # counts one API page can honor (Discord caps limit at 100) take
         # the shortcut; zero, negative (all-but-last-N) and larger counts,
         # -v headers, byte counts and -z all keep the generic path.
-        if (len(paths) == 1 and scope.level == "messages" and scope.channel_id
-                and scope.date_str and parsed.bytes_ is None
+        if (match is not None and parsed.bytes_ is None
                 and not parsed.zero_terminated and not parsed.verbose
                 and 0 < lines <= 100):
-            after = date_to_snowflake(scope.date_str)
-            before_int = int(date_to_snowflake(scope.date_str, end=True))
+            day = match.slots["day"]
+            after = date_to_snowflake(day)
+            before_int = int(date_to_snowflake(day, end=True))
             msgs = await discord_get(
                 accessor.config,
-                f"/channels/{scope.channel_id}/messages",
+                f"/channels/{match.slots['channel_id']}/messages",
                 params={
                     "after": after,
                     "limit": lines

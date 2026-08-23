@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { SlackAccessor } from '../../../accessor/slack.ts'
-import { read as slackRead } from '../../../core/slack/read.ts'
+import { read as slackRead, readRange as slackReadRange } from '../../../core/slack/read.ts'
 import { DU_MAX_ENTRIES } from '../../../core/slack/constants.ts'
 import { readdir as slackReaddir } from '../../../core/slack/readdir.ts'
 import { stat as slackStat } from '../../../core/slack/stat.ts'
@@ -23,7 +23,7 @@ import { streamFromBytes } from '../utils/wrap.ts'
 export const SLACK_IO: CommandIO<SlackAccessor> = {
   readdir: slackReaddir,
   readBytes: slackRead,
-  readRange: rangeOf(slackRead),
+  readRange: rangeOf(slackReadRange),
   readStream: (a, p, i) => streamFromBytes(slackRead, a, p, i),
   stat: slackStat,
   isMounted: () => true,

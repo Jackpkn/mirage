@@ -45,9 +45,9 @@
   },
   "unconstructible_resources": {
     "browser": {
-      "databricks_volume": "Registers commands in the browser bundle but has no browser registry factory. Both it and jaeger are pure HTTP, so the omission looks accidental rather than a runtime limit \u2014 confirm the intended browser scope before wiring them up.",
+      "databricks_volume": "Node-only on purpose, and not for want of a factory: the Databricks Files API sends no CORS headers, so a browser fetch is blocked whatever the config says. docs/typescript/setup/databricks_volume.mdx states it. The commands still register because they live in core, which every bundle carries.",
       "history": "See python: the history view mount is workspace-internal.",
-      "jaeger": "Registers commands in the browser bundle but has no browser registry factory. See databricks_volume."
+      "jaeger": "Same as databricks_volume, measured rather than assumed: on jaegertracing/jaeger:latest a GET carrying an Origin comes back with no Access-Control-Allow-Origin and the CORS preflight OPTIONS is a 404, so the query API is unreachable from a page. A deployment that fronts Jaeger with a CORS-adding proxy can register its own factory."
     },
     "node": {
       "history": "See python: the history view mount is workspace-internal."

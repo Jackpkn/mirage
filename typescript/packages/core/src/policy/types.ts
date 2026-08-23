@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { ScriptSource } from '../runtime/policy/types.ts'
 import type { Limit, PathSpec, Producer } from '../types.ts'
 
 /**
@@ -37,6 +38,22 @@ interface MountRootQuery {
 export type DenyScope = 'command' | 'operand'
 
 /**
+ * What the profile's rules say about one line: the document's own three
+ * verbs and nothing else.
+ *
+ * ALLOW is silence as well as consent, since a line no rule speaks
+ * about runs. DENY covers both refusals, and `Ruling.rule` tells them
+ * apart: a rule refused it, or, with no rule, the allow list did. Both
+ * exit 126; only the wording differs, because one has an operator's
+ * reason to print and the other has none.
+ */
+export enum Outcome {
+  ALLOW = 'allow',
+  ASK = 'ask',
+  DENY = 'deny',
+}
+
+/**
  * Refuse the command, op or session write, with a reason. Rendered by
  * the door it fires at: the command plane prints it in the scope's voice
  * (DenyScope), the op doors throw EACCES with it, the session door
@@ -53,8 +70,9 @@ export interface Deny {
 /**
  * One admission rule of the permissions document: refuse (or ask about)
  * matching commands, on matching paths when it names any. It is the
- * compiled element of `commands.deny` and `commands.ask` at every tier
- * and reaches the workspace only inside that document; the internal
+ * compiled element of `commands.deny` and `commands.ask` wherever the
+ * profile writes one, and reaches the workspace only inside that document;
+ * the internal
  * RulePolicy is what evaluates it. The document writes a rule in one of
  * three shapes, and each compiles to rules of this shape: a list of
  * command patterns (a whole-line rule on each, no paths), a mapping of
@@ -67,14 +85,14 @@ export interface Deny {
  * grammar: an entry with `*`, `?` or `[` is a pattern (repo fnmatch
  * dialect, `*` crossing `/`, a slashless pattern matching any name
  * component), anything else is an exact path and its subtree. An entry
- * holds a token (a blank one would be the root), and at the workspace
- * and profile tiers it is absolute or a name pattern; only the mount
- * tier's entries are relative, to the mount root. Empty
- * `commands` means every command, and a path-scoped rule carries exactly
- * one; empty `paths` refuses the command regardless of its operands.
- * `mount` is set by the compiler for a mount-tier rule (the mount root
- * the rule is scoped to: it applies only to a line whose cwd or paths
- * lie under it), never typed.
+ * holds a token (a blank one would be the root), is absolute or a name
+ * pattern, and inside a mount section must name something under that
+ * mount root. Empty `commands` means every command, and a path-scoped
+ * rule carries exactly one; empty `paths` refuses the command
+ * regardless of its operands. `mount` is set by the compiler for a rule
+ * written under a `mounts.<prefix>` section (the mount root the rule is
+ * scoped to: it applies only to a line whose cwd or paths lie under
+ * it), never typed.
  */
 export interface CommandRule {
   reason: string
@@ -83,15 +101,49 @@ export interface CommandRule {
   mount?: string
 }
 
+/** The profile's answer about one line, and what produced it. */
+export interface Ruling {
+  /** Which verb spoke. */
+  readonly outcome: Outcome
+  /**
+   * The rule that spoke; null on ALLOW, and on the DENY the allow list
+   * produces, which is not a rule and so has no reason of its own to
+   * print.
+   */
+  readonly rule: CommandRule | null
+  /**
+   * The operand a path-scoped rule matched, as typed, which the GNU
+   * voice prints (`rm: letters.txt: <reason>`); null when the rule
+   * reaches the whole line.
+   */
+  readonly matchedPath: string | null
+  /**
+   * Where in the document the rule was written, for a host reading a
+   * decision: `top` or `mounts./repo`. Empty on ALLOW, and
+   * `commands.allow` on the DENY the allow list produces, which is the
+   * one place a source names no rule.
+   */
+  readonly source: string
+  /**
+   * Every ask that won a subject of its own, `rule` among them, in the
+   * order the subjects were read. Only ASK fills it, and the line runs
+   * only once each has been answered: one nod covers the subject it was
+   * given for and no other, so a deeper ask on a destination cannot
+   * carry a source past the ask written for it. One entry is the
+   * ordinary case.
+   */
+  readonly asks: readonly CommandRule[]
+}
+
 /**
  * Admit the command only with a host approval. A preCommand answer:
  * `PermissionsPolicy` returns one for a `commands.ask` rule, a custom
  * policy for a coded condition, and both route to the workspace's
- * approval door (`Approvals`). A Deny from any policy outranks it: the
+ * decision ledger (`Decisions`). A Deny from any policy outranks it: the
  * chain keeps looking past an Ask for a Deny, so an approval can never
  * re-open a refusal. Command plane only: the op doors cannot wait on a
  * host. `rule` is the document rule that asked, absent for a coded
- * condition, for which the door keys a session grant on the program
+ * condition, for which the ledger keys a session answer on the program
  * that asked. Mirrors the Python Ask.
  */
 export interface Ask {
@@ -99,6 +151,15 @@ export interface Ask {
   /** Why the line needs sign-off, shown to the agent and the host. */
   reason: string
   rule?: CommandRule
+  /**
+   * Every rule the line has to be granted, `rule` among them and usually
+   * alone: a line whose operands were each asked about by a different
+   * rule carries them all. The door asks about them one at a time and
+   * runs the line only once each is answered, so a nod given for one
+   * operand cannot carry another. Absent for a coded Ask, whose one rule
+   * the door synthesizes.
+   */
+  rules?: readonly CommandRule[]
 }
 
 /**
@@ -112,48 +173,37 @@ export interface Ask {
 export type Action = Deny | Limit | Ask
 
 /**
- * The host's answer to an approval request. `allow_once` admits the
- * exact line one time, `allow_session` admits every line the rule
- * covers for the rest of the session, `deny` refuses the retry with the
- * ask's reason in the deny voice.
+ * How far an answer reaches.
+ *
+ * ONCE answers the one line that asked and is consumed by it, so the
+ * next identical line asks again. SESSION answers every line the same
+ * rule covers for the rest of the session. Nothing reaches further: an
+ * answer is never inherited by another session, and never re-opens a
+ * deny rule, which is consulted first. Mirrors the Python Scope.
  */
-export type ApprovalDecision = 'allow_once' | 'allow_session' | 'deny'
-
-/**
- * How far a host grant reaches through `Approvals.grant`: `once` is
- * `allow_once`, `session` is `allow_session`.
- */
-export type GrantScope = 'once' | 'session'
-
-/**
- * The host's standing answer to an asked line, held on the session until
- * the run it answers. `allow_once` and `deny` answer one retry of the
- * exact line (the expanded words and the cwd of the request) and are
- * consumed by it; `allow_session` answers every line the rule covers for
- * the rest of the session and stays. Session state like functions and
- * cwd: persisted with the session record, read through the session
- * manager so a fork or a background copy shares it, never inherited by
- * another session. Consulted only after the deny arm, so a grant never
- * re-opens a deny. `argv` is the line as expanded, command name first.
- * Mirrors the Python Grant.
- */
-export interface Grant {
-  decision: ApprovalDecision
-  /** The rule the answer is for; for a coded Ask the door synthesizes one over the program that asked. */
-  rule: CommandRule
-  argv: readonly string[]
-  cwd: string
+export enum Scope {
+  ONCE = 'once',
+  SESSION = 'session',
 }
 
 /**
- * One asked line, as the approver sees it. `id` is stable for the exact
- * line in the session (a digest of session, cwd and words), so a retry
- * asks the same question and the host answers it once. `argv` is the
- * words after the name, as expanded; `paths` the virtual paths the line
- * names; `rule` the rule that asked (synthesized for a coded Ask).
- * Mirrors the Python ApprovalRequest.
+ * One asked line, and the answer to it once a host gives one.
+ *
+ * The ledger's entry, and the only shape the permissions layer keeps
+ * about an ask. It is written when a rule asks and rewritten when a
+ * host answers, so listing what is waiting and reading what was settled
+ * are the same query over the same records rather than two stores that
+ * can disagree.
+ *
+ * A retry is matched by comparing `command`, `argv` and `cwd` against
+ * what was recorded, not by re-deriving an id, so two lines that differ
+ * only where the recorded fields differ can never collide.
+ *
+ * `outcome` is the host's answer, ALLOW or DENY, and null while nobody
+ * has answered. ASK is not an answer, it is the question. Mirrors the
+ * Python Decision.
  */
-export interface ApprovalRequest {
+export interface Decision {
   id: string
   sessionId: string
   agentId: string
@@ -163,6 +213,9 @@ export interface ApprovalRequest {
   paths: readonly string[]
   reason: string
   rule: CommandRule
+  outcome: Outcome | null
+  scope: Scope
+  note: string
 }
 
 /**
@@ -180,37 +233,72 @@ export interface Pending {
  * satisfies it structurally, so the door reads and writes a session's
  * grants by id without this package importing the workspace, and always
  * on the registered session rather than the fork a line may be running
- * in. Mirrors the Python SessionGrantsQuery.
+ * in. Mirrors the Python SessionDecisionsQuery.
  */
-export interface SessionGrantsQuery {
-  grantsOf(sessionId: string): readonly Grant[]
-  setGrants(sessionId: string, grants: readonly Grant[]): void
+export interface SessionDecisionsQuery {
+  decisionSessions(): readonly string[]
+  decisionsOf(sessionId: string): readonly Decision[]
+  setDecisions(sessionId: string, records: readonly Decision[]): void
   flush(): Promise<void>
 }
 
 /**
- * One tier's `commands` block, compiled. A session is evaluated over an
- * array of these: the mount tiers in registration order, the workspace
- * tier, then the session's own (profile tightened by the inline
- * document). `allow` intersects across tiers (a line must match one
- * pattern in every tier that has a list), `ask` and `deny` union, in
- * tier order for the message. `allow` null when the tier states no list.
+ * One profile's admission rules, compiled: the whole permission document a
+ * session runs under. A session is evaluated against exactly one of
+ * these. It holds the profile's allow list, its ask and deny rules, and
+ * the rules its mount sections carry, each stamped with the mount it
+ * was written under so it applies to a line working inside that mount.
+ * There is nothing above it and nothing beside it: two rules that both
+ * match are resolved by anchor depth, then by verb (`policy/match/
+ * decide`). `allow` null when the profile states no list.
  */
-export interface CommandsSpec {
+export interface AdmissionRules {
   allow: readonly string[] | null
   ask: readonly CommandRule[]
   deny: readonly CommandRule[]
 }
 
 /**
+ * The rules that apply to one line, each with the verb it carries, deny
+ * before ask and in the order written. Built once per line by `decide`
+ * and read again at every subject of it.
+ */
+export type LiveRules = readonly (readonly [Outcome, CommandRule])[]
+
+/**
  * The one session question the permissions policy asks. The
  * SessionManager satisfies it structurally, so the policy reads the
- * layers by session id without this package importing the workspace.
+ * rules by session id without this package importing the workspace.
  * An id the manager does not know (or the empty id of an unbound door)
- * answers the bound tiers alone, so it still fails toward refusal.
+ * answers the default profile's rules, so it still fails toward refusal.
  */
 export interface SessionCommandsQuery {
-  commandsOf(sessionId: string): readonly CommandsSpec[]
+  commandsOf(sessionId: string): AdmissionRules | null
+}
+
+/**
+ * One profile's script, as a session carries it: the program, the
+ * engine it runs on, and the profile it speaks for. Compiled off
+ * `SessionProfile.script` beside the admission rules, and evaluated per
+ * command by `ScriptPolicy` with the command's facts as `ctx`; its
+ * answer is allow (no opinion), deny or ask. `profile` is the
+ * profile's name, which the script reads as `ctx.profile`; empty for a
+ * profile document passed to `createSession` without a name.
+ */
+export interface ProfileScript {
+  readonly profile: string
+  readonly script: ScriptSource
+  readonly runtime: string
+}
+
+/**
+ * The one session question the script policy asks, satisfied the same
+ * way `SessionCommandsQuery` is: the policy reads a session's script by
+ * the id the door put in the context, falling back to the default
+ * profile's for an id the manager does not know.
+ */
+export interface SessionScriptsQuery {
+  scriptOf(sessionId: string): ProfileScript | null
 }
 
 /** Facts about one classified command, as preCommand hooks see it. */
@@ -250,10 +338,11 @@ export interface CommandContext {
   /** The head of `tokens` that names what runs: the name plus a CLI's verb path. */
   program?: readonly string[]
   /**
-   * Whether the word is a tool the allow lists govern. The door clears
-   * it for the shell's own grammar (the grammar-tier builtins), the
-   * agent's own function where the function is what runs, and an
-   * executed path: none of those is tool use, so an allow list never
+   * Whether the word is a tool the allow lists govern, which every
+   * named command is, shell builtins included. The door clears it for
+   * the agent's own function where the function is what runs, and for
+   * an executed path: neither is a name a list could hold, and every
+   * line either runs passes the gate itself, so an allow list never
    * refuses them, though a deny rule still can. Absent reads as true.
    */
   tool?: boolean
@@ -328,4 +417,43 @@ export const VALIDITY: Readonly<
   postOps: new Set(['deny', 'limit']),
   postExecute: new Set(['limit']),
   preSession: new Set(['deny']),
+}
+
+/**
+ * What one command of a line would do, without doing it.
+ *
+ * Produced by the same gate the dispatcher runs, so a host reading this
+ * and an agent typing the line cannot be told different things.
+ * Everything the agent would see is here as it would arrive: `exitCode`
+ * and `stderr` come out of the one outcome table, so an explanation of a
+ * refused line is byte-identical to the refusal.
+ *
+ * `outcome` is the document's answer and `rule` says who gave it. The
+ * two refusals the allow list produces both arrive as `DENY` with no
+ * rule, and `exitCode` separates them: 127 for a head word the session
+ * cannot see, which reads as bash's "command not found" so an unlisted
+ * tool never leaks that it exists, and 126 for a line whose head was
+ * visible but which no allow entry covers.
+ */
+export interface Explanation {
+  /** The head word, as the gate read it. */
+  readonly command: string
+  /** The words after it. */
+  readonly argv: readonly string[]
+  /** What the profile's rules say. */
+  readonly outcome: Outcome
+  /** The rule that spoke, null when the allow list did or nothing did. */
+  readonly rule: CommandRule | null
+  /** The rule's reason, empty when there is no rule. */
+  readonly reason: string
+  /** Where in the document the rule was written. */
+  readonly source: string
+  /** The operand a path-scoped rule matched, as typed. */
+  readonly matchedPath: string | null
+  /** The paths the rules were shown, after the session's hides. */
+  readonly paths: readonly string[]
+  /** What the line would exit with, 0 to run. */
+  readonly exitCode: number
+  /** What the agent would read, empty to run. */
+  readonly stderr: string
 }

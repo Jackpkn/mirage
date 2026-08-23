@@ -33,14 +33,7 @@ import {
   parseMountMode,
 } from '@struktoai/mirage-core/types'
 import { snakeToCamel } from '@struktoai/mirage-core/utils/normalize'
-import {
-  parseMountPermissions,
-  parseSessionProfile,
-  parseWorkspacePermissions,
-  type MountPermissions,
-  type SessionProfile,
-} from '@struktoai/mirage-core/workspace/session/permissions'
-import { inherit } from '@struktoai/mirage-core/workspace/session/resolve'
+import { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
 import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3'
@@ -151,8 +144,8 @@ const TOP_LEVEL_KEYS = [
   'clis',
   'runtimes',
   'policy',
-  'permissions',
   'profiles',
+  'profile',
   'mode',
   'consistency',
   'default_session_id',
@@ -170,7 +163,6 @@ const MOUNT_KEYS = [
   'command_limits',
   'backend',
   'mountpoint',
-  'permissions',
 ] as const
 const CACHE_KEYS: Record<string, readonly string[]> = {
   ram: ['type', 'limit', 'max_drain_bytes'],
@@ -333,9 +325,6 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
     for (const [prefix, block] of Object.entries(raw.mounts)) {
       if (!isPlainObject(block)) throw new Error(`mount \`${prefix}\` must be a mapping`)
       rejectUnknownKeys(block, MOUNT_KEYS, `mount \`${prefix}\``)
-      if (block.permissions !== undefined && block.permissions !== null) {
-        parseMountPermissions(block.permissions, `mount \`${prefix}\` permissions`)
-      }
     }
   }
   if (isPlainObject(raw.clis)) {
@@ -344,14 +333,18 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
       rejectUnknownKeys(block, CLI_KEYS, `cli \`${name}\``)
     }
   }
-  // The permissions document validates through the core's own
-  // validators (the same shape the SDK and REST take), so a typo like
-  // `path:` on a deny rule fails here rather than widening the rule.
-  if (raw.permissions !== undefined && raw.permissions !== null) {
-    parseWorkspacePermissions(raw.permissions, 'permissions')
-  }
+  // The profiles validate through the core's own validators (the same
+  // shape the SDK and REST take), so a typo like `path:` on a deny rule
+  // fails here rather than widening the rule.
   if (raw.profiles !== undefined && raw.profiles !== null) {
     parseProfiles(raw.profiles)
+  }
+  if (raw.profile !== undefined && raw.profile !== null) {
+    if (typeof raw.profile !== 'string') throw new Error('profile must be a string')
+    const known = isPlainObject(raw.profiles) ? Object.keys(raw.profiles) : []
+    if (!known.includes(raw.profile)) {
+      throw new Error(`unknown profile ${JSON.stringify(raw.profile)}`)
+    }
   }
   validateTypedBlock(raw.cache, CACHE_KEYS, 'cache')
   validateTypedBlock(raw.index, INDEX_KEYS, 'index')
@@ -420,16 +413,42 @@ function parseLimits(
 
 /**
  * Validate the `profiles:` block: every entry through the core profile
- * validator, then every `extends` chain resolved once, so an unknown
- * parent or a cycle is a load error rather than a first-session one.
+ * validator, so a misspelled field is a load error rather than a
+ * first-session one. A profile is the whole document it runs under, so
+ * there is no chain to resolve here.
  */
 function parseProfiles(raw: unknown): Record<string, SessionProfile> {
   if (!isPlainObject(raw)) throw new Error('config `profiles` must be a mapping')
   const out: Record<string, SessionProfile> = {}
   for (const [name, block] of Object.entries(raw)) {
+    // A path-form script stays the string the config wrote: the check
+    // door validates shape only, and runs before `absolutizeScripts`
+    // has rebased the path onto the config file's directory, so reading
+    // it here would resolve against the process cwd. The workspace door
+    // (`toWorkspaceOptions`) loads it, the python loader's split.
     out[name] = parseSessionProfile(block, `profile \`${name}\``)
   }
-  for (const name of Object.keys(out)) inherit(out, name)
+  return out
+}
+
+/**
+ * Load each profile's path-form script into a ScriptSource.
+ *
+ * By this door the path is absolute for a file config (the check door
+ * rebased it onto the config file's directory); an object config's
+ * relative path resolves against the process cwd, as in Python. Code
+ * that passes a loaded ScriptSource is left alone.
+ */
+function loadProfileScripts(
+  profiles: Record<string, SessionProfile>,
+): Record<string, SessionProfile> {
+  const out: Record<string, SessionProfile> = {}
+  for (const [name, profile] of Object.entries(profiles)) {
+    out[name] =
+      typeof profile.script === 'string'
+        ? { ...profile, script: loadScriptSource(profile.script) }
+        : profile
+  }
   return out
 }
 
@@ -484,8 +503,6 @@ export interface MountBlock {
   /** vfs (default), fuse, or fskit. Mirrors Python's MountBlock.backend. */
   backend?: string
   mountpoint?: string
-  /** The mount-owned permissions block, validated by the core's parseMountPermissions. */
-  permissions?: unknown
 }
 
 interface RamIndexBlock {
@@ -584,10 +601,10 @@ export interface WorkspaceConfigRaw {
   clis?: Record<string, CLIBlock> | null
   runtimes?: (string | Record<string, unknown>)[] | null
   policy?: string | null
-  /** The workspace-tier permissions document; validated by the core's parseWorkspacePermissions. */
-  permissions?: unknown
-  /** Named session profiles; validated by parseProfiles. */
+  /** The profiles (`profiles:`); every entry validated by parseProfiles. */
   profiles?: unknown
+  /** Which profile shapes a session created without one. */
+  profile?: unknown
   mode?: string
   consistency?: string
   defaultSessionId?: string
@@ -677,7 +694,17 @@ function absolutizeScripts(raw: Record<string, unknown>, base: string): void {
     for (const block of Object.values(raw.clis)) {
       if (!isPlainObject(block)) continue
       absolutizeScriptKey(block, base)
-      absolutizeCliRef(block, base)
+      absolutizeCodeRef(block, 'cli', base)
+    }
+  }
+  if (isPlainObject(raw.mounts)) {
+    for (const block of Object.values(raw.mounts)) {
+      if (isPlainObject(block)) absolutizeCodeRef(block, 'resource', base)
+    }
+  }
+  if (isPlainObject(raw.profiles)) {
+    for (const block of Object.values(raw.profiles)) {
+      if (isPlainObject(block)) absolutizeScriptKey(block, base)
     }
   }
 }
@@ -691,21 +718,22 @@ function absolutizeScriptKey(entry: Record<string, unknown>, base: string): void
 }
 
 /**
- * Rebase one `clis` entry's path-form `cli` reference onto `base`.
+ * Rebase a path-form colon reference under `key` onto `base`.
  *
- * `cli: ./tool.mjs:TREE` means "next to the config file", the same
- * build-context rule `script:` follows; without this the pointer reaches
- * `loadAttr` relative and resolves against the server process's cwd. A
- * package specifier (`my-clis:JIRA`) is left alone: Node resolves it,
- * not the filesystem. The split is `splitRef`/`isModulePath`, the same
- * pair `loadAttr` uses, so the two cannot disagree about what a path is.
+ * `cli: ./tool.mjs:TREE` and `resource: ./wiki.mjs:WikiResource` both
+ * mean "next to the config file", the same build-context rule `script:`
+ * follows; without this the pointer reaches `loadAttr` relative and
+ * resolves against the server process's cwd. A package specifier
+ * (`my-clis:JIRA`) is left alone: Node resolves it, not the filesystem.
+ * The split is `splitRef`/`isModulePath`, the same pair `loadAttr` uses,
+ * so the two cannot disagree about what a path is.
  */
-function absolutizeCliRef(entry: Record<string, unknown>, base: string): void {
-  const ref = entry.cli
+function absolutizeCodeRef(entry: Record<string, unknown>, key: string, base: string): void {
+  const ref = entry[key]
   if (typeof ref !== 'string' || !ref.includes(':')) return
   const [source, attr] = splitRef(ref)
   if (!isModulePath(source) || isAbsolute(source)) return
-  entry.cli = `${join(base, source)}:${attr}`
+  entry[key] = `${join(base, source)}:${attr}`
 }
 
 /**
@@ -845,19 +873,12 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   const consistency = coerceConsistency(cfg.consistency)
   const resources: Record<string, [Resource, MountMode, Record<string, Limit>]> = {}
   const kernelMounts: Record<string, [MountBackend, string | undefined]> = {}
-  const mountPermissions: Record<string, MountPermissions> = {}
   for (const [prefix, block] of Object.entries(cfg.mounts)) {
     const r = await buildResource(block.resource, block.config ?? {})
     const m = coerceMountMode(block.mode, wsMode)
     resources[prefix] = [r, m, parseLimits(block.command_limits)]
     const backend = (block.backend ?? MountBackend.VFS) as MountBackend
     if (KERNEL_BACKENDS.includes(backend)) kernelMounts[prefix] = [backend, block.mountpoint]
-    if (block.permissions !== undefined && block.permissions !== null) {
-      mountPermissions[prefix] = parseMountPermissions(
-        block.permissions,
-        `mount \`${prefix}\` permissions`,
-      )
-    }
   }
   const index = buildIndex(cfg.index)
   const stateStore = buildStateStore(cfg.store)
@@ -886,13 +907,12 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       ...(cfg.policy !== undefined && cfg.policy !== null
         ? { policy: loadScriptSource(cfg.policy) }
         : {}),
-      ...(cfg.permissions !== undefined && cfg.permissions !== null
-        ? { permissions: parseWorkspacePermissions(cfg.permissions, 'permissions') }
-        : {}),
       ...(cfg.profiles !== undefined && cfg.profiles !== null
-        ? { profiles: parseProfiles(cfg.profiles) }
+        ? { profiles: loadProfileScripts(parseProfiles(cfg.profiles)) }
         : {}),
-      ...(Object.keys(mountPermissions).length > 0 ? { mountPermissions } : {}),
+      ...(cfg.profile !== undefined && cfg.profile !== null
+        ? { profile: cfg.profile as string }
+        : {}),
       ...(cliEntries !== undefined ? { clis: cliEntries } : {}),
     },
     kernelMounts,
@@ -980,12 +1000,14 @@ async function buildCliEntries(
     if (block.config !== undefined && !isPlainObject(block.config)) {
       throw new Error(`clis entry '${name}': config must be a mapping`)
     }
-    // A `cli` value carrying a colon points at code the way `resource:`
-    // never does: `./tool.mjs:TALLY` (a file) or `my-clis:JIRA` (a
-    // package specifier). A bare name stays a name for the workspace to
-    // resolve against the registered specs. Mirrors the `":" in name`
-    // branch of Python's `cli_spec_for`, one layer up: `cliSpecFor`
-    // lives in core, which has no filesystem and is synchronous.
+    // A `cli` value carrying a colon points at code: `./tool.mjs:TALLY`
+    // (a file) or `my-clis:JIRA` (a package specifier). A bare name stays
+    // a name for the workspace to resolve against the registered specs.
+    // Mirrors the `":" in name` branch of Python's `cli_spec_for`, one
+    // layer up: `cliSpecFor` lives in core, which has no filesystem and
+    // is synchronous. A `resource:` value reads the same way, resolved by
+    // `buildResource` rather than here, because a mount block reaches the
+    // registry and a `clis` block does not.
     const entry = hasScript
       ? new CLISpec({
           name,

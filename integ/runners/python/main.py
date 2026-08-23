@@ -24,10 +24,6 @@ import adapters  # noqa: E402
 import harness  # noqa: E402
 
 from mirage.types import ConsistencyPolicy  # noqa: E402
-from mirage.workspace.session import SessionProfile  # noqa: E402
-
-PROFILE_KEYS = frozenset(
-    {"extends", "cwd", "env", "mounts", "paths", "vars", "commands"})
 
 HOST = "python"
 
@@ -40,7 +36,8 @@ def _emit_or_record(emit: list[dict] | None,
                     out: str,
                     err: str,
                     elapsed: float,
-                    check_out: str | None = None) -> None:
+                    check_out: str | None = None,
+                    notes: list[str] | None = None) -> None:
     if emit is not None:
         emit.append({
             "target": target_id,
@@ -53,7 +50,8 @@ def _emit_or_record(emit: list[dict] | None,
     elif report is not None:
         report.record(
             target_id, case["id"],
-            harness.compare(case, exit_code, out, err, elapsed, check_out))
+            harness.compare(case, exit_code, out, err, elapsed, check_out,
+                            notes))
 
 
 async def run_consistency_case(target: dict, case: dict,
@@ -81,28 +79,41 @@ async def run_target(target: dict, cases: list[dict], root: Path,
                                        root)
             if mount.get("seed_root"):
                 await harness.seed_mount_root(ws, mount["path"])
-        # Sessions a case can name via its "session" field. Mount grants take
-        # either the mapping form ({"/data": "read"}) or the list form
-        # (["/data"], which inherits the mount's own mode). A profile form is
-        # the permissions document itself ({"mounts": ..., "paths": {"hide":
-        # ...}, "vars": {"hide": ...}, "env": ..., "cwd": ...}), validated by
-        # the same model the YAML door uses; it is told apart by its keys,
-        # which never start with "/".
+        # Sessions a case can name via its "session" field, through the
+        # two doors a host really has. A string names one of the
+        # target's profiles (`profile=`), which is the whole document that
+        # session runs under. A mapping is an inline document added to
+        # the default profile (`permissions=`): it may add ask and deny
+        # rules and hides, never an allow list, so a session that needs
+        # its own allow list has to be a profile. An empty mapping is the
+        # default profile with nothing added.
+        # A profile written by a script is ready only after hydration,
+        # which every embedding program already awaits before it creates
+        # a session; the battery is a program like any other.
+        await ws.ensure_sessions_loaded()
         for session_id, spec in (target.get("sessions") or {}).items():
-            if isinstance(spec, dict) and (set(spec) & PROFILE_KEYS):
-                ws.create_session(session_id,
-                                  profile=SessionProfile.model_validate(spec))
+            if isinstance(spec, str):
+                ws.create_session(session_id, profile=spec)
             else:
-                ws.create_session(session_id, mounts=spec)
+                ws.create_session(session_id, permissions=spec or None)
         primary = target["mounts"][0]["path"]
+        # Only a target carrying a permissions document has a verdict
+        # for `explain` to predict, and only there is the extra dry run
+        # per case worth its time. The reasons double as the tell that a
+        # refusal came from the policy layer rather than from the
+        # command itself.
+        reasons = harness.rule_reasons({
+            "profiles": target.get("profiles"),
+            "sessions": target.get("sessions"),
+        })
         for case in selected:
             if "consistency" in case:
                 continue
             bound = harness.bind_mount(case, primary)
-            exit_code, out, err, elapsed, check_out = await harness.run_case(
-                ws, bound)
+            ran = await harness.run_case(ws, bound, reasons)
+            exit_code, out, err, elapsed, check_out, notes = ran
             _emit_or_record(emit, report, target["id"], bound, exit_code, out,
-                            err, elapsed, check_out)
+                            err, elapsed, check_out, notes)
     finally:
         await cleanup()
     for case in selected:

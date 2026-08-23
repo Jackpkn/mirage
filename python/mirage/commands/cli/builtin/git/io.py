@@ -68,18 +68,19 @@ async def restore_entry(dispatch: DispatchFn,
     A 120000 entry is a symlink whose blob is the target string, so it
     is restored through the namespace rather than written as content:
     writing the blob would leave a regular file spelling the target.
-    The namespace overwrites a link of the same name, which is what a
-    checkout that changes where a link points needs.
 
-    Whatever is already there goes first when it is the other kind,
-    because the two live on different planes and neither replaces the
-    other. Writing a regular blob at a path the namespace holds a link
-    for follows the link and lands the content in the file it points
-    at, corrupting a path no branch touched while the link stays; and
-    linking over a regular file leaves that file behind the link, ready
-    to reappear when the link goes. git replaces the entry in both
-    directions. The check is a namespace lookup, so the ordinary
-    file-for-file case costs nothing.
+    Whatever is already there goes first, whichever kind it is, because
+    git replaces a tree entry rather than merging with it. Two of the
+    four combinations are the ones that corrupt state: writing a regular
+    blob at a path the namespace holds a link for follows the link and
+    lands the content in the file it points at, damaging a path no
+    branch touched while the link stays; and linking over a regular file
+    leaves that file behind the link, ready to reappear when the link
+    goes. The fourth, a link over a link, is the retarget a checkout
+    does when a branch moves where a link points: symlink(2) does not
+    overwrite, so the old name is removed rather than replaced in place.
+    The check is a namespace lookup, so the ordinary file-for-file case
+    costs nothing.
 
     Args:
         dispatch (DispatchFn): workspace op dispatcher.
@@ -91,8 +92,7 @@ async def restore_entry(dispatch: DispatchFn,
     """
     linked = links is not None and links.stat_at(path) is not None
     if mode == SYMLINK:
-        if not linked:
-            await remove_file(dispatch, path)
+        await remove_file(dispatch, path)
         await dispatch("symlink",
                        PathSpec.from_str_path(path),
                        target=blob.decode("utf-8", errors="replace"))

@@ -20,7 +20,7 @@ import { IOResult } from '../../../../io/types.ts'
 import type { CLIInstall } from '../../../cli/types.ts'
 import { DEV_PREFIX } from '../../../mount/registry.ts'
 import type { MountRegistry } from '../../../mount/registry.ts'
-import { commandVisible } from '../../../route/route.ts'
+import { commandVisible, verbVisible } from '../../../lookup/lookup.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
 import type { Result } from '../shared.ts'
@@ -119,19 +119,34 @@ function renderSection(title: string, entries: readonly ManEntry[]): string {
 }
 
 /**
- * The page for one node of an installed CLI, null when the verbs miss.
+ * The page for one node of an installed CLI, null when the verbs miss or
+ * the session cannot see the node they name.
  *
  * The page is the node's own `--help`, rendered by the one renderer that
  * serves `--help` and the bare-group refusal, so a CLI's manual cannot
  * drift from the program. A tree is a manual with sections: `man linear`
  * lists the verbs and `man linear issue create` is the page for one leaf.
+ *
+ * The allow list narrows a tree the same way it narrows the bare listing,
+ * one level down: a profile holding `linear issue list` reads a manual for
+ * that verb and nothing else, because a row it cannot run is an
+ * advertisement for a 126.
  */
-function renderCliEntry(head: string, verbs: readonly string[], spec: CLISpec): string | null {
+function renderCliEntry(
+  head: string,
+  verbs: readonly string[],
+  spec: CLISpec,
+  session: Session,
+): string | null {
   const found = findNode(spec, verbs)
   if (found === null) return null
+  const { node, path } = found
+  if (!verbVisible(head, path, session)) return null
   // The root's dialect, so a manual page reads exactly like the --help it
   // renders from.
-  return nodeHelp([head, ...found.path].join(' '), found.node, spec.usageStyle)
+  return nodeHelp([head, ...path].join(' '), node, spec.usageStyle, (verb) =>
+    verbVisible(head, [...path, verb], session),
+  )
 }
 
 /**
@@ -162,10 +177,11 @@ function cliMan(
   verbs: readonly string[],
   cmdStr: string,
   registry: MountRegistry,
+  session: Session,
 ): Result {
   const enc = new TextEncoder()
   const head = install.name
-  const entry = renderCliEntry(head, verbs, install.spec)
+  const entry = renderCliEntry(head, verbs, install.spec, session)
   if (entry === null) {
     const err = enc.encode(`man: no entry for ${[head, ...verbs].join(' ')}\n`)
     return [
@@ -200,7 +216,7 @@ export function handleMan(args: string[], registry: MountRegistry, session: Sess
   // args[0]. A word the session cannot see has no page.
   const visible = commandVisible(name, session)
   const install = registry.clis.get(name)
-  if (install !== null && visible) return cliMan(install, args.slice(1), cmdStr, registry)
+  if (install !== null && visible) return cliMan(install, args.slice(1), cmdStr, registry, session)
   const entry = visible ? (commandEntry(name, registry) ?? builtinEntry(name)) : null
   if (entry === null) {
     const err = enc.encode(`man: no entry for ${name}\n`)

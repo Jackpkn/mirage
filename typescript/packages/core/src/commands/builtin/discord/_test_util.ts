@@ -115,9 +115,9 @@ export async function seedChannel(
     const entries: [string, IndexEntry][] = dates.map((d) => [
       d,
       new IndexEntry({
-        id: `${channelDirname}:${d}`,
+        id: `${channelId}:${d}`,
         name: d,
-        resourceType: 'discord/date_dir',
+        resourceType: 'discord/history',
         vfsName: d,
       }),
     ])
@@ -129,7 +129,7 @@ export async function seedChannel(
         [
           'chat.jsonl',
           new IndexEntry({
-            id: `${channelDirname}:${d}:chat`,
+            id: `${channelId}:${d}:chat`,
             name: 'chat.jsonl',
             resourceType: 'discord/chat_jsonl',
             vfsName: 'chat.jsonl',
@@ -138,13 +138,17 @@ export async function seedChannel(
         [
           'files',
           new IndexEntry({
-            id: `${channelDirname}:${d}:files`,
+            id: `${channelId}:${d}:files`,
             name: 'files',
             resourceType: 'discord/files_dir',
             vfsName: 'files',
+            extra: { channel_id: channelId, date: d },
           }),
         ],
       ])
+      // The real day fetch seeds the files listing in the same write, so
+      // the fixture does too; without it a walk would refetch the day.
+      await index.setDir(`${dateKey}/files`, [])
     }
   }
 }

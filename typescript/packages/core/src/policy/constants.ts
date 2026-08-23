@@ -12,13 +12,31 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { ApprovalDecision } from './types.ts'
+import { Outcome } from './types.ts'
 
 /**
  * A whole-command refusal exits as bash does for a command it found but
  * may not run.
  */
 export const POLICY_DENIED_EXIT = 126
+
+/**
+ * Which verb wins when two rules speak about the same subject at the
+ * same anchor depth: deny before ask. Both gates order by it, which is
+ * what keeps the entry gate from contradicting the admission gate.
+ */
+export const DENY_FIRST = 0
+export const ASK_SECOND = 1
+
+/**
+ * The same ordering as the outcome a rule produces, for the gate that
+ * has already named the verb. ALLOW is absent because only a rule ties
+ * against a rule, and nothing in the document says allow at a path.
+ */
+export const VERB_ORDER: Readonly<Record<string, number>> = {
+  [Outcome.DENY]: DENY_FIRST,
+  [Outcome.ASK]: ASK_SECOND,
+}
 
 /**
  * The reason a bare command pattern under `commands.deny` carries, and
@@ -32,13 +50,6 @@ export const DEFAULT_ASK_REASON = 'no standing approval'
  * matches whatever follows, which a prefix already does.
  */
 export const WILDCARD = '*'
-
-/**
- * The approval decisions that answer one retry of the exact line (the
- * words and cwd of the request) and are consumed by it; `allow_session`
- * is the one that covers the rule and stays.
- */
-export const EXACT_LINE_DECISIONS: ReadonlySet<ApprovalDecision> = new Set(['allow_once', 'deny'])
 
 /**
  * Ops that act on a whole subtree at once, so a pure path rule refuses
@@ -68,3 +79,6 @@ export const SUBTREE_COMMANDS: ReadonlySet<string> = new Set(['rm', 'rmdir', 'mv
  * hidden path is the hide arm's, and stays ENOENT.
  */
 export const METADATA_OPS: ReadonlySet<string> = new Set(['stat', 'exists'])
+
+/** How long one profile script may run before its profile is refused. */
+export const SCRIPT_EVAL_TIMEOUT_SECONDS = 10.0

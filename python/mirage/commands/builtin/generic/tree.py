@@ -8,11 +8,10 @@ from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
-from mirage.context import mount_allowed
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import MountView, ReaddirPath, StatPath
 from mirage.types import FileStat, FileType, PathSpec, ReaddirFn
-from mirage.utils.errors import WALK_ERRORS
+from mirage.utils.errors import MISS_ERRORS, WALK_ERRORS
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.key_prefix import rekey
 
@@ -65,14 +64,12 @@ def _child_mounts(mounts: MountView | None, directory: str) -> list[str]:
     somebody else. Either way the name has to come from the mount table,
     the same way `ls` injects it.
 
-    Session-filtered, because a crossing entry is drawn from the mount
-    table alone: its row is synthesized as a directory without asking
-    any backend, so the dispatcher never gets the chance to refuse it
-    and an ungranted mount's name would reach the drawing. `ls` filters
-    the same fact through `child_mount_names`. Note this is the opposite
-    of what `du` wants from the same view: there an ungranted mount
-    still shadows the parent's keys, so its prefix must stay in the
-    list even though the walk never enters it.
+    A crossing entry's row is drawn from the mount table alone: it is
+    synthesized as a directory without asking any backend, so the
+    dispatcher never gets the chance to refuse it. `tree` names the
+    boundary rather than avoiding it, so it reads the visible list; `du`
+    reads the other one from the same view, because there a hidden mount
+    still shadows the parent's keys and its prefix has to stay.
 
     Args:
         mounts (MountView | None): the boundary facts.
@@ -82,8 +79,8 @@ def _child_mounts(mounts: MountView | None, directory: str) -> list[str]:
         return []
     base = directory.rstrip("/")
     return [
-        root for root in mounts.descendants(directory)
-        if posixpath.dirname(root) == (base or "/") and mount_allowed(root)
+        root for root in mounts.visible_descendants(directory)
+        if posixpath.dirname(root) == (base or "/")
     ]
 
 
@@ -118,12 +115,23 @@ async def _walk(
     dirs = 0
     files = 0
     unopened = 0
+    # The mount table is read before the backend, not merged after it. A
+    # directory that exists only because mounts sit under it (`/repos`
+    # when `/repos/alpha` is mounted) has no backend to list it, so the
+    # readdir raises and a merge below it never runs: `tree` reported the
+    # one path whose children it could name for certain as unopenable.
+    child_mounts = _child_mounts(mounts, path.virtual)
     try:
         entries = sorted(await readdir(path, index))
     except WALK_ERRORS as exc:
-        warnings.append(f"tree: '{path.raw_path}': {exc}")
-        return lines, dirs, files, 1
-    child_mounts = _child_mounts(mounts, path.virtual)
+        # An absence only. A directory the backend refused (EACCES,
+        # ENOTSUP) is there and holds data, so it stays a warning and an
+        # unopened row even when mounts sit under it; swallowing that to
+        # draw the children would report a readable tree that is not.
+        if not (child_mounts and isinstance(exc, MISS_ERRORS)):
+            warnings.append(f"tree: '{path.raw_path}': {exc}")
+            return lines, dirs, files, 1
+        entries = []
     if child_mounts:
         entries = sorted(set(entries) | set(child_mounts))
 

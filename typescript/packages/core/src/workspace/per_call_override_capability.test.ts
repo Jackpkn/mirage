@@ -16,17 +16,16 @@ import { describe, expect, it } from 'vitest'
 import { makeWorkspace, stdoutStr } from './fixtures/workspace_fixture.ts'
 
 // `Workspace.execute({cwd, env})` constructs a new Session via
-// `targetSession.fork({...})`. fork() must propagate mountModes so
-// the per-call override session cannot bypass the parent's allowlist.
-// Without fork() (or without manually copying mountModes in the old
-// inline `new Session({...})` ctor) this test would fail because the
-// override session would have mountModes === null and assertMountAllowed
-// would short-circuit on the `if (sess?.mountModes == null) return`
-// branch in context/session_context.ts.
-describe('per-call cwd/env override preserves mountModes', () => {
-  it('execute({cwd}) on a restricted session still rejects out-of-allowlist mounts', async () => {
+// `targetSession.fork({...})`. fork() must propagate hiddenPaths so the
+// per-call override session cannot see past the parent's hides. Without
+// fork() (or without manually copying hiddenPaths in the old inline
+// `new Session({...})` ctor) this test would fail because the override
+// session would have hiddenPaths === null and the hide filter would
+// short-circuit in context/session_context.ts.
+describe('per-call cwd/env override preserves hiddenPaths', () => {
+  it('execute({cwd}) on a restricted session still hides a hidden mount', async () => {
     const { ws } = await makeWorkspace()
-    ws.createSession('restricted', { mounts: ['/disk'] })
+    ws.createSession('restricted', { profile: { paths: { hide: ['/ram'] } } })
     const io = await ws.execute('cat /ram/notes.txt', {
       sessionId: 'restricted',
       cwd: '/disk',
@@ -36,9 +35,9 @@ describe('per-call cwd/env override preserves mountModes', () => {
     await ws.close()
   })
 
-  it('execute({env}) on a restricted session still rejects out-of-allowlist mounts', async () => {
+  it('execute({env}) on a restricted session still hides a hidden mount', async () => {
     const { ws } = await makeWorkspace()
-    ws.createSession('restricted', { mounts: ['/disk'] })
+    ws.createSession('restricted', { profile: { paths: { hide: ['/ram'] } } })
     const io = await ws.execute('cat /ram/notes.txt', {
       sessionId: 'restricted',
       env: { EXTRA: '1' },
@@ -48,9 +47,9 @@ describe('per-call cwd/env override preserves mountModes', () => {
     await ws.close()
   })
 
-  it('execute({cwd}) on a restricted session can still reach allowed mounts', async () => {
+  it('execute({cwd}) on a restricted session can still reach visible mounts', async () => {
     const { ws } = await makeWorkspace()
-    ws.createSession('restricted', { mounts: ['/disk'] })
+    ws.createSession('restricted', { profile: { paths: { hide: ['/ram'] } } })
     const io = await ws.execute('cat /disk/readme.txt', {
       sessionId: 'restricted',
       cwd: '/disk',

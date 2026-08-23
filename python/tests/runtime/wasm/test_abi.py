@@ -16,11 +16,16 @@ import errno as host_errno
 import struct
 
 from mirage.errors import FsCondition
+from mirage.runtime.verbs import refusal_of
+# yapf: disable
 from mirage.runtime.wasm.abi import (EACCES, EEXIST, EINVAL, EIO, EISDIR,
-                                     ENOENT, ENOTDIR, ENOTSUP, EXDEV, FT_DIR,
-                                     FT_REG, WASI, errno_for, pack_dirent,
-                                     pack_fdstat, pack_filestat, pack_prestat,
-                                     unpack_iovs, wasi_errno)
+                                     ENOENT, ENOTDIR, ENOTSUP, EXDEV, FST_ATIM,
+                                     FST_ATIM_NOW, FST_MTIM, FST_MTIM_NOW,
+                                     FT_DIR, FT_REG, FT_SYMLINK, LINK_REFUSAL,
+                                     LOOKUP_SYMLINK_FOLLOW, WASI, errno_for,
+                                     pack_dirent, pack_fdstat, pack_filestat,
+                                     pack_prestat, unpack_iovs, wasi_errno)
+# yapf: enable
 from mirage.utils.errors import no_mount
 from mirage.utils.path import CycleError
 
@@ -121,3 +126,20 @@ def test_dirent_carries_cookie_name_and_type():
 def test_unpack_iovs_decodes_pointer_length_pairs():
     raw = struct.pack("<IIII", 16, 128, 4096, 64)
     assert unpack_iovs(raw, 2) == [(16, 128), (4096, 64)]
+
+
+def test_link_refusal_comes_from_the_verb_table():
+    # The surface renders the refusal, the table decides it: pinning the
+    # translation rather than the number is what keeps a change to the
+    # table from silently leaving preview1 behind.
+    assert LINK_REFUSAL == wasi_errno(refusal_of("link"))
+    assert LINK_REFUSAL == WASI[FsCondition.EPERM]
+
+
+def test_symlink_filetype_is_the_preview1_number():
+    assert FT_SYMLINK == 7
+
+
+def test_lookup_and_fst_flag_bits_are_the_preview1_numbers():
+    assert LOOKUP_SYMLINK_FOLLOW == 1
+    assert (FST_ATIM, FST_ATIM_NOW, FST_MTIM, FST_MTIM_NOW) == (1, 2, 4, 8)

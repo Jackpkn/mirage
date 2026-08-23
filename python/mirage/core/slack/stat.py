@@ -12,22 +12,18 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
-import re
-
 from mirage.accessor.slack import SlackAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.slack.readdir import readdir as _readdir
+from mirage.cache.index import IndexCacheStore, IndexEntry
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.stat import make_stat
+from mirage.core.slack.readdir import readdir
+from mirage.core.slack.scope import detect_scope
 from mirage.core.timeutil import epoch_to_iso
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 from mirage.utils.filetype import filetype_from_mimetype
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
-
-logger = logging.getLogger(__name__)
-
-VIRTUAL_DIRS = {"", "channels", "dms", "users"}
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _slack_modified(remote_time: str) -> str | None:
@@ -42,111 +38,110 @@ def _slack_modified(remote_time: str) -> str | None:
     return epoch_to_iso(ts)
 
 
-async def _populate_via_parent(
-    accessor: SlackAccessor,
-    virtual_key: str,
-    prefix: str,
-    index: IndexCacheStore = NULL_INDEX,
-) -> None:
-    parent_virtual = virtual_key.rsplit("/", 1)[0] or "/"
-    try:
-        await _readdir(
-            accessor,
-            PathSpec(virtual=parent_virtual,
-                     directory=parent_virtual,
-                     resource_path=mount_key(parent_virtual, prefix)),
-            index=index,
-        )
-    except FileNotFoundError as exc:
-        logger.debug("stat populate failed for %s: %s", virtual_key, exc)
+def _channel_stat(match: ScopeMatch, path: PathSpec,
+                  entry: IndexEntry) -> FileStat:
+    return FileStat(
+        name=entry.vfs_name or entry.name,
+        type=FileType.DIRECTORY,
+        modified=_slack_modified(entry.remote_time),
+        extra={"channel_id": entry.id},
+    )
 
 
-async def stat(
-    accessor: SlackAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> FileStat:
-    virtual = path.virtual
-    prefix = mount_prefix_of(path.virtual, path.resource_path) if isinstance(
-        path, PathSpec) else ""
-    raw = path.virtual if isinstance(path, PathSpec) else path
-    if prefix and raw.startswith(prefix):
-        raw = raw[len(prefix):] or "/"
-    key = raw.strip("/")
+def _user_stat(match: ScopeMatch, path: PathSpec,
+               entry: IndexEntry) -> FileStat:
+    return FileStat(
+        name=entry.vfs_name or entry.name,
+        type=FileType.FILE,
+        content=ContentType.JSON,
+        size=entry.size,
+        extra={"user_id": entry.id},
+    )
 
-    if key in VIRTUAL_DIRS:
-        name = key if key else "/"
-        return FileStat(name=name, type=FileType.DIRECTORY)
 
-    parts = key.split("/")
-    virtual_key = prefix + "/" + key
+def _dir_stat(match: ScopeMatch, path: PathSpec,
+              entry: IndexEntry) -> FileStat:
+    return FileStat(name=entry.vfs_name, type=FileType.DIRECTORY)
 
-    if len(parts) == 2 and parts[0] in ("channels", "dms"):
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-            if lookup.entry is None:
-                raise enoent(virtual)
-        return FileStat(
-            name=lookup.entry.vfs_name or lookup.entry.name,
-            type=FileType.DIRECTORY,
-            modified=_slack_modified(lookup.entry.remote_time),
-            extra={"channel_id": lookup.entry.id},
-        )
 
-    if len(parts) == 2 and parts[0] == "users":
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-            if lookup.entry is None:
-                raise enoent(virtual)
-        return FileStat(
-            name=lookup.entry.vfs_name or lookup.entry.name,
-            type=FileType.JSON,
-            size=lookup.entry.size,
-            extra={"user_id": lookup.entry.id},
-        )
+def _file_blob_stat(match: ScopeMatch, path: PathSpec,
+                    entry: IndexEntry) -> FileStat:
+    mimetype = entry.extra.get("mimetype", "")
+    return FileStat(
+        name=entry.vfs_name or entry.name,
+        type=FileType.FILE,
+        content=filetype_from_mimetype(mimetype),
+        size=entry.size,
+        modified=_slack_modified(entry.remote_time),
+        extra={"file_id": entry.id},
+    )
 
-    if (len(parts) == 3 and parts[0] in ("channels", "dms")
-            and _DATE_RE.match(parts[2])):
-        return FileStat(name=parts[2], type=FileType.DIRECTORY)
 
-    if (len(parts) == 4 and parts[0] in ("channels", "dms")
-            and _DATE_RE.match(parts[2]) and parts[3] == "chat.jsonl"):
-        # The day's readdir renders the messages it fetched and stores the
-        # byte length, so stat serves it from the index instead of
-        # answering blind.
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            raise enoent(virtual)
-        return FileStat(name="chat.jsonl",
-                        type=FileType.TEXT,
-                        size=lookup.entry.size)
+async def _channel_proven(accessor: SlackAccessor, path: PathSpec,
+                          index: IndexCacheStore, up: int) -> None:
+    """Raise ENOENT unless the path's channel ancestor exists.
 
-    if (len(parts) == 4 and parts[0] in ("channels", "dms")
-            and _DATE_RE.match(parts[2]) and parts[3] == "files"):
-        return FileStat(name="files", type=FileType.DIRECTORY)
+    Args:
+        accessor (SlackAccessor): slack accessor.
+        path (PathSpec): the day or chat.jsonl path being stat'd.
+        index (IndexCacheStore): index cache.
+        up (int): how many trailing segments to drop to reach the
+            channel (1 for a day dir, 2 for its children).
+    """
+    virtual = path.virtual.rstrip("/")
+    for _ in range(up):
+        virtual = virtual.rsplit("/", 1)[0]
+    prefix = mount_prefix_of(path.virtual, path.resource_path)
+    spec = PathSpec(virtual=virtual,
+                    directory=virtual,
+                    resource_path=mount_key(virtual, prefix))
+    if await resolve_entry(readdir, accessor, spec, index) is None:
+        raise enoent(path.virtual)
 
-    if (len(parts) == 5 and parts[0] in ("channels", "dms")
-            and _DATE_RE.match(parts[2]) and parts[3] == "files"):
-        lookup = await index.get(virtual_key)
-        if lookup.entry is None:
-            await _populate_via_parent(accessor, virtual_key, prefix, index)
-            lookup = await index.get(virtual_key)
-            if lookup.entry is None:
-                raise enoent(virtual)
-        mimetype = lookup.entry.extra.get("mimetype", "")
-        return FileStat(
-            name=lookup.entry.vfs_name or lookup.entry.name,
-            type=filetype_from_mimetype(mimetype),
-            size=lookup.entry.size,
-            modified=_slack_modified(lookup.entry.remote_time),
-            extra={"file_id": lookup.entry.id},
-        )
 
-    raise enoent(virtual)
+async def _stat_day(accessor: SlackAccessor, match: ScopeMatch, path: PathSpec,
+                    index: IndexCacheStore) -> FileStat:
+    """Stat a day directory, which resolves beyond the listed window.
+
+    The channel listing synthesizes a bounded window of recent days,
+    but the history API answers a range query for any date, so a
+    well-formed day under a channel that exists is a directory whether
+    or not the window lists it. A bogus channel chain is ENOENT.
+
+    Args:
+        accessor (SlackAccessor): slack accessor.
+        match (ScopeMatch): a match holding ``container``/``channel``/
+            ``day``.
+        path (PathSpec): the path to stat.
+        index (IndexCacheStore): index cache.
+    """
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is not None:
+        return FileStat(name=entry.vfs_name, type=FileType.DIRECTORY)
+    await _channel_proven(accessor, path, index, up=1)
+    return FileStat(name=match.slots["day"], type=FileType.DIRECTORY)
+
+
+def _chat_stat(match: ScopeMatch, path: PathSpec,
+               entry: IndexEntry) -> FileStat:
+    # A denied or empty day lists no chat.jsonl, and the kit reports the
+    # absent entry as ENOENT: slack does not fabricate a sizeless file
+    # for a sealed day (discord deliberately does; see its override).
+    return FileStat(name="chat.jsonl",
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    size=entry.size)
+
+
+stat = make_stat(
+    detect_scope,
+    readdir,
+    entry_stats={
+        "channel": _channel_stat,
+        "user": _user_stat,
+        "messages": _chat_stat,
+        "files": _dir_stat,
+        "file_blob": _file_blob_stat,
+    },
+    overrides={"day": _stat_day},
+)

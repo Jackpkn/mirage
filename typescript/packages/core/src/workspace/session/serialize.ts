@@ -12,7 +12,16 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { ApprovalDecision, CommandRule, CommandsSpec, Grant } from '../../policy/types.ts'
+import type {
+  CommandRule,
+  AdmissionRules,
+  Decision,
+  Outcome,
+  ProfileScript,
+} from '../../policy/types.ts'
+import type { Scope } from '../../policy/types.ts'
+import { ScriptSource } from '../../runtime/policy/types.ts'
+import type { RuntimeLanguage } from '../../runtime/types.ts'
 
 /** A compiled command tier as the session record stores it (the Python spelling). */
 export interface CommandsJSON {
@@ -47,7 +56,7 @@ export function ruleFromJSON(data: RuleJSON): CommandRule {
   }
 }
 
-export function commandsToJSON(spec: CommandsSpec): CommandsJSON {
+export function commandsToJSON(spec: AdmissionRules): CommandsJSON {
   return {
     allow: spec.allow === null ? null : [...spec.allow],
     ask: spec.ask.map(ruleToJSON),
@@ -55,7 +64,7 @@ export function commandsToJSON(spec: CommandsSpec): CommandsJSON {
   }
 }
 
-export function commandsFromJSON(data: CommandsJSON): CommandsSpec {
+export function commandsFromJSON(data: CommandsJSON): AdmissionRules {
   return {
     allow: data.allow ?? null,
     ask: data.ask.map(ruleFromJSON),
@@ -63,28 +72,77 @@ export function commandsFromJSON(data: CommandsJSON): CommandsSpec {
   }
 }
 
-/** A host grant as the session record stores it (the Python spelling). */
-export interface GrantJSON {
-  decision: ApprovalDecision
-  rule: RuleJSON
-  argv: string[]
-  cwd: string
+/** A session's profile script as the record stores it (the Python spelling). */
+export interface ScriptJSON {
+  profile: string
+  language: string
+  source: string
+  runtime: string
 }
 
-export function grantToJSON(grant: Grant): GrantJSON {
+export function scriptToJSON(entry: ProfileScript): ScriptJSON {
   return {
-    decision: grant.decision,
-    rule: ruleToJSON(grant.rule),
-    argv: [...grant.argv],
-    cwd: grant.cwd,
+    profile: entry.profile,
+    language: entry.script.language,
+    source: entry.script.source,
+    runtime: entry.runtime,
   }
 }
 
-export function grantFromJSON(data: GrantJSON): Grant {
+export function scriptFromJSON(data: ScriptJSON): ProfileScript {
   return {
-    decision: data.decision,
-    rule: ruleFromJSON(data.rule),
+    profile: data.profile,
+    script: new ScriptSource(data.source, data.language as RuntimeLanguage),
+    runtime: data.runtime,
+  }
+}
+
+/** A ledger record as the session record stores it (the Python spelling). */
+export interface DecisionJSON {
+  id: string
+  session_id: string
+  agent_id: string
+  command: string
+  argv: string[]
+  cwd: string
+  paths: string[]
+  reason: string
+  rule: RuleJSON
+  outcome: string | null
+  scope: string
+  note: string
+}
+
+export function decisionToJSON(record: Decision): DecisionJSON {
+  return {
+    id: record.id,
+    session_id: record.sessionId,
+    agent_id: record.agentId,
+    command: record.command,
+    argv: [...record.argv],
+    cwd: record.cwd,
+    paths: [...record.paths],
+    reason: record.reason,
+    rule: ruleToJSON(record.rule),
+    outcome: record.outcome,
+    scope: record.scope,
+    note: record.note,
+  }
+}
+
+export function decisionFromJSON(data: DecisionJSON): Decision {
+  return {
+    id: data.id,
+    sessionId: data.session_id,
+    agentId: data.agent_id,
+    command: data.command,
     argv: data.argv,
     cwd: data.cwd,
+    paths: data.paths,
+    reason: data.reason,
+    rule: ruleFromJSON(data.rule),
+    outcome: data.outcome !== null ? (data.outcome as Outcome) : null,
+    scope: data.scope as Scope,
+    note: data.note,
   }
 }

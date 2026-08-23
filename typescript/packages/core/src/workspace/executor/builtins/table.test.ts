@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { ShellBuiltin } from '../../../shell/types.ts'
-import { JOB_BUILTINS } from '../../route/index.ts'
+import { JOB_BUILTINS } from '../../lookup/index.ts'
 import { BUILTINS } from './table.ts'
 
 // Interpreters are general mount commands (commands/builtin/general),

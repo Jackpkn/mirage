@@ -17,46 +17,83 @@ import type { IndexCacheStore } from '../../cache/index/store.ts'
 import type { QdrantRow } from './client.ts'
 import { PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
+import { perAccessor } from '../hierarchy/bind.ts'
+import { makeRead, type Reader } from '../hierarchy/read.ts'
+import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { blobBytes, renderJson, renderText } from './render.ts'
-import { type QdrantScope, ScopeLevel, detectScope } from './scope.ts'
+import { detectFor, tableOf } from './scope.ts'
 
-async function resolveRow(
+async function rowOf(
   accessor: QdrantAccessor,
-  scope: QdrantScope,
-  notFoundPath: string,
+  match: ScopeMatch,
+  virtual: string,
 ): Promise<QdrantRow> {
   const config = accessor.config
-  if (scope.table === null || scope.rowId === null) throw enoent(notFoundPath)
-  const row = await accessor.rowRecord(scope.table, config.idField, scope.rowId)
-  if (row === null) throw enoent(notFoundPath)
+  const row = await accessor.rowRecord(
+    tableOf(config, match),
+    config.idField,
+    match.slots.row_id ?? '',
+  )
+  if (row === null) throw enoent(virtual)
   return row
 }
+
+async function readJson(
+  accessor: QdrantAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const row = await rowOf(accessor, match, path.virtual)
+  return renderJson(row, accessor.config)
+}
+
+async function readText(
+  accessor: QdrantAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const config = accessor.config
+  const row = await rowOf(accessor, match, path.virtual)
+  if (
+    config.textField === null ||
+    row[config.textField] === null ||
+    row[config.textField] === undefined
+  ) {
+    throw enoent(path.virtual)
+  }
+  return renderText(row, config)
+}
+
+async function readBlob(
+  accessor: QdrantAccessor,
+  match: ScopeMatch,
+  path: PathSpec,
+): Promise<Uint8Array> {
+  const config = accessor.config
+  if (config.blobField === null) throw enoent(path.virtual)
+  const row = await rowOf(accessor, match, path.virtual)
+  const value = row[config.blobField]
+  if (value === null || value === undefined) throw enoent(path.virtual)
+  return blobBytes(value)
+}
+
+const READERS: Record<string, Reader<QdrantAccessor>> = {
+  row_json: readJson,
+  row_text: readText,
+  row_blob: readBlob,
+}
+
+function buildRead(accessor: QdrantAccessor) {
+  return makeRead(detectFor(accessor), READERS)
+}
+
+const readFor = perAccessor(buildRead)
 
 export async function read(
   accessor: QdrantAccessor,
   path: PathSpec | string,
-  _index?: IndexCacheStore,
+  index?: IndexCacheStore,
 ): Promise<Uint8Array> {
   const spec = typeof path === 'string' ? PathSpec.fromStrPath(path) : path
-  const config = accessor.config
-  const scope = detectScope(spec, config)
-  if (scope.level !== ScopeLevel.ROW) throw enoent(spec.virtual)
-  const row = await resolveRow(accessor, scope, spec.virtual)
-  if (scope.kind === 'blob') {
-    if (config.blobField === null) throw enoent(spec.virtual)
-    const blobValue = row[config.blobField]
-    if (blobValue === null || blobValue === undefined) throw enoent(spec.virtual)
-    return blobBytes(blobValue)
-  }
-  if (scope.kind === 'txt') {
-    if (
-      config.textField === null ||
-      row[config.textField] === null ||
-      row[config.textField] === undefined
-    ) {
-      throw enoent(spec.virtual)
-    }
-    return renderText(row, config)
-  }
-  return renderJson(row, config)
+  return readFor(accessor)(accessor, spec, index)
 }

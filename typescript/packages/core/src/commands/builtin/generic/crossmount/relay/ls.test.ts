@@ -168,6 +168,7 @@ describe('runLs — cross-mount ls', () => {
     const ns: NamespaceView = {
       mounts: {
         descendants: () => [],
+        visibleDescendants: () => [],
         isRoot: (p) => nested.has(rstripSlash(p)),
         rootOf: () => '/',
       },

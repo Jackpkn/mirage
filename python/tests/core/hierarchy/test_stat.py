@@ -21,7 +21,7 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hierarchy.readdir import make_readdir
 from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.stat import make_stat
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from tests.core.hierarchy.conftest import (FakeAccessor, detect_scope,
                                            list_notes, list_rooms, room_guard,
                                            spec)
@@ -67,10 +67,18 @@ def test_guarded_dir_carries_extras(accessor):
 def test_leaf_proves_existence_through_the_parent_listing(accessor):
     index = RAMIndexCacheStore()
     st = asyncio.run(STAT(accessor, spec("/rooms/red/a.json"), index=index))
-    assert st.type == FileType.JSON
+    assert st.content == ContentType.JSON
     assert st.size == 7
     with pytest.raises(FileNotFoundError):
         asyncio.run(STAT(accessor, spec("/rooms/red/nope.json"), index=index))
+
+
+def test_a_none_index_gets_a_call_local_store(accessor):
+    # Bare commands built outside a workspace bind index=None; the kit
+    # substitutes a call-local store exactly as it does for NULL_INDEX.
+    st = asyncio.run(STAT(accessor, spec("/rooms/red/a.json"), index=None))
+    assert st.content == ContentType.JSON
+    assert st.size == 7
 
 
 def test_invalid_shapes_are_enoent(accessor):
@@ -84,7 +92,10 @@ def test_override_replaces_the_whole_shape(accessor):
 
     async def bespoke(accessor: FakeAccessor, match: ScopeMatch,
                       path: PathSpec, index: IndexCacheStore) -> FileStat:
-        return FileStat(name="custom", type=FileType.TEXT, size=1)
+        return FileStat(name="custom",
+                        type=FileType.FILE,
+                        content=ContentType.TEXT,
+                        size=1)
 
     stat = make_stat(detect_scope, READDIR, overrides={"note": bespoke})
     st = asyncio.run(stat(accessor, spec("/rooms/red/a.json")))
@@ -96,7 +107,8 @@ def test_entry_stat_builds_from_the_resolved_entry(accessor):
 
     def from_entry(match, path, entry) -> FileStat:
         return FileStat(name=entry.vfs_name,
-                        type=FileType.JSON,
+                        type=FileType.FILE,
+                        content=ContentType.JSON,
                         size=entry.size,
                         extra={"doc_id": entry.id})
 

@@ -48,11 +48,11 @@ from mirage.workspace.executor.jobs import (handle_disown, handle_fg,
                                             handle_jobs, handle_kill,
                                             handle_ps, handle_wait)
 from mirage.workspace.expand.globs import glob_options, resolve_globs
+from mirage.workspace.lookup import JOB_BUILTINS, Consumer, lookup
 from mirage.workspace.mount import MountCommandUnsupported, MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.storage import make_storage_key
-from mirage.workspace.route import JOB_BUILTINS, Consumer, route
-from mirage.workspace.session import Session, assert_mount_allowed
+from mirage.workspace.session import Session
 from mirage.workspace.session.state import session_view
 from mirage.workspace.types import ExecutionNode
 
@@ -60,7 +60,7 @@ from mirage.workspace.executor.command.run import (  # isort: skip
     drop_service_caches, exec_node, namespace_view_of, run_on_mount,
     scalar_find_flags)
 
-# One handler per JOB_BUILTINS member; route already narrowed the name.
+# One handler per JOB_BUILTINS member; lookup already narrowed the name.
 JOB_HANDLERS = {
     "wait": handle_wait,
     "fg": handle_fg,
@@ -154,7 +154,7 @@ async def handle_command(
     # backend work. The admission policies (fired upstream at the
     # dispatch chokepoint) stay ahead of this so protective refusals
     # keep their specific messages.
-    if route(cmd_name, session, registry) is Consumer.UNKNOWN:
+    if lookup(cmd_name, session, registry) is Consumer.UNKNOWN:
         err = f"{cmd_name}: command not found\n".encode()
         return None, IOResult(exit_code=127,
                               stderr=err), ExecutionNode(command=cmd_str,
@@ -308,19 +308,6 @@ async def handle_command(
             exit_code=127,
             stderr=f"{cmd_name}: command not found".encode(),
         ), ExecutionNode(command=cmd_str, exit_code=127)
-
-    try:
-        assert_mount_allowed(mount.prefix)
-        for ps in routing_scopes:
-            target = registry.try_mount_for(ps.virtual)
-            if target is not None:
-                assert_mount_allowed(target.prefix)
-    except PermissionError as exc:
-        err = f"{cmd_name}: {exc}\n".encode()
-        return None, IOResult(exit_code=1,
-                              stderr=err), ExecutionNode(command=cmd_str,
-                                                         exit_code=1,
-                                                         stderr=err)
 
     # Parse flags upstream — mount receives clean args
     single_parsed = parse_flags(parts[1:], mount.spec_for(cmd_name), cmd_name,

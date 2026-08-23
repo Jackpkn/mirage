@@ -56,10 +56,20 @@ def create_cmd(
         [],
         "--mount",
         "-m",
-        help=("Restrict this session to a mount, optionally capping its "
-              "mode: '/data:read' (alias '/data:r'), '/scratch:rw', "
-              "'/bin:rwx', or a bare '/data' to keep the mount's own "
-              "mode. Repeat for multiple mounts; omit for unrestricted."),
+        help=("Narrow a mount's mode for this session: '/data:read' "
+              "(alias '/data:r'), '/scratch:rw', '/bin:rwx', or a bare "
+              "'/data' to keep the mount's own mode. Repeat per mount. "
+              "This narrows only; a mount you do not name keeps its own "
+              "mode, and keeping a session away from one is a hide in "
+              "its profile."),
+    ),
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        "-p",
+        help=("The profile this session runs under, by name from the "
+              "workspace's profiles. A profile is the whole permission "
+              "document; omit it to take the workspace default."),
     ),
 ) -> None:
     body: dict[str, Any] = {}
@@ -67,6 +77,8 @@ def create_cmd(
         body["session_id"] = session_id
     if mount:
         body["mounts"] = _parse_mount_modes(mount)
+    if profile:
+        body["profile"] = profile
     with make_client() as client:
         client.ensure_running(allow_spawn=False)
         r = client.request("POST",

@@ -20,7 +20,7 @@ import pytest_asyncio
 from mirage.accessor.redis import RedisAccessor
 from mirage.core.redis.stat import stat
 from mirage.resource.redis.store import RedisStore
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 REDIS_URL = os.environ.get("REDIS_URL", "")
 pytestmark = pytest.mark.skipif(not REDIS_URL, reason="REDIS_URL not set")
@@ -58,7 +58,7 @@ async def test_stat_file(accessor):
                  directory="/hello.txt"))
     assert result.name == "hello.txt"
     assert result.size == 11
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
 
 
 @pytest.mark.asyncio
@@ -86,7 +86,7 @@ async def test_stat_json_file(accessor):
         PathSpec(resource_path="data.json",
                  virtual="/data.json",
                  directory="/data.json"))
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.size == 16
 
 
@@ -97,4 +97,4 @@ async def test_stat_image_file(accessor):
         PathSpec(resource_path="img.png",
                  virtual="/img.png",
                  directory="/img.png"))
-    assert result.type == FileType.IMAGE_PNG
+    assert result.content == ContentType.IMAGE_PNG

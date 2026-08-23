@@ -218,16 +218,29 @@ async def handle_redirect(
         elif isinstance(dest, str):
             file_bufs[dest] += data
 
-    for path, buf in file_bufs.items():
-        data = bytes(buf)
-        scope = file_scopes[path]
-        try:
-            await create_file(dispatch, session, scope, data)
-        except FS_ERRORS as exc:
-            out_stderr += _redirect_error_line(scope, exc)
-            io.exit_code = 1
-            break
-        io.writes[path] = data
+    # Bound again for the writes, because the admission that judged
+    # these targets ended with the command and the op doors below see
+    # them from underneath: with no line and no grant behind it, a door
+    # re-deriving a verdict here would refuse the very carve-out the
+    # command was admitted under. Only a redirect that had a command has
+    # been judged at all, so the bare ``> file`` form binds nothing and
+    # is judged by the door on its own.
+    write_token = (set_redirect_paths(command.id, tuple(file_scopes.values()))
+                   if command is not None else None)
+    try:
+        for path, buf in file_bufs.items():
+            data = bytes(buf)
+            scope = file_scopes[path]
+            try:
+                await create_file(dispatch, session, scope, data)
+            except FS_ERRORS as exc:
+                out_stderr += _redirect_error_line(scope, exc)
+                io.exit_code = 1
+                break
+            io.writes[path] = data
+    finally:
+        if write_token is not None:
+            reset_redirect_paths(write_token)
 
     result_stdout = bytes(out_stdout)
     io.stderr = bytes(out_stderr) if out_stderr else None

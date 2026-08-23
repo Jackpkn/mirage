@@ -12,60 +12,38 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from dataclasses import dataclass
+from mirage.core.hierarchy.codec import DATE, Codec
+from mirage.core.hierarchy.scope import ROOT, Scope, Slot, make_detect_scope
+from mirage.types import ContentType
 
-from mirage.types import PathSpec
-from mirage.utils.key_prefix import mount_prefix_of
+GMAIL_JSON = Codec(suffix=".gmail.json")
 
+_LABEL = (Slot("label"), )
+_DAY = _LABEL + (Slot("day", DATE), )
 
-@dataclass
-class GmailScope:
-    use_native: bool
-    label_name: str | None = None
-    date_str: str | None = None
-    resource_path: str = "/"
+# One description of the tree: readdir, stat, read and the search
+# push-down all classify through it, so the file surface and the command
+# surface cannot disagree about what a path means. The message scope is
+# declared before the attachment dir because only the suffix separates
+# the two at that depth.
+SCOPES = (
+    Scope(kind="label", segments=_LABEL),
+    Scope(kind="day", segments=_DAY),
+    Scope(kind="message",
+          segments=_DAY + (Slot("message", GMAIL_JSON, id_key="message_id"), ),
+          leaf=True,
+          filetype=ContentType.JSON),
+    Scope(kind="attachment_dir",
+          segments=_DAY + (Slot("attachment_dir", id_key="message_id"), )),
+    Scope(kind="attachment",
+          segments=_DAY +
+          (Slot("attachment_dir", id_key="message_id"), Slot("filename")),
+          leaf=True),
+)
 
+detect_scope = make_detect_scope(SCOPES)
 
-def detect_scope(path: PathSpec) -> GmailScope:
-    prefix = mount_prefix_of(path.virtual, path.resource_path) or ""
-
-    if path.pattern and path.pattern.endswith(".gmail.json"):
-        dir_key = path.directory.strip("/")
-        if prefix:
-            dir_key = dir_key.removeprefix(prefix.strip("/") + "/")
-        parts = dir_key.split("/") if dir_key else []
-        if len(parts) == 2:
-            return GmailScope(
-                use_native=True,
-                label_name=parts[0],
-                date_str=parts[1],
-                resource_path=dir_key,
-            )
-
-    key = path.resource_path
-    if not key:
-        return GmailScope(use_native=True, resource_path="/")
-
-    parts = key.split("/")
-
-    if len(parts) == 1:
-        return GmailScope(
-            use_native=True,
-            label_name=parts[0],
-            resource_path=key,
-        )
-
-    if len(parts) == 2:
-        return GmailScope(
-            use_native=True,
-            label_name=parts[0],
-            date_str=parts[1],
-            resource_path=key,
-        )
-
-    return GmailScope(
-        use_native=False,
-        label_name=parts[0],
-        date_str=parts[1] if len(parts) >= 2 else None,
-        resource_path=key,
-    )
+# Kinds the Gmail search push-down may answer for: the whole account,
+# one label, or one label's day. A message file or an attachment names
+# one node, which a query over the account cannot stand in for.
+NATIVE_KINDS = frozenset({ROOT, "label", "day"})

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from mirage.commands.builtin.generic.tree import tree
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _spec(path: str) -> PathSpec:
@@ -13,7 +13,10 @@ def _spec(path: str) -> PathSpec:
 
 
 def _file(name: str, size: int = 0) -> FileStat:
-    return FileStat(name=name, size=size, type=FileType.TEXT)
+    return FileStat(name=name,
+                    size=size,
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 def _dir(name: str) -> FileStat:
@@ -341,13 +344,51 @@ def _dispatch_pair(parent: dict, child: dict, root: str):
     return readdir_path, stat_path
 
 
-def _mounts_view(roots: list[str]):
-    return SimpleNamespace(descendants=lambda path: [
+def _under(roots: list[str], path: str) -> list[str]:
+    return [
         r for r in roots
         if r.startswith(path.rstrip("/") + "/") and r != path.rstrip("/")
-    ],
+    ]
+
+
+def _mounts_view(roots: list[str], hidden: tuple[str, ...] = ()):
+    """A MountView double: `roots` are the mounts, `hidden` the ones
+    this session may not be told about."""
+    return SimpleNamespace(descendants=lambda path: _under(roots, path),
+                           visible_descendants=lambda path:
+                           [r for r in _under(roots, path) if r not in hidden],
                            is_root=lambda path: path.rstrip("/") in roots,
                            root_of=lambda path: "/")
+
+
+@pytest.mark.asyncio
+async def test_tree_never_draws_a_mount_the_session_cannot_see():
+    # A crossing row is drawn from the mount table alone, so no backend
+    # and no dispatcher gets a chance to refuse it: `tree` has to read
+    # the list of mounts it may name rather than the list it may not
+    # descend into.
+    parent = {
+        "/base": _dir("base"),
+        "/base/top.txt": _file("top.txt"),
+    }
+    child = {"/base/inner": _dir("inner")}
+    readdir, stat = _make_backend(parent)
+    readdir_path, stat_path = _dispatch_pair(parent, child, "/base/inner")
+    output, io = await tree(
+        _spec("/base"),
+        readdir=readdir,
+        stat=stat,
+        mounts=_mounts_view(["/base/inner"], hidden=("/base/inner", )),
+        readdir_path=readdir_path,
+        stat_path=stat_path,
+    )
+    assert output.decode().splitlines() == [
+        "/base",
+        "`-- top.txt",
+        "",
+        "1 directory, 1 file",
+    ]
+    assert io.exit_code == 0
 
 
 @pytest.mark.asyncio
@@ -429,15 +470,24 @@ async def test_tree_marks_a_subdirectory_it_may_not_open_and_exits_2():
         "/r":
         FileStat(name="r", type=FileType.DIRECTORY),
         "/r/a":
-        FileStat(name="a", type=FileType.TEXT, size=1),
+        FileStat(name="a",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
+                 size=1),
         "/r/locked":
         FileStat(name="locked", type=FileType.DIRECTORY),
         "/r/locked/y":
-        FileStat(name="y", type=FileType.TEXT, size=1),
+        FileStat(name="y",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
+                 size=1),
         "/r/sub":
         FileStat(name="sub", type=FileType.DIRECTORY),
         "/r/sub/y":
-        FileStat(name="y", type=FileType.TEXT, size=1),
+        FileStat(name="y",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
+                 size=1),
     })
 
     async def guarded(p: PathSpec, index=None) -> list[str]:

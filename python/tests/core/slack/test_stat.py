@@ -20,7 +20,7 @@ from mirage.accessor.slack import SlackAccessor
 from mirage.cache.index import IndexEntry, RAMIndexCacheStore
 from mirage.core.slack.config import SlackConfig
 from mirage.core.slack.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 @pytest.fixture
@@ -53,12 +53,12 @@ async def _populate_index(index: RAMIndexCacheStore) -> None:
     ])
     await index.set_dir("/users", [
         (
-            "alice.json",
+            "alice__U001.json",
             IndexEntry(
                 id="U001",
                 name="alice",
                 resource_type="slack/user",
-                vfs_name="alice.json",
+                vfs_name="alice__U001.json",
             ),
         ),
     ])
@@ -90,11 +90,11 @@ async def test_stat_channel(accessor, index):
 async def test_stat_user(accessor, index):
     await _populate_index(index)
     result = await stat(accessor,
-                        PathSpec(resource_path="users/alice.json",
-                                 virtual="/users/alice.json",
-                                 directory="/users/alice.json"),
+                        PathSpec(resource_path="users/alice__U001.json",
+                                 virtual="/users/alice__U001.json",
+                                 directory="/users/alice__U001.json"),
                         index=index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.extra["user_id"] == "U001"
 
 
@@ -117,7 +117,7 @@ async def test_stat_jsonl(accessor, index):
                  virtual="/channels/general__C001/2023-11-14/chat.jsonl",
                  directory="/channels/general__C001/2023-11-14/chat.jsonl"),
         index=index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.name == "chat.jsonl"
     assert result.size == 42
 
@@ -176,6 +176,17 @@ async def test_stat_chat_jsonl_absent_from_day_is_enoent(accessor, index):
 
 @pytest.mark.asyncio
 async def test_stat_files_dir(accessor, index):
+    await index.set_dir("/channels/general__C001/2026-04-10", [
+        ("files",
+         IndexEntry(id="C001:2026-04-10:files",
+                    name="files",
+                    resource_type="slack/files_dir",
+                    vfs_name="files",
+                    extra={
+                        "channel_id": "C001",
+                        "date": "2026-04-10"
+                    })),
+    ])
     s = await stat(accessor,
                    PathSpec(
                        resource_path="channels/general__C001/2026-04-10/files",
@@ -183,6 +194,19 @@ async def test_stat_files_dir(accessor, index):
                        directory="/channels/general__C001/2026-04-10/files"),
                    index=index)
     assert s.type == FileType.DIRECTORY
+
+
+@pytest.mark.asyncio
+async def test_stat_files_absent_from_day_is_enoent(accessor, index):
+    # A sealed day lists nothing, so its files subdir does not exist.
+    await index.set_dir("/channels/general__C001/2026-04-10", [])
+    with pytest.raises(FileNotFoundError):
+        await stat(accessor,
+                   PathSpec(
+                       resource_path="channels/general__C001/2026-04-10/files",
+                       virtual="/channels/general__C001/2026-04-10/files",
+                       directory="/channels/general__C001/2026-04-10/files"),
+                   index=index)
 
 
 @pytest.mark.asyncio
@@ -211,7 +235,7 @@ async def test_stat_file_blob_pdf(accessor, index):
             directory="/channels/general__C001/2026-04-10/files/report__F1.pdf"
         ),
         index=index)
-    assert s.type == FileType.PDF
+    assert s.content == ContentType.PDF
     assert s.size == 4096
 
 
@@ -241,7 +265,7 @@ async def test_stat_file_blob_text(accessor, index):
             directory="/channels/general__C001/2026-04-10/files/notes__F2.txt"
         ),
         index=index)
-    assert s.type == FileType.TEXT
+    assert s.content == ContentType.TEXT
 
 
 @pytest.mark.asyncio
@@ -269,14 +293,14 @@ async def test_stat_file_blob_unknown_mimetype_is_binary(accessor, index):
             virtual="/channels/general__C001/2026-04-10/files/data__F3.bin",
             directory="/channels/general__C001/2026-04-10/files/data__F3.bin"),
         index=index)
-    assert s.type == FileType.BINARY
+    assert s.content == ContentType.BINARY
     assert s.size == 2048
 
 
 @pytest.mark.asyncio
 async def test_stat_propagates_parent_refresh_failure(accessor, index):
     failure = RuntimeError("slack unavailable")
-    with patch("mirage.core.slack.stat._readdir",
+    with patch("mirage.core.slack.readdir.list_channels",
                new_callable=AsyncMock,
                side_effect=failure):
         with pytest.raises(RuntimeError, match="slack unavailable"):

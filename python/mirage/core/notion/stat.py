@@ -17,7 +17,7 @@ from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.stat import make_stat
 from mirage.core.notion.readdir import readdir
 from mirage.core.notion.scope import detect_scope
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _page_stat(match: ScopeMatch, path: PathSpec,
@@ -32,7 +32,10 @@ def _page_stat(match: ScopeMatch, path: PathSpec,
 
 def _page_json_stat(match: ScopeMatch, path: PathSpec,
                     entry: IndexEntry) -> FileStat:
-    return FileStat(name=entry.vfs_name, type=FileType.JSON, size=entry.size)
+    return FileStat(name=entry.vfs_name,
+                    type=FileType.FILE,
+                    content=ContentType.JSON,
+                    size=entry.size)
 
 
 def _database_stat(match: ScopeMatch, path: PathSpec,
@@ -49,7 +52,8 @@ def _database_json_stat(match: ScopeMatch, path: PathSpec,
                         entry: IndexEntry) -> FileStat:
     return FileStat(
         name=entry.vfs_name,
-        type=FileType.JSON,
+        type=FileType.FILE,
+        content=ContentType.JSON,
         size=entry.size,
         extra={"database_id": match.slots["database_id"]},
     )
@@ -69,7 +73,8 @@ def _data_source_json_stat(match: ScopeMatch, path: PathSpec,
                            entry: IndexEntry) -> FileStat:
     return FileStat(
         name=entry.vfs_name,
-        type=FileType.JSON,
+        type=FileType.FILE,
+        content=ContentType.JSON,
         size=entry.size,
         extra={"data_source_id": match.slots["data_source_id"]},
     )

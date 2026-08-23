@@ -12,21 +12,19 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Sequence
-
 from mirage.policy.match.pattern import pattern_names, split_pattern
-from mirage.policy.types import CommandRule, CommandsSpec
+from mirage.policy.types import AdmissionRules, CommandRule
 
 
-def has_rules(layers: Sequence[CommandsSpec]) -> bool:
-    """Whether any tier states a command rule at all: an allow list,
-    an ask or a deny.
+def has_rules(rules: AdmissionRules | None) -> bool:
+    """Whether the profile states any admission rule at all: an allow
+    list, an ask or a deny.
 
     Args:
-        layers (Sequence[CommandsSpec]): the session's command tiers.
+        rules (AdmissionRules | None): the session's admission rules.
     """
-    return any(layer.allow is not None or layer.ask or layer.deny
-               for layer in layers)
+    return rules is not None and (rules.allow is not None or bool(rules.ask)
+                                  or bool(rules.deny))
 
 
 def _rule_reads_args(rule: CommandRule, name: str) -> bool:
@@ -49,7 +47,7 @@ def _rule_reads_args(rule: CommandRule, name: str) -> bool:
         for p in rule.commands)
 
 
-def reads_args(layers: Sequence[CommandsSpec], name: str) -> bool:
+def reads_args(rules: AdmissionRules | None, name: str) -> bool:
     """Whether a rule in force reads a command's words past its name.
 
     The whole-line gate asks this for a word the runtime, not the gate,
@@ -60,21 +58,19 @@ def reads_args(layers: Sequence[CommandsSpec], name: str) -> bool:
     would have seen anyway.
 
     Args:
-        layers (Sequence[CommandsSpec]): the session's command tiers.
+        rules (AdmissionRules | None): the session's admission rules.
         name (str): the command name, as typed.
     """
-    for layer in layers:
-        for pattern in layer.allow or ():
-            if pattern_names(pattern, name) and len(
-                    split_pattern(pattern)) > 1:
-                return True
-        for rule in (*layer.ask, *layer.deny):
-            if _rule_reads_args(rule, name):
-                return True
-    return False
+    if rules is None:
+        return False
+    for pattern in rules.allow or ():
+        if pattern_names(pattern, name) and len(split_pattern(pattern)) > 1:
+            return True
+    return any(
+        _rule_reads_args(rule, name) for rule in (*rules.ask, *rules.deny))
 
 
-def scopes_paths(layers: Sequence[CommandsSpec], name: str) -> bool:
+def scopes_paths(rules: AdmissionRules | None, name: str) -> bool:
     """Whether a path rule in force reads this command's paths.
 
     The argv builder asks this before deciding who resolves a glob
@@ -87,14 +83,15 @@ def scopes_paths(layers: Sequence[CommandsSpec], name: str) -> bool:
     the gate judges the paths the command will touch.
 
     Args:
-        layers (Sequence[CommandsSpec]): the session's command tiers.
+        rules (AdmissionRules | None): the session's admission rules.
         name (str): the command name, as typed.
     """
-    for layer in layers:
-        for rule in (*layer.ask, *layer.deny):
-            if not rule.paths and not rule.mount:
-                continue
-            if not rule.commands or any(
-                    pattern_names(p, name) for p in rule.commands):
-                return True
+    if rules is None:
+        return False
+    for rule in (*rules.ask, *rules.deny):
+        if not rule.paths and not rule.mount:
+            continue
+        if not rule.commands or any(
+                pattern_names(p, name) for p in rule.commands):
+            return True
     return False

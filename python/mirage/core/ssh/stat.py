@@ -49,7 +49,8 @@ async def stat(accessor: SSHAccessor,
             size=attrs.size or 0,
             modified=mod_str,
             fingerprint=mod_str or None,
-            type=FileType.DIRECTORY if is_dir else guess_type(path),
+            type=FileType.DIRECTORY if is_dir else FileType.FILE,
+            content=None if is_dir else guess_type(path),
             mode=(attrs.permissions
                   & 0o7777 if attrs.permissions is not None else None),
             atime=(epoch_to_iso(attrs.atime)

@@ -14,23 +14,27 @@
 
 import functools
 import posixpath
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 # yapf: disable
 from mirage.runtime.errors import CrossMountError
 from mirage.runtime.handles import FileHandle, FileTable
+from mirage.runtime.types import VFSStat
 from mirage.runtime.wasm.abi import (EBADF, EEXIST, EINVAL, EISDIR, ENOENT,
-                                     ENOTDIR, ENOTSUP, FDFLAG_APPEND, FT_CHR,
-                                     FT_DIR, FT_REG, OFLAG_CREAT,
-                                     OFLAG_DIRECTORY, OFLAG_EXCL, OFLAG_TRUNC,
-                                     OK, RIGHT_FD_WRITE, errno_for,
-                                     pack_dirent, pack_fdstat, pack_filestat,
-                                     pack_prestat, pack_u32, pack_u64,
-                                     unpack_iovs)
+                                     ENOTDIR, FDFLAG_APPEND, FST_ATIM,
+                                     FST_ATIM_NOW, FST_MTIM, FST_MTIM_NOW,
+                                     FT_CHR, FT_DIR, FT_REG, FT_SYMLINK,
+                                     LINK_REFUSAL, LOOKUP_SYMLINK_FOLLOW,
+                                     OFLAG_CREAT, OFLAG_DIRECTORY, OFLAG_EXCL,
+                                     OFLAG_TRUNC, OK, RIGHT_FD_WRITE,
+                                     errno_for, pack_dirent, pack_fdstat,
+                                     pack_filestat, pack_prestat, pack_u32,
+                                     pack_u64, unpack_iovs)
 # yapf: enable
-from mirage.runtime.wasm.types import GuestStat
 from mirage.runtime.wasm.vfs import WasmVFS
+from mirage.utils.dates import timestamp_iso
 
 FdKind = Literal["stdin", "stdout", "stderr", "dir", "file"]
 
@@ -53,6 +57,39 @@ else:
     Func = _Func
     FuncType = _FuncType
     ValType = _ValType
+
+
+def _filetype(st: VFSStat) -> int:
+    """The preview1 filetype for one guest stat.
+
+    Args:
+        st (VFSStat): the stat to classify.
+    """
+    if st.is_link:
+        return FT_SYMLINK
+    return FT_DIR if st.is_dir else FT_REG
+
+
+def _stamp(fst_flags: int, set_bit: int, now_bit: int, value: int,
+           now: float) -> str | None:
+    """One utimensat stamp as ISO text, None when the call omits it.
+
+    preview1 splits each of the two stamps into "write the argument" and
+    "write the host clock" bits, and neither set is UTIME_OMIT: leave
+    that field alone.
+
+    Args:
+        fst_flags (int): the call's fstflags bag.
+        set_bit (int): the FST_*TIM bit for this stamp.
+        now_bit (int): the FST_*TIM_NOW bit for this stamp.
+        value (int): the argument's epoch nanoseconds.
+        now (float): the host clock, read once for both stamps.
+    """
+    if fst_flags & now_bit:
+        return timestamp_iso(now)
+    if fst_flags & set_bit:
+        return timestamp_iso(value / 1_000_000_000)
+    return None
 
 
 def _call_guarded(fn: Callable[..., Any], caller: "wasmtime.Caller", *args:
@@ -84,7 +121,7 @@ class FdEntry:
         preopen (bool): the preopened root dir, which close refuses.
         dirents (list[tuple[str, int]] | None): a dir fd's cached
             listing, filled on the first fd_readdir.
-        stat (GuestStat | None): a file's stat at open, for mtime.
+        stat (VFSStat | None): a file's stat at open, for mtime.
     """
 
     kind: FdKind
@@ -92,7 +129,7 @@ class FdEntry:
     path: str = ""
     preopen: bool = False
     dirents: list[tuple[str, int]] | None = None
-    stat: GuestStat | None = None
+    stat: VFSStat | None = None
 
 
 class WasiFs:
@@ -384,9 +421,12 @@ class WasiFs:
         path = self._path_arg(caller, dirfd, ptr, length)
         if path is None:
             return EBADF
-        st = self._fs.stat(path)
-        packed = pack_filestat(st.size,
-                               st.mtime_ns, FT_DIR if st.is_dir else FT_REG,
+        # The follow bit is how a guest spells stat versus lstat, so it
+        # is read rather than ignored: without it every link answered as
+        # its target and os.path.islink was always False.
+        follow = bool(flags & LOOKUP_SYMLINK_FOLLOW)
+        st = self._fs.stat(path) if follow else self._fs.lstat(path)
+        packed = pack_filestat(st.size, st.mtime_ns, _filetype(st),
                                self._ino(path))
         self._store(caller, buf, packed)
         return OK
@@ -478,23 +518,55 @@ class WasiFs:
     def path_filestat_set_times(self, caller: "wasmtime.Caller", dirfd: int,
                                 flags: int, ptr: int, length: int, atim: int,
                                 mtim: int, fst_flags: int) -> int:
+        path = self._path_arg(caller, dirfd, ptr, length)
+        if path is None:
+            return EBADF
+        now = time.time()
+        atime = _stamp(fst_flags, FST_ATIM, FST_ATIM_NOW, atim, now)
+        mtime = _stamp(fst_flags, FST_MTIM, FST_MTIM_NOW, mtim, now)
+        if atime is None and mtime is None:
+            # No stamp selected is a no-op, not an error: utimensat(2)
+            # with two UTIME_OMIT values does nothing and succeeds.
+            return OK
+        self._fs.setattr(path,
+                         atime=atime,
+                         mtime=mtime,
+                         nofollow=not (flags & LOOKUP_SYMLINK_FOLLOW))
         return OK
 
     def path_readlink(self, caller: "wasmtime.Caller", dirfd: int, ptr: int,
                       length: int, buf: int, buf_len: int, used: int) -> int:
-        # Workspace links resolve inside dispatch; the guest never sees
-        # a symlink, so readlink on any path answers "not a symlink".
-        return EINVAL
+        path = self._path_arg(caller, dirfd, ptr, length)
+        if path is None:
+            return EBADF
+        raw = self._fs.readlink(path).encode()[:buf_len]
+        self._store(caller, buf, raw)
+        # preview1 truncates rather than refusing a short buffer, and
+        # reports what it wrote; a guest that wants the whole target
+        # retries with a bigger one, which is what wasi-libc does.
+        self._store(caller, used, pack_u32(len(raw)))
+        return OK
 
     def path_link(self, caller: "wasmtime.Caller", old_dirfd: int,
                   old_flags: int, old_ptr: int, old_length: int,
                   new_dirfd: int, new_ptr: int, new_length: int) -> int:
-        return ENOTSUP
+        # A hard link is a second name for one inode, and nothing above
+        # a mount holds that. Which refusal that is comes from the verb
+        # table, not from this surface; see abi.LINK_REFUSAL.
+        return LINK_REFUSAL
 
     def path_symlink(self, caller: "wasmtime.Caller", old_ptr: int,
                      old_length: int, dirfd: int, new_ptr: int,
                      new_length: int) -> int:
-        return ENOTSUP
+        # The old_* pair is the target string, not a path to resolve:
+        # a link stores what was typed, so it is read straight out of
+        # guest memory and never joined against a preopen.
+        target = self._load(caller, old_ptr, old_length).decode()
+        path = self._path_arg(caller, dirfd, new_ptr, new_length)
+        if path is None:
+            return EBADF
+        self._fs.symlink(path, target)
+        return OK
 
 
 def _spec() -> dict[str, tuple[list[Any], list[Any]]]:

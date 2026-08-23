@@ -21,7 +21,7 @@ from typing import Any
 from mirage.cache.file import io as cache_io
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.utils.limit import apply_op_limit
-from mirage.context import get_current_session, mount_allowed, path_allowed
+from mirage.context import get_current_session, path_allowed
 from mirage.io import IOResult, OpReport
 from mirage.observe.context import record
 from mirage.observe.record import OpRecord
@@ -29,20 +29,21 @@ from mirage.ops.config import NO_FOLLOW_OPS, STAMP_WRITE_OPS
 from mirage.ops.namespace_view import (merge_readdir, namespace_listing,
                                        namespace_stat)
 from mirage.policy import post_ops_gate, pre_ops_gate
-from mirage.types import ConsistencyPolicy, FileStat, PathSpec, ResourceName
-from mirage.utils.errors import no_mount
+from mirage.policy.errors import PolicyDenied, PolicyError
+from mirage.types import (ConsistencyPolicy, FileStat, FileType, PathSpec,
+                          ResourceName)
+from mirage.utils.errors import MISS_ERRORS, no_mount
 from mirage.utils.key_prefix import mount_key
-from mirage.utils.path import owner_prefix
+from mirage.utils.path import norm_dir, owner_prefix
 from mirage.utils.ranges import slice_window
 from mirage.workspace.mount import MountEntry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.overlay import merge_overlay_stat
 from mirage.workspace.reconcile import Reconciler
-from mirage.workspace.session import assert_mount_allowed
 from mirage.workspace.snapshot.drift import DriftQueue
 
 from mirage.workspace.dispatcher.constants import (  # isort: skip
-    DISPATCH_READ_OPS, DISPATCH_WRITE_OPS, HIDDEN_CREATE_OPS,
+    DISPATCH_READ_OPS, DISPATCH_WRITE_OPS, HIDDEN_CREATE_OPS, LINK_ENTRY_OPS,
     NAMESPACE_TABLE_OPS, POLICY_WRITE_OPS, SETATTR_KEYS)
 
 
@@ -222,13 +223,7 @@ class Dispatcher:
                 and not path_allowed(dst.virtual)):
             raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
                                   dst.virtual)
-        # An unlink of a link is the removal half of `symlink`, and the
-        # door owns both: a link has no backend entry, so forwarding it
-        # reaches a backend that has never heard of the name and answers
-        # ENOENT with the link still there. An unlink of anything else
-        # is an ordinary backend write.
-        if op in NAMESPACE_TABLE_OPS or (
-                op == "unlink" and self._namespace.is_link(path.virtual)):
+        if self._table_answers(op, path.virtual, kwargs):
             return (await self._namespace_table_op(op, path, kwargs,
                                                    report), IOResult())
         # `nofollow` is the caller's AT_SYMLINK_NOFOLLOW: an op that acts
@@ -260,19 +255,6 @@ class Dispatcher:
                 raise no_mount(path.virtual)
             return (await self._gated_namespace(op, path, fallback,
                                                 report), IOResult())
-        if not mount_allowed(mount.prefix):
-            # The mount is real but ungranted, and the namespace may
-            # still owe the session a directory here: a granted mount
-            # below it already put this path's name in a listing, so
-            # walking down to the grant must answer. The names are
-            # session-filtered, so nothing of the mount's own content
-            # leaks; a path the structure does not owe falls through to
-            # the canonical denial below.
-            fallback = self._namespace_result(op, path.virtual)
-            if fallback is not None:
-                return (await self._gated_namespace(op, path, fallback,
-                                                    report), IOResult())
-        assert_mount_allowed(mount.prefix)
         # Admission policies fire at the door, before the warm-cache
         # early return below: a cached read must be refused exactly
         # like a cold one, or the cache becomes a policy bypass.
@@ -366,6 +348,13 @@ class Dispatcher:
             await self.invalidate_after_write(mount, path, observed=observed)
             if op == "rename" and isinstance(kwargs.get("dst"), PathSpec):
                 await self.invalidate_after_write(mount, kwargs["dst"])
+                # rename(2) replaces the destination, so a node the
+                # table holds at that name does not survive the move.
+                # A link left there shadowed the file that had just
+                # landed: the listing showed the new file, every read
+                # followed the old link, and the moved content was
+                # reachable under no name at all.
+                await self._namespace.unlink(kwargs["dst"].virtual)
         bound = await post_ops_gate(policies, op, path, write, mount.prefix,
                                     result)
         if bound is not None:
@@ -375,26 +364,54 @@ class Dispatcher:
             result = await apply_op_limit(result, bound)
         return result, IOResult()
 
+    def _table_answers(self, op: str, virtual: str, kwargs: dict[str,
+                                                                 Any]) -> bool:
+        """Whether the node table answers this op instead of a backend.
+
+        ``symlink`` and ``readlink`` always, because a link exists
+        nowhere else. The rest only when the path itself is a link, and
+        then for the same reason the create and the read are the door's:
+        forwarding reaches a backend that has never heard of the name.
+        A no-follow stat is the read half of that fact (lstat asks for
+        the link's own row, which only the table holds); a following
+        stat never arrives here, since the follow above rewrote it to
+        the target.
+
+        Args:
+            op (str): the dispatched op name.
+            virtual (str): the op's virtual path.
+            kwargs (dict[str, Any]): the op's arguments, read for the
+                caller's ``nofollow``.
+        """
+        if op in NAMESPACE_TABLE_OPS:
+            return True
+        if op not in LINK_ENTRY_OPS:
+            return False
+        if op == "stat" and not kwargs.get("nofollow"):
+            return False
+        return self._namespace.is_link(virtual)
+
     async def _namespace_table_op(self, op: str, path: PathSpec,
                                   kwargs: dict[str, Any],
                                   report: OpReport | None) -> Any:
         """Answer a node-table op at the door itself, gated like a backend.
 
         A symlink is namespace state with no backend behind it, so the
-        door owns both directions. Admission still fires exactly as for
-        a backend write: the link's turf is the longest mount prefix
-        above it (the same ownership rule ``_link_allowed`` reads for),
-        session grants and both gates run, and the write leaves an
-        OpRecord — a scoped kernel mount refuses exactly like a scoped
-        shell. A link above every mount is bare namespace structure and
-        clears the gates with an empty prefix.
+        door owns every verb that names one. Admission still fires
+        exactly as for a backend write: the link's turf is the longest
+        mount prefix above it (the same ownership rule ``_link_allowed``
+        reads for), session grants and both gates run, and the write
+        leaves an OpRecord — a scoped kernel mount refuses exactly like
+        a scoped shell. A link above every mount is bare namespace
+        structure and clears the gates with an empty prefix.
 
         Args:
-            op (str): ``symlink``, ``readlink``, or the ``unlink`` of a
-                path the node table holds a link for.
+            op (str): ``symlink`` or ``readlink``, or the ``unlink``,
+                ``rename`` or no-follow ``stat`` of a path the node
+                table holds a link for.
             path (PathSpec): the link's own path, never followed.
             kwargs (dict[str, Any]): op arguments (``target`` for
-                symlink).
+                symlink, ``dst`` for rename).
             report (OpReport | None): the caller's report, stamped when
                 the answer is in hand.
         """
@@ -402,25 +419,49 @@ class Dispatcher:
         owner = owner_prefix(
             (m.prefix for m in self._namespace.registry.mounts()),
             path.virtual)
-        if owner is not None:
-            assert_mount_allowed(owner)
         policies = self._namespace.registry.policies
         write = op in POLICY_WRITE_OPS
         await pre_ops_gate(policies, op, path, write, owner or "",
                            _session_id())
+        result: str | FileStat | None = None
         if op == "unlink":
             target = self._namespace.readlink(path.virtual) or ""
             await self._namespace.unlink(path.virtual)
-            result: str | None = None
+        elif op == "rename":
+            target = self._namespace.readlink(path.virtual) or ""
+            dst = kwargs["dst"]
+            # The destination is a create there, gated like the source,
+            # the way the backend path gates both ends of a rename. It
+            # is then replaced as rename(2) replaces it: any node the
+            # table holds at that name (a link, an attr overlay) goes.
+            await pre_ops_gate(policies, op, dst, True, owner or "",
+                               _session_id())
+            await self._namespace.unlink(dst.virtual)
+            await self._namespace.rename(path.virtual, dst.virtual)
         elif op == "symlink":
             target = str(kwargs["target"])
+            # symlink(2) refuses an occupied name, and the door is the
+            # only place that can tell: the node table sees a link, and
+            # a probe sees the file or directory a backend holds. Left
+            # unchecked, the new node shadowed live data (the bytes
+            # stayed, the name read as a link) and could bury a mount
+            # root, which is the one name a deployment configured.
+            if await self._path_present(path):
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST),
+                                      path.virtual)
             await self._namespace.symlink(path.virtual, target, time.time())
-            result = None
+        elif op == "stat":
+            row = self._namespace.link_stat_at(path.virtual)
+            if row is None:
+                raise FileNotFoundError(errno.ENOENT,
+                                        os.strerror(errno.ENOENT),
+                                        path.virtual)
+            target = self._namespace.readlink(path.virtual) or ""
+            result = row
         else:
             found = self._namespace.readlink(path.virtual)
             if found is None:
-                raise OSError(errno.EINVAL, os.strerror(errno.EINVAL),
-                              path.virtual)
+                raise await self._readlink_miss(path)
             target = found
             result = found
         record(op, path.virtual, ResourceName.RAM.value,
@@ -431,6 +472,118 @@ class Dispatcher:
         if bound is not None:
             return await apply_op_limit(result, bound)
         return result
+
+    async def _readlink_miss(self, path: PathSpec) -> OSError:
+        """The error a readlink of something that is not a link answers.
+
+        readlink(2) splits the two misses and callers read them
+        differently: a path that is there but is not a link is EINVAL,
+        and one that is not there at all is ENOENT, which is the code a
+        guest's ``except FileNotFoundError`` catches. The node table
+        only knows the first half, so absence is probed here and only
+        here, on the failure path, where one extra round trip buys the
+        right errno.
+
+        Args:
+            path (PathSpec): the path the readlink named.
+        """
+        if await self._path_present(path):
+            return OSError(errno.EINVAL, os.strerror(errno.EINVAL),
+                           path.virtual)
+        return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 path.virtual)
+
+    async def _path_present(self, path: PathSpec) -> bool:
+        """Whether anything at all is at `path`.
+
+        Four channels, asked in the order of what they prove. The
+        namespace goes first: a link, and a directory that exists only
+        because a mount or a link sits below it, are structure no
+        backend can see, and a mount root is the deployment's own
+        configuration. Then the backend's row, which settles a file. A
+        directory row settles nothing, because an API tree synthesizes
+        its directories: a postgres schema lists ``tables/`` and
+        ``views/`` before anything has asked whether that schema is
+        there, and a grouping mount stats every path under a live
+        collection as a directory. So a directory is proven the way the
+        hierarchy kit itself proves one, by appearing in its parent's
+        listing, which is also the only way a prefix store can answer
+        for a directory that is nothing but a set of keys. Cannot reuse
+        ``resolve_path_stat``: that dispatches, and the door is what
+        dispatch is inside of.
+
+        Args:
+            path (PathSpec): the path to probe.
+        """
+        if self._namespace.is_link(path.virtual):
+            return True
+        prefixes = [m.prefix for m in self._namespace.registry.mounts()]
+        if namespace_stat(prefixes, self._namespace, path.virtual) is not None:
+            return True
+        mount = self._namespace.try_mount_for(path.virtual)
+        if mount is None:
+            return False
+        if norm_dir(mount.prefix) == norm_dir(path.virtual):
+            return True
+        try:
+            row = await self._probe_op("stat", mount, path)
+            if row is not None and row.type is not FileType.DIRECTORY:
+                return True
+            return await self._listed_by_parent(path)
+        except (PolicyError, PolicyDenied):
+            # A channel that refuses to answer is not evidence of
+            # absence. Reporting "present" keeps the answer at the EINVAL
+            # every miss gave before the split, which asserts nothing the
+            # policy is withholding; reporting absence would assert a
+            # fact this door was not allowed to check.
+            return True
+
+    async def _listed_by_parent(self, path: PathSpec) -> bool:
+        """Whether the path's own name is in its parent's listing.
+
+        Compared on the final segment, because backends disagree on
+        entry shape: bare names, a trailing slash to mark a directory,
+        or full paths. The same normalization ``merge_readdir`` dedupes
+        on.
+
+        Args:
+            path (PathSpec): the path to look for.
+        """
+        parent, _, name = path.virtual.rstrip("/").rpartition("/")
+        mount = self._namespace.try_mount_for(parent or "/")
+        if not name or mount is None:
+            return False
+        listing = await self._probe_op("readdir", mount,
+                                       PathSpec.from_str_path(parent or "/"))
+        return any(
+            str(entry).rstrip("/").rsplit("/", 1)[-1] == name
+            for entry in listing or ())
+
+    async def _probe_op(self, op: str, mount: MountEntry,
+                        path: PathSpec) -> Any:
+        """Run one read op for a probe, or None when it found nothing.
+
+        The probe reads on the caller's behalf but not at its request, so
+        it passes the same admission gate the op would at the door: a
+        policy that denies ``stat`` must not be reachable through a
+        readlink. That refusal is raised, not swallowed, because only the
+        caller knows what to answer when a channel goes dark.
+
+        Args:
+            op (str): ``stat`` or ``readdir``.
+            mount (MountEntry): the mount owning the path.
+            path (PathSpec): the path to probe.
+        """
+        if not mount.supports_op(op, path.virtual):
+            return None
+        await pre_ops_gate(self._namespace.registry.policies, op, path, False,
+                           mount.prefix, _session_id())
+        try:
+            return await mount.execute_op(op, path.virtual)
+        except MISS_ERRORS:
+            # The "nothing here" set exactly: a miss on one channel is
+            # not absence on its own, so the caller tries the other.
+            return None
 
     async def _apply_setattr(self, mount: MountEntry, path: PathSpec,
                              kwargs: dict[str, Any]) -> dict[str, Any]:

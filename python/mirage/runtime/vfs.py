@@ -23,19 +23,23 @@ from mirage.observe.context import (active_recorder, reset_active_recorder,
 from mirage.runtime.errors import CrossMountError
 from mirage.runtime.handles import plan_flush
 from mirage.runtime.resolver import MountResolver
-from mirage.runtime.types import DispatchFn, VFSEntry
+from mirage.runtime.types import DispatchFn, VFSEntry, VFSStat
 from mirage.types import FileStat, PathSpec
 from mirage.utils.errors import OperationNotSupportedError
 from mirage.utils.path import norm
-from mirage.utils.stat_view import content_size, is_dir
+from mirage.utils.stat_view import (content_size, is_dir, is_link, mtime_ns,
+                                    posix_mode)
 
 
 class RuntimeVFS:
     """The mount-facing op vocabulary a sandboxed runtime encodes into.
 
     One instruction set (read/write/append/stat/readdir/create/truncate/
-    unlink/mkdir/rmdir/rename), one routing table, one place that knows
-    an append may have to become a whole-file write. Encoders hold one
+    unlink/mkdir/rmdir/rename/symlink/readlink/setattr), one routing
+    table, one place that knows an append may have to become a
+    whole-file write. The last three reach the name plane rather than a
+    backend, which is what lets a guest create a link or chmod a file on
+    a mount whose store has neither. Encoders hold one
     of these; they never inherit it, because a monty encoder must
     inherit the binding's own OSAccess and a wasm encoder is a table of
     preview1 host functions.
@@ -158,11 +162,43 @@ class RuntimeVFS:
     def write(self, path: str, data: bytes) -> None:
         self.call("write", path, data=data)
 
-    def stat(self, path: str) -> FileStat:
-        return self.call("stat", path)
+    def stat(self, path: str, *, nofollow: bool = False) -> VFSStat:
+        """One path's metadata, projected for a guest encoder.
+
+        The projection lives here rather than in each surface so both
+        languages build one struct in one tier: preview1 reads the type
+        bits out of ``mode`` and drops the rest, monty fills a
+        ``StatResult``, Emscripten fills an ``FSAttr``.
+
+        Args:
+            path (str): guest-absolute virtual path.
+            nofollow (bool): report a trailing symlink itself rather
+                than its target (a guest's lstat). The row is then the
+                node table's own, so it carries the target string's
+                length as the size, the link's mtime, and whatever a
+                ``chown -h`` wrote; the dispatcher consumes the flag
+                and gates that read exactly as it gates ``readlink``.
+        """
+        return self._row(self.call("stat", path, nofollow=nofollow))
+
+    @staticmethod
+    def _row(fs: FileStat) -> VFSStat:
+        """Translate one mirage stat row into the guest-facing struct.
+
+        Args:
+            fs (FileStat): the row the door answered with.
+        """
+        ns = mtime_ns(fs)
+        # A guest wire has no validity channel for a timestamp, so an
+        # unknown mtime and epoch zero both encode as 0 from here on.
+        return VFSStat(size=content_size(fs),
+                       is_dir=is_dir(fs),
+                       mode=posix_mode(fs),
+                       mtime_ns=0 if ns is None else ns,
+                       is_link=is_link(fs))
 
     def readdir(self, path: str) -> list[VFSEntry]:
-        """List a directory as resolved entries (the TS bridge's shape).
+        """List a directory as resolved entries (the TS door's shape).
 
         A backend that slash-marks directories skips the stat; every
         other entry is classified by the stat the readdir just
@@ -171,22 +207,62 @@ class RuntimeVFS:
         dangling link) rides as a size-0 file instead of failing the
         whole listing: the guest's own open reports the miss.
 
+        A row that did stat carries its mode and mtime too, since the
+        struct is already in hand: a guest that seeds a whole tree from
+        one listing (Emscripten does) then needs no second stat per
+        file. The two slash-marked rows report None for both, which is
+        the honest answer for a listing that never asked.
+
+        The link mark comes from the name plane, since stat follows and
+        no backend listing reports a link. One table read per listing,
+        and it only ever marks a name the listing itself returned, so a
+        link the session hides stays hidden: the dispatcher filtered it
+        out of the entries above and an unmatched mark marks nothing.
+
         Args:
             path (str): guest-absolute virtual path.
         """
         entries: list[VFSEntry] = []
-        for raw in self.call("readdir", path):
+        listing = self.call("readdir", path)
+        # After the listing, not before: a directory that will not list
+        # (ENOENT, or a link cycle the namespace refuses to resolve)
+        # must fail as readdir, not as the mark read.
+        links = self._link_names(path)
+        for raw in listing:
+            linked = raw.rstrip("/").rsplit("/", 1)[-1] in links
             if raw.endswith("/"):
-                entries.append(VFSEntry(path=raw, size=0, is_dir=True))
+                entries.append(
+                    VFSEntry(path=raw, size=0, is_dir=True, is_link=linked))
                 continue
             try:
-                st = self.call("stat", raw)
+                st = self.stat(raw)
             except FileNotFoundError:
-                entries.append(VFSEntry(path=raw, size=0, is_dir=False))
+                entries.append(
+                    VFSEntry(path=raw, size=0, is_dir=False, is_link=linked))
                 continue
             entries.append(
-                VFSEntry(path=raw, size=content_size(st), is_dir=is_dir(st)))
+                VFSEntry(path=raw,
+                         size=st.size,
+                         is_dir=st.is_dir,
+                         is_link=linked,
+                         mode=st.mode,
+                         mtime_ns=st.mtime_ns))
         return entries
+
+    def _link_names(self, directory: str) -> set[str]:
+        """The link names the namespace owes `directory`, empty when none.
+
+        Compared by final segment, because backends disagree on entry
+        shape (bare names, trailing-slash names, full paths) and the
+        name is the part they agree on. The same normalization
+        ``merge_readdir`` dedupes on.
+
+        Args:
+            directory (str): guest-absolute virtual path being listed.
+        """
+        if self._resolver is None:
+            return set()
+        return self._resolver.link_children(directory)
 
     def create(self, path: str) -> None:
         self.call("create", path)
@@ -216,6 +292,73 @@ class RuntimeVFS:
         if self.mount_of(src) != self.mount_of(dst):
             raise CrossMountError(src, dst)
         self.call("rename", src, dst=PathSpec.from_str_path(dst))
+
+    def symlink(self, path: str, target: str) -> None:
+        """Create a namespace symlink at `path` pointing at `target`.
+
+        A link is namespace state, so no backend stores one and the
+        target is kept verbatim as the guest typed it. The dispatcher
+        answers this op from the node table itself, which is why a
+        runtime can serve `os.symlink` at all: the door a surface
+        already holds reaches the name plane, not just a mount.
+
+        Args:
+            path (str): guest-absolute path of the link to create.
+            target (str): link target, stored as typed.
+        """
+        self.call("symlink", path, target=target)
+
+    def readlink(self, path: str) -> str:
+        """The target of the symlink at `path`.
+
+        Args:
+            path (str): guest-absolute path of the link.
+
+        Returns:
+            str: the stored target.
+
+        Raises:
+            OSError: EINVAL when `path` is not a link, which is what the
+                node table answers and what POSIX readlink says.
+        """
+        return str(self.call("readlink", path))
+
+    def setattr(self,
+                path: str,
+                *,
+                mode: int | None = None,
+                uid: int | str | None = None,
+                gid: int | str | None = None,
+                atime: str | None = None,
+                mtime: str | None = None,
+                nofollow: bool = False) -> None:
+        """Write metadata fields, natively where the backend can hold them.
+
+        Every field is passed, unset ones as None, because the door
+        reads the whole set and stores in the namespace overlay whatever
+        the backend cannot keep. A mount with no setattr op therefore
+        still answers: chmod on an s3 or dropbox mount lands in the name
+        plane and stat reports it back. Stored, not enforced; mount mode
+        is the access control.
+
+        Args:
+            path (str): guest-absolute virtual path.
+            mode (int | None): permission bits (e.g. 0o644).
+            uid (int | str | None): owner id or name.
+            gid (int | str | None): group id or name.
+            atime (str | None): ISO access time.
+            mtime (str | None): ISO modification time.
+            nofollow (bool): write the link entry's own attrs rather
+                than its target's (a guest's AT_SYMLINK_NOFOLLOW).
+        """
+        self.call("setattr",
+                  path,
+                  mode=mode,
+                  uid=uid,
+                  gid=gid,
+                  atime=atime,
+                  mtime=mtime,
+                  nofollow=nofollow)
 
     def append(self, path: str, data: bytes, whole: bytes) -> None:
         """Extend `path` by `data`, falling back to writing `whole`.

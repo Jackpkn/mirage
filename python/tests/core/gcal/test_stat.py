@@ -15,7 +15,7 @@
 import pytest
 
 from mirage.core.gcal.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 pytestmark = pytest.mark.asyncio
 
@@ -74,7 +74,7 @@ async def test_event_reports_json_with_a_rendered_size(api, accessor, index):
         accessor,
         spec("/primary/2026-08-11/aaaa1__0900-1030_PhD_Defense.gcal.json"),
         index)
-    assert row.type is FileType.JSON
+    assert row.content is ContentType.JSON
     assert row.extra["event_id"] == "aaaa1"
     # Size is the rendered payload's byte length, never a source-side number.
     assert row.size is not None and row.size > 0
@@ -82,7 +82,7 @@ async def test_event_reports_json_with_a_rendered_size(api, accessor, index):
 
 async def test_calendar_json_reports_json(api, accessor, index):
     row = await stat(accessor, spec("/primary/calendar.json"), index)
-    assert row.type is FileType.JSON
+    assert row.content is ContentType.JSON
 
 
 async def test_unknown_event_is_enoent(api, accessor, index):

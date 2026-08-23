@@ -389,9 +389,13 @@ describe('ls injects child mounts as virtual subdirectories', () => {
   // registry.descendantMounts is not session-filtered, so proving presence
   // from the mount table alone would answer `0 /empty` here and confirm a
   // walled-off mount's parent. The dispatcher-backed probe is filtered.
-  it('du still reports absence when the descendant mount is ungranted', async () => {
+  it('du still reports absence when the descendant mount is hidden', async () => {
+    // `registry.descendantMounts` is not session-filtered, so proving
+    // presence from the mount table alone would answer `0 /empty` here
+    // and confirm a walled-off mount's parent. The dispatcher-backed
+    // probe is filtered, so absence stays the answer.
     const ws = await makeWs({ '/': new RAMResource(), '/empty/hole': new RAMResource() })
-    ws.createSession('scoped', { mounts: { '/': 'rw' } })
+    ws.createSession('scoped', { profile: { paths: { hide: ['/empty/hole'] } } })
     const result = await ws.execute('du /empty', { sessionId: 'scoped' })
     expect(result.stdoutText).toBe('')
     expect(result.stderrText).toBe("du: cannot access '/empty': No such file or directory\n")

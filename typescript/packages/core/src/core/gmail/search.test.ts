@@ -14,14 +14,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { formatGrepResults, type GmailSearchRow } from './search.ts'
-import type { GmailScope } from './scope.ts'
 
-const SCOPE: GmailScope = {
-  useNative: true,
-  labelName: 'INBOX',
-  dateStr: null,
-  resourcePath: '/',
-}
+const LABEL = 'INBOX'
 
 const EMOJI = '\u{1F600}'
 
@@ -61,7 +55,7 @@ describe('formatGrepResults excerpts', () => {
     // 200 emoji are 200 code points and 400 UTF-16 units: python returns all
     // of them, and measuring in units returned 117 plus a split 118th pair.
     const body = EMOJI.repeat(200)
-    const excerpt = excerptOf(formatGrepResults([row(body)], SCOPE, '/gmail', 'zzz'))
+    const excerpt = excerptOf(formatGrepResults([row(body)], LABEL, '/gmail', 'zzz'))
     expect(excerpt).toBe(`note ${body}`)
     expect(Array.from(excerpt)).toHaveLength(205)
     expect(roundTrip(excerpt)).not.toContain('�')
@@ -70,7 +64,7 @@ describe('formatGrepResults excerpts', () => {
   it('windows around the match on code-point boundaries', () => {
     const pad = EMOJI.repeat(200)
     const excerpt = excerptOf(
-      formatGrepResults([row(`${pad} needle ${pad}`)], SCOPE, '/gmail', 'needle'),
+      formatGrepResults([row(`${pad} needle ${pad}`)], LABEL, '/gmail', 'needle'),
     )
     // `note ` + 200 emoji + ` needle ` + 200 emoji, windowed 120 code points
     // either side of the hit at index 206 and clipped to the body's end.
@@ -80,12 +74,12 @@ describe('formatGrepResults excerpts', () => {
 
   it('leaves an ascii excerpt exactly where python leaves it', () => {
     const body = `${'a'.repeat(300)} needle ${'b'.repeat(300)}`
-    const excerpt = excerptOf(formatGrepResults([row(body)], SCOPE, '/gmail', 'needle'))
+    const excerpt = excerptOf(formatGrepResults([row(body)], LABEL, '/gmail', 'needle'))
     expect(excerpt).toBe(`...${'a'.repeat(119)} needle ${'b'.repeat(119)}...`)
   })
 
   it('falls back to the snippet when the pattern is empty', () => {
-    const lines = formatGrepResults([row('body')], SCOPE, '/gmail')
+    const lines = formatGrepResults([row('body')], LABEL, '/gmail')
     expect(lines).toEqual(['/gmail/INBOX/2026-08-19/note__m1.gmail.json:[a@b.c] fallback snippet'])
   })
 })

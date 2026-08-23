@@ -25,7 +25,7 @@ import { RedisWorkspaceStateStore } from './workspace/store/redis.ts'
 import { RedisConsoleStore } from './shell/console/redis/index.ts'
 import { RedisFileCacheStore } from './cache/file/redis.ts'
 import { Workspace } from './workspace.ts'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -486,38 +486,47 @@ describe('configToWorkspaceArgs', () => {
   })
 
   it('the permissions document maps to workspace args', async () => {
+    // `mounts:` is infrastructure and `profiles:` is every permission
+    // the deployment states, including the per-mount ones; there is no
+    // workspace `permissions:` block and no `permissions:` on a mount.
     const cfg = loadWorkspaceConfig({
       mounts: {
-        '/repo': { resource: 'ram', permissions: { paths: { hide: ['*.pem', '.env'] } } },
+        '/repo': { resource: 'ram' },
         '/scratch': { resource: 'ram', mode: 'rwx' },
       },
-      permissions: {
-        commands: {
-          deny: [
-            {
-              reason: 'production data is protected',
-              commands: { rm: ['/repo/prod/*'], mv: ['/repo/prod/*'] },
-            },
-            'python3',
-          ],
-        },
-        paths: { hide: ['/scratch/finance'] },
-      },
+      profile: 'reviewer',
       profiles: {
         default: {
           cwd: '/scratch',
           env: { PAGER: 'cat' },
           mounts: { '/repo': 'r', '/scratch': 'rwx' },
+          commands: {
+            deny: [
+              {
+                reason: 'production data is protected',
+                commands: { rm: ['/repo/prod/*'], mv: ['/repo/prod/*'] },
+              },
+              'python3',
+            ],
+          },
+          paths: { hide: ['/scratch/finance'] },
         },
         reviewer: {
-          extends: 'default',
+          mounts: { '/repo': { mode: 'r', paths: { hide: ['/repo/*.pem', '/repo/.env'] } } },
           paths: { hide: ['/repo/docs/internal'] },
           vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
         },
       },
     })
     const args = await configToWorkspaceArgs(cfg)
-    expect(args.options.permissions).toEqual({
+    expect(args.options.profile).toBe('reviewer')
+    expect(args.options.profiles?.default).toEqual({
+      cwd: '/scratch',
+      env: { PAGER: 'cat' },
+      mounts: new Map([
+        ['/repo', { mode: MountMode.READ }],
+        ['/scratch', { mode: MountMode.EXEC }],
+      ]),
       commands: {
         allow: null,
         ask: [],
@@ -529,23 +538,12 @@ describe('configToWorkspaceArgs', () => {
       },
       paths: { hide: ['/scratch/finance'] },
     })
-    expect(args.options.profiles).toEqual({
-      default: {
-        cwd: '/scratch',
-        env: { PAGER: 'cat' },
-        mounts: new Map([
-          ['/repo', MountMode.READ],
-          ['/scratch', MountMode.EXEC],
-        ]),
-      },
-      reviewer: {
-        extends: 'default',
-        paths: { hide: ['/repo/docs/internal'] },
-        vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
-      },
-    })
-    expect(args.options.mountPermissions).toEqual({
-      '/repo': { paths: { hide: ['*.pem', '.env'] }, commands: { ask: [], deny: [] } },
+    expect(args.options.profiles?.reviewer).toEqual({
+      mounts: new Map([
+        ['/repo', { mode: MountMode.READ, paths: { hide: ['/repo/*.pem', '/repo/.env'] } }],
+      ]),
+      paths: { hide: ['/repo/docs/internal'] },
+      vars: { hide: ['AWS_*', 'SLACK_TOKEN'] },
     })
     expect(args.resources['/scratch']?.[1]).toBe(MountMode.EXEC)
   })
@@ -557,29 +555,39 @@ describe('configToWorkspaceArgs', () => {
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
-        permissions: { commands: { deny: [{ reason: 'x', path: ['/data/prod/*'] }] } },
+        profiles: {
+          default: { commands: { deny: [{ reason: 'x', path: ['/data/prod/*'] }] } },
+        },
       }),
     ).toThrow(/deny\[0\]: unknown field `path`/)
   })
 
-  it('unshipped fields and a broken profile chain fail at load', () => {
+  it('unshipped and misspelled fields fail at load', () => {
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
         profiles: { a: { hidden_paths: { paths: ['/x'] } } },
       }),
     ).toThrow(/unknown field `hidden_paths`/)
+    // A mount section has no allow list, and a mount block has no
+    // permissions of its own any more.
     expect(() =>
       loadWorkspaceConfig({
-        mounts: { '/data': { resource: 'ram', permissions: { commands: { allow: ['ls'] } } } },
+        mounts: { '/data': { resource: 'ram' } },
+        profiles: { a: { mounts: { '/data': { commands: { allow: ['ls'] } } } } },
       }),
     ).toThrow(/unknown field `allow`/)
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram', permissions: { paths: { hide: ['x'] } } } },
+      }),
+    ).toThrow(/unknown mount `\/data` key `permissions`/)
     expect(() =>
       loadWorkspaceConfig({
         mounts: { '/data': { resource: 'ram' } },
         profiles: { orphan: { extends: 'gone' } },
       }),
-    ).toThrow(/extends unknown profile 'gone'/)
+    ).toThrow(/unknown field `extends`/)
   })
 
   it('console redis block builds a factory that mints fresh keys', async () => {
@@ -713,6 +721,63 @@ describe('clis section', () => {
       clis: { sl: { cli: 'slack', runtime: 'monty' } },
     })
     await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/it takes script/)
+  })
+})
+
+// Mirrors python/tests/config/test_loader.py's mounts `resource:` cases.
+// A `resource` value carrying a colon names a class the same way `cli:`
+// names a spec, which is what lets a deployment mount its own backend
+// from YAML without registering a factory in a host program.
+describe('mounts resource: reference', () => {
+  const CORE_RES = pathToFileURL(
+    resolve(fileURLToPath(import.meta.url), '../../../core/dist/index.js'),
+  ).href
+  const BACKEND =
+    `import {RAMResource} from ${JSON.stringify(CORE_RES)}\n` +
+    'export class WikiResource extends RAMResource {}\n'
+
+  it('builds a resource out of a file next to the config', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-res-'))
+    writeFileSync(join(dir, 'wiki.mjs'), BACKEND)
+    writeFileSync(
+      join(dir, 'ws.yaml'),
+      'mounts:\n  /wiki:\n    resource: ./wiki.mjs:WikiResource\n',
+    )
+    const cfg = loadWorkspaceConfigFile(join(dir, 'ws.yaml'))
+    const args = await configToWorkspaceArgs(cfg)
+    expect(args.resources['/wiki']?.[0]?.constructor.name).toBe('WikiResource')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('rebases a relative ref onto the config file directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-res-'))
+    writeFileSync(join(dir, 'wiki.mjs'), BACKEND)
+    writeFileSync(
+      join(dir, 'ws.yaml'),
+      'mounts:\n  /wiki:\n    resource: ./wiki.mjs:WikiResource\n',
+    )
+    const cfg = loadWorkspaceConfigFile(join(dir, 'ws.yaml'))
+    expect(cfg.mounts['/wiki']?.resource).toBe(`${join(dir, 'wiki.mjs')}:WikiResource`)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('leaves a package specifier alone', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-res-'))
+    writeFileSync(
+      join(dir, 'ws.yaml'),
+      'mounts:\n  /wiki:\n    resource: my-backends:WikiResource\n',
+    )
+    const cfg = loadWorkspaceConfigFile(join(dir, 'ws.yaml'))
+    expect(cfg.mounts['/wiki']?.resource).toBe('my-backends:WikiResource')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('leaves a registry name alone', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-res-'))
+    writeFileSync(join(dir, 'ws.yaml'), 'mounts:\n  /data:\n    resource: ram\n')
+    const cfg = loadWorkspaceConfigFile(join(dir, 'ws.yaml'))
+    expect(cfg.mounts['/data']?.resource).toBe('ram')
+    rmSync(dir, { recursive: true, force: true })
   })
 })
 
@@ -897,12 +962,66 @@ describe('CLI to daemon round trip', () => {
     expect(cfg.defaultSessionId).toBe('mysess')
     rmSync(dir, { recursive: true, force: true })
   })
+
+  it('rebases a profile script path onto the config dir before loading it', async () => {
+    // The check door validates the profile without reading its script:
+    // reading at validation resolved `roles/x.js` against the process
+    // cwd (this test's cwd is the package, not the config dir), so
+    // checking a file config from anywhere else failed with ENOENT.
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-profile-script-'))
+    mkdirSync(join(dir, 'roles'))
+    writeFileSync(join(dir, 'roles', 'x.js'), 'null\n')
+    const file = join(dir, 'w.yaml')
+    writeFileSync(
+      file,
+      [
+        'mounts:',
+        '  /data:',
+        '    resource: ram',
+        'profiles:',
+        '  release: {script: roles/x.js, runtime: quickjs}',
+        '',
+      ].join('\n'),
+    )
+    const wire = checkWorkspaceConfigFile(file)
+    const profiles = wire.profiles as Record<string, Record<string, unknown>>
+    expect(profiles.release?.script).toBe(join(dir, 'roles', 'x.js'))
+    const args = await configToWorkspaceArgs(loadWorkspaceConfigFile(file))
+    const release = args.options.profiles?.release
+    expect(release?.script).toBeInstanceOf(ScriptSource)
+    expect((release?.script as ScriptSource).source).toBe('null\n')
+    expect(release?.runtime).toBe('quickjs')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('refuses a profile script that states no runtime', () => {
+    // There is no default engine: a script the config does not pin to
+    // an engine is refused at load, not guessed at the gate.
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-profile-script-'))
+    const file = join(dir, 'w.yaml')
+    writeFileSync(
+      file,
+      [
+        'mounts:',
+        '  /data:',
+        '    resource: ram',
+        'profiles:',
+        '  release: {script: roles/x.js}',
+        '',
+      ].join('\n'),
+    )
+    expect(() => checkWorkspaceConfigFile(file)).toThrow(/set runtime beside script/)
+    rmSync(dir, { recursive: true, force: true })
+  })
 })
 
-// integ/fixtures/config/{rejected,accepted}.json are the contract: the
-// python suite (tests/config/test_loader.py) reads the same two files, so
-// a config that loads in one language and not the other fails a test
-// until both loaders agree.
+// integ/fixtures/config/*.json are the contract: the python suite
+// (tests/config/test_loader.py) reads the same files, so a config that
+// loads in one language and not the other fails a test until both
+// loaders agree. The accepted half is one file per subject: every config
+// block that is not a permission verb, then a verb each.
+const ACCEPTED_FIXTURES = ['blocks', 'allow', 'ask', 'deny'] as const
+
 function fixtureCases(name: string): { name: string; config: Record<string, unknown> }[] {
   const path = fileURLToPath(
     new URL(`../../../../integ/fixtures/config/${name}.json`, import.meta.url),
@@ -926,12 +1045,12 @@ describe('shared rejection fixture', () => {
   })
 })
 
-describe('shared acceptance fixture', () => {
+describe.each(ACCEPTED_FIXTURES)('shared acceptance fixture: %s', (fixture) => {
   // The key tables are copied by hand from Python's models, so the drift
   // this catches is a field added there and never mirrored here: every
-  // key of every block appears in the fixture, and an unmirrored one
+  // key of every block appears in the accepted set, and an unmirrored one
   // comes back as `unknown ... key`.
-  const cases = fixtureCases('accepted')
+  const cases = fixtureCases(fixture)
 
   it('has cases', () => {
     expect(cases.length).toBeGreaterThan(0)

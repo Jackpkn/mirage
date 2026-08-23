@@ -33,21 +33,23 @@ async function mkCore(): Promise<MountCore> {
 }
 
 describe('MountCore', () => {
-  it('refuses a symlink on ungranted turf for a scoped session', async () => {
+  it('refuses a symlink on hidden turf for a scoped session', async () => {
     // The R8 hole: a session-scoped kernel mount could create a link on
-    // an ungranted mount's turf because the FUSE symlink path wrote the
-    // namespace table directly, at a layer no session grant covers.
+    // a mount the profile hides, because the FUSE symlink path wrote the
+    // namespace table directly, at a layer no session view covers.
     const ws = new Workspace(
       { '/data/': new RAMResource(), '/extra/': new RAMResource() },
       { mode: MountMode.WRITE },
     )
     await ws.execute("echo 'hello' > /data/greeting.txt")
-    const sess = ws.createSession('agent', { mounts: { '/data': MountMode.WRITE } })
+    const sess = ws.createSession('agent', { profile: { paths: { hide: ['/extra'] } } })
     const core = new MountCore(ws.fs, { session: sess })
     // The fs adapter enters the session context before every kernel
     // callback; the unit test binds the same way.
     await runWithSession(sess, async () => {
-      await expect(core.symlink('/data/greeting.txt', '/extra/lk')).rejects.toThrow('not allowed')
+      await expect(core.symlink('/data/greeting.txt', '/extra/lk')).rejects.toMatchObject({
+        code: 'EACCES',
+      })
       await core.symlink('greeting.txt', '/data/lk')
     })
     expect(ws.namespace.isLink('/extra/lk')).toBe(false)
@@ -109,6 +111,26 @@ describe('MountCore', () => {
     const body = await core.read('/data/greeting.txt', after, 0, 100)
     await core.release(after)
     expect(new TextDecoder().decode(body)).toBe('rewritten, longer than before\n')
+  })
+
+  it('reports a link with the node row its own stamps live on', async () => {
+    // A link has no backend inode, so the node table is the only place
+    // its stamps live. Built from the target string alone, getattr
+    // answered the mount's construction time for every link, so a
+    // no-follow touch through the mount was invisible right after it
+    // landed.
+    const ws = new Workspace({ '/data/': new RAMResource() }, { mode: MountMode.WRITE })
+    await ws.execute("echo 'hello' > /data/greeting.txt")
+    await ws.execute('ln -s greeting.txt /data/lk')
+    await ws.dispatch('setattr', '/data/lk', [], {
+      mtime: '2020-01-02T03:04:05Z',
+      nofollow: true,
+    })
+    const core = new MountCore(ws.fs)
+    const attrs = await core.getattr('/data/lk')
+    expect(attrs.mode).toBe(0o120777)
+    expect(attrs.size).toBe('greeting.txt'.length)
+    expect(attrs.mtime.getTime()).toBe(Date.parse('2020-01-02T03:04:05Z'))
   })
 
   it('throws EINVAL from readlink on a regular file', async () => {

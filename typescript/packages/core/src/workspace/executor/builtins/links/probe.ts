@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { FileStat, FileType, PathSpec } from '../../../../types.ts'
+import { isMissError } from '../../../../utils/errors.ts'
 import { gnuBasename } from '../../../../utils/path.ts'
 import { rstripSlash } from '../../../../utils/slash.ts'
 import type { StatOverlay } from '../../../../ops/types.ts'
@@ -30,18 +31,6 @@ export async function statOrNull(dispatch: DispatchFn, path: PathSpec): Promise<
   }
 }
 
-// What an existence probe reads as "nothing here": the path is absent, or
-// a component of it is not traversable. Deliberately narrower than a walk's
-// tolerance, because a permission or missing-capability error is not
-// absence, and mapping it to one would report a path that exists as
-// missing. Mirrors python MISS_ERRORS.
-function isMissError(exc: unknown): boolean {
-  const code = (exc as { code?: string }).code
-  if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return true
-  const msg = exc instanceof Error ? exc.message : String(exc)
-  return /not found|no such file|not a directory|is a directory/i.test(msg)
-}
-
 // What a path is, asked on both channels a backend can answer on.
 //
 // A point lookup alone cannot decide. On a prefix store a directory is not
@@ -53,6 +42,9 @@ function isMissError(exc: unknown): boolean {
 // path with [] rather than raising, and cannot hold an empty directory
 // anyway (one with no keys under it does not exist). Measured across every
 // integ target: an implicit directory answers here, a missing path does not.
+// That holds only while a backend's readdir refuses a path it cannot prove:
+// postgres answered tables/views under any first segment, and every absent
+// schema read as a directory here.
 export async function resolvePathStat(
   dispatch: DispatchFn,
   path: PathSpec,

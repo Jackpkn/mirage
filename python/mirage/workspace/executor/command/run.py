@@ -18,6 +18,7 @@ from typing import Any
 from mirage.commands.builtin.utils.limit import CommandTimeoutError
 from mirage.commands.errors import UsageError
 from mirage.commands.spec.types import FlagValue
+from mirage.context import path_allowed
 from mirage.io import IOResult
 from mirage.io.stream import materialize, wrap_cachable_streams
 from mirage.io.types import ByteSource
@@ -38,8 +39,7 @@ from mirage.workspace.mount import (MountCommandUnsupported, MountEntry,
                                     MountRegistry)
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.overlay import merge_overlay_stat
-from mirage.workspace.session import (Session, assert_mount_allowed,
-                                      env_snapshot, session_view)
+from mirage.workspace.session import Session, env_snapshot, session_view
 from mirage.workspace.types import ExecutionNode
 
 
@@ -165,6 +165,10 @@ def link_view(namespace: Namespace | None,
 def mount_roots_below(registry: MountRegistry, virtual: str) -> list[str]:
     """Mount roots strictly under a path, without the trailing slash.
 
+    Every one, unfiltered: this is the list a caller avoids a boundary
+    with, and a mount the session cannot see still shadows the parent
+    backend's keys under its prefix.
+
     Args:
         registry (MountRegistry): registry holding the mount table.
         virtual (str): absolute virtual path to scan beneath.
@@ -172,6 +176,26 @@ def mount_roots_below(registry: MountRegistry, virtual: str) -> list[str]:
     return [
         m.prefix.rstrip("/") or "/"
         for m in registry.descendant_mounts(virtual)
+    ]
+
+
+def visible_mount_roots_below(registry: MountRegistry,
+                              virtual: str) -> list[str]:
+    """The mount roots under a path this session may be told about.
+
+    The list a caller *names* a boundary from. The mount table is not
+    session state, so nothing below filters it: a row in a tree, a
+    member in an archive and a "different filesystem" warning are each
+    produced above every backend, and each one hands back a name the
+    session's hides were meant to withhold.
+
+    Args:
+        registry (MountRegistry): registry holding the mount table.
+        virtual (str): absolute virtual path to scan beneath.
+    """
+    return [
+        root for root in mount_roots_below(registry, virtual)
+        if path_allowed(root)
     ]
 
 
@@ -205,6 +229,8 @@ def mount_view(registry: MountRegistry) -> MountView:
     """
     return MountView(descendants=functools.partial(mount_roots_below,
                                                    registry),
+                     visible_descendants=functools.partial(
+                         visible_mount_roots_below, registry),
                      is_root=registry.is_mount_root,
                      root_of=functools.partial(mount_root_of, registry))
 
@@ -351,15 +377,6 @@ async def run_on_mount(
             return None, IOResult(
                 exit_code=127,
                 stderr=f"{cmd_name}: command not found".encode())
-        try:
-            assert_mount_allowed(mount.prefix)
-            for ps in paths:
-                target = registry.try_mount_for(ps.virtual)
-                if target is not None:
-                    assert_mount_allowed(target.prefix)
-        except PermissionError as exc:
-            return None, IOResult(exit_code=1, stderr=f"{exc}\n".encode())
-
     if cmd_name == "find":
         flag_kwargs = scalar_find_flags(flag_kwargs)
 

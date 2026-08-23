@@ -17,14 +17,15 @@ from mirage.core.gslides.readdir import readdir
 from mirage.core.gslides.scope import detect_scope
 from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.hierarchy.stat import make_stat
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 
 
 def _file_stat(match: ScopeMatch, path: PathSpec,
                entry: IndexEntry) -> FileStat:
     return FileStat(
         name=entry.vfs_name,
-        type=FileType.JSON,
+        type=FileType.FILE,
+        content=ContentType.JSON,
         modified=entry.remote_time,
         size=entry.size,
         extra={

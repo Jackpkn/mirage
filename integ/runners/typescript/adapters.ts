@@ -92,11 +92,10 @@ import {
   type ConsoleFactory,
 } from '@struktoai/mirage-node'
 import {
-  parseMountPermissions,
-  parseWorkspacePermissions,
-  type MountPermissions,
-  type WorkspacePermissions,
-} from '@struktoai/mirage-core/workspace/session/permissions'
+  parseSessionProfile,
+  type SessionProfile,
+} from '@struktoai/mirage-core/policy/profile'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/types'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
 import { ChromaClient } from 'chromadb'
@@ -210,27 +209,41 @@ function consoleFactoryFor(target: Target): ConsoleFactory | undefined {
     )
 }
 
-// The permissions document a target declares: the workspace tier
-// (`permissions` on the target) and each mount's own block
-// (`permissions` on the mount), validated by the parsers the YAML door
-// uses so a case runs under exactly what a deployment would write. Only
-// the ram and disk openers consult it (main.ts refuses it on any other
-// resource), the same way the console block rides ram alone.
+// The target's profiles, and which one shapes a session that names none.
+// A profile is the whole permission document, so this is every permission
+// the target states, including the per-mount ones; the parser is the
+// one the YAML door uses, so a case runs under exactly what a
+// deployment would write. Only the openers that consult it may declare
+// one (main.ts refuses it on any other resource), the same way the
+// console block rides ram alone: an unwired opener would run the target
+// unbound and it would read as covered.
+/**
+ * Wrap a profile's inline script source the way the config door does.
+ *
+ * A target is JSON, so it carries a profile's script as source rather than
+ * as the path a YAML config would name. Loading is the config layer's
+ * job everywhere else, so the battery does that one step here and hands
+ * the workspace what code would pass.
+ */
+function scriptedProfile(doc: unknown): unknown {
+  if (typeof doc !== 'object' || doc === null) return doc
+  const script = (doc as { script?: unknown }).script
+  if (typeof script !== 'object' || script === null) return doc
+  const { source, language } = script as { source: string; language?: 'python' | 'js' }
+  return { ...(doc as object), script: new ScriptSource(source, language ?? 'python') }
+}
+
 function permissionOptions(target: Target): {
-  permissions?: WorkspacePermissions
-  mountPermissions?: Record<string, MountPermissions>
+  profiles?: Record<string, SessionProfile>
+  profile?: string
 } {
-  const mountPermissions: Record<string, MountPermissions> = {}
-  for (const m of target.mounts) {
-    if (m.permissions !== undefined) {
-      mountPermissions[m.path] = parseMountPermissions(m.permissions, `mount ${m.path} permissions`)
-    }
+  const profiles: Record<string, SessionProfile> = {}
+  for (const [name, doc] of Object.entries(target.profiles ?? {})) {
+    profiles[name] = parseSessionProfile(scriptedProfile(doc), `profile \`${name}\``)
   }
   return {
-    ...(target.permissions !== undefined
-      ? { permissions: parseWorkspacePermissions(target.permissions) }
-      : {}),
-    ...(Object.keys(mountPermissions).length > 0 ? { mountPermissions } : {}),
+    ...(Object.keys(profiles).length > 0 ? { profiles } : {}),
+    ...(target.profile !== undefined ? { profile: target.profile } : {}),
   }
 }
 
@@ -565,7 +578,7 @@ async function openEmail(target: Target): Promise<Open> {
       maxMessages: 200,
     })
   }
-  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  const ws = new Workspace(mounts, { mode: MountMode.WRITE, ...permissionOptions(target) })
   // Every registerCli in this file installs the same snake_case block
   // the Python runner does, so the cli facet proves one YAML config
   // serves both hosts rather than only that each host has some config

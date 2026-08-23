@@ -13,8 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { MountRegistry } from '../../../mount/registry.ts'
-import { KEYWORDS } from '../../../route/constants.ts'
-import { route, routeAll } from '../../../route/route.ts'
+import { KEYWORDS } from '../../../lookup/constants.ts'
+import { lookup, lookupAll } from '../../../lookup/lookup.ts'
 import type { Session } from '../../../session/session.ts'
 import { DESCRIPTIONS, KIND_BY_CONSUMER } from './constants.ts'
 import { NameKind } from './types.ts'
@@ -24,7 +24,7 @@ import { sessionEntry } from '../../../session/session.ts'
 export function classify(name: string, session: Session, registry: MountRegistry): NameKind | null {
   if (sessionEntry(session.aliases, name) !== undefined) return NameKind.ALIAS
   if (KEYWORDS.has(name)) return NameKind.KEYWORD
-  return KIND_BY_CONSUMER[route(name, session, registry)] ?? null
+  return KIND_BY_CONSUMER[lookup(name, session, registry)] ?? null
 }
 
 /**
@@ -49,7 +49,7 @@ export function classifyAll(name: string, session: Session, registry: MountRegis
   const kinds: NameKind[] =
     sessionEntry(session.aliases, name) !== undefined ? [NameKind.ALIAS] : []
   if (KEYWORDS.has(name)) kinds.push(NameKind.KEYWORD)
-  for (const consumer of routeAll(name, session, registry)) {
+  for (const consumer of lookupAll(name, session, registry)) {
     const kind = KIND_BY_CONSUMER[consumer]
     if (kind !== undefined && !kinds.includes(kind)) kinds.push(kind)
   }

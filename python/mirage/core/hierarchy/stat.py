@@ -20,7 +20,7 @@ from mirage.core.hierarchy.probe import (A, ReaddirFn, assert_listed,
                                          listed_size, resolve_entry)
 from mirage.core.hierarchy.readdir import Guard
 from mirage.core.hierarchy.scope import ROOT, DetectFn, ScopeMatch
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.errors import enoent
 
 ExtraFn = Callable[[ScopeMatch], dict[str, str]]
@@ -29,23 +29,36 @@ StatHook = Callable[[A, ScopeMatch, PathSpec, IndexCacheStore],
 EntryStatFn = Callable[[ScopeMatch, PathSpec, IndexEntry], FileStat]
 
 
-def entry_stat(id_field: str, filetype: FileType) -> EntryStatFn:
+def entry_stat(id_field: str, filetype: ContentType | FileType) -> EntryStatFn:
     """The shape most id-addressed nodes share, keyed by an id field.
 
     Name from the entry's ``vfs_name``, size and modified straight off
     the listing, and the entry's id under ``id_field`` in ``extra``. A
     kind whose shape differs writes its own ``EntryStatFn`` instead.
 
+    ``filetype`` is the node's kind: a ``FileType`` for a non-regular
+    node (a directory entry, e.g. a linear team or trello board) or a
+    ``ContentType`` for a regular file, whose node kind is then FILE.
+
     Args:
         id_field (str): the ``extra`` key the entry's id rides under.
-        filetype (FileType): the node's rendered type.
+        filetype (ContentType | FileType): the node's kind.
     """
 
     def build(match: ScopeMatch, path: PathSpec,
               entry: IndexEntry) -> FileStat:
+        if isinstance(filetype, FileType):
+            return FileStat(
+                name=entry.vfs_name,
+                type=filetype,
+                size=entry.size,
+                modified=entry.remote_time or None,
+                extra={id_field: entry.id},
+            )
         return FileStat(
             name=entry.vfs_name,
-            type=filetype,
+            type=FileType.FILE,
+            content=filetype,
             size=entry.size,
             modified=entry.remote_time or None,
             extra={id_field: entry.id},
@@ -90,10 +103,12 @@ def make_stat(
     async def stat(accessor: A,
                    path: PathSpec,
                    index: IndexCacheStore = NULL_INDEX) -> FileStat:
-        if index is NULL_INDEX:
+        if index is NULL_INDEX or index is None:
             # Entry resolution and listed_size read what the probe's
             # parent listing just wrote, so a caller with no cache still
-            # needs one for the duration of the call.
+            # needs one for the duration of the call. None arrives from
+            # bare commands built outside a workspace (the TS twin's ??
+            # treats null and undefined alike).
             index = RAMIndexCacheStore()
         virtual = path.virtual
         match = detect(path)
@@ -127,8 +142,9 @@ def make_stat(
             return FileStat(name=name, type=FileType.DIRECTORY, extra=extra)
         return FileStat(
             name=name,
-            type=scope.filetype
-            if scope.filetype is not None else FileType.JSON,
+            type=FileType.FILE,
+            content=scope.filetype
+            if scope.filetype is not None else ContentType.JSON,
             size=await listed_size(index, path),
             extra=extra,
         )

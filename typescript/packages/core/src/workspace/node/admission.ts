@@ -14,8 +14,15 @@
 
 import { sessionPathAllowed } from '../../context/session_context.ts'
 import type { ByteSource } from '../../io/types.ts'
-import { PolicyDenied, askRule, renderDeny, renderPending } from '../../policy/index.ts'
-import type { CommandContext, CommandRule, CommandsSpec } from '../../policy/index.ts'
+import {
+  Outcome,
+  PolicyDenied,
+  Scope,
+  askRule,
+  renderDeny,
+  renderPending,
+} from '../../policy/index.ts'
+import type { Ask, CommandContext, CommandRule, AdmissionRules, Deny } from '../../policy/index.ts'
 import { ioRefusal } from '../../policy/match/rule.ts'
 import { hasRules, readsArgs, scopesPaths } from '../../policy/match/reads.ts'
 import type { ValueType } from '../../commands/spec/types.ts'
@@ -54,10 +61,10 @@ import {
   followsLastComponent,
   isTool,
   readsSubtrees,
-  route,
+  lookup,
   walksMounts,
   wordPolicy,
-} from '../route/index.ts'
+} from '../lookup/index.ts'
 import type { Session } from '../session/session.ts'
 import { homeDir } from '../session/shell_dirs.ts'
 import { innerLines, innerReadable, wordValue, type Word } from './inner_lines.ts'
@@ -78,6 +85,12 @@ function norm(virtual: string): string {
 }
 
 /**
+ * The nodes a redirected statement may wrap whose last command is the
+ * one the redirect binds to.
+ */
+const REDIRECT_CHAIN: ReadonlySet<string> = new Set([NodeType.LIST, NodeType.PIPELINE])
+
+/**
  * A command the gate let through, and what its own I/O may touch.
  *
  * The gate judged the paths the line names; a walk below them reaches
@@ -92,20 +105,20 @@ function norm(virtual: string): string {
  * the door answered for this line, and the session's standing ones.
  */
 export class Admitted implements EntryGate {
-  readonly layers: readonly CommandsSpec[]
+  readonly rules: AdmissionRules | null
   readonly tokens: readonly string[]
   readonly judged: ReadonlySet<string>
   readonly granted: readonly CommandRule[]
   readonly scoped: boolean
 
   constructor(init: {
-    layers: readonly CommandsSpec[]
+    rules: AdmissionRules | null
     tokens: readonly string[]
     judged: ReadonlySet<string>
     granted: readonly CommandRule[]
     scoped: boolean
   }) {
-    this.layers = init.layers
+    this.rules = init.rules
     this.tokens = init.tokens
     this.judged = init.judged
     this.granted = init.granted
@@ -116,7 +129,7 @@ export class Admitted implements EntryGate {
   // running command.
   check(virtual: string): void {
     if (this.judged.has(norm(virtual))) return
-    const reason = ioRefusal(this.layers, this.tokens, virtual, this.granted)
+    const reason = ioRefusal(this.rules, this.tokens, virtual, this.granted)
     if (reason !== null) throw new PolicyDenied(reason, virtual)
   }
 }
@@ -235,7 +248,50 @@ function seen(session: Session, specs: readonly PathSpec[]): PathSpec[] {
  * request; `stdin` decides whether a bare `rg` reads the working
  * directory.
  */
-export async function admit(
+/**
+ * One command's literal words, classified the way the runtime would
+ * classify them, so the gate and the run name the same paths.
+ */
+export function classifiedWords(
+  name: string,
+  args: readonly string[],
+  session: Session,
+  registry: MountRegistry,
+): (string | PathSpec)[] {
+  const line = [name, ...args]
+  const [wordKinds, wordBases] = wordHints(line, session, registry)
+  return classifyParts(line, registry, session.cwd, wordKinds, wordBases)
+}
+
+/**
+ * The paths a statement's redirect targets name.
+ *
+ * Shared by admission and by the dry run, because a rule reads a
+ * redirect the same way in both: a target only the runtime can expand
+ * names no path here, and one that is not path-shaped is not a file.
+ */
+export function redirectPaths(
+  words: readonly Word[],
+  registry: MountRegistry,
+  cwd: string,
+): PathSpec[] {
+  return words
+    .filter((w) => w.text !== null)
+    .map((w) => classifyBarePath(wordValue(w), registry, cwd))
+    .filter((p): p is PathSpec => p instanceof PathSpec)
+}
+
+/**
+ * Everything the gate decides about one command before anything is
+ * spent on it: visibility, the classified context, and the policy
+ * chain's answer.
+ *
+ * Split out of `admit` so a dry run can have the answer without the
+ * consequences. Nothing here records a request, consumes a grant or
+ * reaches the host, which is what makes it safe for `explain`;
+ * `admit` adds exactly those and renders.
+ */
+export async function gate(
   name: string,
   args: readonly string[],
   operands: readonly (string | PathSpec)[],
@@ -245,7 +301,7 @@ export async function admit(
   agentId = '',
   stdin: ByteSource | null = null,
   redirects: readonly PathSpec[] = [],
-): Promise<Refusal | Admitted> {
+): Promise<Refusal | [CommandContext, Deny | Ask | null]> {
   if (!commandVisible(name, session)) {
     return { stderr: new TextEncoder().encode(`${name}: command not found\n`), exitCode: 127 }
   }
@@ -271,26 +327,54 @@ export async function admit(
     tool: isTool(name, session),
     walks: walksMounts(name, [name, ...args]),
   }
-  const asked = await registry.policies.preCommand(ctx)
+  return [ctx, await registry.policies.preCommand(ctx)]
+}
+
+export async function admit(
+  name: string,
+  args: readonly string[],
+  operands: readonly (string | PathSpec)[],
+  session: Session,
+  registry: MountRegistry,
+  namespace: Namespace | null,
+  agentId = '',
+  stdin: ByteSource | null = null,
+  redirects: readonly PathSpec[] = [],
+): Promise<Refusal | Admitted> {
+  const gated = await gate(
+    name,
+    args,
+    operands,
+    session,
+    registry,
+    namespace,
+    agentId,
+    stdin,
+    redirects,
+  )
+  if (!Array.isArray(gated)) return gated
+  const [ctx, asked] = gated
   // An Ask is the chain's answer only after every Deny had its say; the
   // door answers it from the session's grants or the host, so a grant
   // never re-opens a deny.
-  const verdict =
-    asked !== null && asked.kind === 'ask' ? await registry.approvals.resolve(ctx, asked) : asked
-  if (verdict === null) {
-    const granted = session.grants.filter((g) => g.decision === 'allow_session').map((g) => g.rule)
+  const action =
+    asked !== null && asked.kind === 'ask' ? await registry.decisions.resolve(ctx, asked) : asked
+  if (action === null) {
+    const granted = session.decisions
+      .filter((r) => r.scope === Scope.SESSION && r.outcome === Outcome.ALLOW)
+      .map((r) => r.rule)
     if (asked !== null && asked.kind === 'ask') granted.unshift(askRule(ctx, asked))
-    const layers = session.commandLayers
+    const rules = session.commands
     return new Admitted({
-      layers,
-      tokens,
+      rules,
+      tokens: ctx.tokens ?? [],
       judged: new Set(ctx.paths.map((p) => norm(p.virtual))),
       granted,
-      scoped: scopesPaths(layers, name),
+      scoped: scopesPaths(rules, name),
     })
   }
   const [stderr, exitCode] =
-    verdict.kind === 'pending' ? renderPending(name, verdict) : renderDeny(name, verdict)
+    action.kind === 'pending' ? renderPending(name, action) : renderDeny(name, action)
   return { stderr, exitCode }
 }
 
@@ -320,7 +404,7 @@ function wordHints(
   const joined = line.slice(0, consumed).join(' ')
   if (
     Object.hasOwn(session.functions, joined) ||
-    wordPolicy(route(joined, session, registry)) !== WordPolicy.MOUNT
+    wordPolicy(lookup(joined, session, registry)) !== WordPolicy.MOUNT
   ) {
     return [null, null]
   }
@@ -348,22 +432,18 @@ async function admitWords(
   registry: MountRegistry,
   namespace: Namespace | null,
   agentId: string,
-  layers: readonly CommandsSpec[],
+  rules: AdmissionRules | null,
   reparse: (line: string) => TSNodeLike,
   redirectWords: readonly Word[] = [],
 ): Promise<Refusal | null> {
   const head = words[0]
   if (head === undefined) return null
-  if (head.text === null && hasRules(layers)) return refuse(head.raw, unreadable(head.raw))
+  if (head.text === null && hasRules(rules)) return refuse(head.raw, unreadable(head.raw))
   const name = wordValue(head)
   const args = words.slice(1).map(wordValue)
   const line = [name, ...args]
-  const [wordKinds, wordBases] = wordHints(line, session, registry)
-  const classified = classifyParts(line, registry, session.cwd, wordKinds, wordBases)
-  const redirects = redirectWords
-    .filter((w) => w.text !== null)
-    .map((w) => classifyBarePath(wordValue(w), registry, session.cwd))
-    .filter((p): p is PathSpec => p instanceof PathSpec)
+  const classified = classifiedWords(name, args, session, registry)
+  const redirects = redirectPaths(redirectWords, registry, session.cwd)
   const verdict = await admit(
     name,
     args,
@@ -389,7 +469,7 @@ async function admitWords(
     if (globby) return refuse(name, 'expands a pattern only the runtime can read')
   }
   const unread = [...words.slice(1), ...redirectWords].find((w) => w.text === null)?.raw
-  if ((unread !== undefined || open) && readsArgs(layers, name)) {
+  if ((unread !== undefined || open) && readsArgs(rules, name)) {
     return refuse(
       name,
       unread !== undefined ? unreadable(unread) : 'runs on operands the gate cannot read',
@@ -397,7 +477,7 @@ async function admitWords(
   }
   for (const inner of innerLines(name, words.slice(1))) {
     if (!innerReadable(inner)) {
-      if (hasRules(layers)) return refuse(name, 'runs lines the gate cannot read')
+      if (hasRules(rules)) return refuse(name, 'runs lines the gate cannot read')
       continue
     }
     const innerRefusal =
@@ -410,7 +490,7 @@ async function admitWords(
             registry,
             namespace,
             agentId,
-            layers,
+            rules,
             reparse,
           )
     if (innerRefusal !== null) return innerRefusal
@@ -453,7 +533,7 @@ export async function admitLine(
   agentId: string,
   reparse: (line: string) => TSNodeLike,
 ): Promise<Refusal | null> {
-  const layers = session.commandLayers
+  const rules = session.commands
   const home = homeDir(session)
   for (const node of commandNodes(root)) {
     const [, parts] = splitEnvPrefix(getParts(node))
@@ -469,9 +549,9 @@ export async function admitLine(
       registry,
       namespace,
       agentId,
-      layers,
+      rules,
       reparse,
-      redirectWords(node, home),
+      statementRedirects(node, home),
     )
     if (refusal !== null) return refusal
   }
@@ -485,13 +565,30 @@ export async function admitLine(
  * command's arguments, like any other word). Heredoc and herestring
  * bodies are content, not paths, and a numeric target is an fd
  * duplication; neither names a file.
+ *
+ * A redirect binds to one command, and which one is a question about
+ * the tree rather than the statement: `a && b > f` and `a | b > f` both
+ * parse as a redirected_statement wrapping the whole list, so reading
+ * only its first child answered `a` and left `b`, the command bash
+ * actually opens the file for, with no target at all. The walk climbs
+ * the last-command chain instead, which is bash's own rule for a list
+ * and a pipeline. A compound (`{ }`, a loop, a subshell) redirects
+ * every command inside it, which is not a chain, so none is claimed
+ * here and the op door judges the write.
  */
-function redirectWords(node: TSNodeLike, home: string | null): Word[] {
-  const parent = node.parent
+export function statementRedirects(node: TSNodeLike, home: string | null): Word[] {
+  let owner = node
+  let parent = owner.parent
+  while (parent !== undefined && parent !== null && REDIRECT_CHAIN.has(parent.type)) {
+    const last = parent.namedChildren[parent.namedChildren.length - 1]
+    if (last === undefined || last.startIndex !== owner.startIndex) return []
+    owner = parent
+    parent = owner.parent
+  }
   if (parent === undefined || parent === null) return []
   if (parent.type !== NodeType.REDIRECTED_STATEMENT) return []
   const body = parent.namedChildren[0]
-  if (body === undefined || body.startIndex !== node.startIndex) return []
+  if (body === undefined || body.startIndex !== owner.startIndex) return []
   const [, redirects] = getRedirects(parent)
   const words: Word[] = []
   for (const r of redirects) {

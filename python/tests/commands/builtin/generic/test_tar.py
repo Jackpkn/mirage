@@ -8,7 +8,8 @@ from mirage.commands.builtin.generic.archive.types import Walked
 from mirage.commands.builtin.generic.tar import (excluded, member_name, pruned,
                                                  strip_prefix, tar)
 from mirage.ops.types import LinkView, MountView
-from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec
+from mirage.types import (LINK_TARGET_KEY, ContentType, FileStat, FileType,
+                          PathSpec)
 from mirage.utils.key_prefix import mount_key
 from mirage.utils.path import CycleError
 
@@ -60,7 +61,8 @@ class _Tree:
             return FileStat(name=key, type=FileType.DIRECTORY)
         if key in self.files:
             return FileStat(name=key,
-                            type=FileType.TEXT,
+                            type=FileType.FILE,
+                            content=ContentType.TEXT,
                             size=len(self.files[key]))
         raise FileNotFoundError(key)
 
@@ -126,6 +128,8 @@ def _mounts(descendants: tuple[str, ...] = (),
 
     return MountView(
         descendants=lambda p:
+        [d for d in descendants if d.startswith(p.rstrip("/") + "/")],
+        visible_descendants=lambda p:
         [d for d in descendants if d.startswith(p.rstrip("/") + "/")],
         is_root=lambda p: p.rstrip("/") in {r.rstrip("/")
                                             for r in roots},

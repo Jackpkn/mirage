@@ -36,6 +36,23 @@ def test_owner_of_answers_none_off_every_mount():
     assert PrefixResolver(lambda: []).owner_of("/data") is None
 
 
+def test_link_children_reflects_the_live_source_per_directory():
+    links = {"/data": {"lnk"}}
+    resolver = PrefixResolver(lambda: ["/data/"],
+                              lambda directory: links.get(directory, set()))
+    assert resolver.link_children("/data") == {"lnk"}
+    assert resolver.link_children("/other") == set()
+    links["/data"] = {"lnk", "later"}
+    assert resolver.link_children("/data") == {"lnk", "later"}
+
+
+def test_link_children_answers_nothing_without_a_link_source():
+    # No node table means no name can be a link, which is the answer a
+    # resolver built outside a workspace owes.
+    assert PrefixResolver(lambda: ["/data/"]).link_children("/data") == set()
+
+
 def test_prefix_resolver_satisfies_the_protocol():
     resolver: MountResolver = PrefixResolver(lambda: ["/data/"])
     assert resolver.owner_of("/data/x") == "/data/"
+    assert resolver.link_children("/data") == set()

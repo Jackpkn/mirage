@@ -19,9 +19,10 @@ from stat import S_IFDIR, S_IFREG
 
 import pytest
 
-from mirage.types import FileStat, FileType
-from mirage.utils.stat_view import (DIR_MODE, FILE_MODE, content_size, is_dir,
-                                    mtime_ns)
+from mirage.types import ContentType, FileStat, FileType
+from mirage.utils.stat_view import (DIR_MODE, FILE_MODE, LINK_MODE,
+                                    content_size, is_dir, is_link, mtime_ns,
+                                    posix_mode)
 
 NAIVE = "2026-01-02T03:04:05"
 UTC_NS = int(
@@ -51,27 +52,44 @@ def test_offsetless_stamp_reads_as_utc(new_york_clock):
     # The rule utils/dates already states: an offset-less stamp is UTC
     # "so Python and TypeScript agree". The view delegates rather than
     # re-parsing, which is what three of the four translators got wrong.
-    st = FileStat(name="f", type=FileType.TEXT, modified=NAIVE)
+    st = FileStat(name="f",
+                  type=FileType.FILE,
+                  content=ContentType.TEXT,
+                  modified=NAIVE)
     assert mtime_ns(st) == UTC_NS
 
 
 def test_aware_and_offsetless_stamps_agree(new_york_clock):
-    naive = FileStat(name="f", type=FileType.TEXT, modified=NAIVE)
-    aware = FileStat(name="f", type=FileType.TEXT, modified=NAIVE + "+00:00")
-    zulu = FileStat(name="f", type=FileType.TEXT, modified=NAIVE + "Z")
+    naive = FileStat(name="f",
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
+                     modified=NAIVE)
+    aware = FileStat(name="f",
+                     type=FileType.FILE,
+                     content=ContentType.TEXT,
+                     modified=NAIVE + "+00:00")
+    zulu = FileStat(name="f",
+                    type=FileType.FILE,
+                    content=ContentType.TEXT,
+                    modified=NAIVE + "Z")
     assert mtime_ns(naive) == mtime_ns(aware) == mtime_ns(zulu)
 
 
 def test_missing_or_garbage_mtime_is_none():
-    assert mtime_ns(FileStat(name="f", type=FileType.TEXT)) is None
     assert mtime_ns(
-        FileStat(name="f", type=FileType.TEXT,
+        FileStat(name="f", type=FileType.FILE,
+                 content=ContentType.TEXT)) is None
+    assert mtime_ns(
+        FileStat(name="f",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
                  modified="yesterday-ish")) is None
 
 
 def test_epoch_zero_is_a_real_time_not_unknown():
     st = FileStat(name="f",
-                  type=FileType.TEXT,
+                  type=FileType.FILE,
+                  content=ContentType.TEXT,
                   modified="1970-01-01T00:00:00Z")
     assert mtime_ns(st) == 0
 
@@ -83,15 +101,56 @@ def test_directory_size_is_zero_whatever_the_backend_reports():
 
 
 def test_unknown_size_reads_as_zero():
-    st = FileStat(name="f", type=FileType.TEXT)
+    st = FileStat(name="f", type=FileType.FILE, content=ContentType.TEXT)
     assert content_size(st) == 0
     assert not is_dir(st)
 
 
 def test_known_size_passes_through():
-    assert content_size(FileStat(name="f", type=FileType.TEXT, size=11)) == 11
+    assert content_size(
+        FileStat(name="f",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
+                 size=11)) == 11
 
 
 def test_mode_constants_carry_type_bits():
     assert DIR_MODE == (S_IFDIR | 0o755)
     assert FILE_MODE == (S_IFREG | 0o644)
+
+
+def test_posix_mode_defaults_by_kind():
+    file_st = FileStat(name="f", type=FileType.FILE, content=ContentType.TEXT)
+    dir_st = FileStat(name="d", type=FileType.DIRECTORY)
+    assert posix_mode(file_st) == FILE_MODE
+    assert posix_mode(dir_st) == DIR_MODE
+
+
+def test_posix_mode_takes_the_overlay_bits_and_keeps_the_kind():
+    st = FileStat(name="d", type=FileType.DIRECTORY, mode=0o700)
+    assert posix_mode(st) == (S_IFDIR | 0o700)
+    st = FileStat(name="f",
+                  type=FileType.FILE,
+                  content=ContentType.TEXT,
+                  mode=0o600)
+    assert posix_mode(st) == (S_IFREG | 0o600)
+
+
+def test_posix_mode_reports_a_link_as_lrwxrwxrwx():
+    st = FileStat(name="l", type=FileType.SYMLINK)
+    assert posix_mode(st) == LINK_MODE
+    # A chmod -h stores bits the overlay keeps, but no POSIX system
+    # consults the bits on a symlink, so none of them are reported.
+    st = FileStat(name="l", type=FileType.SYMLINK, mode=0o600)
+    assert posix_mode(st) == LINK_MODE
+
+
+def test_is_link_reads_the_kind():
+    assert is_link(FileStat(name="l", type=FileType.SYMLINK)) is True
+    assert is_link(
+        FileStat(name="f", type=FileType.FILE,
+                 content=ContentType.TEXT)) is False
+
+
+def test_link_mode_is_lrwxrwxrwx():
+    assert LINK_MODE == 0o120777

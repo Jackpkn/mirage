@@ -22,7 +22,7 @@ from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.langfuse.stat import stat
 from mirage.core.render.json import jsonl_bytes
 from mirage.resource.langfuse.config import LangfuseConfig
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 
 
 async def seed_dir(index, virtual_key: str, names: list[str]) -> None:
@@ -77,7 +77,7 @@ async def test_stat_trace_file(accessor, index):
         PathSpec(resource_path="traces/abc.json",
                  virtual="/traces/abc.json",
                  directory="/traces/abc.json"), index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.name == "abc.json"
 
 
@@ -101,7 +101,7 @@ async def test_stat_prompt_version_file(accessor, index):
         PathSpec(resource_path="prompts/summarize/1.json",
                  virtual="/prompts/summarize/1.json",
                  directory="/prompts/summarize/1.json"), index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.name == "1.json"
 
 
@@ -118,7 +118,7 @@ async def test_stat_dataset_items(accessor, index):
             PathSpec(resource_path="datasets/qa-eval/items.jsonl",
                      virtual="/datasets/qa-eval/items.jsonl",
                      directory="/datasets/qa-eval/items.jsonl"), index)
-    assert result.type == FileType.TEXT
+    assert result.content == ContentType.TEXT
     assert result.name == "items.jsonl"
     assert result.size == len(jsonl_bytes(items))
 

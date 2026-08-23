@@ -19,7 +19,7 @@ import pytest
 from mirage.accessor.gmail import GmailAccessor
 from mirage.cache.index import IndexEntry, RAMIndexCacheStore
 from mirage.core.gmail.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -131,7 +131,7 @@ async def test_stat_message(accessor, index):
         index,
     )
     assert result.name == "Test_Email__msg1.gmail.json"
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.extra["message_id"] == "msg1"
     # rendered .gmail.json length is unknown until read; the source
     # estimate is surfaced via extra only
@@ -184,7 +184,7 @@ async def test_stat_not_found(accessor, index):
 @pytest.mark.asyncio
 async def test_stat_unknown_top_level_raises(accessor, index):
     with patch(
-            "mirage.core.gmail.stat.list_labels",
+            "mirage.core.gmail.readdir.list_labels",
             new_callable=AsyncMock,
             return_value=[{
                 "type": "system",
@@ -203,7 +203,7 @@ async def test_stat_unknown_top_level_raises(accessor, index):
 @pytest.mark.asyncio
 async def test_stat_real_label_via_api(accessor, index):
     with patch(
-            "mirage.core.gmail.stat.list_labels",
+            "mirage.core.gmail.readdir.list_labels",
             new_callable=AsyncMock,
             return_value=[{
                 "type": "system",
@@ -222,12 +222,13 @@ async def test_stat_real_label_via_api(accessor, index):
 @pytest.mark.asyncio
 async def test_stat_propagates_parent_refresh_failure(accessor, index):
     failure = RuntimeError("gmail unavailable")
-    with patch("mirage.core.gmail.stat._readdir",
+    with patch("mirage.core.gmail.readdir.list_labels",
                new_callable=AsyncMock,
                side_effect=failure):
         with pytest.raises(RuntimeError, match="gmail unavailable"):
             await stat(
                 accessor,
-                PathSpec.from_str_path("/INBOX/missing.gmail.json"),
+                PathSpec.from_str_path(
+                    "/INBOX/2026-04-12/missing__x1.gmail.json"),
                 index,
             )

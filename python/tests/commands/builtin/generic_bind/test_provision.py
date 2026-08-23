@@ -26,7 +26,7 @@ from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.provision import Precision
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 SIZES = {
@@ -57,7 +57,8 @@ async def _stat(accessor, path, index=None) -> FileStat:
                         type=FileType.DIRECTORY)
     return FileStat(name=virtual.rsplit("/", 1)[-1],
                     size=SIZES.get(virtual),
-                    type=FileType.TEXT)
+                    type=FileType.FILE,
+                    content=ContentType.TEXT)
 
 
 async def _readdir(accessor, path, index=None) -> list[str]:
@@ -309,7 +310,10 @@ async def test_index_hit_read_provision_without_paths_is_unknown():
 
 
 async def _noop_stat(*args, **kwargs):
-    return FileStat(name="x", size=0, type=FileType.FILE)
+    return FileStat(name="x",
+                    size=0,
+                    type=FileType.FILE,
+                    content=ContentType.FILE)
 
 
 def _make_command(name: str, provision=None, filetype: str | None = None):

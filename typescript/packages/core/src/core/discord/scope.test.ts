@@ -12,209 +12,94 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { stripSlash } from '../../utils/slash.ts'
-import { mountKey } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
-import { detectScope } from './scope.ts'
-import { PathSpec } from '../../types.ts'
+
+import { INVALID, ROOT } from '../hierarchy/scope.ts'
+import { detectScope, NATIVE_KINDS } from './scope.ts'
+
+const CHAT = '/My Server__G1/channels/general__C1/2024-01-15/chat.jsonl'
 
 describe('detectScope', () => {
-  it('root → level=root, useNative=true, resourcePath /', () => {
-    const s = detectScope(new PathSpec({ resourcePath: '', virtual: '/', directory: '/' }))
-    expect(s.level).toBe('root')
-    expect(s.useNative).toBe(true)
-    expect(s.resourcePath).toBe('/')
+  it('classifies the root', () => {
+    expect(detectScope('/').kind).toBe(ROOT)
   })
 
-  it('/myserver__G1 → level=guild, guildName=myserver, guildId=G1, useNative=true', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1',
-        virtual: '/myserver__G1',
-        directory: '/myserver__G1',
-      }),
-    )
-    expect(s.level).toBe('guild')
-    expect(s.guildName).toBe('myserver')
-    expect(s.guildId).toBe('G1')
-    expect(s.useNative).toBe(true)
+  it('classifies a guild and decodes both dirname halves', () => {
+    const match = detectScope('/My Server__G1')
+    expect(match.kind).toBe('guild')
+    expect(match.slots).toEqual({ guild: 'My Server', guild_id: 'G1' })
   })
 
-  it('/myserver__G1/channels → level=guild, container=channels, guildId=G1, useNative=true', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1/channels',
-        virtual: '/myserver__G1/channels',
-        directory: '/myserver__G1/channels',
-      }),
-    )
-    expect(s.level).toBe('guild')
-    expect(s.container).toBe('channels')
-    expect(s.guildId).toBe('G1')
-    expect(s.useNative).toBe(true)
+  it('refuses a bare guild name', () => {
+    // The tree mints every dirname as `name__id`, so a bare name can never
+    // be a listed guild and classifies as invalid outright.
+    expect(detectScope('/My Server').kind).toBe(INVALID)
   })
 
-  it('/myserver__G1/members → level=guild, container=members, guildId=G1, useNative=false', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1/members',
-        virtual: '/myserver__G1/members',
-        directory: '/myserver__G1/members',
-      }),
-    )
-    expect(s.level).toBe('guild')
-    expect(s.container).toBe('members')
-    expect(s.guildId).toBe('G1')
-    expect(s.useNative).toBe(false)
+  it('classifies the containers', () => {
+    expect(detectScope('/My Server__G1/channels').kind).toBe('channels_dir')
+    expect(detectScope('/My Server__G1/members').kind).toBe('members_dir')
+    expect(detectScope('/My Server__G1/nope').kind).toBe(INVALID)
   })
 
-  it('/myserver__G1/channels/general__C1 → level=channel, useNative=true', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1/channels/general__C1',
-        virtual: '/myserver__G1/channels/general__C1',
-        directory: '/myserver__G1/channels/general__C1',
-      }),
-    )
-    expect(s.level).toBe('channel')
-    expect(s.guildName).toBe('myserver')
-    expect(s.guildId).toBe('G1')
-    expect(s.channelName).toBe('general')
-    expect(s.channelId).toBe('C1')
-    expect(s.container).toBe('channels')
-    expect(s.useNative).toBe(true)
+  it('classifies a channel', () => {
+    const match = detectScope('/My Server__G1/channels/general__C1')
+    expect(match.kind).toBe('channel')
+    expect(match.slots.channel).toBe('general')
+    expect(match.slots.channel_id).toBe('C1')
   })
 
-  it('/myserver__G1/channels/general__C1/2026-04-24/chat.jsonl → level=messages', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1/channels/general__C1/2026-04-24/chat.jsonl',
-        virtual: '/myserver__G1/channels/general__C1/2026-04-24/chat.jsonl',
-        directory: '/myserver__G1/channels/general__C1/2026-04-24/chat.jsonl',
-      }),
-    )
-    expect(s.level).toBe('messages')
-    expect(s.dateStr).toBe('2026-04-24')
-    expect(s.useNative).toBe(false)
-    expect(s.guildId).toBe('G1')
-    expect(s.channelId).toBe('C1')
-    expect(s.container).toBe('channels')
+  it('classifies a member profile', () => {
+    const match = detectScope('/My Server__G1/members/alice__U1.json')
+    expect(match.kind).toBe('member')
+    expect(match.slots.member).toBe('alice')
+    expect(match.slots.user_id).toBe('U1')
   })
 
-  it('/myserver__G1/channels/general__C1/2026-04-24 → level=date', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1/channels/general__C1/2026-04-24',
-        virtual: '/myserver__G1/channels/general__C1/2026-04-24',
-        directory: '/myserver__G1/channels/general__C1/2026-04-24',
-      }),
-    )
-    expect(s.level).toBe('date')
-    expect(s.dateStr).toBe('2026-04-24')
-    expect(s.useNative).toBe(true)
+  it('refuses a member without the .json suffix', () => {
+    expect(detectScope('/My Server__G1/members/alice__U1').kind).toBe(INVALID)
   })
 
-  it('/myserver__G1/channels/general__C1/2026-04-24/files/blob.png → level=file_blob', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: stripSlash(
-          '/myserver__G1/channels/general__C1/2026-04-24/files/blob__A1.png',
-        ),
-        virtual: '/myserver__G1/channels/general__C1/2026-04-24/files/blob__A1.png',
-        directory: '/myserver__G1/channels/general__C1/2026-04-24/files/blob__A1.png',
-      }),
-    )
-    expect(s.level).toBe('file_blob')
-    expect(s.dateStr).toBe('2026-04-24')
+  it('classifies a day directory', () => {
+    const match = detectScope('/My Server__G1/channels/general__C1/2024-01-15')
+    expect(match.kind).toBe('day')
+    expect(match.slots.day).toBe('2024-01-15')
   })
 
-  it('*.jsonl glob in channel dir → level=channel, useNative=true', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1/channels/general__C1/*.jsonl',
-        virtual: '/myserver__G1/channels/general__C1/*.jsonl',
-        directory: '/myserver__G1/channels/general__C1',
-        pattern: '*.jsonl',
-      }),
-    )
-    expect(s.level).toBe('channel')
-    expect(s.useNative).toBe(true)
-    expect(s.guildId).toBe('G1')
-    expect(s.channelId).toBe('C1')
-    expect(s.container).toBe('channels')
+  it('refuses a non-date under a channel', () => {
+    expect(detectScope('/My Server__G1/channels/general__C1/notadate').kind).toBe(INVALID)
   })
 
-  it('handles dirname without __id (just name) gracefully', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1/channels/general',
-        virtual: '/myserver__G1/channels/general',
-        directory: '/myserver__G1/channels/general',
-      }),
-    )
-    expect(s.level).toBe('channel')
-    expect(s.channelName).toBe('general')
-    expect(s.channelId).toBeUndefined()
+  it('classifies chat.jsonl as a leaf', () => {
+    const match = detectScope(CHAT)
+    expect(match.kind).toBe('messages')
+    expect(match.scope?.leaf).toBe(true)
   })
 
-  it('respects PathSpec.prefix', () => {
-    const s = detectScope(
-      new PathSpec({
-        virtual: '/discord/myserver__G1/channels/general__C1',
-        directory: '/discord/myserver__G1/channels/general__C1',
-        resourcePath: mountKey('/discord/myserver__G1/channels/general__C1', '/discord'),
-      }),
-    )
-    expect(s.level).toBe('channel')
-    expect(s.guildName).toBe('myserver')
-    expect(s.guildId).toBe('G1')
-    expect(s.channelName).toBe('general')
-    expect(s.channelId).toBe('C1')
+  it('classifies the files dir and its blobs', () => {
+    expect(detectScope('/My Server__G1/channels/general__C1/2024-01-15/files').kind).toBe('files')
+    const blob = detectScope('/My Server__G1/channels/general__C1/2024-01-15/files/kept__A1.txt')
+    expect(blob.kind).toBe('file_blob')
+    expect(blob.slots.blob).toBe('kept__A1.txt')
   })
 
-  it('respects PathSpec.prefix on glob inside channel dir', () => {
-    const s = detectScope(
-      new PathSpec({
-        virtual: '/discord/myserver__G1/channels/general__C1/*.jsonl',
-        directory: '/discord/myserver__G1/channels/general__C1',
-        pattern: '*.jsonl',
-        resourcePath: mountKey('/discord/myserver__G1/channels/general__C1/*.jsonl', '/discord'),
-      }),
+  it('refuses deep unknown paths and dot segments', () => {
+    expect(detectScope('/My Server__G1/channels/general__C1/2024-01-15/files/a/b').kind).toBe(
+      INVALID,
     )
-    expect(s.level).toBe('channel')
-    expect(s.useNative).toBe(true)
-    expect(s.guildId).toBe('G1')
-    expect(s.channelId).toBe('C1')
+    expect(detectScope('/My Server__G1/channels/.hidden__C1').kind).toBe(INVALID)
   })
+})
 
-  it('member json file → level=member, container=members, useNative=false', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver__G1/members/alice__U1.json',
-        virtual: '/myserver__G1/members/alice__U1.json',
-        directory: '/myserver__G1/members/alice__U1.json',
-      }),
-    )
-    expect(s.level).toBe('member')
-    expect(s.container).toBe('members')
-    expect(s.useNative).toBe(false)
-    expect(s.guildId).toBe('G1')
-    expect(s.memberName).toBe('alice')
-    expect(s.memberId).toBe('U1')
-    expect(s.channelName).toBeUndefined()
-    expect(s.channelId).toBeUndefined()
-  })
-
-  it('guild dirname without __id parsed gracefully', () => {
-    const s = detectScope(
-      new PathSpec({
-        resourcePath: 'myserver',
-        virtual: '/myserver',
-        directory: '/myserver',
-      }),
-    )
-    expect(s.level).toBe('guild')
-    expect(s.guildName).toBe('myserver')
-    expect(s.guildId).toBeUndefined()
+describe('NATIVE_KINDS', () => {
+  it('excludes the rendered leaves', () => {
+    // chat.jsonl, member profiles and stored blobs are not answerable by
+    // the guild message search; the containers above them are.
+    expect(NATIVE_KINDS.has('messages')).toBe(false)
+    expect(NATIVE_KINDS.has('member')).toBe(false)
+    expect(NATIVE_KINDS.has('file_blob')).toBe(false)
+    for (const kind of ['guild', 'channel', 'day', 'files']) {
+      expect(NATIVE_KINDS.has(kind)).toBe(true)
+    }
   })
 })

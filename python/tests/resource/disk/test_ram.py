@@ -101,7 +101,8 @@ def test_stat_file(memory_backend):
     s = asyncio.run(memory_backend.stat(_ps("/f.txt")))
     assert s.name == "f.txt"
     assert s.size == 5
-    assert s.type == "text"
+    assert s.type == "file"
+    assert s.content == "text"
 
 
 def test_stat_directory(memory_backend):

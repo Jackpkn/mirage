@@ -18,6 +18,7 @@ from mirage.commands.builtin.generic_bind import CommandIO
 from mirage.commands.builtin.utils.wrap import stream_from_bytes
 from mirage.core.slack.constants import DU_MAX_ENTRIES
 from mirage.core.slack.read import read as _read
+from mirage.core.slack.read import read_range as _read_range
 from mirage.core.slack.readdir import readdir as _readdir
 from mirage.core.slack.stat import stat as _stat
 
@@ -28,7 +29,7 @@ from mirage.core.slack.stat import stat as _stat
 IO = CommandIO(
     readdir=_readdir,
     read_bytes=_read,
-    read_range=_read,
+    read_range=_read_range,
     read_stream=partial(stream_from_bytes, _read),
     stat=_stat,
     is_mounted=lambda a: True,

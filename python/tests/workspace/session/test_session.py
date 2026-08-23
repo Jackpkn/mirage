@@ -14,7 +14,8 @@
 
 import dataclasses
 
-from mirage.policy.types import CommandRule, CommandsSpec, Grant
+from mirage.policy.match import Outcome
+from mirage.policy.types import AdmissionRules, CommandRule, Decision, Scope
 from mirage.shell.variable import ShellVar, VarAttr
 from mirage.types import MountMode
 from mirage.workspace.session import Session
@@ -320,12 +321,12 @@ def test_a_payload_with_no_attributes_is_read_as_a_process_environment():
 
 
 def test_session_command_tier_round_trips_through_the_record():
-    own = CommandsSpec(allow=("ls", "git log"),
-                       ask=(CommandRule(reason="sign-off",
-                                        commands=("git push", ),
-                                        paths=("/repo/*", ),
-                                        mount="/repo"), ),
-                       deny=(CommandRule(reason="no", commands=("rm", )), ))
+    own = AdmissionRules(allow=("ls", "git log"),
+                         ask=(CommandRule(reason="sign-off",
+                                          commands=("git push", ),
+                                          paths=("/repo/*", ),
+                                          mount="/repo"), ),
+                         deny=(CommandRule(reason="no", commands=("rm", )), ))
     s = Session(session_id="s1", commands=own)
     d = s.to_dict()
     assert d["commands"] == {
@@ -347,37 +348,40 @@ def test_session_command_tier_round_trips_through_the_record():
     # list writes allow as null, distinct from an empty list.
     assert "commands" not in Session(session_id="s2").to_dict()
     bare = Session(session_id="s3",
-                   commands=CommandsSpec(deny=(CommandRule(reason="x"), )))
+                   commands=AdmissionRules(deny=(CommandRule(reason="x"), )))
     assert bare.to_dict()["commands"]["allow"] is None
     assert Session.from_dict(bare.to_dict()).commands == bare.commands
 
 
-def test_session_grants_round_trip_through_the_record():
+def test_session_decisions_round_trip_through_the_record():
     rule = CommandRule(reason="sign-off", commands=("git push", ))
-    grants = (Grant("allow_session", rule, ("git", "push"), "/repo"),
-              Grant("deny", rule, ("git", "push", "--force"), "/repo"))
-    s = Session(session_id="s1", grants=grants)
+    records = (Decision(id="d1",
+                        session_id="s1",
+                        agent_id="a",
+                        command="git",
+                        argv=("push", ),
+                        cwd="/repo",
+                        paths=(),
+                        reason="sign-off",
+                        rule=rule,
+                        outcome=Outcome.ALLOW,
+                        scope=Scope.SESSION),
+               Decision(id="d2",
+                        session_id="s1",
+                        agent_id="a",
+                        command="git",
+                        argv=("push", "--force"),
+                        cwd="/repo",
+                        paths=(),
+                        reason="sign-off",
+                        rule=rule,
+                        outcome=Outcome.DENY))
+    s = Session(session_id="s1", decisions=records)
     d = s.to_dict()
-    assert d["grants"] == [{
-        "decision": "allow_session",
-        "rule": {
-            "reason": "sign-off",
-            "commands": ["git push"],
-            "paths": []
-        },
-        "argv": ["git", "push"],
-        "cwd": "/repo",
-    }, {
-        "decision": "deny",
-        "rule": {
-            "reason": "sign-off",
-            "commands": ["git push"],
-            "paths": []
-        },
-        "argv": ["git", "push", "--force"],
-        "cwd": "/repo",
-    }]
-    assert Session.from_dict(d).grants == grants
+    assert [r["id"] for r in d["decisions"]] == ["d1", "d2"]
+    assert [r["outcome"] for r in d["decisions"]] == ["allow", "deny"]
+    assert [r["scope"] for r in d["decisions"]] == ["session", "once"]
+    assert Session.from_dict(d).decisions == records
     # Nothing held writes nothing, and a fork carries what is held.
-    assert "grants" not in Session(session_id="s2").to_dict()
-    assert s.fork().grants == grants
+    assert "decisions" not in Session(session_id="s2").to_dict()
+    assert s.fork().decisions == records

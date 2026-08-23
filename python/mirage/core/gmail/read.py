@@ -12,47 +12,44 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import posixpath
-from functools import partial
-
 from mirage.accessor.gmail import GmailAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.cache.index.warm import entry_or_warm
+from mirage.cache.index import IndexCacheStore
 from mirage.core.gmail.messages import (get_attachment, get_message_raw,
                                         message_json_bytes)
 from mirage.core.gmail.readdir import readdir
+from mirage.core.gmail.scope import detect_scope
+from mirage.core.hierarchy.probe import resolve_entry
+from mirage.core.hierarchy.read import make_read
+from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 
-async def read(
-    accessor: GmailAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> bytes:
-    virtual = path.virtual
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
-    virtual_key = prefix + "/" + key if prefix else "/" + key
-    parent_key = posixpath.dirname(virtual_key) or "/"
-    parent_path = PathSpec.from_str_path(parent_key,
-                                         mount_key(parent_key, prefix))
-    warm = (partial(readdir, accessor, parent_path, index)
-            if parent_key != virtual_key else None)
-    entry = await entry_or_warm(index, virtual_key, warm)
+async def _read_message(accessor: GmailAccessor, match: ScopeMatch,
+                        path: PathSpec, index: IndexCacheStore) -> bytes:
+    entry = await resolve_entry(readdir, accessor, path, index)
     if entry is None:
-        raise enoent(virtual)
-    if entry.resource_type in ("gmail/label", "gmail/date",
-                               "gmail/attachment_dir"):
-        raise IsADirectoryError(virtual)
-    if entry.resource_type == "gmail/attachment":
-        att_dir_result = await index.get(parent_key)
-        if att_dir_result.entry is None:
-            raise enoent(virtual)
-        message_id = att_dir_result.entry.id
-        attachment_id = entry.id
-        return await get_attachment(accessor.token_manager, message_id,
-                                    attachment_id)
+        raise enoent(path.virtual)
     raw = await get_message_raw(accessor.token_manager, entry.id)
     return message_json_bytes(raw)
+
+
+async def _read_attachment(accessor: GmailAccessor, match: ScopeMatch,
+                           path: PathSpec, index: IndexCacheStore) -> bytes:
+    # The message id decodes from the attachment dir's `subject__id`
+    # segment; the attachment id only exists in the listing, so the
+    # entry stays the proof of existence AND the id source.
+    entry = await resolve_entry(readdir, accessor, path, index)
+    if entry is None:
+        raise enoent(path.virtual)
+    return await get_attachment(accessor.token_manager,
+                                match.slots["message_id"], entry.id)
+
+
+read = make_read(
+    detect_scope,
+    readers={
+        "message": _read_message,
+        "attachment": _read_attachment,
+    },
+)

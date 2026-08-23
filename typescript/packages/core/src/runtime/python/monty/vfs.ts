@@ -150,6 +150,25 @@ export class MontyVFS {
     }
   }
 
+  /**
+   * Whether the mount's name plane holds a symlink at `path`.
+   *
+   * Read off the parent's listing, which the door already marks, so a
+   * predicate the guest asks per path costs no dispatch of its own
+   * beyond the one `entryFor` was going to make. A parent that will
+   * not list answers False, the same as pathlib does for a path it
+   * cannot reach.
+   *
+   * Args:
+   *   path: the path to test.
+   */
+  isLink(path: string): Promise<boolean> {
+    return this.entryFor(path).then(
+      (e) => e?.isLink === true,
+      () => false,
+    )
+  }
+
   /** The parent's entry for `path`, or null when the parent lacks one. */
   async entryFor(path: string): Promise<VFSEntry | null> {
     if (this.missing.has(path)) return null

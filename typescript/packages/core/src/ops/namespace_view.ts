@@ -12,47 +12,60 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { mountAllowed, pathAllowed } from '../context/session_context.ts'
-import { normDir, ownerPrefix, rstripSlash } from '../utils/slash.ts'
+import { pathAllowed } from '../context/session_context.ts'
+import { normDir, rstripSlash } from '../utils/slash.ts'
 import { FileStat, FileType } from '../types.ts'
 import type { NamespaceLinks } from './config.ts'
 import { compareCodePoints } from '../utils/sort.ts'
 
 /**
- * Immediate child segments of mounts strictly under `parent`.
+ * The child segments of `parent` that some allowed path runs through.
  *
- * Session-filtered: a child name appears only when some mount whose
- * prefix runs through it is visible to the current session, so a scoped
- * session never learns an ungranted mount's name from a listing. Hidden
- * names (leading dot) are included; presentation filtering is the
- * consumer's job, exactly as for backend entries.
+ * The one session filter both namespace enumerations share, because both
+ * owe a segment to a deeper thing rather than to an entry of its own: a
+ * mount prefix and a link path each synthesize every directory above it,
+ * and the segment is visible exactly when at least one of the things that
+ * synthesized it is.
+ *
+ * The full path is what gets tested, never the segment. A hide is
+ * subtree-closed on all three of its planes (an exact entry contains its
+ * subtree, a component pattern matches any segment, an anchored one is
+ * tested against every ancestor), so testing the deeper path is strictly
+ * stronger: a segment can only be withheld by this, never granted.
+ * Testing the segment instead is what leaked the name of a namespace-only
+ * ancestor whose only mount or link the session hides, a directory that
+ * answers ENOENT to every verb applied to it.
  */
-export function childMountNames(prefixes: readonly string[], parent: string): string[] {
+export function visibleChildSegments(paths: Iterable<string>, parent: string): string[] {
   const norm = normDir(parent)
   const out = new Set<string>()
-  for (const prefix of prefixes) {
-    const p = normDir(prefix)
-    if (p === norm || !p.startsWith(norm)) continue
-    const name = p.slice(norm.length).split('/', 1)[0] ?? ''
-    if (name === '' || !mountAllowed(p) || !pathAllowed(norm + name)) continue
+  for (const path of paths) {
+    if (!path.startsWith(norm)) continue
+    const name = path.slice(norm.length).split('/', 1)[0] ?? ''
+    if (name === '' || out.has(name) || !pathAllowed(path)) continue
     out.add(name)
   }
   return [...out].sort(compareCodePoints)
 }
 
 /**
- * Whether the current session may see the link at `link`.
+ * Immediate child segments of mounts strictly under `parent`.
  *
- * A link is namespace state, but its path lies on some mount's turf:
- * the longest mount prefix above it owns it, the same longest-match
- * rule dispatch resolves the path by. A scoped session that may not
- * touch that mount must not learn the link's name from a listing,
- * exactly as `childMountNames` hides the mount itself. A link above
- * every mount is bare namespace structure and stays visible.
+ * Session-filtered by `visibleChildSegments`: a child name appears only
+ * when some mount whose prefix runs through it is visible to the current
+ * session, so a scoped session never learns an ungranted mount's name
+ * from a listing. Hidden names (leading dot) are included; presentation
+ * filtering is the consumer's job, exactly as for backend entries.
  */
-function linkAllowed(prefixes: readonly string[], link: string): boolean {
-  const owner = ownerPrefix(prefixes, link)
-  return owner === null || mountAllowed(normDir(owner))
+export function childMountNames(prefixes: readonly string[], parent: string): string[] {
+  const norm = normDir(parent)
+  const below: string[] = []
+  for (const prefix of prefixes) {
+    const p = normDir(prefix)
+    if (p === norm || !p.startsWith(norm)) continue
+    below.push(rstripSlash(p))
+  }
+  return visibleChildSegments(below, parent)
 }
 
 /**
@@ -62,24 +75,14 @@ function linkAllowed(prefixes: readonly string[], link: string): boolean {
  * mount prefixes are: `ln` allows a link below a directory chain no
  * backend serves, and without its ancestors synthesized the link lists
  * at its own parent yet is unreachable from a walk above it.
- * Session-filtered through `linkAllowed`: a link below an ungranted
- * mount would otherwise leak that mount's name into a listing
- * `childMountNames` had already filtered.
+ * Session-filtered by `visibleChildSegments`, the same predicate
+ * `childMountNames` applies to a mount prefix: the link path is tested,
+ * not the segment, so a namespace-only ancestor whose only link the
+ * session hides is not named either.
  */
-function linkNames(
-  prefixes: readonly string[],
-  links: NamespaceLinks | null,
-  parent: string,
-): string[] {
+function linkNames(links: NamespaceLinks | null, parent: string): string[] {
   if (links === null) return []
-  const norm = normDir(parent)
-  const out = new Set<string>()
-  for (const link of links.symlinkTargets().keys()) {
-    if (!link.startsWith(norm)) continue
-    const name = link.slice(norm.length).split('/', 1)[0] ?? ''
-    if (name !== '' && linkAllowed(prefixes, link) && pathAllowed(norm + name)) out.add(name)
-  }
-  return [...out].sort(compareCodePoints)
+  return visibleChildSegments(links.symlinkTargets().keys(), parent)
 }
 
 /**
@@ -95,9 +98,9 @@ export function namespaceNames(
   links: NamespaceLinks | null,
   parent: string,
 ): string[] {
-  return [
-    ...new Set([...childMountNames(prefixes, parent), ...linkNames(prefixes, links, parent)]),
-  ].sort(compareCodePoints)
+  return [...new Set([...childMountNames(prefixes, parent), ...linkNames(links, parent)])].sort(
+    compareCodePoints,
+  )
 }
 
 /**

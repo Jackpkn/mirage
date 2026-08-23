@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { DIR_MODE, FILE_MODE } from './constants.ts'
+import { DIR_MODE, FILE_MODE, LINK_MODE } from './constants.ts'
 import { fsError } from './errors.ts'
 import type { MirageFsSeed } from './seed.ts'
 import type { FSNode, NodeHost, NodeOps, StreamOps } from './types.ts'
@@ -69,17 +69,51 @@ export class NodeTree {
   seed(seed: MirageFsSeed): void {
     for (const dir of seed.dirs) {
       const rel = this.relative(dir)
-      if (rel !== null) this.ensureDir(rel)
+      if (rel !== null) this.stamp(seed, dir, this.ensureDir(rel))
     }
     for (const path of seed.unreadable) {
       const node = this.placeFile(path)
-      if (node !== null) node.unreadable = true
+      if (node !== null) {
+        node.unreadable = true
+        this.stamp(seed, path, node)
+      }
     }
     for (const [path, bytes] of seed.files) {
       const node = this.placeFile(path)
       if (node === null) continue
       node.contents = bytes
       node.usedBytes = bytes.length
+      this.stamp(seed, path, node)
+    }
+    for (const [path, target] of seed.links) {
+      const node = this.placeFile(path, LINK_MODE)
+      if (node !== null) node.link = target
+    }
+  }
+
+  /**
+   * Put the mount's own mode and stamp on a node the seed just placed.
+   *
+   * Without it a seeded node carries `makeNode`'s defaults: 0o644
+   * whatever the mount holds, and the moment the node was built, so a
+   * chmod the shell made was invisible and every file the guest stats
+   * looked modified this second. Only seeded nodes are restamped: a
+   * file the guest creates during the run really was modified now.
+   *
+   * Args:
+   *   seed: the collected tree, holding what the rows reported.
+   *   path: guest-absolute path of the node.
+   *   node: the node just placed for it.
+   */
+  private stamp(seed: MirageFsSeed, path: string, node: FSNode): void {
+    const mode = seed.modes.get(path)
+    // Permission bits only: the kind is the tree's own decision, and a
+    // row that disagreed would otherwise turn a file into a directory.
+    if (mode !== undefined) node.mode = (node.mode & ~0o7777) | (mode & 0o7777)
+    const at = seed.stamps.get(path)
+    if (at !== undefined) {
+      node.atime = at.atimeMs
+      node.mtime = node.ctime = at.mtimeMs
     }
   }
 
@@ -96,6 +130,7 @@ export class NodeTree {
     node.node_ops = this.nodeOps
     node.stream_ops = this.streamOps
     if (this.host.isDir(mode)) node.children = new Map()
+    else if (this.host.isLink(mode)) node.link = ''
     else {
       node.contents = new Uint8Array(0)
       node.usedBytes = 0
@@ -171,13 +206,20 @@ export class NodeTree {
     return cur
   }
 
-  private placeFile(path: string): FSNode | null {
+  /**
+   * Create a leaf node at `path`, building the directories above it.
+   *
+   * Args:
+   *   path: guest-absolute path of the leaf.
+   *   mode: type and permission bits, a regular file by default.
+   */
+  private placeFile(path: string, mode: number = FILE_MODE): FSNode | null {
     const rel = this.relative(path)
     if (rel === null) return null
     const cut = rel.lastIndexOf('/')
     const name = cut < 0 ? rel : rel.slice(cut + 1)
     if (name === '') return null
     const parent = cut <= 0 ? this.rootNode() : this.ensureDir(rel.slice(0, cut))
-    return this.makeNode(parent, name, FILE_MODE)
+    return this.makeNode(parent, name, mode)
   }
 }

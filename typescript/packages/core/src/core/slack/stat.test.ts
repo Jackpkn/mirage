@@ -23,11 +23,24 @@ import { stat } from './stat.ts'
 
 class FakeTransport implements SlackTransport {
   public readonly calls: { endpoint: string; params?: Record<string, string> }[] = []
-  constructor(private readonly responder: () => SlackResponse) {}
+  constructor(private readonly responder: (endpoint: string) => SlackResponse) {}
   call(endpoint: string, params?: Record<string, string>): Promise<SlackResponse> {
     this.calls.push({ endpoint, ...(params !== undefined ? { params } : {}) })
-    return Promise.resolve(this.responder())
+    return Promise.resolve(this.responder(endpoint))
   }
+}
+
+function channelWorld(endpoint: string): SlackResponse {
+  if (endpoint === 'conversations.list') {
+    return { ok: true, channels: [{ id: 'C1', name: 'general', created: 1 }] }
+  }
+  if (endpoint === 'conversations.open' || endpoint === 'users.conversations') {
+    return { ok: true, channels: [] }
+  }
+  if (endpoint === 'users.list') {
+    return { ok: true, members: [{ id: 'U1', name: 'alice' }] }
+  }
+  return { ok: true, channels: [], members: [], ims: [] }
 }
 
 function spec(virtual: string, prefix = ''): PathSpec {
@@ -167,25 +180,44 @@ describe('stat user file', () => {
 })
 
 describe('stat date directory', () => {
-  it('returns DIRECTORY with date name for channel/<chan>/<date>', async () => {
-    const t = new FakeTransport(() => ({ ok: true }))
+  it('returns DIRECTORY with date name for a listed channel', async () => {
+    const t = new FakeTransport(channelWorld)
     const out = await stat(
       new SlackAccessor(t),
       spec('/mnt/slack/channels/general__C1/2026-04-24', '/mnt/slack'),
     )
     expect(out.type).toBe(FileType.DIRECTORY)
     expect(out.name).toBe('2026-04-24')
-    expect(t.calls).toHaveLength(0)
   })
 
-  it('returns DIRECTORY with date name for dm/<dm>/<date>', async () => {
+  it('returns DIRECTORY with date name for a seeded dm', async () => {
+    const idx = new RAMIndexCacheStore()
+    await idx.setDir('/mnt/slack/dms', [
+      [
+        'alice__D1',
+        new IndexEntry({
+          id: 'D1',
+          name: 'alice',
+          resourceType: 'slack/dm',
+          vfsName: 'alice__D1',
+        }),
+      ],
+    ])
     const t = new FakeTransport(() => ({ ok: true }))
     const out = await stat(
       new SlackAccessor(t),
       spec('/mnt/slack/dms/alice__D1/2026-04-24', '/mnt/slack'),
+      idx,
     )
     expect(out.type).toBe(FileType.DIRECTORY)
     expect(out.name).toBe('2026-04-24')
+  })
+
+  it('throws ENOENT for a date under a bogus channel', async () => {
+    const t = new FakeTransport(channelWorld)
+    await expect(
+      stat(new SlackAccessor(t), spec('/mnt/slack/channels/nope__C9/2026-04-24', '/mnt/slack')),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 
@@ -230,14 +262,42 @@ describe('stat chat.jsonl and files dir', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('returns DIRECTORY files for <chan>/<date>/files', async () => {
+  it('returns DIRECTORY files for a listed day', async () => {
+    const idx = new RAMIndexCacheStore()
+    await idx.setDir('/mnt/slack/channels/general__C1/2026-04-24', [
+      [
+        'files',
+        new IndexEntry({
+          id: 'C1:2026-04-24:files',
+          name: 'files',
+          resourceType: 'slack/files_dir',
+          vfsName: 'files',
+          extra: { channel_id: 'C1', date: '2026-04-24' },
+        }),
+      ],
+    ])
     const t = new FakeTransport(() => ({ ok: true }))
     const out = await stat(
       new SlackAccessor(t),
       spec('/mnt/slack/channels/general__C1/2026-04-24/files', '/mnt/slack'),
+      idx,
     )
     expect(out.type).toBe(FileType.DIRECTORY)
     expect(out.name).toBe('files')
+  })
+
+  it('throws ENOENT for files under a sealed day', async () => {
+    // A sealed day lists nothing, so its files subdir does not exist.
+    const idx = new RAMIndexCacheStore()
+    await idx.setDir('/mnt/slack/channels/general__C1/2026-04-24', [])
+    const t = new FakeTransport(() => ({ ok: true }))
+    await expect(
+      stat(
+        new SlackAccessor(t),
+        spec('/mnt/slack/channels/general__C1/2026-04-24/files', '/mnt/slack'),
+        idx,
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 

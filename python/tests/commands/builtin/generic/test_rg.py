@@ -1,8 +1,9 @@
 import pytest
 
 from mirage.commands.builtin.generic.rg import parse_flags, rg
+from mirage.commands.config import CommandOpts
 from mirage.commands.spec.types import FlagView
-from mirage.types import FileStat, FileType, PathSpec
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -51,7 +52,8 @@ def _make_backend(files: dict[str, bytes], dirs: set[str] | None = None):
         if p in files:
             return FileStat(name=p.rsplit("/", 1)[-1] or p,
                             size=len(files[p]),
-                            type=FileType.TEXT)
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
         if p.rstrip("/") in inferred_dirs or p in inferred_dirs:
             return FileStat(name=p.rsplit("/", 1)[-1] or "/",
                             type=FileType.DIRECTORY)
@@ -86,6 +88,7 @@ async def test_rg_stdin_basic():
     output, _ = await rg(
         [],
         ["apple"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -103,12 +106,12 @@ async def test_rg_count_stdin_uses_match_count():
     output, io = await rg(
         [],
         ["foo"],
+        CommandOpts(flags={"c": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
         stdin=b"foo foo\nfoo bar\nbaz\n",
-        flags={"c": True},
     )
     assert (await _drain_async(output)) == b"2\n"
     assert io.exit_code == 0
@@ -120,12 +123,12 @@ async def test_rg_count_stdin_zero_exits_1_without_output():
     output, io = await rg(
         [],
         ["foo"],
+        CommandOpts(flags={"c": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
         stdin=b"bar\nbaz\n",
-        flags={"c": True},
     )
     assert await _drain_async(output) == b""
     assert io.exit_code == 1
@@ -140,6 +143,7 @@ async def test_rg_file_basic():
     output, _ = await rg(
         [_spec("/a.txt")],
         ["ap"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -157,6 +161,7 @@ async def test_rg_no_match_returns_exit_1():
     output, io = await rg(
         [_spec("/a.txt")],
         ["zzz"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -177,6 +182,7 @@ async def test_rg_dir_auto_recursive():
     output, _ = await rg(
         [_spec("/dir")],
         ["ap"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -196,11 +202,11 @@ async def test_rg_count_dir_skips_zero_count_files():
     output, io = await rg(
         [_spec("/dir")],
         ["foo"],
+        CommandOpts(flags={"c": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"c": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert "/dir/a.txt:2" in decoded
@@ -217,11 +223,11 @@ async def test_rg_files_only_on_dir():
     output, _ = await rg(
         [_spec("/dir")],
         ["apple"],
+        CommandOpts(flags={"args_l": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"args_l": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert "/dir/a.txt" in decoded
@@ -237,11 +243,11 @@ async def test_rg_hidden_excluded_by_default():
     output, _ = await rg(
         [_spec("/dir")],
         ["apple"],
+        CommandOpts(flags={"args_l": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"args_l": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert "/dir/visible.txt" in decoded
@@ -257,14 +263,14 @@ async def test_rg_hidden_included_with_flag():
     output, _ = await rg(
         [_spec("/dir")],
         ["apple"],
+        CommandOpts(flags={
+            "args_l": True,
+            "hidden": True
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={
-            "args_l": True,
-            "hidden": True
-        },
     )
     decoded = (await _drain_async(output)).decode()
     assert "/dir/visible.txt" in decoded
@@ -280,14 +286,14 @@ async def test_rg_file_type_filter():
     output, _ = await rg(
         [_spec("/dir")],
         ["apple"],
+        CommandOpts(flags={
+            "args_l": True,
+            "type": "py"
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={
-            "args_l": True,
-            "type": "py"
-        },
     )
     decoded = (await _drain_async(output)).decode()
     assert "/dir/a.py" in decoded
@@ -303,14 +309,14 @@ async def test_rg_glob_filter():
     output, _ = await rg(
         [_spec("/dir")],
         ["apple"],
+        CommandOpts(flags={
+            "args_l": True,
+            "glob": "*.log"
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={
-            "args_l": True,
-            "glob": "*.log"
-        },
     )
     decoded = (await _drain_async(output)).decode()
     assert "/dir/a.log" in decoded
@@ -361,7 +367,8 @@ def _make_prefixed_backend(files: dict[str, bytes], mount_prefix: str):
         if p in full_files:
             return FileStat(name=p.rsplit("/", 1)[-1],
                             size=len(full_files[p]),
-                            type=FileType.TEXT)
+                            type=FileType.FILE,
+                            content=ContentType.TEXT)
         if p.rstrip("/") in inferred_dirs:
             return FileStat(name=p.rsplit("/", 1)[-1] or "/",
                             type=FileType.DIRECTORY)
@@ -394,11 +401,11 @@ async def test_rg_files_only_mount_prefix_not_doubled():
     output, _ = await rg(
         [p],
         ["apple"],
+        CommandOpts(flags={"args_l": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=None,
-        flags={"args_l": True},
     )
     decoded = (await _drain_async(output)).decode().strip()
     assert decoded == "/s3/dir/a.txt"
@@ -414,6 +421,7 @@ async def test_rg_multiple_dirs_searches_all():
     output, _ = await rg(
         [_spec("/d1"), _spec("/d2")],
         ["apple"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -433,11 +441,11 @@ async def test_rg_files_only_multiple_files():
     output, _ = await rg(
         [_spec("/t1.txt"), _spec("/t2.txt")],
         ["apple"],
+        CommandOpts(flags={"args_l": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"args_l": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert "/t1.txt" in decoded
@@ -471,7 +479,7 @@ async def test_rg_with_filename_labels_single_file():
     output, _ = await rg(
         [_spec("/a.txt")],
         ["ap"],
-        {"H": True},
+        CommandOpts(flags={"H": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -486,10 +494,10 @@ async def test_rg_with_filename_labels_single_file_count():
     output, _ = await rg(
         [_spec("/a.txt")],
         ["ap"],
-        {
+        CommandOpts(flags={
             "H": True,
             "c": True
-        },
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -507,7 +515,7 @@ async def test_rg_no_filename_suppresses_multi_file_labels():
     output, _ = await rg(
         [_spec("/a.txt"), _spec("/b.txt")],
         ["ap"],
-        {"args_I": True},
+        CommandOpts(flags={"args_I": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -526,7 +534,7 @@ async def test_rg_context_after_single_file():
     output, io = await rg(
         [_spec("/app.log")],
         ["warning"],
-        {"A": "1"},
+        CommandOpts(flags={"A": "1"}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -543,7 +551,7 @@ async def test_rg_context_c_merges_adjacent_groups():
     output, _ = await rg(
         [_spec("/app.log")],
         ["error"],
-        {"C": "1"},
+        CommandOpts(flags={"C": "1"}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -560,10 +568,10 @@ async def test_rg_context_line_numbers_use_dash_separator():
     output, _ = await rg(
         [_spec("/app.log")],
         ["warning"],
-        {
+        CommandOpts(flags={
             "n": True,
             "A": "1"
-        },
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -579,10 +587,10 @@ async def test_rg_context_respects_max_count():
     output, _ = await rg(
         [_spec("/app.log")],
         ["error"],
-        {
+        CommandOpts(flags={
             "m": "1",
             "C": "1"
-        },
+        }),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -598,7 +606,7 @@ async def test_rg_context_separates_distant_groups():
     output, _ = await rg(
         [_spec("/f.txt")],
         ["hit"],
-        {"A": "1"},
+        CommandOpts(flags={"A": "1"}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -616,7 +624,7 @@ async def test_rg_dir_search_ignores_context():
     output, _ = await rg(
         [_spec("/dir")],
         ["warning"],
-        {"A": "1"},
+        CommandOpts(flags={"A": "1"}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -635,7 +643,7 @@ async def test_rg_no_filename_dir_walk():
     output, _ = await rg(
         [_spec("/dir")],
         ["alpha"],
-        {"args_I": True},
+        CommandOpts(flags={"args_I": True}),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -651,6 +659,7 @@ async def test_rg_multi_file_missing_operand_reports_and_continues():
     output, io = await rg(
         [_spec("/a.txt"), _spec("/nope.txt")],
         ["o"],
+        CommandOpts(),
         readdir=readdir,
         stat=stat,
         read_bytes=rb,
@@ -681,11 +690,11 @@ async def test_rg_not_a_directory_operand_keeps_the_others():
     output, io = await rg(
         [_spec("/a.txt/x"), _spec("/real")],
         ["foo"],
+        CommandOpts(flags={"args_l": True}),
         readdir=readdir_enotdir,
         stat=stat,
         read_bytes=rb,
         read_stream=rs,
-        flags={"args_l": True},
     )
     decoded = (await _drain_async(output)).decode()
     assert decoded == "/real/b.txt\n"

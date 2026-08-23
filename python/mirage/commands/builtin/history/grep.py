@@ -36,7 +36,7 @@ async def grep(accessor: HistoryAccessor, paths: list[PathSpec],
     return await generic_grep(
         list(paths),
         texts,
-        opts.flags,
+        opts,
         readdir=bound_op(_readdir, accessor, opts.index),
         stat=bound_op(_stat, accessor, opts.index),
         read_bytes=bound_op(history_read, accessor, opts.index),

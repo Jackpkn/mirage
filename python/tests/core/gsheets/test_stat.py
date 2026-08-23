@@ -20,7 +20,7 @@ from mirage.accessor.gsheets import GSheetsAccessor
 from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.gsheets.stat import stat
-from mirage.types import FileType, PathSpec
+from mirage.types import ContentType, FileType, PathSpec
 from mirage.utils.key_prefix import mount_key
 
 
@@ -75,7 +75,7 @@ async def test_stat_sheet_from_cache(accessor, index):
                  directory=target),
         index,
     )
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.extra["doc_id"] == "s1"
 
 
@@ -101,7 +101,7 @@ async def test_stat_cache_miss_falls_back_via_readdir(accessor, index):
             PathSpec(resource_path=mount_key(target, "/gsheets"),
                      virtual=target,
                      directory=target), index)
-    assert result.type == FileType.JSON
+    assert result.content == ContentType.JSON
     assert result.extra["doc_id"] == "s1"
     assert mock_list.call_count == 1
 

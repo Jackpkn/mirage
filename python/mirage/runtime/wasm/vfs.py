@@ -16,14 +16,13 @@ import errno as host_errno
 from pathlib import Path
 from typing import Any
 
+from mirage.runtime.types import VFSStat
 from mirage.runtime.vfs import RuntimeVFS
-from mirage.runtime.wasm.abi import FT_DIR, FT_REG
+from mirage.runtime.wasm.abi import FT_DIR, FT_REG, FT_SYMLINK
 from mirage.runtime.wasm.build import BuildDir
 from mirage.runtime.wasm.config import WasmFsConfig
 from mirage.runtime.wasm.constants import READONLY_HINT
-from mirage.runtime.wasm.types import GuestStat
 from mirage.utils.path import owner_prefix
-from mirage.utils.stat_view import content_size, is_dir, mtime_ns
 
 
 class WasmVFS:
@@ -34,11 +33,12 @@ class WasmVFS:
     the workspace mounts. A mount prefix always wins, anything else
     falls to the build, and a path neither side holds is ENOENT.
 
-    Its second job is shape. `RuntimeVFS` answers in mirage's terms
-    (`FileStat`, virtual paths); preview1 asks in its own (`GuestStat`,
-    `FT_DIR`/`FT_REG` pairs, errno). Translating between them is why
-    quickjs still builds one of these even with no build directory to
-    route to.
+    Its second job is shape. `RuntimeVFS` answers in virtual paths
+    and one `VFSStat` per path; preview1 asks in `(name, filetype)`
+    pairs and errno, and its filestat record has no mode field at all,
+    so the type bits are read out of the mode and the rest is dropped.
+    Translating between them is why quickjs still builds one of these
+    even with no build directory to route to.
 
     Args:
         config (WasmFsConfig | dict | None): the knobs, chiefly which
@@ -126,7 +126,7 @@ class WasmVFS:
             raise FileNotFoundError(path)
         return self._core.call(op, path, **kwargs)
 
-    def stat(self, path: str) -> GuestStat:
+    def stat(self, path: str) -> VFSStat:
         """Stat a guest path.
 
         Args:
@@ -138,15 +138,41 @@ class WasmVFS:
         build = self._serving_build(path)
         if build is not None:
             return build.stat(path)
-        fs = self._core_call("stat", path)
-        ns = mtime_ns(fs)
-        # The filestat record has no validity channel, so an unknown
-        # mtime and epoch zero both encode as 0 on this wire.
-        return GuestStat(is_dir=is_dir(fs),
-                         size=content_size(fs),
-                         mtime_ns=0 if ns is None else ns)
+        return self._core_stat(path)
 
-    def stat_or_none(self, path: str) -> GuestStat | None:
+    def lstat(self, path: str) -> VFSStat:
+        """Stat a guest path without following a trailing symlink.
+
+        A link's own row is the node table's, not a backend's, and the
+        door serves it under `nofollow`: the row carries the target's
+        byte length as the size, the link's own mtime, and whatever a
+        `chown -h` or a no-follow `utime` wrote, none of which a row
+        rebuilt here from the target string could report. Every other
+        path answers exactly as `stat` does. A build path can never be
+        a link, so it takes the ordinary path.
+
+        Args:
+            path (str): guest-absolute path.
+
+        Raises:
+            FileNotFoundError: the path exists on neither side.
+        """
+        if self._serving_build(path) is not None:
+            return self.stat(path)
+        return self._core_stat(path, nofollow=True)
+
+    def _core_stat(self, path: str, nofollow: bool = False) -> VFSStat:
+        """The door's own stat, or ENOENT when no workspace is attached.
+
+        Args:
+            path (str): guest-absolute path.
+            nofollow (bool): report a trailing symlink itself.
+        """
+        if self._core is None:
+            raise FileNotFoundError(path)
+        return self._core.stat(path, nofollow=nofollow)
+
+    def stat_or_none(self, path: str) -> VFSStat | None:
         try:
             return self.stat(path)
         except (FileNotFoundError, NotADirectoryError):
@@ -204,6 +230,54 @@ class WasmVFS:
             raise PermissionError(READONLY_HINT)
         self._require_core().rename(src, dst)
 
+    def symlink(self, path: str, target: str) -> None:
+        """Create a symlink at `path` pointing at `target`.
+
+        Args:
+            path (str): guest-absolute path of the link.
+            target (str): what the link points to, stored as typed.
+        """
+        self._deny_build(path)
+        self._core_call("symlink", path, target=target)
+
+    def readlink(self, path: str) -> str:
+        """The target of the symlink at `path`.
+
+        Args:
+            path (str): guest-absolute path of the link.
+
+        Raises:
+            OSError: EINVAL when the path is not a link, which is what
+                readlink(2) answers and what the node table reports. A
+                build path answers that too rather than the read-only
+                refusal: reading is not the mutation `_deny_build`
+                guards, and the build holds no links.
+        """
+        if self._serving_build(path) is not None:
+            raise OSError(host_errno.EINVAL, "not a symbolic link", path)
+        return str(self._core_call("readlink", path))
+
+    def setattr(self, path: str, *, atime: str | None, mtime: str | None,
+                nofollow: bool) -> None:
+        """Write timestamps, in the namespace overlay where needed.
+
+        Times are the only attributes preview1 can express: it has no
+        chmod or chown call at all. A mount whose backend cannot hold a
+        stamp still answers, because the door overlays what the backend
+        declines.
+
+        Args:
+            path (str): guest-absolute path.
+            atime (str | None): ISO access time, None to leave it.
+            mtime (str | None): ISO modification time, None to leave it.
+            nofollow (bool): stamp the link itself, not its target.
+        """
+        self._deny_build(path)
+        self._require_core().setattr(path,
+                                     atime=atime,
+                                     mtime=mtime,
+                                     nofollow=nofollow)
+
     def flush(self, path: str, base_len: int, low_write: int,
               buf: bytes | bytearray) -> None:
         """Send a closing handle's buffer, as a delta when it can be one.
@@ -223,6 +297,10 @@ class WasmVFS:
         Core entries arrive kind-resolved (the door stats what the
         backend does not slash-mark), so a guest's ``d_type`` is real
         instead of FT_UNKNOWN paid off with one lazy stat per entry.
+        A link is reported as one: preview1 has the filetype, the door
+        marks the row, and a guest that reads ``d_type`` (CPython's
+        ``scandir`` does) then answers ``is_symlink`` without a call of
+        its own.
 
         Args:
             path (str): guest-absolute path.
@@ -239,6 +317,9 @@ class WasmVFS:
         for entry in self._require_core().readdir(path):
             base = entry.path.rstrip("/").rsplit("/", 1)[-1]
             if not base:
+                continue
+            if entry.is_link:
+                entries[base] = FT_SYMLINK
                 continue
             entries[base] = FT_DIR if entry.is_dir else FT_REG
         return sorted(entries.items())

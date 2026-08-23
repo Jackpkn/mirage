@@ -42,7 +42,7 @@ from moto.server import ThreadedMotoServer
 from pymongo import AsyncMongoClient
 from qdrant_client import AsyncQdrantClient, models
 
-from mirage import Mount, MountMode, Workspace
+from mirage import MountMode, Workspace
 from mirage.accessor.onedrive import OneDriveConfig
 from mirage.accessor.sharepoint import SharePointConfig
 from mirage.commands.cli.specs import cli_spec_for
@@ -108,11 +108,11 @@ from mirage.resource.supabase import SupabaseConfig, SupabaseResource
 from mirage.resource.tencent import TencentConfig, TencentResource
 from mirage.resource.trello import TrelloConfig, TrelloResource
 from mirage.resource.wasabi import WasabiConfig, WasabiResource
+from mirage.runtime.types import ScriptSource
 from mirage.shell.console import JobConsole
 from mirage.shell.console.redis import RedisConsoleStore
 from mirage.shell.job_table import ConsoleFactory
 from mirage.types import ConsistencyPolicy
-from mirage.workspace.session import MountPermissions, WorkspacePermissions
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 EMAIL_IMAP_PORT = int(os.environ.get("EMAIL_IMAP_PORT", "3143"))
@@ -2228,15 +2228,10 @@ async def build_mounts(
             resource, cleanup = pair
         built[mount["path"]] = resource
         mode = MountMode.READ if mount.get("mode") == "read" else None
-        # A mount's own permissions block (`mounts.<p>.permissions` in
-        # YAML), validated by the model the YAML door uses.
-        if mount.get("permissions") is not None:
-            mounts[mount["path"]] = Mount(
-                resource,
-                mode,
-                permissions=MountPermissions.model_validate(
-                    mount["permissions"]))
-        elif mode is not None:
+        # A mount states infrastructure only: what it is, where it is,
+        # how it is served. Its permissions live in the profile, under
+        # `profiles.<name>.mounts.<prefix>`.
+        if mode is not None:
             mounts[mount["path"]] = (resource, mode)
         else:
             mounts[mount["path"]] = resource
@@ -2332,23 +2327,27 @@ async def open_target(
     mounts, cleanups = await build_mounts(target, run_id, service)
     agent_id = target.get("agentId")
     factory = console_factory(target, run_id)
-    # The workspace tier of the permissions document, validated by the
-    # model the YAML door uses; it binds every session the cases name.
-    permissions = (WorkspacePermissions.model_validate(target["permissions"])
-                   if target.get("permissions") is not None else None)
+    # The target's profiles, and which one shapes a session that names
+    # none. A profile is the whole permission document, so this is every
+    # permission the target states; the models are the ones the YAML
+    # door validates with.
+    profiles = scripted_profiles(target.get("profiles") or None)
+    default_profile = target.get("profile")
     if consistency is not None:
         ws = Workspace(mounts,
                        mode=MountMode.WRITE,
                        consistency=consistency,
                        agent_id=agent_id,
                        console_factory=factory,
-                       permissions=permissions)
+                       profiles=profiles,
+                       profile=default_profile)
     else:
         ws = Workspace(mounts,
                        mode=MountMode.WRITE,
                        agent_id=agent_id,
                        console_factory=factory,
-                       permissions=permissions)
+                       profiles=profiles,
+                       profile=default_profile)
     for cli_name in target.get("clis", []):
         spec, config = cli_install(service, cli_name)
         ws.register_cli(cli_name, spec, config)
@@ -2391,3 +2390,29 @@ async def open_consistency(
         functools.partial(teardown_target, [read_ws, shadow_ws],
                           [*read_cleanups, *shadow_cleanups], service),
     )
+
+
+def scripted_profiles(profiles: dict | None) -> dict | None:
+    """Wrap a profile's inline script source the way the config door does.
+
+    A target is JSON, so it carries a profile's script as source rather
+    than as the path a YAML config would name. Loading is the config
+    layer's job everywhere else, so the battery does that one step here
+    and hands the workspace what code would pass.
+
+    Args:
+        profiles (dict | None): the target's profiles as written.
+    """
+    if not profiles:
+        return profiles
+    out: dict = {}
+    for name, doc in profiles.items():
+        script = doc.get("script") if isinstance(doc, dict) else None
+        if isinstance(script, dict):
+            doc = {
+                **doc, "script":
+                ScriptSource(script["source"],
+                             language=script.get("language", "python"))
+            }
+        out[name] = doc
+    return out

@@ -23,6 +23,6 @@ export const WC_BUILDER: Builder = {
   fn: async (ops, accessor, paths, texts, opts) => {
     const idx = opts.index ?? undefined
     const resolved = paths.length > 0 ? await resolveGlobOf(ops)(accessor, paths, idx) : []
-    return wcGeneric(resolved, texts, opts, dirAwareStream(ops, accessor, idx))
+    return wcGeneric(resolved, texts, opts, dirAwareStream(ops, accessor, opts))
   },
 }

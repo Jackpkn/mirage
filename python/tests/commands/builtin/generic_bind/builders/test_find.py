@@ -41,7 +41,8 @@ def _ops(stat_calls: list[str], find_op=None) -> CommandIO:
             return FileStat(name=path.virtual,
                             type=FileType.DIRECTORY,
                             modified="2099-01-01T00:00:00+00:00")
-        return FileStat(name=path.virtual,
+        return FileStat(type=FileType.FILE,
+                        name=path.virtual,
                         size=3,
                         modified="2099-01-01T00:00:00+00:00")
 

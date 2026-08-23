@@ -16,7 +16,6 @@ import type { EmailAccessor } from '../../accessor/email.ts'
 import { fetchMessage, listMessageUids, type FetchedMessage } from './client.ts'
 import { dateBucket, msgFilename } from './readdir.ts'
 import { messageJsonText } from './render.ts'
-import type { EmailScope } from './scope.ts'
 
 interface SearchOptions {
   text?: string | null
@@ -74,12 +73,11 @@ export function buildVfsPath(prefix: string, folder: string, msg: FetchedMessage
 
 export async function searchAndFormat(
   accessor: EmailAccessor,
-  scope: EmailScope,
+  folder: string,
   pattern: string,
   prefix: string,
   maxResults: number | null = null,
 ): Promise<[string, string][]> {
-  const folder = scope.folder ?? ''
   if (folder === '') return []
   const uids = await searchMessages(accessor, folder, { text: pattern }, maxResults)
   const pairs: [string, string][] = []

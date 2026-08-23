@@ -12,86 +12,59 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
-
-from mirage.accessor.email import EmailAccessor
-from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.email.client import list_folders
-from mirage.core.email.readdir import readdir as _readdir
-from mirage.types import FileStat, FileType, PathSpec
-from mirage.utils.errors import enoent
+from mirage.cache.index import IndexEntry
+from mirage.core.email.readdir import readdir
+from mirage.core.email.scope import detect_scope
+from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.core.hierarchy.stat import make_stat
+from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.filetype import guess_type
-from mirage.utils.key_prefix import mount_key, mount_prefix_of
-
-logger = logging.getLogger(__name__)
 
 
-async def stat(
-    accessor: EmailAccessor,
-    path: PathSpec,
-    index: IndexCacheStore = NULL_INDEX,
-) -> FileStat:
-    virtual = path.virtual
-    prefix = mount_prefix_of(path.virtual, path.resource_path)
-    key = path.resource_path
-    if not key:
-        return FileStat(name="/", type=FileType.DIRECTORY)
-    virtual_key = prefix + "/" + key if prefix else "/" + key
-    result = await index.get(virtual_key)
-    if result.entry is None and "/" not in key:
-        folders = await list_folders(accessor)
-        if key in folders:
-            return FileStat(name=key, type=FileType.DIRECTORY)
-        raise enoent(virtual)
-    if result.entry is None:
-        parent_virtual = virtual_key.rsplit("/", 1)[0] or "/"
-        try:
-            await _readdir(
-                accessor,
-                PathSpec(virtual=parent_virtual,
-                         directory=parent_virtual,
-                         resource_path=mount_key(parent_virtual, prefix)),
-                index=index,
-            )
-        except FileNotFoundError as exc:
-            logger.debug("stat populate failed for %s: %s", virtual_key, exc)
-        result = await index.get(virtual_key)
-        if result.entry is None:
-            raise enoent(virtual)
-    rt = result.entry.resource_type
-    if rt == "email/folder":
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.DIRECTORY,
-        )
-    if rt == "email/date":
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.DIRECTORY,
-        )
-    if rt == "email/message":
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.JSON,
-            size=result.entry.size,
-            extra={"uid": result.entry.id},
-        )
-    if rt == "email/attachment_dir":
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=FileType.DIRECTORY,
-            extra={"uid": result.entry.id},
-        )
-    if rt == "email/attachment":
-        ft = guess_type(result.entry.vfs_name)
-        return FileStat(
-            name=result.entry.vfs_name,
-            type=ft,
-            size=result.entry.size,
-            extra={"attachment_id": result.entry.id},
-        )
+def _dir_stat(match: ScopeMatch, path: PathSpec,
+              entry: IndexEntry) -> FileStat:
+    return FileStat(name=entry.vfs_name, type=FileType.DIRECTORY)
+
+
+def _message_stat(match: ScopeMatch, path: PathSpec,
+                  entry: IndexEntry) -> FileStat:
     return FileStat(
-        name=result.entry.vfs_name,
-        type=FileType.JSON,
-        extra={"uid": result.entry.id},
+        name=entry.vfs_name,
+        type=FileType.FILE,
+        content=ContentType.JSON,
+        size=entry.size,
+        extra={"uid": entry.id},
     )
+
+
+def _attachment_dir_stat(match: ScopeMatch, path: PathSpec,
+                         entry: IndexEntry) -> FileStat:
+    return FileStat(
+        name=entry.vfs_name,
+        type=FileType.DIRECTORY,
+        extra={"uid": entry.id},
+    )
+
+
+def _attachment_stat(match: ScopeMatch, path: PathSpec,
+                     entry: IndexEntry) -> FileStat:
+    return FileStat(
+        name=entry.vfs_name,
+        type=FileType.FILE,
+        content=guess_type(entry.vfs_name),
+        size=entry.size,
+        extra={"attachment_id": entry.id},
+    )
+
+
+stat = make_stat(
+    detect_scope,
+    readdir,
+    entry_stats={
+        "folder": _dir_stat,
+        "day": _dir_stat,
+        "message": _message_stat,
+        "attachment_dir": _attachment_dir_stat,
+        "attachment": _attachment_stat,
+    },
+)

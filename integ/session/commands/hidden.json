@@ -34,6 +34,7 @@
       ],
       "session": "veiled",
       "command": "cat /scratch/private/k",
+      "explain_blind": "the refusal comes from the op door during the walk, below the command plane the dry run reads",
       "expect": {
         "exit": 1,
         "stdout": "",
@@ -93,6 +94,34 @@
         "exit": 126,
         "stdout": "",
         "stderr": "git: policy denied: history is read-only here\n"
+      }
+    },
+    {
+      "id": "hidden_a_mount_sections_name_pattern_is_absent_inside_that_mount",
+      "seq": 923253,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "anchored",
+      "command": "cat /scratch/anch.key",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/anch.key: No such file or directory\n"
+      }
+    },
+    {
+      "id": "hidden_a_mount_sections_name_pattern_stops_at_that_mount",
+      "seq": 923254,
+      "targets": [
+        "ram-commands"
+      ],
+      "session": "anchored",
+      "command": "cat /vault/anch.key",
+      "expect": {
+        "exit": 0,
+        "stdout": "k\n",
+        "stderr": ""
       }
     }
   ]

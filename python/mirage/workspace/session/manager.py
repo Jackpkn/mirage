@@ -16,10 +16,10 @@ import asyncio
 import copy
 from collections.abc import Mapping
 
-from mirage.policy.types import CommandsSpec, Grant
-from mirage.types import HiddenPaths, MountMode
+from mirage.policy.profile import CompiledProfile
+from mirage.policy.types import AdmissionRules, Decision, ProfileScript
+from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
-from mirage.workspace.session.permissions import CompiledProfile
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.resolve import apply_profile, narrow
 from mirage.workspace.session.session import Session, vars_from_env
@@ -54,8 +54,6 @@ class SessionManager:
         self._locks[default_session_id] = asyncio.Lock()
         self._loaded = False
         self._load_lock = asyncio.Lock()
-        self._bound_hidden: HiddenPaths | None = None
-        self._bound_commands: tuple[CommandsSpec, ...] = ()
         self._default_profile: CompiledProfile | None = None
 
     @property
@@ -69,7 +67,7 @@ class SessionManager:
 
         The workspace's own session is a session created without a
         name, so ``profiles.default`` reaches it the way it reaches
-        ``create_session(id)``: applied in full now (ceilings, hides,
+        ``create_session(id)``: applied in full now (modes, hides,
         exported env, cwd), and its narrowing stamped again after
         hydration, where a record from before the profile existed would
         otherwise wake the primary agent unrestricted. None (no default
@@ -83,62 +81,50 @@ class SessionManager:
         if compiled is not None:
             apply_profile(self._sessions[self._default_id], compiled)
 
-    @property
-    def bound_hidden(self) -> HiddenPaths | None:
-        """What the workspace and its mounts hide from every session."""
-        return self._bound_hidden
+    def commands_of(self, session_id: str) -> AdmissionRules | None:
+        """The admission rules one session runs under
+        (SessionCommandsQuery).
 
-    @bound_hidden.setter
-    def bound_hidden(self, spec: HiddenPaths | None) -> None:
-        """Stamp the workspace-bound hides onto every live session.
-
-        Set once by the workspace after its mounts are installed, and
-        applied again to every session created or hydrated later, so
-        the fact rides the session object without ever being persisted.
-
-        Args:
-            spec (HiddenPaths | None): the compiled bound hides.
-        """
-        self._bound_hidden = spec
-        for session in self._sessions.values():
-            session.bound_hidden = spec
-
-    @property
-    def bound_commands(self) -> tuple[CommandsSpec, ...]:
-        """The command tiers the workspace and its mounts bind every
-        session to (mounts in registration order, then the workspace)."""
-        return self._bound_commands
-
-    @bound_commands.setter
-    def bound_commands(self, layers: tuple[CommandsSpec, ...]) -> None:
-        """Stamp the workspace-bound command tiers onto every live
-        session, and onto every session created or hydrated later, the
-        way ``bound_hidden`` rides the session without being persisted.
-
-        Args:
-            layers (tuple[CommandsSpec, ...]): the compiled bound tiers.
-        """
-        self._bound_commands = layers
-        for session in self._sessions.values():
-            session.bound_commands = layers
-
-    def commands_of(self, session_id: str) -> tuple[CommandsSpec, ...]:
-        """The command tiers one session runs under (SessionCommandsQuery).
-
-        The bound tiers alone for an id this manager does not know, the
-        empty id of an unbound door included, so a door that names no
-        session still fails toward refusal.
+        The default profile's rules for an id this manager does not know,
+        the empty id of an unbound door included (FUSE, the host's own
+        ``ws.ops``), so a door that names no session is judged like a
+        session that named no profile rather than judged not at all.
 
         Args:
             session_id (str): the session, empty when none is bound.
         """
         session = self._sessions.get(session_id)
         if session is None:
-            return self._bound_commands
-        return session.command_layers
+            return (self._default_profile.commands
+                    if self._default_profile is not None else None)
+        return session.commands
 
-    def grants_of(self, session_id: str) -> tuple[Grant, ...]:
-        """The host grants one session holds (SessionGrantsQuery).
+    def script_of(self, session_id: str) -> ProfileScript | None:
+        """The profile script one session runs under
+        (SessionScriptsQuery).
+
+        The default profile's for an id this manager does not know, the
+        same fallback ``commands_of`` makes and for the same reason: a
+        door that names no session is judged like a session that named
+        no profile.
+
+        Args:
+            session_id (str): the session, empty when none is bound.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return (self._default_profile.script
+                    if self._default_profile is not None else None)
+        return session.script
+
+    def decision_sessions(self) -> tuple[str, ...]:
+        """Every session id holding ledger records
+        (SessionDecisionsQuery)."""
+        return tuple(sid for sid, s in self._sessions.items() if s.decisions)
+
+    def decisions_of(self, session_id: str) -> tuple[Decision, ...]:
+        """The ledger records one session holds
+        (SessionDecisionsQuery).
 
         Read off the registered session, never a fork, so a line
         running in a background copy sees the same answers.
@@ -146,17 +132,18 @@ class SessionManager:
         Args:
             session_id (str): the session.
         """
-        return self.get(session_id).grants
+        return self.get(session_id).decisions
 
-    def set_grants(self, session_id: str, grants: tuple[Grant, ...]) -> None:
-        """Replace one session's host grants (SessionGrantsQuery);
-        durable at the next flush.
+    def set_decisions(self, session_id: str, records: tuple[Decision,
+                                                            ...]) -> None:
+        """Replace one session's ledger records
+        (SessionDecisionsQuery); durable at the next flush.
 
         Args:
             session_id (str): the session.
-            grants (tuple[Grant, ...]): the new list.
+            records (tuple[Decision, ...]): the new list.
         """
-        self.get(session_id).grants = grants
+        self.get(session_id).decisions = records
 
     @property
     def default_id(self) -> str:
@@ -238,11 +225,12 @@ class SessionManager:
                     default.hidden_paths = stored.hidden_paths
                     default.hidden_vars = stored.hidden_vars
                     default.commands = stored.commands
+                    default.script = stored.script
                     # The host's standing answers are session state
                     # like cwd: dropped here, an approved line would
                     # ask again after a restart and the next flush
-                    # would erase the grant from the store.
-                    default.grants = stored.grants
+                    # would erase the record from the store.
+                    default.decisions = stored.decisions
                     default.generation = stored.generation
                     # Hydrated sessions start clean: baseline what the
                     # store holds so the next flush skips them.
@@ -256,8 +244,6 @@ class SessionManager:
                 if sid in self._sessions:
                     continue
                 session = Session.from_dict(fields)
-                session.bound_hidden = self._bound_hidden
-                session.bound_commands = self._bound_commands
                 self._sessions[sid] = session
                 self._locks[sid] = asyncio.Lock()
                 self._persisted[sid] = copy.deepcopy(session.to_dict())
@@ -311,10 +297,7 @@ class SessionManager:
                mount_modes: dict[str, MountMode] | None = None) -> Session:
         if session_id in self._sessions:
             raise ValueError(f"Session {session_id!r} already exists")
-        session = Session(session_id=session_id,
-                          mount_modes=mount_modes,
-                          bound_hidden=self._bound_hidden,
-                          bound_commands=self._bound_commands)
+        session = Session(session_id=session_id, mount_modes=mount_modes)
         self._sessions[session_id] = session
         self._locks[session_id] = asyncio.Lock()
         return session

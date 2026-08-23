@@ -190,9 +190,10 @@ async def du_operands(
     rides along with it: a mount the session may not see contributes no
     directory here, so absence stays the answer for it.
 
-    ``has_content`` is the last resort behind that, for a backend that
+    ``has_content`` is the second channel behind that, for a backend that
     never materialises a directory entry for its own mount root (redis is
-    one) while the subtree below it is full.
+    one) while the subtree below it is full. It counts only what the
+    session may see, so it cannot re-open what the first channel closed.
 
     Args:
         paths (list[PathSpec]): the operands as parsed, possibly empty.
@@ -226,6 +227,7 @@ async def du_operands(
             continue
         try:
             await stat(path)
+            stattable = True
         except NotADirectoryError:
             # An operand typed with a trailing slash that did not name a
             # directory. Unreadable like a missing one, but GNU reports
@@ -233,20 +235,57 @@ async def du_operands(
             missing.append((path.raw_path, "Not a directory"))
             continue
         except (FileNotFoundError, ValueError):
-            probed: FileStat | None = None
-            if stat_path is not None:
-                probed = await stat_path(path.virtual)
-            if probed is None and (has_content is None
-                                   or not await has_content(path)):
-                missing.append((path.raw_path, ENOENT_TEXT))
-                continue
+            stattable = False
+        if not await du_operand_exists(path, stattable, has_content,
+                                       stat_path):
+            missing.append((path.raw_path, ENOENT_TEXT))
+            continue
         present.append(path)
     return present, missing
 
 
+async def du_operand_exists(path: PathSpec, stattable: bool,
+                            has_content: Callable[[PathSpec], Awaitable[bool]]
+                            | None, stat_path: StatPath | None) -> bool:
+    """Whether one operand is there at all, before anything is measured.
+
+    A point lookup alone cannot decide, so this asks both channels a
+    backend can answer on, the way ``find`` classifies its start point:
+    on a prefix store a directory is not an object, it is the set of keys
+    under it, so ``stat`` misses what a listing would show (redis never
+    materialises an entry for its own mount root). Absence takes both
+    coming back empty.
+
+    Where a dispatcher is wired it replaces the bound backend's stat,
+    because that stat sees one accessor and knows nothing of hides:
+    trusting it answered ``0 <path>`` for a hidden directory and
+    confirmed to the agent what the profile was not meant to show it. The
+    content probe behind it counts only what the session may see, so it
+    cannot re-open what the first channel closed.
+
+    Args:
+        path (PathSpec): the operand.
+        stattable (bool): whether the bound backend's stat succeeded.
+        has_content (HasContent | None): the content probe, which tells
+            an implicit directory from an absent path.
+        stat_path (StatPath | None): dispatcher-backed stat.
+    """
+    if stat_path is None and stattable:
+        return True
+    if stat_path is not None and await stat_path(path.virtual) is not None:
+        return True
+    return has_content is not None and await has_content(path)
+
+
 async def du_has_content(compute_entries: ComputeEntries,
                          path: PathSpec) -> bool:
-    """Whether an operand holds anything, for the unstattable case.
+    """Whether an operand holds anything the session may see.
+
+    The visibility filter is what makes this safe to ask after the
+    dispatcher already said no: ``compute_entries`` runs on the bound
+    accessor, which knows nothing of hides, so counting its raw answer
+    would confirm a walled-off subtree's parent. Entries are lifted onto
+    virtual paths first, since that is the space a hide is written in.
 
     Args:
         compute_entries (ComputeEntries): per-file breakdown.
@@ -254,7 +293,7 @@ async def du_has_content(compute_entries: ComputeEntries,
     """
     try:
         entries, _ = await compute_entries(path)
-        return bool(entries)
+        return any(path_allowed(leaf) for leaf, _ in to_virtual(entries, path))
     except Exception as exc:
         # This runs only after stat already failed, to tell an implicit
         # directory from an absent path. Backends raise their own error

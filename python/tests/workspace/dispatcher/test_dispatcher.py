@@ -21,7 +21,8 @@ from mirage.policy import (Action, CommandRule, Deny, OpsContext, Policies,
                            Policy, PolicyDenied)
 from mirage.policy.rule import RulePolicy
 from mirage.resource.ram import RAMResource
-from mirage.types import ConsistencyPolicy, FileType, MountMode, PathSpec
+from mirage.types import (ConsistencyPolicy, FileType, HiddenPaths, MountMode,
+                          PathSpec)
 from mirage.workspace import Workspace
 from mirage.workspace.dispatcher import Dispatcher
 from mirage.workspace.session import Session
@@ -186,63 +187,42 @@ async def test_structure_fallback_serves_when_no_policy_objects():
 
 @pytest.fixture
 def scoped_session():
-    """Bind a session granted only the deep nested mount."""
+    """Bind a session whose profile hides the parent mount's own content,
+    leaving the mount nested below it reachable."""
     session = Session(session_id="agent",
-                      mount_modes={"/data/locked/inner/deep": MountMode.EXEC})
+                      hidden_paths=HiddenPaths(paths=("/data/locked/other",
+                                                      "/data/locked/f.txt")))
     token = set_current_session(session)
     yield session
     reset_current_session(token)
 
 
-def _ungranted_parent(dispatcher) -> None:
-    """Point the mocks at a real but ungranted mount whose subtree holds
-    a granted one: try_mount_for resolves the parent for every path, while
-    only the deep mount is in the session's grants."""
-    namespace = dispatcher._namespace
-    mount = MagicMock()
-    mount.prefix = "/data/locked/"
-    mount.execute_op = AsyncMock(return_value=b"cold")
-    namespace.try_mount_for = MagicMock(return_value=mount)
-    deep = MagicMock()
-    deep.prefix = "/data/locked/inner/deep/"
-    namespace.registry.mounts = MagicMock(return_value=[mount, deep])
-    namespace.symlink_targets = MagicMock(return_value={})
-
-
 @pytest.mark.asyncio
-async def test_ungranted_parent_serves_granted_structure(scoped_session):
-    # A granted mount below an ungranted one already put the parent's
-    # name in a listing, so walking down to the grant must answer; the
-    # backend never runs, so nothing of the parent's content leaks.
-    dispatcher, _ = _dispatcher(Policies())
-    _ungranted_parent(dispatcher)
-    result, _ = await dispatcher.dispatch("readdir", _path("/data/locked"))
-    assert result == ["/data/locked/inner"]
-    st, _ = await dispatcher.dispatch("stat", _path("/data/locked"))
-    assert st.type is FileType.DIRECTORY
-    mount = dispatcher._namespace.try_mount_for.return_value
-    mount.execute_op.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_ungranted_parent_structure_still_clears_admission(
+async def test_a_structure_answer_still_clears_the_sessions_hides(
         scoped_session):
-    policies = Policies()
-    policies.add(DenyLocked())
-    dispatcher, _ = _dispatcher(policies)
-    _ungranted_parent(dispatcher)
-    with pytest.raises(PolicyDenied):
-        await dispatcher.dispatch("readdir", _path("/data/locked/inner"))
+    # The synthetic answer passes the session's view as well as the
+    # policy chain: it is produced above every backend, so a path the
+    # profile hides would otherwise be served by the one code path that
+    # asks no mount anything.
+    dispatcher, _ = _dispatcher(Policies())
+    _structure_only(dispatcher)
+    result, _ = await dispatcher.dispatch("readdir",
+                                          _path("/data/locked/inner"))
+    assert result == ["/data/locked/inner/deep"]
+    with pytest.raises(FileNotFoundError):
+        await dispatcher.dispatch("readdir", _path("/data/locked/other"))
 
 
 @pytest.mark.asyncio
-async def test_ungranted_mount_without_structure_still_denies(scoped_session):
-    # A path the structure does not owe raises the canonical denial,
-    # and a write can never be served synthetically.
+async def test_a_hidden_path_denies_a_read_and_refuses_a_create(
+        scoped_session):
+    # The hide's two verdicts, at the door every surface comes through:
+    # absent on a read, EACCES on a create, and a write is never served
+    # from structure.
     dispatcher, _ = _dispatcher(Policies())
-    _ungranted_parent(dispatcher)
-    with pytest.raises(PermissionError):
-        await dispatcher.dispatch("readdir", _path("/data/locked/other"))
+    _structure_only(dispatcher)
+    with pytest.raises(FileNotFoundError):
+        await dispatcher.dispatch("stat", _path("/data/locked/other"))
     with pytest.raises(PermissionError):
         await dispatcher.dispatch("write",
                                   _path("/data/locked/f.txt"),
@@ -273,3 +253,82 @@ async def test_unlink_of_an_ordinary_file_still_reaches_the_backend():
         await ws.dispatch("unlink", PathSpec.from_str_path("/ram/a.txt"))
         listing = await ws.execute("ls /ram")
         assert (listing.stdout or b"").strip() == b""
+
+
+@pytest.mark.asyncio
+async def test_rename_moves_a_namespace_link():
+    # Same fact as the unlink above, one verb along: a guest's os.rename
+    # of a link forwarded to a backend that had never heard of the name,
+    # so it answered ENOENT with the link still under the old one.
+    with Workspace({"/ram/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo hi > /ram/a.txt")
+        await ws.execute("ln -s a.txt /ram/link")
+        await ws.dispatch("rename",
+                          PathSpec.from_str_path("/ram/link"),
+                          dst=PathSpec.from_str_path("/ram/moved"))
+        assert not ws._namespace.is_link("/ram/link")
+        assert ws._namespace.readlink("/ram/moved") == "a.txt"
+
+
+@pytest.mark.asyncio
+async def test_a_no_follow_stat_answers_a_links_own_row():
+    # lstat asks for the row only the node table holds. Without it every
+    # surface rebuilt the row from the target string and reported epoch
+    # zero, so a no-follow utime persisted and stayed invisible.
+    with Workspace({"/ram/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo hi > /ram/a.txt")
+        await ws.execute("ln -s a.txt /ram/link")
+        link = PathSpec.from_str_path("/ram/link")
+        row, _ = await ws.dispatch("stat", link, nofollow=True)
+        assert row.type == FileType.SYMLINK
+        assert row.size == len("a.txt")
+        await ws.dispatch("setattr",
+                          link,
+                          mode=None,
+                          uid=None,
+                          gid=None,
+                          atime=None,
+                          mtime="2020-01-02T03:04:05Z",
+                          nofollow=True)
+        row, _ = await ws.dispatch("stat", link, nofollow=True)
+        assert row.modified == "2020-01-02T03:04:05Z"
+        # Following is the other answer: the target's row, not the link's.
+        followed, _ = await ws.dispatch("stat", link)
+        assert followed.type != FileType.SYMLINK
+
+
+@pytest.mark.asyncio
+async def test_a_rename_replaces_a_link_at_the_destination():
+    # rename(2) replaces the destination. A link left in the table there
+    # shadowed the file that had just landed: the listing showed the new
+    # file, every read followed the old link, and the moved content was
+    # reachable under no name at all. mv did this right at the command
+    # tier, so only the surfaces below it (a guest, a kernel mount) saw
+    # the broken state.
+    with Workspace({"/ram/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo hi > /ram/a.txt")
+        await ws.execute("echo tgt > /ram/t.txt")
+        await ws.execute("ln -s t.txt /ram/link")
+        await ws.dispatch("rename",
+                          PathSpec.from_str_path("/ram/a.txt"),
+                          dst=PathSpec.from_str_path("/ram/link"))
+        assert not ws._namespace.is_link("/ram/link")
+        assert (await ws.execute("cat /ram/link")).stdout == b"hi\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("occupied",
+                         ["/ram/a.txt", "/ram/d", "/ram/link", "/ram"])
+async def test_symlink_refuses_an_occupied_name(occupied):
+    # symlink(2) is EEXIST on a name that is taken, and only the door can
+    # tell: a file and a directory are the backend's, a link is the node
+    # table's, and a mount root is the registry's. Unchecked, the node
+    # went on top and buried whatever was there.
+    with Workspace({"/ram/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo hi > /ram/a.txt; mkdir /ram/d")
+        await ws.execute("ln -s a.txt /ram/link")
+        with pytest.raises(FileExistsError):
+            await ws.dispatch("symlink",
+                              PathSpec.from_str_path(occupied),
+                              target="elsewhere")
+        assert (await ws.execute("cat /ram/a.txt")).stdout == b"hi\n"

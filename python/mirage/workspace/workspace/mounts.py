@@ -22,7 +22,6 @@ from mirage.resource.ram import RAMResource
 from mirage.types import KERNEL_BACKENDS, MountBackend, MountMode
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.spec import Mount
-from mirage.workspace.session.permissions import MountPermissions
 from mirage.workspace.workspace.types import MountSpec, ResourceMount
 
 
@@ -82,9 +81,6 @@ def normalize_resources(resources: dict[str, ResourceMount],
                     backend=value.backend,
                     mountpoint=value.mountpoint,
                     command_limits=dict(value.command_limits or {}),
-                    permissions=(MountPermissions.model_validate(
-                        value.permissions)
-                                 if value.permissions is not None else None),
                 ))
         elif isinstance(value, tuple):
             if len(value) not in (2, 3):

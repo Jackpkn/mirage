@@ -18,11 +18,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from mirage.agents.openai_agents.runner import MirageRunner
-from mirage.types import FileStat, FileType
+from mirage.types import ContentType, FileStat, FileType
 
 
-def _stat(file_type: FileType) -> FileStat:
-    return FileStat(name="x", type=file_type)
+def _stat(file_type: ContentType) -> FileStat:
+    return FileStat(name="x", type=FileType.FILE, content=file_type)
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def ws():
 
 @pytest.mark.asyncio
 async def test_build_blocks_image_inlines_base64(ws):
-    ws.ops.stat.return_value = _stat(FileType.IMAGE_PNG)
+    ws.ops.stat.return_value = _stat(ContentType.IMAGE_PNG)
     ws.ops.read.return_value = b"\x89PNG\r\n\x1a\n"
     runner = MirageRunner(ws)
     blocks = await runner.build_blocks("hi", ["/img.png"])
@@ -48,7 +48,7 @@ async def test_build_blocks_image_inlines_base64(ws):
 
 @pytest.mark.asyncio
 async def test_build_blocks_pdf_uploads_to_files_api(ws):
-    ws.ops.stat.return_value = _stat(FileType.PDF)
+    ws.ops.stat.return_value = _stat(ContentType.PDF)
     ws.ops.read.return_value = b"%PDF-1.4 ..."
     fake_client = MagicMock()
     fake_client.files = MagicMock()
@@ -66,7 +66,7 @@ async def test_build_blocks_pdf_uploads_to_files_api(ws):
 
 @pytest.mark.asyncio
 async def test_build_blocks_text_decoded_inline(ws):
-    ws.ops.stat.return_value = _stat(FileType.TEXT)
+    ws.ops.stat.return_value = _stat(ContentType.TEXT)
     ws.ops.read.return_value = b"hello world"
     runner = MirageRunner(ws)
     blocks = await runner.build_blocks("look", ["/notes.txt"])
@@ -75,7 +75,7 @@ async def test_build_blocks_text_decoded_inline(ws):
 
 @pytest.mark.asyncio
 async def test_build_blocks_jpeg(ws):
-    ws.ops.stat.return_value = _stat(FileType.IMAGE_JPEG)
+    ws.ops.stat.return_value = _stat(ContentType.IMAGE_JPEG)
     ws.ops.read.return_value = b"\xff\xd8\xff..."
     runner = MirageRunner(ws)
     blocks = await runner.build_blocks("see", ["/photo.jpg"])
@@ -85,7 +85,7 @@ async def test_build_blocks_jpeg(ws):
 
 @pytest.mark.asyncio
 async def test_build_blocks_multiple_paths_in_order(ws):
-    types = [FileType.TEXT, FileType.IMAGE_PNG]
+    types = [ContentType.TEXT, ContentType.IMAGE_PNG]
     bytes_seq = [b"first", b"\x89PNG\r\n\x1a\n"]
 
     async def fake_stat(p):

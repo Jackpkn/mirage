@@ -22,25 +22,20 @@ import { IOResult } from '../io/types.ts'
 import { OpsRegistry, type RegisteredOp } from '../ops/registry.ts'
 import type {
   Action,
-  ApprovalDecision,
-  ApprovalRequest,
+  Decision,
   CommandContext,
   OpsContext,
   Policy,
   SessionContext,
 } from '../policy/index.ts'
-import { CallbackApprover } from '../policy/index.ts'
+import { Outcome, Scope, type AskHandler } from '../policy/index.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { Runtime } from '../runtime/base.ts'
 import { LINE_EXECUTOR, type LineExecutor } from '../runtime/mixin.ts'
 import type { RunResult } from '../runtime/types.ts'
 import { MountMode, ResourceName } from '../types.ts'
 import { cliSpecFor } from '../commands/cli/specs.ts'
-import {
-  parseSessionProfile,
-  parseWorkspacePermissions,
-  type SessionProfile,
-} from './session/permissions.ts'
+import { parseSessionProfile, type SessionProfile } from '../policy/profile.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
 
@@ -105,9 +100,9 @@ describe('name-plane writes go through the door', () => {
     expect(ws.records.some((r) => r.op === 'symlink' && r.path === '/a/lk')).toBe(true)
   })
 
-  it('scoped shell ln onto ungranted turf is refused', async () => {
+  it('scoped shell ln onto hidden turf is refused', async () => {
     const ws = await makeWs()
-    ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
+    ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })
     const io = await ws.execute('ln -s /a/x.txt /b/lk', { sessionId: 'agent' })
     expect(io.exitCode).not.toBe(0)
     expect(ws.namespace.isLink('/b/lk')).toBe(false)
@@ -127,12 +122,12 @@ describe('name-plane writes go through the door', () => {
     await expect(ws.fs.readlink('/a/x.txt')).rejects.toMatchObject({ code: 'EINVAL' })
   })
 
-  it('scoped shell readlink on ungranted turf is refused', async () => {
-    // The read twin of the scoped-ln hole: a session granted only /a
+  it('scoped shell readlink on hidden turf is refused', async () => {
+    // The read twin of the scoped-ln hole: a session that cannot see /b
     // must not learn /b/lk's target through the readlink builtin, which
     // used to read the node table directly instead of dispatching.
     const ws = await makeWs()
-    ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
+    ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })
     const made = await ws.execute('ln -s /b/y.txt /b/lk')
     expect(made.exitCode).toBe(0)
     const io = await ws.execute('readlink /b/lk', { sessionId: 'agent' })
@@ -140,11 +135,11 @@ describe('name-plane writes go through the door', () => {
     expect(stdoutStr(io)).not.toContain('y.txt')
   })
 
-  it('scoped shell readlink -m on ungranted turf is refused', async () => {
+  it('scoped shell readlink -m on hidden turf is refused', async () => {
     // -m/-f canonicalize without any existence probe, so without the
-    // gate they printed the resolved target of an ungranted link.
+    // gate they printed the resolved target of a hidden link.
     const ws = await makeWs()
-    ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
+    ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })
     const made = await ws.execute('ln -s /b/y.txt /b/lk')
     expect(made.exitCode).toBe(0)
     const io = await ws.execute('readlink -m /b/lk', { sessionId: 'agent' })
@@ -161,12 +156,16 @@ describe('name-plane writes go through the door', () => {
     expect(stdoutStr(io)).not.toContain('x.txt')
   })
 
-  it('facade symlink respects session grants', async () => {
+  it("facade symlink respects the session's view", async () => {
     const ws = await makeWs()
-    const sess = ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })
+    const sess = ws.createSession('agent', { profile: { paths: { hide: ['/b'] } } })
     await runWithSession(sess, async () => {
       await ws.fs.symlink('/a/lk', 'x.txt')
-      await expect(ws.fs.symlink('/b/lk', 'y.txt')).rejects.toThrow('not allowed')
+      // Creating under a hidden path is EACCES, not ENOENT: a create is
+      // the one op a hide answers out loud, because silently succeeding
+      // would leave a link the session cannot see and the next writer
+      // cannot overwrite.
+      await expect(ws.fs.symlink('/b/lk', 'y.txt')).rejects.toMatchObject({ code: 'EACCES' })
     })
     expect(ws.namespace.isLink('/a/lk')).toBe(true)
     expect(ws.namespace.isLink('/b/lk')).toBe(false)
@@ -886,12 +885,12 @@ describe('session profiles', () => {
     a.store.dirs.add('/secrets')
     const ws = new Workspace({ '/a': a }, { mode: MountMode.WRITE, shellParser: parser })
     open.push(ws)
-    const analyst = {
+    const analyst = parseSessionProfile({
       mounts: { '/a': 'write' },
       paths: { hide: ['/a/secrets'] },
       vars: { hide: ['SLACK_TOKEN'] },
       env: { ROLE: 'analyst' },
-    }
+    })
     const s1 = ws.createSession('agent1', { profile: analyst })
     const s2 = ws.createSession('agent2', { profile: analyst })
     expect(s1.mountModes?.get('/a')).toBe(MountMode.WRITE)
@@ -901,27 +900,38 @@ describe('session profiles', () => {
     expect(s1.env.ROLE).toBe('analyst')
     const listing = await ws.execute('ls /a', { sessionId: 'agent1' })
     expect(stdoutStr(listing)).not.toContain('secrets')
-    const role = await ws.execute('echo "$ROLE"', { sessionId: 'agent1' })
-    expect(stdoutStr(role)).toBe('analyst\n')
+    const profile = await ws.execute('echo "$ROLE"', { sessionId: 'agent1' })
+    expect(stdoutStr(profile)).toBe('analyst\n')
   })
 
-  it('explicit mounts tighten the profile, never widen it', async () => {
+  it('explicit mounts can only weaken a mode, never raise it', async () => {
+    // An inline document restricts: a mode both sides state settles at
+    // the weaker one, and a mount only the inline document names is
+    // narrowed from whatever the workspace gave it, never raised.
     const parser = await getTestParser()
     const ws = new Workspace(
       { '/a': new RAMResource(), '/b': new RAMResource() },
       { mode: MountMode.WRITE, shellParser: parser },
     )
     open.push(ws)
+    const profile = parseSessionProfile({
+      mounts: { '/a': 'write' },
+      paths: { hide: ['/a/secrets'] },
+    })
     const sess = ws.createSession('agent', {
       mounts: { '/a': 'read', '/b': 'read' },
-      profile: { mounts: { '/a': 'write' }, paths: { hide: ['/a/secrets'] } },
+      profile: profile,
     })
     expect(sess.mountModes?.get('/a')).toBe(MountMode.READ)
-    expect(sess.mountModes?.has('/b')).toBe(false)
+    expect(sess.mountModes?.get('/b')).toBe(MountMode.READ)
     expect(sess.hiddenPaths).toEqual({ paths: ['/a/secrets'], patterns: [] })
+    const raised = ws.createSession('wider', { mounts: { '/a': 'rwx' }, profile: profile })
+    expect(raised.mountModes?.get('/a')).toBe(MountMode.WRITE)
   })
 
-  it('a named profile resolves its chain, default applies unnamed, unknown throws', async () => {
+  it('a named profile is the whole document, unnamed takes the default, unknown throws', async () => {
+    // Two profiles, each the whole document it runs under: there is no
+    // inheritance, so reading one is reading everything it may do.
     const parser = await getTestParser()
     const ws = new Workspace(
       { '/a': new RAMResource(), '/b': new RAMResource() },
@@ -929,12 +939,17 @@ describe('session profiles', () => {
         mode: MountMode.WRITE,
         shellParser: parser,
         profiles: {
-          default: { cwd: '/b', env: { PAGER: 'cat' }, mounts: { '/a': 'rw', '/b': 'rwx' } },
-          reviewer: {
-            extends: 'default',
+          default: parseSessionProfile({
+            cwd: '/b',
+            env: { PAGER: 'cat' },
+            mounts: { '/a': 'rw', '/b': 'rwx' },
+          }),
+          reviewer: parseSessionProfile({
+            cwd: '/b',
+            env: { PAGER: 'cat' },
             mounts: { '/a': 'r', '/b': 'rwx' },
             paths: { hide: ['/a/secrets'] },
-          },
+          }),
         },
       },
     )
@@ -948,30 +963,79 @@ describe('session profiles', () => {
     expect(dflt.mountModes?.get('/a')).toBe(MountMode.WRITE)
     expect(dflt.hiddenPaths).toBeNull()
     expect(dflt.cwd).toBe('/b')
-    expect(() => ws.createSession('x', { profile: 'nope' })).toThrow("unknown profile 'nope'")
+    expect(() => ws.createSession('x', { profile: 'nope' })).toThrow('unknown profile "nope"')
+    // An inline document adds to the named profile: the weaker mode wins,
+    // hides union, and an allow list there is refused outright.
     const inline = ws.createSession('i', {
       profile: 'reviewer',
-      permissions: {
+      permissions: parseSessionProfile({
         cwd: '/a',
         mounts: { '/a': 'rw' },
         paths: { hide: ['*.key'] },
         vars: { hide: ['AWS_*'] },
-      },
+      }),
     })
     expect(inline.mountModes?.get('/a')).toBe(MountMode.READ)
-    expect(inline.mountModes?.has('/b')).toBe(false)
+    expect(inline.mountModes?.get('/b')).toBe(MountMode.EXEC)
     expect(inline.hiddenPaths).toEqual({ paths: ['/a/secrets'], patterns: ['*.key'] })
+    expect(() =>
+      ws.createSession('wide', {
+        profile: 'reviewer',
+        permissions: parseSessionProfile({ commands: { allow: ['ls'] } }),
+      }),
+    ).toThrow('not an allow list')
     expect(inline.hiddenVars).toEqual({ names: [], patterns: ['AWS_*'] })
     expect(inline.cwd).toBe('/a')
     const pwd = await ws.execute('pwd', { sessionId: 'r' })
     expect(stdoutStr(pwd)).toBe('/b\n')
   })
 
-  it('a broken profile chain fails at construction', () => {
-    expect(
-      () =>
-        new Workspace({ '/a': new RAMResource() }, { profiles: { orphan: { extends: 'gone' } } }),
-    ).toThrow("extends unknown profile 'gone'")
+  it('a misspelled document field fails at the parser', () => {
+    expect(() => parseSessionProfile({ extends: 'default' })).toThrow('unknown field `extends`')
+  })
+
+  it('a profile keeps a mount away by hiding it, not by omitting it', async () => {
+    // Omission is not a refusal, so exclusion is a hide: the mount
+    // reads as nonexistent rather than as a permission error naming
+    // something the profile cannot see.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/a': new RAMResource(), '/b': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        profiles: {
+          default: parseSessionProfile({ mounts: { '/b': 'rwx' }, paths: { hide: ['/a'] } }),
+        },
+      },
+    )
+    open.push(ws)
+    const listed = await ws.execute('ls /a')
+    expect(listed.exitCode).not.toBe(0)
+    expect(stderrStr(listed)).toContain('No such file or directory')
+    const root = stdoutStr(await ws.execute('ls /'))
+    expect(root).toContain('b')
+    expect(root.split(/\s+/)).not.toContain('a')
+  })
+
+  it('the workspace names its default profile by name', async () => {
+    // `profile:` on the workspace picks which profile shapes a session
+    // created without one, including its own.
+    const parser = await getTestParser()
+    const profiles = {
+      default: parseSessionProfile({ mounts: { '/a': 'rw' } }),
+      reviewer: parseSessionProfile({ mounts: { '/a': 'r' } }),
+    }
+    const ws = new Workspace(
+      { '/a': new RAMResource() },
+      { mode: MountMode.WRITE, shellParser: parser, profiles, profile: 'reviewer' },
+    )
+    open.push(ws)
+    expect(ws.getSession(ws.defaultSessionId).mountModes?.get('/a')).toBe(MountMode.READ)
+    expect(ws.createSession('agent').mountModes?.get('/a')).toBe(MountMode.READ)
+    expect(() => new Workspace({ '/a': new RAMResource() }, { profiles, profile: 'gone' })).toThrow(
+      'unknown profile "gone"',
+    )
   })
 
   it('the default profile shapes the workspace session too', async () => {
@@ -986,12 +1050,12 @@ describe('session profiles', () => {
         mode: MountMode.WRITE,
         shellParser: parser,
         profiles: {
-          default: {
+          default: parseSessionProfile({
             cwd: '/b',
             env: { PAGER: 'cat' },
             mounts: { '/b': 'rwx' },
             paths: { hide: ['/b/vault'] },
-          },
+          }),
         },
       },
     )
@@ -1003,7 +1067,9 @@ describe('session profiles', () => {
     expect(dflt.cwd).toBe('/b')
     expect(stdoutStr(await ws.execute('pwd'))).toBe('/b\n')
     expect(stdoutStr(await ws.execute('echo "$PAGER"'))).toBe('cat\n')
-    expect((await ws.execute('ls /a')).exitCode).not.toBe(0)
+    // A mount the profile does not name is reachable at its own mode: the
+    // `mounts` mapping narrows, it is not an allowlist.
+    expect((await ws.execute('ls /a')).exitCode).toBe(0)
     expect((await ws.execute('mkdir /b/vault')).exitCode).not.toBe(0)
     const plain = new Workspace({ '/a': new RAMResource() }, { shellParser: parser })
     open.push(plain)
@@ -1012,7 +1078,9 @@ describe('session profiles', () => {
     expect(own.hiddenPaths).toBeNull()
   })
 
-  it('workspace and mount-owned hides bind every session, the default included', async () => {
+  it("a default profile's hides, its own and its mount sections', bind every session", async () => {
+    // One document: `paths.hide` at the top and `mounts./repo`'s own,
+    // compiled into the one hidden-paths spec every session carries.
     const parser = await getTestParser()
     const repo = new RAMResource()
     const ws = new Workspace(
@@ -1020,8 +1088,15 @@ describe('session profiles', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: { commands: { deny: [] }, paths: { hide: ['/other/finance', '*.key'] } },
-        mountPermissions: { '/repo': { paths: { hide: ['.env', '*.pem'] } } },
+        profiles: {
+          default: parseSessionProfile({
+            paths: { hide: ['/other/finance', '*.key'] },
+            // Anchored on purpose: a bare `*.pem` is a name pattern and
+            // means the same thing inside a mount section as outside
+            // one, so hiding only the repo's copies spells the prefix.
+            mounts: { '/repo': { paths: { hide: ['/repo/.env', '/repo/*.pem'] } } },
+          }),
+        },
       },
     )
     open.push(ws)
@@ -1041,14 +1116,25 @@ describe('session profiles', () => {
     expect(listing.split('/other:')[1]).toContain('.env')
     expect((await ws.execute('cat /repo/.env')).exitCode).not.toBe(0)
     expect(stdoutStr(await ws.execute('cat /other/.env'))).toBe('v')
-    ws.createSession('late')
+    const late = ws.createSession('late')
     expect((await ws.execute('cat /other/pub/b.key', { sessionId: 'late' })).exitCode).not.toBe(0)
-    expect(ws.getSession('late').hiddenPaths).toBeNull()
+    // The profile is the session's own document now, so its hides are on
+    // the session rather than bound beside it.
+    expect(late.hiddenPaths?.paths).toContain('/other/finance')
   })
 })
 
 describe('command permissions end to end', () => {
-  const COMMANDS_DOC = {
+  // One mount section, written the same way by both profiles below: rules
+  // here reach a line that works inside /repo, by cwd or by operand,
+  // which is what a path-scoped rule cannot express (`cd /repo && git
+  // commit` names no path).
+  const REPO_SECTION = {
+    commands: {
+      deny: [{ reason: 'history is read-only here', commands: ['git commit', 'git reset --hard'] }],
+    },
+  }
+  const COMMANDS_DOC = parseSessionProfile({
     commands: {
       allow: [
         'ls',
@@ -1064,17 +1150,25 @@ describe('command permissions end to end', () => {
         'wc',
         'man',
         'find',
+        'type',
+        'command',
+        'which',
+        'cd',
+        '[',
       ],
       deny: [
-        { reason: 'no deletes in the repo', commands: ['rm'], paths: ['/repo/*'] },
+        { reason: 'no deletes in the repo', commands: { rm: ['/repo/*'] } },
         { reason: 'frozen', paths: ['/repo/locked/*'] },
       ],
     },
-    paths: { hide: [] },
-  }
-  const REVIEWER: SessionProfile = {
-    commands: { allow: ['ls', 'cat', 'echo', 'git log', 'git status', 'xargs'], deny: [] },
-  }
+    mounts: { '/repo': REPO_SECTION },
+  })
+  const REVIEWER: SessionProfile = parseSessionProfile({
+    commands: {
+      allow: ['ls', 'cat', 'echo', 'git log', 'git status', 'xargs', 'type', 'eval'],
+    },
+    mounts: { '/repo': REPO_SECTION },
+  })
 
   async function commandsWs(): Promise<Workspace> {
     const parser = await getTestParser()
@@ -1088,21 +1182,7 @@ describe('command permissions end to end', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: COMMANDS_DOC,
-        mountPermissions: {
-          '/repo': {
-            paths: { hide: [] },
-            commands: {
-              deny: [
-                {
-                  reason: 'history is read-only here',
-                  commands: ['git commit', 'git reset --hard'],
-                },
-              ],
-            },
-          },
-        },
-        profiles: { reviewer: REVIEWER },
+        profiles: { default: COMMANDS_DOC, reviewer: REVIEWER },
       },
     )
     open.push(ws)
@@ -1133,21 +1213,25 @@ describe('command permissions end to end', () => {
     expect(out).toContain('- cat')
     expect(out).not.toContain('- sort')
     expect((await line(ws, 'man sort'))[0]).toBe(1)
-    // Grammar-tier builtins and functions are not subjects; a listed
-    // tool runs; the workspace's own session is bound like any other.
+    // Builtins are subjects like everything else: the listed cd and [
+    // run, the unlisted pwd and history are not commands at all.
+    // Functions are the one exemption, and every line of a body passes
+    // the gate itself.
     expect(await line(ws, 'cd /repo && [ -f d/x ] && echo yes')).toEqual([0, 'yes\n', ''])
     expect(await line(ws, 'f() { echo in-f; }; f')).toEqual([0, 'in-f\n', ''])
     expect((await line(ws, 'cat /repo/d/x'))[0]).toBe(0)
+    expect(await line(ws, 'pwd')).toEqual([127, '', 'pwd: command not found\n'])
+    expect(await line(ws, 'type pwd; echo $?')).toEqual([0, '1\n', 'type: pwd: not found\n'])
     // `history` is a tool-tier builtin: hidden when unlisted.
     expect(await line(ws, 'history')).toEqual([127, '', 'history: command not found\n'])
   })
 
-  it('a profile allow list intersects with the workspace tier', async () => {
+  it("a profile's allow list is the only one a session reads", async () => {
     const ws = await commandsWs()
     ws.createSession('rev', { profile: 'reviewer' })
     await ws.execute('mkdir -p /repo/d && touch /repo/d/x')
-    // Both tiers list `cat`; the workspace lists python3, the profile
-    // does not; the profile lists `git log`, so `git` is visible but a
+    // The reviewer profile lists `cat` and not python3, whatever the
+    // default profile lists; it lists `git log`, so `git` is visible but a
     // `git commit` line is covered by nothing (a refusal that names the
     // program, not "command not found").
     expect((await line(ws, 'cat /repo/d/x', 'rev'))[0]).toBe(0)
@@ -1178,17 +1262,27 @@ describe('command permissions end to end', () => {
       '',
       'rm: command not found\n',
     ])
-    // An inline document tightens further: allow lists intersect.
+    // An inline document may add rules, never an allow list.
+    expect(() =>
+      ws.createSession('tight', {
+        profile: 'reviewer',
+        permissions: parseSessionProfile({ commands: { allow: ['cat', 'git'] } }),
+      }),
+    ).toThrow('not an allow list')
     ws.createSession('tight', {
       profile: 'reviewer',
-      permissions: { commands: { allow: ['cat', 'git'], deny: [] } },
+      permissions: parseSessionProfile({ commands: { deny: ['ls'] } }),
     })
     expect((await line(ws, 'cat /repo/d/x', 'tight'))[0]).toBe(0)
-    expect(await line(ws, 'ls /repo', 'tight')).toEqual([127, '', 'ls: command not found\n'])
+    expect(await line(ws, 'ls /repo', 'tight')).toEqual([
+      126,
+      '',
+      'ls: policy denied: denied by policy\n',
+    ])
     expect((await line(ws, 'git log', 'tight'))[2]).not.toContain('not allowed')
   })
 
-  it('deny rules by tier, scope and voice', async () => {
+  it('deny rules by scope, voice and where they were written', async () => {
     const ws = await commandsWs()
     await ws.execute('mkdir -p /repo/d && touch /repo/d/x /scratch/z')
     // Operand-scoped: the GNU voice at 1, the operand as typed.
@@ -1199,9 +1293,9 @@ describe('command permissions end to end', () => {
     expect(await line(ws, 'cat /repo/locked/y')).toEqual([1, '', 'cat: /repo/locked/y: frozen\n'])
     await expect(ws.fs.writeFile('/repo/locked/y', 'changed')).rejects.toThrow()
     await expect(ws.fs.readFile('/repo/locked/y')).rejects.toThrow()
-    // Mount tier: applies when the line works inside the mount (cwd
-    // under it, or a path under it), speaks first, whole command; the
-    // verb walk reads `-C /repo reset --hard` as `git reset --hard`.
+    // A mount section's rule applies when the line works inside the
+    // mount (cwd under it, or a path under it), whole command; the verb
+    // walk reads `-C /repo reset --hard` as `git reset --hard`.
     expect(await line(ws, 'cd /repo && git commit -m x')).toEqual([
       126,
       '',
@@ -1244,14 +1338,15 @@ describe('command permissions end to end', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: {
-          commands: {
-            deny: [
-              { reason: 'sealed', commands: ['cat', 'head'], paths: ['/data/secret*'] },
-              { reason: 'keep the link', commands: ['rm'], paths: ['/data/link'] },
-            ],
-          },
-          paths: { hide: [] },
+        profiles: {
+          default: parseSessionProfile({
+            commands: {
+              deny: [
+                { reason: 'sealed', commands: { cat: ['/data/secret*'], head: ['/data/secret*'] } },
+                { reason: 'keep the link', commands: { rm: ['/data/link'] } },
+              ],
+            },
+          }),
         },
       },
     )
@@ -1281,14 +1376,15 @@ describe('command permissions end to end', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: {
-          commands: {
-            deny: [
-              { reason: 'sealed', commands: ['cat'], paths: ['/data/secret*'] },
-              { reason: 'audit is append-only', commands: ['echo'], paths: ['/data/audit.log'] },
-            ],
-          },
-          paths: { hide: [] },
+        profiles: {
+          default: parseSessionProfile({
+            commands: {
+              deny: [
+                { reason: 'sealed', commands: { cat: ['/data/secret*'] } },
+                { reason: 'audit is append-only', commands: { echo: ['/data/audit.log'] } },
+              ],
+            },
+          }),
         },
       },
     )
@@ -1322,11 +1418,14 @@ describe('command permissions end to end', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        mountPermissions: {
-          '/scratch/child': {
-            paths: { hide: [] },
-            commands: { deny: [{ reason: 'boxed', commands: ['grep'] }] },
-          },
+        profiles: {
+          default: parseSessionProfile({
+            mounts: {
+              '/scratch/child': {
+                commands: { deny: [{ reason: 'boxed', commands: ['grep'] }] },
+              },
+            },
+          }),
         },
       },
     )
@@ -1358,8 +1457,7 @@ describe('command permissions end to end', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: COMMANDS_DOC,
-        profiles: { reviewer: REVIEWER },
+        profiles: { default: COMMANDS_DOC, reviewer: REVIEWER },
         runtimes: [box, 'vfs'],
       },
     )
@@ -1398,15 +1496,16 @@ describe('command permissions end to end', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: {
-          commands: {
-            deny: [
-              { reason: 'no deletes', commands: ['rm'] },
-              { reason: 'sealed', commands: ['cat'], paths: ['/repo/secret*'] },
-              { reason: 'no pushes', commands: ['git push'] },
-            ],
-          },
-          paths: { hide: [] },
+        profiles: {
+          default: parseSessionProfile({
+            commands: {
+              deny: [
+                { reason: 'no deletes', commands: ['rm'] },
+                { reason: 'sealed', commands: { cat: ['/repo/secret*'] } },
+                { reason: 'no pushes', commands: ['git push'] },
+              ],
+            },
+          }),
         },
         runtimes: [box, 'vfs'],
       },
@@ -1477,11 +1576,21 @@ describe('command permissions end to end', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: {
-          commands: {
-            deny: [{ reason: 'sealed', commands: ['ls', 'find', 'grep'], paths: ['/repo/sealed'] }],
-          },
-          paths: { hide: [] },
+        profiles: {
+          default: parseSessionProfile({
+            commands: {
+              deny: [
+                {
+                  reason: 'sealed',
+                  commands: {
+                    ls: ['/repo/sealed'],
+                    find: ['/repo/sealed'],
+                    grep: ['/repo/sealed'],
+                  },
+                },
+              ],
+            },
+          }),
         },
       },
     )
@@ -1513,17 +1622,18 @@ describe('command permissions end to end', () => {
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: {
-          commands: {
-            allow: ['mkdir', 'echo', 'touch', 'cat', 'rm', 'ls', 'head'],
-            ask: [{ reason: 'sign-off', commands: ['rm'], paths: ['/repo/shared/*'] }],
-            deny: [
-              { reason: 'private', commands: ['cat'], paths: ['/repo/private'] },
-              { reason: 'sealed', paths: ['/repo/sealed/*'] },
-              { reason: 'no heads', commands: ['head'] },
-            ],
-          },
-          paths: { hide: [] },
+        profiles: {
+          default: parseSessionProfile({
+            commands: {
+              allow: ['mkdir', 'echo', 'touch', 'cat', 'rm', 'ls', 'head'],
+              ask: [{ reason: 'sign-off', commands: { rm: ['/repo/shared/*'] } }],
+              deny: [
+                { reason: 'private', commands: { cat: ['/repo/private'] } },
+                { reason: 'sealed', paths: ['/repo/sealed/*'] },
+                { reason: 'no heads', commands: ['head'] },
+              ],
+            },
+          }),
         },
       },
     )
@@ -1532,7 +1642,9 @@ describe('command permissions end to end', () => {
       'mkdir -p /repo/private /repo/shared && echo k > /repo/private/k && touch /repo/shared/a',
     )
     ws.createSession('veiled', {
-      profile: { paths: { hide: ['/repo/private', '/repo/shared', '/repo/sealed'] } },
+      permissions: parseSessionProfile({
+        paths: { hide: ['/repo/private', '/repo/shared', '/repo/sealed'] },
+      }),
     })
     expect(await line(ws, 'cat /repo/private/k')).toEqual([
       1,
@@ -1558,7 +1670,7 @@ describe('command permissions end to end', () => {
       '',
       "rm: cannot remove '/repo/shared/a': No such file or directory\n",
     ])
-    expect(ws.approvals.list().map((r) => r.sessionId)).toEqual([ws.sessionManager.defaultId])
+    expect(ws.decisions.pending().map((r) => r.sessionId)).toEqual([ws.sessionManager.defaultId])
     expect(await line(ws, 'ls /repo', 'veiled')).toEqual([0, '', ''])
     // A rule with no path in it still speaks: nothing hidden is named.
     expect(await line(ws, 'head /repo/private/k', 'veiled')).toEqual([
@@ -1593,7 +1705,7 @@ class Box extends Runtime implements LineExecutor {
 describe('ask end to end', () => {
   // Through the document parser, as the YAML door reads it: a bare
   // string under `ask` is one pattern with the default reason.
-  const ASK_DOC = parseWorkspacePermissions({
+  const ASK_DOC = parseSessionProfile({
     commands: {
       ask: [{ reason: 'sign-off', commands: ['rm'] }, 'head'],
       deny: [{ reason: 'no deletes in the repo', commands: { rm: ['/repo/*'] } }],
@@ -1608,16 +1720,16 @@ describe('ask end to end', () => {
     }
   }
 
-  async function askWs(options: { approver?: CallbackApprover } = {}): Promise<Workspace> {
+  async function askWs(options: { onAsk?: AskHandler } = {}): Promise<Workspace> {
     const parser = await getTestParser()
     const ws = new Workspace(
       { '/repo': new RAMResource(), '/scratch': new RAMResource() },
       {
         mode: MountMode.WRITE,
         shellParser: parser,
-        permissions: ASK_DOC,
+        profiles: { default: ASK_DOC },
         policies: [new AskWc()],
-        ...(options.approver !== undefined ? { approver: options.approver } : {}),
+        ...(options.onAsk !== undefined ? { onAsk: options.onAsk } : {}),
       },
     )
     open.push(ws)
@@ -1635,8 +1747,8 @@ describe('ask end to end', () => {
 
   // The one request a step expects on the door; a missing one is the
   // test's failure, not a type to thread through.
-  function pendingRequest(ws: Workspace, command?: string): ApprovalRequest {
-    const found = ws.approvals.list().find((r) => command === undefined || r.command === command)
+  function pendingRequest(ws: Workspace, command?: string): Decision {
+    const found = ws.decisions.pending().find((r) => command === undefined || r.command === command)
     if (found === undefined) throw new Error(`no pending approval for ${command ?? 'any command'}`)
     return found
   }
@@ -1645,7 +1757,7 @@ describe('ask end to end', () => {
     const ws = await askWs()
     await ws.execute('mkdir -p /repo/d && touch /repo/d/x /scratch/z')
     // Asked: 126 in the requires-approval voice, quoting an id; the
-    // request is on ws.approvals with what was asked; a retry quotes the
+    // request is on ws.decisions with what was asked; a retry quotes the
     // same id and adds nothing.
     const [code, , err] = await line(ws, 'rm /scratch/z')
     expect(code).toBe(126)
@@ -1659,25 +1771,29 @@ describe('ask end to end', () => {
     ])
     expect(request.sessionId).toBe(ws.sessionManager.defaultId)
     expect(await line(ws, 'rm /scratch/z')).toEqual([126, '', err])
-    expect(ws.approvals.list()).toHaveLength(1)
+    expect(ws.decisions.pending()).toHaveLength(1)
     // The request names the agent of the call that asked, not the
     // workspace's constructor agent, so a shared workspace attributes
     // an approval to whoever raised it.
     expect(request.agentId).toBe('')
     const byBob = await ws.execute('rm /scratch/z2', { agentId: 'bob' })
     expect(byBob.exitCode).toBe(126)
-    expect(ws.approvals.list().map((r) => r.agentId)).toEqual(['', 'bob'])
+    expect(ws.decisions.pending().map((r) => r.agentId)).toEqual(['', 'bob'])
     // The agent rides with the execution, not the workspace: a line
     // asked through a nested eval keeps its caller's, and two lines in
     // flight at once keep their own.
+    // The substitution's own command is a command of the line, so the
+    // line is refused whole rather than running `echo` over an empty
+    // substitution and exiting 0, which used to leave the agent reading
+    // success for a removal that never happened.
     const nested = await ws.execute('echo $(rm /scratch/z3)', { agentId: 'carol' })
-    expect(nested.exitCode).toBe(0)
+    expect(nested.exitCode).toBe(126)
     await Promise.all([
       ws.execute('rm /scratch/z4', { agentId: 'dan' }),
       ws.execute("eval 'rm /scratch/z5'", { agentId: 'eve' }),
     ])
     const byAgent = Object.fromEntries(
-      ws.approvals.list().map((r) => [[r.command, ...r.argv].join(' '), r.agentId]),
+      ws.decisions.pending().map((r) => [[r.command, ...r.argv].join(' '), r.agentId]),
     )
     expect(byAgent).toEqual({
       'rm /scratch/z': '',
@@ -1686,15 +1802,15 @@ describe('ask end to end', () => {
       'rm /scratch/z4': 'dan',
       'rm /scratch/z5': 'eve',
     })
-    for (const r of ws.approvals.list()) {
-      if (r.agentId !== '' && r.agentId !== 'bob') await ws.approvals.deny(r.id)
+    for (const r of ws.decisions.pending()) {
+      if (r.agentId !== '' && r.agentId !== 'bob') await ws.decisions.answer(r.id, Outcome.DENY)
     }
-    const bobs = ws.approvals.list().find((r) => r.agentId === 'bob')
+    const bobs = ws.decisions.pending().find((r) => r.agentId === 'bob')
     if (bobs === undefined) throw new Error('no request from bob')
-    await ws.approvals.deny(bobs.id)
+    await ws.decisions.answer(bobs.id, Outcome.DENY)
     // Granted once: the exact retry passes, and the next one asks.
-    await ws.approvals.grant(request.id)
-    expect(ws.approvals.list()).toEqual([])
+    await ws.decisions.answer(request.id, Outcome.ALLOW)
+    expect(ws.decisions.pending()).toEqual([])
     expect((await line(ws, 'rm /scratch/z'))[0]).toBe(0)
     expect((await line(ws, 'cat /scratch/z'))[0]).toBe(1)
     const again = await line(ws, 'rm /scratch/z')
@@ -1706,7 +1822,7 @@ describe('ask end to end', () => {
     expect(asked[2].startsWith('head: requires approval: no standing approval')).toBe(true)
     // Denied: the retry is refused once in the deny voice, then the
     // question is open again.
-    await ws.approvals.deny(pendingRequest(ws, 'head').id)
+    await ws.decisions.answer(pendingRequest(ws, 'head').id, Outcome.DENY)
     expect(await line(ws, 'head /repo/d/x')).toEqual([
       126,
       '',
@@ -1721,7 +1837,7 @@ describe('ask end to end', () => {
     const ws = await askWs()
     await ws.execute('mkdir -p /repo/d && touch /repo/d/x /scratch/y /scratch/z')
     expect((await line(ws, 'rm /scratch/y'))[0]).toBe(126)
-    await ws.approvals.grant(pendingRequest(ws).id, 'session')
+    await ws.decisions.answer(pendingRequest(ws).id, Outcome.ALLOW, Scope.SESSION)
     // Every rm line passes now, in any directory of the session ...
     expect((await line(ws, 'rm /scratch/y'))[0]).toBe(0)
     expect((await line(ws, 'cd /scratch && rm z'))[0]).toBe(0)
@@ -1730,13 +1846,13 @@ describe('ask end to end', () => {
     // request (nothing for the host to answer; the battery cannot see
     // this, so it is pinned here).
     expect(await line(ws, 'cd /repo/d && rm x')).toEqual([1, '', 'rm: x: no deletes in the repo\n'])
-    expect(ws.approvals.list()).toEqual([])
+    expect(ws.decisions.pending()).toEqual([])
     // The grant is session state: on the record, and not another
     // session's.
     const record = ws.sessionManager.get(ws.sessionManager.defaultId).toJSON() as {
-      grants: { decision: string }[]
+      decisions: { outcome: string; scope: string }[]
     }
-    expect(record.grants[0]?.decision).toBe('allow_session')
+    expect(record.decisions[0]?.scope).toBe('session')
     ws.createSession('other')
     await ws.execute('touch /scratch/w', { sessionId: 'other' })
     const other = await line(ws, 'rm /scratch/w', 'other')
@@ -1754,7 +1870,7 @@ describe('ask end to end', () => {
     // The synthesized rule names the program, so a session grant covers
     // every wc line.
     expect(request.rule).toEqual({ reason: 'looks risky', commands: ['wc'] })
-    await ws.approvals.grant(request.id, 'session')
+    await ws.decisions.answer(request.id, Outcome.ALLOW, Scope.SESSION)
     expect(await line(ws, 'wc -c /scratch/z')).toEqual([0, '0 /scratch/z\n', ''])
     expect(await line(ws, 'wc -l /scratch/z')).toEqual([0, '0 /scratch/z\n', ''])
   })
@@ -1763,7 +1879,7 @@ describe('ask end to end', () => {
     const ws = await askWs()
     await ws.execute('touch /scratch/z')
     expect((await line(ws, 'rm /scratch/z'))[0]).toBe(126)
-    await ws.approvals.grant(pendingRequest(ws).id)
+    await ws.decisions.answer(pendingRequest(ws).id, Outcome.ALLOW)
     // execute({env}) runs the line in a fork of the session: the once
     // grant is read and consumed through the manager, so the fork
     // spends it for the session it forked from.
@@ -1774,15 +1890,19 @@ describe('ask end to end', () => {
     expect(again[2]).toContain('requires approval')
   })
 
-  it('a blocking approver answers inside the line', async () => {
-    const allowOnce = (_r: ApprovalRequest): Promise<ApprovalDecision> =>
-      Promise.resolve('allow_once')
-    const denyIt = (_r: ApprovalRequest): Promise<ApprovalDecision> => Promise.resolve('deny')
-    const yes = await askWs({ approver: new CallbackApprover(allowOnce) })
+  it('a blocking host answers inside the line', async () => {
+    // The host is a plain function over the ledger's own record, not a
+    // class implementing a protocol: it answers by returning the record
+    // with an outcome set.
+    const allowOnce = (r: Decision): Promise<Decision> =>
+      Promise.resolve({ ...r, outcome: Outcome.ALLOW, scope: Scope.ONCE })
+    const denyIt = (r: Decision): Promise<Decision> =>
+      Promise.resolve({ ...r, outcome: Outcome.DENY })
+    const yes = await askWs({ onAsk: allowOnce })
     await yes.execute('touch /scratch/z')
     expect((await line(yes, 'rm /scratch/z'))[0]).toBe(0)
-    expect(yes.approvals.list()).toEqual([])
-    const no = await askWs({ approver: new CallbackApprover(denyIt) })
+    expect(yes.decisions.pending()).toEqual([])
+    const no = await askWs({ onAsk: denyIt })
     await no.execute('touch /scratch/z')
     expect(await line(no, 'rm /scratch/z')).toEqual([126, '', 'rm: policy denied: sign-off\n'])
     expect((await line(no, 'cat /scratch/z'))[0]).toBe(0)
@@ -1908,19 +2028,19 @@ describe('a walk below the operand meets the rule guard', () => {
       '',
       'grep: /data/t/asked/a: Permission denied\n',
     ])
-    expect(ws.approvals.list()).toEqual([])
+    expect(ws.decisions.pending()).toEqual([])
     const [code, , err] = await line(ws, 'grep a /data/t/asked/a')
     expect(code).toBe(126)
     expect(err).toContain('grep: requires approval: nod')
-    const [request] = ws.approvals.list()
+    const [request] = ws.decisions.pending()
     if (request === undefined) throw new Error('no pending request')
-    await ws.approvals.grant(request.id)
+    await ws.decisions.answer(request.id, Outcome.ALLOW)
     expect(await line(ws, 'grep a /data/t/asked/a')).toEqual([0, 'a\n', ''])
     // A standing grant covers the walk too.
     await line(ws, 'grep a /data/t/asked/a')
-    const [second] = ws.approvals.list()
+    const [second] = ws.decisions.pending()
     if (second === undefined) throw new Error('no pending request')
-    await ws.approvals.grant(second.id, 'session')
+    await ws.decisions.answer(second.id, Outcome.ALLOW, Scope.SESSION)
     expect(await line(ws, 'grep -r a /data/t/asked')).toEqual([0, '/data/t/asked/a:a\n', ''])
   })
 
