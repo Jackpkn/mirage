@@ -62,7 +62,7 @@ async function trelloCardCreateCommand(
   }
   // A card write is addressed by id, not path, so only the mount-wide
   // grant can admit it (a write-granting carve-out names no card).
-  requireMountWritable()
+  requireMountWritable(opts.mountPrefix ?? '')
   const card = await cardCreate(accessor.transport, {
     listId,
     name,

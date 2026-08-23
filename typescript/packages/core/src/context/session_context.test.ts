@@ -318,7 +318,7 @@ describe('the path axis modes', () => {
         // The carve-out admits the command, but an id-addressed write
         // names no path, so only the mount-wide grant counts.
         expect(() => {
-          requireMountWritable()
+          requireMountWritable('/trello')
         }).toThrowError(/read-only/)
         return Promise.resolve()
       }),
@@ -326,10 +326,10 @@ describe('the path axis modes', () => {
     // Unrestricted (no session narrowing) writes pass, and with no
     // mount bound the check is inert.
     await runWithMountGate('/trello', MountMode.WRITE, () => {
-      requireMountWritable()
+      requireMountWritable('/trello')
       return Promise.resolve()
     })
-    requireMountWritable()
+    requireMountWritable('/trello')
   })
 })
 

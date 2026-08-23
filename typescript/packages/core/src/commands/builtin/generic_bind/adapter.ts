@@ -16,7 +16,7 @@ import type { Accessor } from '../../../accessor/base.ts'
 import {
   effectivePathMode,
   getAdmission,
-  getMountGate,
+  mountGateFor,
   pathAllowed,
   readonlyBelow,
 } from '../../../context/session_context.ts'
@@ -463,12 +463,14 @@ export function withRuleGuard<A extends Accessor = Accessor>(ops: CommandIO<A>):
 
 /** Hold each written path to its region's effective mode before a
  * backend mutation runs. Inert with no mount bound (a generic invoked
- * outside a mount's command). */
+ * outside a mount's command). The gate is resolved per written path
+ * (`mountGateFor`), so on the fallback storage a concurrent command on
+ * another mount cannot lend this one its grant. */
 function modeCheck(...written: readonly PathSpec[]): void {
-  const gate = getMountGate()
-  if (gate === null) return
-  const [prefix, mode] = gate
   for (const spec of written) {
+    const gate = mountGateFor(spec.virtual)
+    if (gate === null) continue
+    const [prefix, mode] = gate
     if (effectivePathMode(spec.virtual, prefix, mode) === MountMode.READ) {
       throw erofsReadOnly(`mount ${prefix} is read-only`, spec.virtual)
     }
@@ -481,10 +483,10 @@ function modeCheck(...written: readonly PathSpec[]): void {
  * backend call no per-path check ever sees. Runs after `modeCheck`
  * has judged the endpoints themselves. */
 function subtreeModeCheck(...written: readonly PathSpec[]): void {
-  const gate = getMountGate()
-  if (gate === null) return
-  const [prefix, mode] = gate
   for (const spec of written) {
+    const gate = mountGateFor(spec.virtual)
+    if (gate === null) continue
+    const [prefix, mode] = gate
     const blame = readonlyBelow(spec.virtual, prefix, mode)
     if (blame !== null) {
       throw erofsReadOnly(`mount ${prefix} is read-only`, blame)

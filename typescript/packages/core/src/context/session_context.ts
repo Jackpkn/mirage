@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { createAsyncContext } from '../utils/async_context.ts'
+import { asyncContextIsolatesTasks, createAsyncContext } from '../utils/async_context.ts'
 import type { SessionManager } from '../workspace/session/manager.ts'
 import type { Session } from '../workspace/session/session.ts'
 import { stripSlash } from '../utils/slash.ts'
@@ -209,6 +209,17 @@ export function pathRulesActive(): boolean {
 
 const mountGateStorage = createAsyncContext<readonly [string, MountMode]>()
 
+// The fallback storage is one global slot, so overlapping commands on
+// different mounts (a pipeline's stages, a background job) would read
+// each other's gate mid-await; every live gate is kept instead, and
+// `mountGateFor` selects among them by the path being judged.
+const liveMountGates: (readonly [string, MountMode])[] = []
+
+function releaseMountGate(gate: readonly [string, MountMode]): void {
+  const at = liveMountGates.indexOf(gate)
+  if (at >= 0) liveMountGates.splice(at, 1)
+}
+
 /**
  * Bind the executing mount's prefix and configured mode for the
  * duration of `fn`: the run of one command.
@@ -218,22 +229,68 @@ const mountGateStorage = createAsyncContext<readonly [string, MountMode]>()
  * a handler mutates: the write-command gate admits a command when any
  * shown subtree grants writes, and this binding is how each individual
  * write is then held to its own region's mode.
+ *
+ * Where the async context isolates tasks the binding rides it. On the
+ * fallback storage (a browser with no AsyncLocalStorage) the gate joins
+ * the live list instead, because a permission read off a slot another
+ * mount's command can overwrite mid-await would judge a path against
+ * the wrong mount.
  */
 export function runWithMountGate<T>(
   prefix: string,
   mode: MountMode,
   fn: () => Promise<T>,
 ): Promise<T> {
-  return Promise.resolve(mountGateStorage.run([prefix, mode], fn))
+  if (asyncContextIsolatesTasks) {
+    return Promise.resolve(mountGateStorage.run([prefix, mode], fn))
+  }
+  const gate: readonly [string, MountMode] = [prefix, mode]
+  liveMountGates.push(gate)
+  try {
+    return Promise.resolve(fn()).finally(() => {
+      releaseMountGate(gate)
+    })
+  } catch (err) {
+    releaseMountGate(gate)
+    throw err
+  }
 }
 
 /**
- * The executing mount's [prefix, configured mode], null outside a
- * mount's command (a generic invoked directly in a test, or the scratch
- * tier).
+ * The gate of the mount serving `virtual`: its [prefix, configured
+ * mode], null outside a mount's command (a generic invoked directly in
+ * a test, or the scratch tier).
+ *
+ * Where the async context isolates tasks the binding answers and the
+ * path plays no part. On the fallback storage the reader selects among
+ * every live gate by the path itself: the longest prefix covering it
+ * wins, the way the mount table routes, and two live gates at one
+ * prefix (two workspaces sharing a fallback runtime) answer with the
+ * weaker mode, failing toward refusal. A path no live gate covers
+ * answers null, which is the same inert reading an unbound context
+ * gives: the serving mount's own gate is live for the whole run of its
+ * handler, so only a path outside every executing mount can miss.
  */
-export function getMountGate(): readonly [string, MountMode] | null {
-  return mountGateStorage.getStore() ?? null
+export function mountGateFor(virtual: string): readonly [string, MountMode] | null {
+  if (asyncContextIsolatesTasks) {
+    return mountGateStorage.getStore() ?? null
+  }
+  const v = normPrefix(virtual)
+  let bestLen = -1
+  let bestPrefix: string | null = null
+  let bestMode: MountMode | null = null
+  for (const [rawPrefix, mode] of liveMountGates) {
+    const prefix = normPrefix(rawPrefix)
+    if (prefix !== '/' && v !== prefix && !v.startsWith(prefix + '/')) continue
+    if (prefix.length > bestLen) {
+      bestLen = prefix.length
+      bestPrefix = prefix
+      bestMode = mode
+    } else if (prefix.length === bestLen && bestMode !== null) {
+      bestMode = weakerMode(bestMode, mode)
+    }
+  }
+  return bestPrefix === null || bestMode === null ? null : [bestPrefix, bestMode]
 }
 
 const redirectStorage = createAsyncContext<[object, readonly PathSpec[]]>()
@@ -422,10 +479,13 @@ export function readonlyBelow(
  * while any shown subtree grants writes, but an id names no path a
  * per-path check could judge, so only the mount-wide grant counts and
  * a write-granting carve-out alone refuses, failing toward refusal.
- * Inert outside a mount's command.
+ * Inert outside a mount's command. `mountPrefix` is the asking
+ * command's own (`opts.mountPrefix`), which is what lets the fallback
+ * storage select the right gate; the isolating runtimes answer from
+ * the binding alone.
  */
-export function requireMountWritable(): void {
-  const gate = getMountGate()
+export function requireMountWritable(mountPrefix: string): void {
+  const gate = mountGateFor(mountPrefix)
   if (gate === null) return
   const [prefix, mode] = gate
   if (effectiveMountMode(prefix, mode) === MountMode.READ) {

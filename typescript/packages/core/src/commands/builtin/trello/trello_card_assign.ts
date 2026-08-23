@@ -44,7 +44,7 @@ async function trelloCardAssignCommand(
   if (memberId === undefined || memberId === '') throw new Error('--member_id is required')
   // A card write is addressed by id, not path, so only the mount-wide
   // grant can admit it (a write-granting carve-out names no card).
-  requireMountWritable()
+  requireMountWritable(opts.mountPrefix ?? '')
   const card = await cardAssign(accessor.transport, cardId, memberId)
   return [ENC.encode(JSON.stringify(normalizeCard(card))), new IOResult()]
 }
