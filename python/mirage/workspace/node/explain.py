@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 from collections.abc import Generator, Iterator
 from typing import Any
 
@@ -333,6 +334,7 @@ async def prejudge_line(
     registry: MountRegistry,
     namespace: Namespace | None,
     agent_id: str = "",
+    cancel: asyncio.Event | None = None,
 ) -> Refusal | None:
     """Judge every command of a line before any of it runs, and refuse
     the whole line when a rule speaks about one.
@@ -395,6 +397,11 @@ async def prejudge_line(
             decision ledger and the CLI installs.
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
+        cancel (asyncio.Event | None): the run's kill channel. This
+            pass puts real questions to a host, so it carries it
+            exactly as the per-command gate does; without it a compound
+            line asked here waited on an answer its own timeout could
+            no longer cut short.
 
     Returns:
         The line's refusal, or None to run it.
@@ -426,7 +433,8 @@ async def prejudge_line(
                 # explain_words lists the statement's own command first
                 # and the lines it runs after it, so only the first
                 # explanation is the command the redirects belong to.
-                redirects=targets if index == 0 else ())
+                redirects=targets if index == 0 else (),
+                cancel=cancel)
             if isinstance(answered, Refusal):
                 return answered
             # The host answered this one inline. The rest of the line

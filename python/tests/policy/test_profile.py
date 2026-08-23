@@ -1608,12 +1608,11 @@ async def test_a_grant_is_consumed_through_a_fork():
         await ws.close()
 
 
-async def _host_allows_once(record: Decision,
-                            cancel: object = None) -> Decision:
+async def _host_allows_once(record: Decision) -> Decision:
     return dataclasses.replace(record, outcome=Outcome.ALLOW, scope=Scope.ONCE)
 
 
-async def _host_denies(record: Decision, cancel: object = None) -> Decision:
+async def _host_denies(record: Decision) -> Decision:
     return dataclasses.replace(record, outcome=Outcome.DENY)
 
 
@@ -1643,7 +1642,7 @@ async def test_a_blocking_host_answers_inside_the_line():
 async def test_a_host_still_deciding_does_not_outlive_the_run():
     started = asyncio.Event()
 
-    async def never(record: Decision, cancel: object = None) -> Decision:
+    async def never(record: Decision) -> Decision:
         # A host that never answers. Before the wait was bounded, the
         # line below sat here forever and the cancel event it was given
         # was never observed at all.
@@ -1663,6 +1662,35 @@ async def test_a_host_still_deciding_does_not_outlive_the_run():
             await line
         # The kill is not an answer: the question is still open, and the
         # file the line would have removed is still there.
+        assert len(ws.decisions.pending()) == 1
+        assert (await _line(ws, "cat /scratch/z"))[0] == 0
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_compound_line_asked_before_it_runs_is_killable_too():
+    started = asyncio.Event()
+
+    async def never(record: Decision) -> Decision:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    cancel = asyncio.Event()
+    ws = _ask_ws(on_ask=never)
+    try:
+        await ws.execute("touch /scratch/z")
+        # More than one command, so the question is put by the prejudge
+        # pass rather than the per-command gate. That pass took no kill
+        # channel, so this shape sat on the host after the single
+        # command one stopped doing so.
+        line = asyncio.ensure_future(
+            ws.execute("rm /scratch/z; echo done", cancel=cancel))
+        await started.wait()
+        cancel.set()
+        with pytest.raises(MirageAbortError):
+            await line
         assert len(ws.decisions.pending()) == 1
         assert (await _line(ws, "cat /scratch/z"))[0] == 0
     finally:

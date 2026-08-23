@@ -105,6 +105,24 @@ describe('approverOf', () => {
   })
 })
 
+/** The prompt for an `rm` asked about these words. */
+function said(argv: string[]): string {
+  return approvalReason({
+    id: 'abc',
+    sessionId: 'agent',
+    agentId: '',
+    command: 'rm',
+    argv,
+    cwd: '/',
+    paths: [],
+    reason: 'deletes are reviewed',
+    rule: { reason: 'deletes are reviewed' },
+    outcome: null,
+    scope: Scope.ONCE,
+    note: '',
+  })
+}
+
 describe('approvalReason', () => {
   it('quotes the line beside the operator sentence', () => {
     const reason = approvalReason({
@@ -123,6 +141,22 @@ describe('approvalReason', () => {
     })
     // The rule's sentence alone names nothing being deleted.
     expect(reason).toBe('deletes are reviewed: rm -rf /data/notes.txt')
+  })
+
+  it('keeps the boundary of a word a shell would read as two', () => {
+    // Joined raw this read `rm -- quarterly report`, naming two
+    // operands where the run has one file.
+    expect(said(['--', 'quarterly report'])).toBe("deletes are reviewed: rm -- 'quarterly report'")
+  })
+
+  it('renders a word that would forge a line break in the prompt', () => {
+    expect(said(['/data/a\nrm -rf /'])).toBe("deletes are reviewed: rm '/data/a'$'\\n''rm -rf /'")
+  })
+
+  it('leaves ordinary words bare', () => {
+    // The quoting is GNU's diagnostic rendering, so the common prompt
+    // is not dressed up into something a human has to decode.
+    expect(said(['-rf', '/data/notes.txt'])).toBe('deletes are reviewed: rm -rf /data/notes.txt')
   })
 })
 
@@ -294,6 +328,20 @@ describe('an ask that outlives the run that raised it', () => {
     expect(run.timedOut).toBe(true)
     expect(run.exitCode).toBeNull()
     expect(run.signal).toBe('SIGTERM')
+    expect(await ws.fs.exists('/data/notes.txt')).toBe(true)
+  })
+
+  it('reports the timeout for a compound line, judged before any of it runs', async () => {
+    const { shell, ws } = await world(ASK_RM, undefined, neverAnswers)
+    // A line with more than one command is held by the prejudge pass,
+    // which asks its own questions. That pass took no signal, so this
+    // shape ignored the deadline even after the single-command one
+    // stopped doing so.
+    const run = await shell.run(
+      shell.resolve({ command: 'rm /data/notes.txt; echo done', timeoutMs: 200 }),
+    )
+    expect(run.timedOut).toBe(true)
+    expect(run.exitCode).toBeNull()
     expect(await ws.fs.exists('/data/notes.txt')).toBe(true)
   })
 

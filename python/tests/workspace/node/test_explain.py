@@ -311,7 +311,7 @@ async def test_a_coded_policy_holds_the_line_without_a_document(coded):
     assert "/data/a.txt" in await coded.ops.readdir("/data")
 
 
-async def _allow_once(record, cancel=None):
+async def _allow_once(record):
     """Answer every question ALLOW the moment it is raised.
 
     Args:

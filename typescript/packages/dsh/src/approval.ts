@@ -16,6 +16,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AskHandler } from '@struktoai/mirage-core/policy/decisions'
 import type { Decision } from '@struktoai/mirage-core/policy/types'
 import { Outcome, Scope } from '@struktoai/mirage-core/policy/types'
+import { shellQuote } from '@struktoai/mirage-core/utils/quote'
 
 /**
  * The tool an approval request is attributed to. A mirage ask is raised
@@ -91,11 +92,20 @@ export function approverOf(ctx: Context): Approver | null {
  * words come off the record rather than being re-rendered, so what was
  * approved is what was asked.
  *
+ * Each word is rendered as a shell would read it back, because this
+ * string is the whole of what the human authorizes and the words are
+ * already-expanded values, not source. Joined raw, `rm -- 'quarterly
+ * report'` reads as two operands and a newline inside a name forges a
+ * line break in the prompt, so the human would be nodding at something
+ * other than the run. `shellQuote` is GNU's diagnostic rendering: an
+ * ordinary name stays bare, and only a word a shell would read as
+ * something else is dressed.
+ *
  * @param record the ledger record being asked about.
  * @returns the prompt text.
  */
 export function approvalReason(record: Decision): string {
-  const line = [record.command, ...record.argv].join(' ')
+  const line = [record.command, ...record.argv].map(shellQuote).join(' ')
   return `${record.reason}: ${line}`
 }
 

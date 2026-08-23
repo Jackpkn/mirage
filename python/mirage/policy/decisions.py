@@ -22,12 +22,17 @@ from mirage.policy.types import (Abandoned, Ask, CommandContext, CommandRule,
                                  Decision, Deny, Pending, Scope,
                                  SessionDecisionsQuery)
 
-# A host that answers an Ask inside the line. The event is the run's, so
-# a host that puts a question to a person can take its prompt down when
-# the run it belongs to is killed. Ignoring it is safe: the ledger stops
-# waiting on the handler either way.
-AskHandler = Callable[[Decision, asyncio.Event | None],
-                      Awaitable[Decision | None]]
+# A host that answers an Ask inside the line.
+#
+# One argument, where the typescript twin takes a second optional
+# AbortSignal. The asymmetry is the runtimes', not a divergence: a
+# pending javascript promise cannot be interrupted, so a host there has
+# to be handed the run's signal to take its own prompt down, while here
+# the wait below cancels the handler's task outright and CancelledError
+# arrives inside it at the await it is parked on. Python's own idiom is
+# the stronger one, and asking every embedder to grow a parameter to be
+# told what cancellation already tells them would be the weaker mirror.
+AskHandler = Callable[[Decision], Awaitable[Decision | None]]
 
 ABANDONED = Abandoned()
 
@@ -42,7 +47,10 @@ async def answered(
     The wait is taken as a thunk so a run already over never starts one:
     nothing should be put to a host on behalf of a line that no longer
     exists. An abandoned wait is cancelled, so an answer that would
-    otherwise be recorded against a dead run never arrives.
+    otherwise be recorded against a dead run never arrives, and the
+    handler learns of the kill the way any parked coroutine does: as
+    CancelledError raised at the await it is sitting on, which a host
+    holding a prompt open can catch or clean up after.
 
     Args:
         start (Callable[[], Awaitable[Decision | None]]): begins the
@@ -360,7 +368,7 @@ class Decisions:
         on_ask = self._on_ask
         if on_ask is None:
             return Pending(record.id, rule.reason)
-        said = await answered(lambda: on_ask(record, cancel), cancel)
+        said = await answered(lambda: on_ask(record), cancel)
         if isinstance(said, Abandoned):
             return said
         if said is None or said.outcome is None:

@@ -38,7 +38,10 @@
 #
 # An `ask` rule is put to the human through dsh's own approval channel
 # (`ctx.approval`), so the prompt the agent triggers is the one dsh
-# already shows for its escalations. `allowed-once` runs the line;
+# already shows for its escalations. It quotes the line word by word as
+# a shell would read it back, so a name carrying a space or a newline
+# cannot pass itself off in the prompt as two operands or two lines.
+# `allowed-once` runs the line;
 # a rejection, a dismissal and an unanswerable ask all refuse it. With
 # no approval plugin composed the ask has nowhere to go, so it stays a
 # pending record the host answers through `ctx.mirage.decisions`

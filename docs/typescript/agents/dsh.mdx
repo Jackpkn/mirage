@@ -168,6 +168,8 @@ An **ask** is put to the human through dsh's own approval channel, `ctx.approval
 | `cancelled` (the prompt was dismissed) | is refused |
 | `unavailable` (nobody could answer) | is refused |
 
+The prompt is the rule's reason and the line it is about, quoted word by word as a shell would read it back: the human is authorizing this run, so a name carrying a space or a newline cannot pass itself off as two operands or as two lines. Ordinary names stay bare.
+
 Only `allowed-once` is a yes, and it grants exactly the line that asked; a single nod is never widened into a standing grant. The three refusals match what dsh does with the same vocabulary for its own escalations, where a rejection, a dismissal and an unanswerable ask all fail closed. A refused retry of the same line is answered from the record rather than prompting again, so a human who said no is not asked twice about it.
 
 A question never outlives the run that raised it. The run's abort signal goes to the channel with the request, so a prompt can take itself down, and the ledger stops waiting on the same signal — a line whose approval is still unanswered when its timeout expires (or when the caller kills it) comes back as the kill it was given, not as a refusal:

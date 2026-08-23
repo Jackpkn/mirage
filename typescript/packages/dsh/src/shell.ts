@@ -582,11 +582,23 @@ export class MirageShellExecutor extends ShellExecutor {
    * whose line goes on to succeed (`rm secrets; echo done`) still
    * happened and the line's status is no longer its own.
    *
-   * A stderr-derived fact is the only one available: `ExecuteResult`
-   * carries stdout, stderr and an exit code and no ruling, so an
-   * operand-scoped deny (`rm: letters.txt: <reason>`, exit 1) cannot be
-   * told from an ordinary failure at all. Carrying the ruling on the
-   * result is what would retire this whole function.
+   * Asking the exit code to agree costs nothing on a compound line,
+   * because a line of two or more commands is judged before any of it
+   * runs and its refusal is returned above the line's own redirections:
+   * `rm secrets 2>&1; echo done` never reaches the duplication or the
+   * trailing command, and answers 126 on stderr. The residue is a line
+   * whose command *name* comes from an expansion (`C=rm; $C secrets
+   * 2>&1; echo done`), which that pass reads literally and so cannot
+   * name; the refusal then happens inside the redirect at the
+   * per-command gate and the trailing command owns the status.
+   *
+   * That residue and the operand-scoped deny (`rm: letters.txt:
+   * <reason>`, exit 1, no marker at all) are the same missing fact:
+   * `ExecuteResult` carries stdout, stderr and an exit code and no
+   * ruling. Carrying the ruling on the result is what would retire this
+   * whole function, and it is not a heuristic that can be sharpened
+   * into place here — no wording test can tell mirage's own refusal
+   * from a log that quotes one.
    *
    * @param spec the resolved spec this run was built from.
    * @param stderr the run's captured standard error.
