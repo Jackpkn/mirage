@@ -18,8 +18,10 @@ import pytest
 
 from mirage.policy.match import Outcome
 from mirage.policy.profile import CompiledProfile
-from mirage.policy.types import AdmissionRules, CommandRule, Decision, Scope
+from mirage.policy.types import (AdmissionRules, CommandRule, Decision,
+                                 ProfileScript, Scope)
 from mirage.resource.ram import RAMResource
+from mirage.runtime.types import ScriptSource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.session import RAMSessionStore, SessionManager
@@ -222,6 +224,34 @@ async def test_manager_default_adopts_stored_hidden_specs():
     assert default.hidden_paths == HiddenPaths(paths=("/s3/secrets", ),
                                                patterns=("*.key", ))
     assert default.hidden_vars == HiddenVars(names=("SLACK_TOKEN", ))
+
+
+@pytest.mark.asyncio
+async def test_manager_default_adopts_stored_script():
+    # The profile script is a durable restriction like the hidden
+    # shapes: a store written by a scripted deployment must not wake a
+    # daemon configured without a default profile unjudged, and the
+    # next flush must not erase the script from the record.
+    store = RAMSessionStore()
+    await store.set(
+        "default", {
+            "session_id": "default",
+            "cwd": "/w",
+            "env": {},
+            "script": {
+                "profile": "judge",
+                "language": "python",
+                "source": "None",
+                "runtime": "monty",
+            },
+        })
+    mgr = SessionManager("default", store=store)
+    await mgr.ensure_loaded()
+    expected = ProfileScript(profile="judge",
+                             script=ScriptSource("None", language="python"),
+                             runtime="monty")
+    assert mgr.get("default").script == expected
+    assert mgr.script_of("default") == expected
 
 
 def test_manager_default_profile_shapes_the_default_session():

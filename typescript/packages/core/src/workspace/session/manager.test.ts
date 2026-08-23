@@ -16,6 +16,7 @@ import { seedVar } from './state.ts'
 import { describe, expect, it } from 'vitest'
 import type { AdmissionRules, Decision } from '../../policy/types.ts'
 import { Outcome, Scope } from '../../policy/types.ts'
+import { ScriptSource } from '../../runtime/policy/types.ts'
 import { MountMode } from '../../types.ts'
 import { SessionManager } from './manager.ts'
 import { RAMSessionStore } from './ram.ts'
@@ -154,6 +155,29 @@ describe('SessionManager with a SessionStore', () => {
     const dflt = m.get('def')
     expect(dflt.hiddenPaths).toEqual({ paths: ['/s3/secrets'], patterns: ['*.key'] })
     expect(dflt.hiddenVars).toEqual({ names: ['SLACK_TOKEN'], patterns: [] })
+  })
+
+  it('default session adopts a stored profile script', async () => {
+    // The profile script is a durable restriction like the hidden
+    // shapes: a store written by a scripted deployment must not wake a
+    // daemon configured without a default profile unjudged, and the
+    // next flush must not erase the script from the record.
+    const store = new RAMSessionStore()
+    await store.set('def', {
+      session_id: 'def',
+      cwd: '/w',
+      env: {},
+      script: { profile: 'judge', language: 'js', source: 'null', runtime: 'quickjs' },
+    })
+    const m = new SessionManager('def', store)
+    await m.ensureLoaded()
+    const expected = {
+      profile: 'judge',
+      script: new ScriptSource('null', 'js'),
+      runtime: 'quickjs',
+    }
+    expect(m.get('def').script).toEqual(expected)
+    expect(m.scriptOf('def')).toEqual(expected)
   })
 
   it('defaultProfile shapes the default session and outranks a stale record', async () => {

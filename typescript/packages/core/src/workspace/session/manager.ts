@@ -196,6 +196,7 @@ export class SessionManager {
         dflt.hiddenPaths = stored.hiddenPaths
         dflt.hiddenVars = stored.hiddenVars
         dflt.commands = stored.commands
+        dflt.script = stored.script
         // The host's standing answers are session state like cwd:
         // dropped here, an approved line would ask again after a
         // restart and the next flush would erase the grant from the

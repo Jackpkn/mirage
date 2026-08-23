@@ -225,6 +225,7 @@ class SessionManager:
                     default.hidden_paths = stored.hidden_paths
                     default.hidden_vars = stored.hidden_vars
                     default.commands = stored.commands
+                    default.script = stored.script
                     # The host's standing answers are session state
                     # like cwd: dropped here, an approved line would
                     # ask again after a restart and the next flush
