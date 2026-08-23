@@ -151,7 +151,8 @@ class FakeCustomConfig:
 
 # The colon rung is the one that accepts a class subclassing nothing, so
 # these stand in for a real out-of-tree backend and subclass BaseResource
-# the way one does. NotAResource below is the class that does not.
+# the way one does. NotAResource below is the class that does not, and
+# NamelessResource is a real subclass that leaves the key empty.
 class FakeCustomResource(BaseResource):
 
     name = "fake_custom"
@@ -255,11 +256,13 @@ def test_colon_reference_to_a_missing_attribute_raises(clean_registry):
         build_resource("tests.resource.test_registry:NoSuchResource")
 
 
-def test_colon_reference_names_the_members_a_class_left_out(clean_registry):
+def test_colon_reference_refuses_a_class_that_is_not_a_resource(
+        clean_registry):
     # Nothing validated this rung, so a class subclassing nothing reached
-    # install_mounts and then crashed Workspace.save() on the get_state it
-    # never declared.
-    with pytest.raises(TypeError, match="is missing close, get_state"):
+    # install_mounts and then crashed there on a method the caller never
+    # called. The subclass check is the same one check_resource makes at
+    # the mount door, moved to the door the author actually called.
+    with pytest.raises(TypeError, match="not a BaseResource subclass"):
         build_resource("tests.resource.test_registry:NotAResource")
 
 

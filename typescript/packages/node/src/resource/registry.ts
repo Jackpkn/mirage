@@ -336,12 +336,16 @@ const RESOURCE_METHODS = ['open', 'close', 'getState', 'loadState'] as const
  *
  * A string rather than a boolean because a colon reference loads whatever
  * the file exports, and "did not build a resource" does not tell the author
- * which member they forgot. Python's `_resource_defect` is the twin, with
- * `close`/`get_state`/`load_state` and no `open`, because a python mount has
- * no open call. Its set is the same for the same reason: `BaseResource`
- * supplies every member, so a class that subclasses it can never be missing
- * one, and the colon rung is the only one that accepts a class subclassing
- * nothing.
+ * which member they forgot.
+ *
+ * Structural, and deliberately unlike the python twin, which checks
+ * `isinstance(built, BaseResource)` instead. The contract differs because the
+ * languages do: python's mount door already refuses a non-subclass
+ * (`workspace/workspace/mounts.py::check_resource`), so a structural check
+ * there would accept what a later door rejects. `Resource` here is an
+ * interface, erased at runtime, so there is no subclass to test and nothing
+ * downstream can ask for more than the members. Both guards end at the same
+ * place: the name a resource is keyed by must not be empty.
  */
 function resourceDefect(value: unknown): string | null {
   if (value === null || typeof value !== 'object') return `built a ${typeof value}`
