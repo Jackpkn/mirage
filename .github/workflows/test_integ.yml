@@ -115,6 +115,42 @@ jobs:
               - '.github/workflows/test_integ.yml'
               - '.github/actions/integ-battery-setup/action.yml'
 
+  typescript-build:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.core == 'true' || needs.changes.outputs.ts == 'true' || needs.changes.outputs.database == 'true' || needs.changes.outputs.fuse == 'true' || needs.changes.outputs.observability == 'true') }}
+    name: TypeScript build bootstrap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 10.32.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      - name: Install TypeScript dependencies
+        working-directory: typescript
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build TypeScript packages
+        working-directory: typescript
+        run: pnpm -r build
+
+      - name: Upload TypeScript build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages/*/dist
+          if-no-files-found: error
+          retention-days: 1
+
   integ:
     needs: changes
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.core == 'true') }}
@@ -173,7 +209,7 @@ jobs:
         run: ./python/.venv/bin/python integ/root.py
 
   integ-ts:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.ts == 'true') }}
     runs-on: ubuntu-latest
     services:
@@ -208,31 +244,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
           version: 10.32.1
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
       - name: Install dependencies
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
-      - name: Build mirage-core
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-core build
-
-      - name: Build mirage-node
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-node build
-
-      - name: Build mirage-browser
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-browser build
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages
 
       - name: Wait for Nextcloud install
         shell: bash
@@ -386,7 +418,7 @@ jobs:
         run: ./python/.venv/bin/python integ/runners/python/main.py --facet core --strict --allow-skip chroma,lancedb,nextcloud,notion,postgres,qdrant
 
   integ-shared-ts:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.core == 'true' || needs.changes.outputs.ts == 'true') }}
     runs-on: ubuntu-latest
     services:
@@ -427,14 +459,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/integ-battery-setup
+        with:
+          build-packages: "false"
+          typescript-build-artifact: integ-typescript-dist
 
       # Every "verified by integ" claim rests on the runner failing when it
       # tests nothing, so assert the gates themselves before the battery.
       # This job hosts them because it is the only one with both halves: the
-      # setup action always installs the python venv, and this job is the
-      # one that builds the mirage packages the typescript runner imports
-      # (integ-shared-py passes build-packages: false). --require-ts turns
-      # an absent tsx into a failure rather than a silent half-run.
+      # setup action always installs the python venv, and this job also has
+      # the prebuilt mirage TypeScript dist the runner imports. --require-ts
+      # turns an absent tsx into a failure rather than a silent half-run.
       - name: Assert the integ runner gates (strict exit, services, case ids)
         run: ./python/.venv/bin/python integ/runners/tools/gate_selftest.py --require-ts
 
@@ -454,7 +488,7 @@ jobs:
   # the same way in both languages still fails. Shared targets only (ram,
   # disk, redis) — the credentialed targets stay in their own jobs.
   integ-shared-parity:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.core == 'true' || needs.changes.outputs.ts == 'true') }}
     runs-on: ubuntu-latest
     services:
@@ -472,6 +506,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/integ-battery-setup
+        with:
+          build-packages: "false"
+          typescript-build-artifact: integ-typescript-dist
       # Targets are pinned: with no arguments parity.py adds the Graph and
       # Mem0 groups unconditionally, and the setup action exports
       # S3_ENDPOINT/SSH_HOST/GWS_URL, which would pull in the S3, SSH and
@@ -489,7 +526,7 @@ jobs:
   # a single fleet. The typescript step runs even when the python one fails so a
   # single-language regression still reports both languages.
   integ-database:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.database == 'true') }}
     runs-on: ubuntu-latest
     services:
@@ -538,33 +575,27 @@ jobs:
         working-directory: python
         run: uv sync --all-extras --no-extra camel
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
           version: 10.32.1
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
       - name: Install dependencies
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
-      - name: Build mirage-core
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-core build
-
-      - name: Build mirage-node
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-node build
-
-      # The typescript runner imports mirage-browser statically for the opfs
-      # target, so its dist must exist even when no browser target runs.
-      - name: Build mirage-browser
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-browser build
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages
 
       - name: Wait for ChromaDB OSS
         run: |
@@ -653,15 +684,17 @@ jobs:
       # The notion fake is a Node server shared by both hosts, so this
       # otherwise python-only job needs node to start it. No package build is
       # required: notion_server.ts imports only node, prisma and the MCP sdk.
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
           version: 10.32.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: typescript
@@ -753,7 +786,7 @@ jobs:
         run: ./python/.venv/bin/python integ/watch/run.py
 
   integ-fuse:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.fuse == 'true') }}
     runs-on: ubuntu-latest
     steps:
@@ -784,27 +817,27 @@ jobs:
           ./python/.venv/bin/python integ/fuse/fuse.py 2>&1 \
             | ./python/.venv/bin/python integ/check_json.py integ/fuse/truth_fuse.json
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
           version: 10.32.1
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
       - name: Install dependencies (builds @zkochan/fuse-native against libfuse3)
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
-      - name: Build mirage-core
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-core build
-
-      - name: Build mirage-node
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-node build
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages
 
       - name: Run TypeScript FUSE mount and check (real libfuse)
         working-directory: integ
@@ -978,7 +1011,7 @@ jobs:
             2>/dev/null | tail -40 || true
 
   integ-runtime:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.core == 'true' || needs.changes.outputs.ts == 'true') }}
     runs-on: ubuntu-latest
     services:
@@ -1037,23 +1070,27 @@ jobs:
         working-directory: python
         run: uv sync --all-extras --no-extra camel
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
           version: 10.32.1
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
       - name: Install TypeScript dependencies
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
-      - name: Build TypeScript packages
-        working-directory: typescript
-        run: pnpm -r build
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages
 
       - name: Cache the quickjs WASI build
         id: quickjs-cache
@@ -1137,7 +1174,7 @@ jobs:
             "node typescript/packages/cli/dist/bin/mirage.js"
 
   integ-observability:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.observability == 'true') }}
     runs-on: ubuntu-latest
     steps:
@@ -1157,33 +1194,27 @@ jobs:
         working-directory: python
         run: uv sync --all-extras --no-extra camel
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
           version: 10.32.1
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
       - name: Install dependencies
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
-      - name: Build mirage-core
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-core build
-
-      - name: Build mirage-node
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-node build
-
-      # The typescript runner imports mirage-browser statically for the opfs
-      # target, so its dist must exist even when no browser target runs.
-      - name: Build mirage-browser
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-browser build
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages
 
       # Self-hosted Langfuse needs six containers with real startup ordering
       # (web runs migrations against postgres and clickhouse), so this uses
@@ -1239,7 +1270,7 @@ jobs:
   # One job per backend family. A failure names the family, and each variant
   # starts only the fake servers that family needs rather than the whole fleet.
   integ-facets:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.core == 'true' || needs.changes.outputs.ts == 'true') }}
     runs-on: ubuntu-latest
     strategy:
@@ -1263,33 +1294,27 @@ jobs:
         working-directory: python
         run: uv sync --all-extras --no-extra camel
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
           version: 10.32.1
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
       - name: Install dependencies
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
-      - name: Build mirage-core
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-core build
-
-      - name: Build mirage-node
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-node build
-
-      # The typescript runner imports mirage-browser statically for the opfs
-      # target, so its dist must exist even when no browser target runs.
-      - name: Build mirage-browser
-        working-directory: typescript
-        run: pnpm --filter @struktoai/mirage-browser build
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages
 
       - name: Start fake Trello and Linear APIs
         if: matrix.facet == 'project'
@@ -1413,7 +1438,7 @@ jobs:
   gate:
     name: integ-gate
     runs-on: ubuntu-latest
-    needs: [changes, integ, integ-ts, integ-shared-py, integ-shared-ts, integ-shared-parity, integ-database, integ-data, integ-fuse, integ-observability, integ-facets, integ-runtime]
+    needs: [changes, typescript-build, integ, integ-ts, integ-shared-py, integ-shared-ts, integ-shared-parity, integ-database, integ-data, integ-fuse, integ-observability, integ-facets, integ-runtime]
     if: always()
     steps:
       - name: Check required jobs
