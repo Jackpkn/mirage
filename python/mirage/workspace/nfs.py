@@ -1,0 +1,155 @@
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import os
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from mirage.nfs.config import NFSConfig
+from mirage.nfs.fs import MirageNFS
+from mirage.nfs.mount import (prepare_mountpoint, run_mount, run_umount,
+                              start_server)
+from mirage.ops import Ops
+
+StartFn = Callable[[Ops, NFSConfig], Awaitable[tuple[MirageNFS, Any]]]
+MountFn = Callable[[str, int, str], Awaitable[None]]
+UnmountFn = Callable[[str], Awaitable[None]]
+
+
+class NFSManager:
+    """One NFS server, many kernel mounts.
+
+    The MOUNT protocol takes a path, so a single server exposing the
+    whole op tree can back any number of kernel mountpoints, each
+    mounting a different export (``127.0.0.1:/`` here, ``:/docs``
+    there). That is the one-per-process limit macOS FUSE lives under,
+    dissolved: the server starts lazily on the first mount and every
+    later mount reuses it.
+
+    Everything is async and thread-free, so this manager is only
+    reachable from an async context; the sync ``KernelMounts.add``
+    seam grows an async route in the integration PR. Session-bound
+    mounts (the FUSE manager's ``session=``) are not offered yet: one
+    server serves one delegate, so a per-session narrowing needs a
+    second server, which is a deliberate follow-up.
+
+    Args:
+        start_fn (StartFn): starts the server; injectable for tests.
+        mount_fn (MountFn): runs one kernel mount; injectable.
+        unmount_fn (UnmountFn): tears one down; injectable.
+    """
+
+    def __init__(self,
+                 start_fn: StartFn = start_server,
+                 mount_fn: MountFn = run_mount,
+                 unmount_fn: UnmountFn = run_umount) -> None:
+        self._start = start_fn
+        self._mount = mount_fn
+        self._unmount = unmount_fn
+        self._fs: MirageNFS | None = None
+        self._handle: Any | None = None
+        self._config: NFSConfig | None = None
+        self._mounts: dict[str, tuple[str, bool]] = {}
+
+    @property
+    def mountpoints(self) -> dict[str, str]:
+        """Live mounts, prefix to mountpoint."""
+        return {prefix: path for prefix, (path, _) in self._mounts.items()}
+
+    async def setup(self,
+                    ops: Ops,
+                    prefix: str = "/",
+                    mountpoint: str | None = None,
+                    config: NFSConfig | None = None) -> str:
+        """Expose ``prefix`` at a kernel mountpoint and return its path.
+
+        The first call starts the server and fixes its config; later
+        calls reuse both, so ``config`` is honored only once.
+
+        Args:
+            ops (Ops): the op facade to serve.
+            prefix (str): the virtual prefix to expose.
+            mountpoint (str | None): where to mount; None picks a
+                temporary directory mirage owns.
+            config (NFSConfig | None): server knobs, first call only.
+
+        Returns:
+            str: the mountpoint now serving the prefix.
+
+        Raises:
+            ValueError: the mountpoint already serves another prefix.
+        """
+        resolved, owns = prepare_mountpoint(mountpoint)
+        for other_prefix, (other_path, _) in self._mounts.items():
+            if other_path == resolved:
+                raise ValueError(f"nfs mountpoint {resolved!r} already serves "
+                                 f"{other_prefix!r}")
+        if self._handle is None:
+            self._config = config or NFSConfig()
+            self._fs, self._handle = await self._start(ops, self._config)
+        export = ("/" if prefix.strip("/") == "" else "/" + prefix.strip("/"))
+        try:
+            await self._mount(resolved, self._handle.port(), export)
+        except Exception:
+            self._discard_mountpoint(resolved, owns)
+            raise
+        self._mounts[prefix] = (resolved, owns)
+        return resolved
+
+    async def unmount(self, prefix: str) -> None:
+        """Tear down one exposed prefix. Missing prefixes are a no-op.
+
+        Args:
+            prefix (str): the virtual prefix that was exposed.
+        """
+        entry = self._mounts.pop(prefix, None)
+        if entry is None:
+            return
+        path, owns = entry
+        await self._unmount(path)
+        self._discard_mountpoint(path, owns)
+
+    async def close(self) -> None:
+        """Unmount everything, flush buffered writes, stop the server.
+
+        The order is load-bearing: unmounting makes the kernel client
+        flush its dirty pages as final WRITEs, which need a live
+        server; ``flush_all`` then stores whatever is still buffered;
+        only then does the server stop. Idempotent.
+        """
+        for prefix in list(self._mounts):
+            await self.unmount(prefix)
+        if self._fs is not None:
+            await self._fs.flush_all()
+        if self._handle is not None:
+            self._handle.stop()
+        self._fs = None
+        self._handle = None
+        self._config = None
+
+    def _discard_mountpoint(self, path: str, owns: bool) -> None:
+        """Remove a mirage-owned, now-empty mountpoint directory.
+
+        Args:
+            path (str): the mountpoint path.
+            owns (bool): whether mirage created it.
+        """
+        if not owns:
+            return
+        try:
+            os.rmdir(path)
+        except OSError:
+            # busy or non-empty: the caller/admin's to clean, never ours
+            # to force
+            return
