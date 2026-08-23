@@ -913,7 +913,34 @@ describe('CLI to daemon round trip', () => {
     // checking a file config from anywhere else failed with ENOENT.
     const dir = mkdtempSync(join(tmpdir(), 'mirage-profile-script-'))
     mkdirSync(join(dir, 'roles'))
-    writeFileSync(join(dir, 'roles', 'x.js'), "({commands: {allow: ['ls']}})\n")
+    writeFileSync(join(dir, 'roles', 'x.js'), 'null\n')
+    const file = join(dir, 'w.yaml')
+    writeFileSync(
+      file,
+      [
+        'mounts:',
+        '  /data:',
+        '    resource: ram',
+        'profiles:',
+        '  release: {script: roles/x.js, runtime: quickjs}',
+        '',
+      ].join('\n'),
+    )
+    const wire = checkWorkspaceConfigFile(file)
+    const profiles = wire.profiles as Record<string, Record<string, unknown>>
+    expect(profiles.release?.script).toBe(join(dir, 'roles', 'x.js'))
+    const args = await configToWorkspaceArgs(loadWorkspaceConfigFile(file))
+    const release = args.options.profiles?.release
+    expect(release?.script).toBeInstanceOf(ScriptSource)
+    expect((release?.script as ScriptSource).source).toBe('null\n')
+    expect(release?.runtime).toBe('quickjs')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('refuses a profile script that states no runtime', () => {
+    // There is no default engine: a script the config does not pin to
+    // an engine is refused at load, not guessed at the gate.
+    const dir = mkdtempSync(join(tmpdir(), 'mirage-profile-script-'))
     const file = join(dir, 'w.yaml')
     writeFileSync(
       file,
@@ -926,13 +953,7 @@ describe('CLI to daemon round trip', () => {
         '',
       ].join('\n'),
     )
-    const wire = checkWorkspaceConfigFile(file)
-    const profiles = wire.profiles as Record<string, Record<string, unknown>>
-    expect(profiles.release?.script).toBe(join(dir, 'roles', 'x.js'))
-    const args = await configToWorkspaceArgs(loadWorkspaceConfigFile(file))
-    const release = args.options.profiles?.release
-    expect(release?.script).toBeInstanceOf(ScriptSource)
-    expect((release?.script as ScriptSource).source).toContain('allow')
+    expect(() => checkWorkspaceConfigFile(file)).toThrow(/set runtime beside script/)
     rmSync(dir, { recursive: true, force: true })
   })
 })

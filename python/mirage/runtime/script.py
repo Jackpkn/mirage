@@ -17,29 +17,9 @@ import asyncio
 from mirage.runtime.base import Runtime
 from mirage.runtime.mixin import EvaluatorMixin
 from mirage.runtime.table import NAMED, build_runtime
-from mirage.runtime.types import EvalValue, Language, ScriptSource
+from mirage.runtime.types import EvalValue, ScriptSource
 
 CTX_GLOBAL = "ctx"
-
-# The sandboxed default engine per config-script language. A config
-# script is operator configuration, so its engine is built fresh and
-# never picked out of a workspace's runtime world: the world is the
-# ordered set that serves *agent* code, it is mutable after
-# construction, and an entry drops out of it silently when an optional
-# dependency is missing.
-#
-# monty on BOTH hosts, deliberately not DEFAULT_PYTHON. The two hosts
-# disagree about the default python engine (monty here, pyodide in
-# TypeScript) because `@pydantic/monty` cannot answer builtin `open()`
-# calls yet, and agent code reads files. A config script does no file
-# I/O at all: it is handed a context and returns a value. So the reason
-# for that split does not reach here, and naming one engine means one
-# source produces one answer on either host rather than two engines
-# that could disagree about the same program.
-DEFAULT_SCRIPT_ENGINES: dict[Language, str] = {
-    "python": "monty",
-    "js": "quickjs",
-}
 
 
 async def eval_with_ctx(source: str, ctx: dict[str, EvalValue],
@@ -79,18 +59,24 @@ async def eval_with_ctx(source: str, ctx: dict[str, EvalValue],
     return result.value
 
 
-def script_engine(script: ScriptSource, runtime: str | None = None) -> Runtime:
-    """Build the engine a config script runs on.
+def script_engine(script: ScriptSource, runtime: str) -> Runtime:
+    """Build the engine a config script runs on: the one the config
+    named, and the config always names one.
 
-    The engine the config named when it names one, else the sandboxed
-    default for the script's language. The mismatch checks run before
-    the build: an engine that cannot be installed here would otherwise
-    report its missing dependency for a config that names the wrong
-    engine, which sends the operator after the wrong fix.
+    There is no default engine to fall back to: a script without a
+    ``runtime`` is refused where the config is validated, because a
+    default the operator never wrote is an engine they never chose. The
+    engine is built fresh and never picked out of a workspace's runtime
+    world: the world is the ordered set that serves *agent* code, it is
+    mutable after construction, and an entry drops out of it silently
+    when an optional dependency is missing. The mismatch checks run
+    before the build: an engine that cannot be installed here would
+    otherwise report its missing dependency for a config that names the
+    wrong engine, which sends the operator after the wrong fix.
 
     Args:
         script (ScriptSource): the program, carrying its language.
-        runtime (str | None): the engine the config named, if any.
+        runtime (str): the engine the config named.
 
     Returns:
         Runtime: the engine, which every arm above has proved carries
@@ -104,27 +90,25 @@ def script_engine(script: ScriptSource, runtime: str | None = None) -> Runtime:
             message is a clause about "script", for the caller to
             prefix with whose script it is.
     """
-    wanted = runtime or DEFAULT_SCRIPT_ENGINES[script.language]
-    named = NAMED.get(wanted)
-    if runtime is not None and named is not None:
+    named = NAMED.get(runtime)
+    if named is not None:
         if not issubclass(named, EvaluatorMixin):
             raise ValueError(
-                f"script names runtime {wanted!r}, which runs programs but "
-                f"cannot evaluate one; use "
-                f"{DEFAULT_SCRIPT_ENGINES[script.language]!r}")
+                f"script names runtime {runtime!r}, which runs programs but "
+                f"cannot evaluate one")
         spoken = getattr(named, "language", None)
         if spoken is not None and spoken != script.language:
             raise ValueError(
-                f"script is {script.language}, but names runtime {wanted!r}, "
+                f"script is {script.language}, but names runtime {runtime!r}, "
                 f"which speaks {spoken}")
     try:
-        built = build_runtime(wanted)
+        built = build_runtime(runtime)
     except (ValueError, ImportError, OSError) as exc:
         # An engine reports a missing dependency as its own error
         # (ImportError for an absent extra, FileNotFoundError for
         # quickjs's absent wasm), and each carries its own install hint.
-        raise ValueError(f"script names runtime {wanted!r}: {exc}") from exc
+        raise ValueError(f"script names runtime {runtime!r}: {exc}") from exc
     if not isinstance(built, EvaluatorMixin):
         raise ValueError(
-            f"script names runtime {wanted!r}, which cannot evaluate")
+            f"script names runtime {runtime!r}, which cannot evaluate")
     return built

@@ -32,8 +32,7 @@ from mirage.observe.store import ObserverStore
 from mirage.ops import Ops
 from mirage.policy import (AskHandler, Decisions, Explanation,
                            PermissionsPolicy, Policies, Policy, PolicyError,
-                           SessionProfile)
-from mirage.policy.script import permissions_from_scripts
+                           ScriptPolicy, SessionProfile)
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
@@ -161,11 +160,15 @@ class Workspace:
         # Admission policies, consulted in registration order after the
         # built-ins the registry seeds: the profile's admission rules
         # (PermissionsPolicy, reading each session's compiled rules
-        # from the manager by the id the door puts in the context), then
-        # Policy instances, then anything added later through
-        # ws.policies.add(). The runtime policy (policy=) is the
-        # line-level counterpart until it is absorbed as a hook.
+        # from the manager by the id the door puts in the context), the
+        # profile's script (ScriptPolicy, evaluated per command through
+        # the same manager), then Policy instances, then anything added
+        # later through ws.policies.add(). The runtime policy (policy=)
+        # is the line-level counterpart until it is absorbed as a hook.
         self._registry.policies.add(PermissionsPolicy(self._session_mgr))
+        self._script_policy = ScriptPolicy(self._session_mgr,
+                                           self._mount_prefixes)
+        self._registry.policies.add(self._script_policy)
         for entry in policies or []:
             self._registry.policies.add(entry)
         # The ledger an Ask is taken to (design 3.9): records live on
@@ -201,9 +204,9 @@ class Workspace:
         # name, so the default profile shapes it too: the primary agent
         # is not the one agent the document cannot reach.
         default_base = self._base_profile(None)
-        self._session_mgr.default_profile = (compile_profile(default_base)
-                                             if default_base is not None else
-                                             None)
+        self._session_mgr.default_profile = (compile_profile(
+            default_base, self._profile_name(None)) if default_base is not None
+                                             else None)
 
         self.observer = Observer(store=stores.observe)
         self._registry.mount(HISTORY_PREFIX,
@@ -722,25 +725,18 @@ class Workspace:
 
         Raises:
             PolicyError: an unknown profile name, or an inline document
-                that states an allow list.
+                that states an allow list or a script.
         """
         if isinstance(profile, Mapping):
             profile = SessionProfile.model_validate(profile)
         base = self._base_profile(profile)
-        if base is not None and base.script is not None:
-            # Still a script means hydration has not run, and running it
-            # needs an await this door does not have. Every caller that
-            # creates a session already takes that door first, so this
-            # names it rather than guessing on their behalf.
-            raise PolicyError(
-                "a profile that states a script is ready only after "
-                "ensure_sessions_loaded(); await it before create_session()")
         inline = (SessionProfile.model_validate(permissions)
                   if permissions is not None else None)
         if mounts is not None:
             inline = with_inline(
                 inline, SessionProfile.model_validate({"mounts": mounts}))
-        compiled = compile_profile(with_inline(base, inline))
+        compiled = compile_profile(with_inline(base, inline),
+                                   self._profile_name(profile))
         check_cli_verbs(compiled.commands, self._cli_verbs())
         session = self._session_mgr.create(session_id)
         apply_profile(session, compiled)
@@ -773,6 +769,27 @@ class Workspace:
             return self._profiles[self._default_profile_name]
         return resolve_profile(self._profiles, profile)
 
+    def _profile_name(self, profile: str | SessionProfile | None) -> str:
+        """The name of the profile ``_base_profile`` resolves, which its
+        script reads as ``ctx["profile"]``; empty for a profile document
+        passed without one.
+
+        Args:
+            profile (str | SessionProfile | None): what the caller
+                named, None for the workspace default.
+        """
+        if isinstance(profile, str):
+            return profile
+        if profile is None and self._default_profile_name is not None:
+            return self._default_profile_name
+        return ""
+
+    def _mount_prefixes(self) -> list[str]:
+        """The mount prefixes a profile script reads as
+        ``ctx["mounts"]``, read per evaluation so a later mount shows.
+        """
+        return [entry.prefix for entry in self._registry.mounts()]
+
     def get_session(self, session_id: str) -> Session:
         return self._session_mgr.get(session_id)
 
@@ -784,46 +801,9 @@ class Workspace:
 
         The discovery record resolves first so a minted default session
         id can adopt the stored pointer before hydration keys off it.
-        Profile scripts run here too, once each, because this is the
-        async door every caller already takes before it creates a
-        session and it is the last moment a failure can refuse one that
-        does not exist yet.
         """
         await self._meta.ensure()
-        await self._evaluate_profile_scripts()
         await self._session_mgr.ensure_loaded()
-
-    async def _evaluate_profile_scripts(self) -> None:
-        """Replace each profile's script with the permissions it
-        produced.
-
-        One call into the policy layer, which runs every script before
-        returning anything, so one broken profile refuses the whole set
-        (see permissions_from_scripts). Idempotent by construction: a
-        profile that has been evaluated no longer states a script, so a
-        second hydration finds nothing left to run.
-
-        Raises:
-            PolicyError: a script failed, or is still a path, which
-                means it reached the workspace without passing the
-                config door that loads one.
-        """
-        scripted = {
-            name: profile
-            for name, profile in self._profiles.items()
-            if profile.script is not None
-        }
-        if not scripted:
-            return
-        mounts = [entry.prefix for entry in self._registry.mounts()]
-        self._profiles.update(await permissions_from_scripts(scripted, mounts))
-        if self._default_profile_name in scripted:
-            # The constructor compiled the default profile before its
-            # script ran, which is the script-only placeholder, so
-            # without this the default session keeps running under
-            # empty permissions.
-            self._session_mgr.default_profile = compile_profile(
-                self._profiles[self._default_profile_name])
 
     @property
     def workspace_id(self) -> str:

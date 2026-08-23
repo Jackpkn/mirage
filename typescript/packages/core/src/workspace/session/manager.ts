@@ -18,7 +18,7 @@ import type { CompiledProfile } from '../../policy/profile.ts'
 import { RAMSessionStore } from './ram.ts'
 import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
-import type { AdmissionRules, Decision } from '../../policy/types.ts'
+import type { AdmissionRules, Decision, ProfileScript } from '../../policy/types.ts'
 import type { MountMode } from '../../types.ts'
 
 type StoredSession = Parameters<typeof Session.fromJSON>[0]
@@ -84,6 +84,18 @@ export class SessionManager {
     return session === undefined
       ? (this.defaultProfileInternal?.commands ?? null)
       : session.commands
+  }
+
+  /**
+   * The profile script one session runs under (SessionScriptsQuery).
+   * The default profile's for an id this manager does not know, the
+   * same fallback `commandsOf` makes and for the same reason: a door
+   * that names no session is judged like a session that named no
+   * profile.
+   */
+  scriptOf(sessionId: string): ProfileScript | null {
+    const session = this.sessions.get(sessionId)
+    return session === undefined ? (this.defaultProfileInternal?.script ?? null) : session.script
   }
 
   /**

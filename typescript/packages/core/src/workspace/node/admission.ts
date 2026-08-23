@@ -61,10 +61,10 @@ import {
   followsLastComponent,
   isTool,
   readsSubtrees,
-  route,
+  lookup,
   walksMounts,
   wordPolicy,
-} from '../route/index.ts'
+} from '../lookup/index.ts'
 import type { Session } from '../session/session.ts'
 import { homeDir } from '../session/shell_dirs.ts'
 import { innerLines, innerReadable, wordValue, type Word } from './inner_lines.ts'
@@ -404,7 +404,7 @@ function wordHints(
   const joined = line.slice(0, consumed).join(' ')
   if (
     Object.hasOwn(session.functions, joined) ||
-    wordPolicy(route(joined, session, registry)) !== WordPolicy.MOUNT
+    wordPolicy(lookup(joined, session, registry)) !== WordPolicy.MOUNT
   ) {
     return [null, null]
   }

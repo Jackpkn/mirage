@@ -30,7 +30,7 @@ from mirage.policy.types import CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.mixin import LineExecutorMixin
-from mirage.runtime.types import RunResult
+from mirage.runtime.types import RunResult, ScriptSource
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace import Workspace
 from mirage.workspace.session.state import seed_var
@@ -821,7 +821,8 @@ COMMANDS_DOC = {
     "commands": {
         "allow": [
             "ls", "cat", "echo", "rm", "git", "python3", "mkdir", "touch",
-            "head", "xargs", "wc", "man", "find"
+            "head", "xargs", "wc", "man", "find", "type", "command", "which",
+            "cd", "["
         ],
         "deny": [{
             "reason": "no deletes in the repo",
@@ -839,7 +840,10 @@ COMMANDS_DOC = {
 }
 REVIEWER_COMMANDS = {
     "commands": {
-        "allow": ["ls", "cat", "echo", "git log", "git status", "xargs"]
+        "allow": [
+            "ls", "cat", "echo", "git log", "git status", "xargs", "type",
+            "eval"
+        ]
     },
     "mounts": {
         "/repo": REPO_SECTION
@@ -892,13 +896,18 @@ async def test_allow_list_hides_unlisted_tools_from_dispatch_and_enumerators():
         code, out, _ = await _line(ws, "man")
         assert code == 0 and "- cat" in out and "- sort" not in out
         assert (await _line(ws, "man sort"))[0] == 1
-        # Grammar-tier builtins and functions are not subjects; a listed
-        # tool runs; the workspace's own session is bound like any other.
+        # Builtins are subjects like everything else: the listed cd and
+        # [ run, the unlisted pwd and history are not commands at all.
+        # Functions are the one exemption, and every line of a body
+        # passes the gate itself.
         assert await _line(
             ws, "cd /repo && [ -f d/x ] && echo yes") == (0, "yes\n", "")
         assert await _line(ws, "f() { echo in-f; }; f") == (0, "in-f\n", "")
         assert (await _line(ws, "cat /repo/d/x"))[0] == 0
-        # `man` and `history` are tool-tier builtins: hidden when unlisted.
+        assert await _line(ws, "pwd") == (127, "", "pwd: command not found\n")
+        assert await _line(ws,
+                           "type pwd; echo $?") == (0, "1\n",
+                                                    "type: pwd: not found\n")
         assert await _line(ws, "history") == (127, "",
                                               "history: command not found\n")
     finally:
@@ -906,7 +915,7 @@ async def test_allow_list_hides_unlisted_tools_from_dispatch_and_enumerators():
 
 
 @pytest.mark.asyncio
-async def test_a_roles_allow_list_is_the_only_one_a_session_reads():
+async def test_a_profiles_allow_list_is_the_only_one_a_session_reads():
     ws = _commands_ws()
     ws.create_session("rev", profile="reviewer")
     try:
@@ -1853,3 +1862,40 @@ def test_a_misspelled_document_field_fails_at_construction():
     ws = Workspace({"/data/": RAMResource()})
     with pytest.raises(ValidationError):
         ws.create_session("x", permissions={"command": {"deny": []}})
+
+
+def test_a_script_alone_is_a_whole_profile():
+    # The document is optional beside a script: nothing is hidden, and
+    # the script is the profile's whole admission policy.
+    profile = SessionProfile.model_validate({
+        "script": ScriptSource("None"),
+        "runtime": "monty",
+    })
+    assert isinstance(profile.script, ScriptSource)
+    assert profile.runtime == "monty"
+    assert profile.commands is None
+
+
+def test_a_script_rides_beside_the_document():
+    profile = SessionProfile.model_validate({
+        "commands": {
+            "allow": ["ls"]
+        },
+        "script": ScriptSource("None"),
+        "runtime": "monty",
+    })
+    assert isinstance(profile.script, ScriptSource)
+    assert profile.runtime == "monty"
+    assert profile.commands is not None
+
+
+def test_a_script_without_a_runtime_is_refused():
+    # There is no default engine, so a script that names none is a
+    # config error, not a guess.
+    with pytest.raises(ValidationError, match="set runtime beside script"):
+        SessionProfile.model_validate({"script": ScriptSource("None")})
+
+
+def test_a_runtime_without_a_script_is_refused():
+    with pytest.raises(ValidationError, match="states no script"):
+        SessionProfile.model_validate({"runtime": "monty"})

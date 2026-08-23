@@ -14,7 +14,8 @@
 
 import { checkRules } from './validate.ts'
 import { PolicyError } from '../../policy/errors.ts'
-import type { CommandRule, AdmissionRules } from '../../policy/types.ts'
+import type { CommandRule, AdmissionRules, ProfileScript } from '../../policy/types.ts'
+import type { ScriptSource } from '../../runtime/policy/types.ts'
 import type { HiddenPaths, MountMode } from '../../types.ts'
 import { weakerMode } from '../../types.ts'
 import { classifyPaths, classifyVars } from '../../utils/hidden.ts'
@@ -131,11 +132,13 @@ function addMount(base: ProfileMount | undefined, inline: ProfileMount | undefin
  * A profile with the inline document of one `createSession` added.
  *
  * The one rule about combining two documents: an inline document may
- * add ask and deny rules and hides, never an allow list, and that holds
- * even when there is no profile to add to. Modes take the weaker of the
- * two, `cwd` and `env` are the inline document's when it states them
- * (they are session presets, not permissions). Either side null returns
- * the other unchanged.
+ * add ask and deny rules and hides, never an allow list and never a
+ * script, and that holds even when there is no profile to add to. Modes
+ * take the weaker of the two, `cwd` and `env` are the inline document's
+ * when it states them (they are session presets, not permissions).
+ * Either side null returns the other unchanged; the profile's script
+ * survives the merge, since the inline document can only add rules
+ * beside it.
  */
 export function withInline(
   base: SessionProfile | null,
@@ -143,6 +146,11 @@ export function withInline(
 ): SessionProfile | null {
   if (inline === null) return base
   refuseAllow(inline.commands)
+  if (inline.script !== undefined && inline.script !== null) {
+    throw new PolicyError(
+      'inline permissions may add ask and deny rules, not a script; state one on the profile',
+    )
+  }
   if (base === null) return inline
   const hidePaths = unionHide(base.paths, inline.paths)
   const hideVars = unionHide(base.vars, inline.vars)
@@ -153,6 +161,8 @@ export function withInline(
     paths?: PathsBlock | null
     vars?: VarsBlock | null
     commands?: CommandsBlock | null
+    script?: ScriptSource | string | null
+    runtime?: string | null
   } = {}
   out.cwd = inline.cwd ?? base.cwd ?? null
   if (base.env != null || inline.env != null) out.env = { ...base.env, ...inline.env }
@@ -169,6 +179,10 @@ export function withInline(
   if (base.paths != null || inline.paths != null) out.paths = { hide: hidePaths }
   if (base.vars != null || inline.vars != null) out.vars = { hide: hideVars }
   out.commands = addCommands(base.commands, inline.commands)
+  if (base.script != null) {
+    out.script = base.script
+    out.runtime = base.runtime ?? null
+  }
   return out
 }
 
@@ -265,8 +279,30 @@ function modesOf(profile: SessionProfile): Map<string, MountMode> | null {
   return modes.size > 0 ? modes : null
 }
 
+/**
+ * The profile's per-command script, compiled onto the session. `name` is
+ * the profile's name, empty for a document passed without one; what the
+ * script reads as `ctx.profile`.
+ *
+ * @throws PolicyError - the script is still a path, which means it
+ * reached the workspace without passing the config door that loads one.
+ */
+export function compileScript(effective: SessionProfile, name: string): ProfileScript | null {
+  const script = effective.script
+  if (script === undefined || script === null) return null
+  if (typeof script === 'string') {
+    throw new PolicyError(
+      `profile '${name}' names a script by path ('${script}'); ` +
+        `only the config door loads one, pass ScriptSource in code`,
+    )
+  }
+  // The parser refuses a script without a runtime, so this narrows a
+  // fact already established.
+  return { profile: name, script, runtime: effective.runtime ?? '' }
+}
+
 /** The session fields a profile compiles to. */
-export function compileProfile(effective: SessionProfile | null): CompiledProfile {
+export function compileProfile(effective: SessionProfile | null, name = ''): CompiledProfile {
   if (effective === null) {
     return {
       mountModes: null,
@@ -275,6 +311,7 @@ export function compileProfile(effective: SessionProfile | null): CompiledProfil
       env: null,
       cwd: null,
       commands: null,
+      script: null,
     }
   }
   const commands = compileCommands(effective)
@@ -286,13 +323,15 @@ export function compileProfile(effective: SessionProfile | null): CompiledProfil
     env: effective.env ?? null,
     cwd: effective.cwd ?? null,
     commands,
+    script: compileScript(effective, name),
   }
 }
 
 /**
- * Stamp a compiled profile's narrowing onto a session: the four fields no
+ * Stamp a compiled profile's narrowing onto a session: the five fields no
  * shell line can edit (the per-mount modes, hidden paths, hidden
- * variables, the admission rules). Applied at creation and again
+ * variables, the admission rules, the profile's script). Applied at
+ * creation and again
  * whenever a stored record could carry a stale copy (the default
  * session after hydration), so the document, not the store, is what an
  * agent runs under.
@@ -302,6 +341,7 @@ export function narrow(session: Session, compiled: CompiledProfile): void {
   session.hiddenPaths = compiled.hiddenPaths
   session.hiddenVars = compiled.hiddenVars
   session.commands = compiled.commands
+  session.script = compiled.script ?? null
 }
 
 /**

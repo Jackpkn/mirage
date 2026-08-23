@@ -280,6 +280,7 @@ describe('compileProfile', () => {
       env: null,
       cwd: null,
       commands: null,
+      script: null,
     })
     expect(compileProfile({})).toEqual(empty)
     // A profile that names a mount without a mode narrows nothing: the

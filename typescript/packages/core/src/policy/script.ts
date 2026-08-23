@@ -1,135 +1,194 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
 import { CommandTimeoutError } from '../commands/builtin/utils/limit.ts'
 import type { Runtime } from '../runtime/base.ts'
 import { EvalError } from '../runtime/errors.ts'
 import type { Evaluator } from '../runtime/mixin.ts'
-import type { ScriptSource } from '../runtime/policy/types.ts'
 import { evalWithCtx, scriptEngine } from '../runtime/script.ts'
 import type { EvalValue } from '../runtime/types.ts'
-import { PolicyError } from './errors.ts'
-import { parseSessionProfile, type SessionProfile } from './profile.ts'
-
-export const SCRIPT_EVAL_TIMEOUT_SECONDS = 10.0
-
-/**
- * What a profile's script is told about the workspace.
- *
- * Deliberately small, and deliberately not per session: the script runs
- * once for the profile, so it is told which profile it produces
- * permissions for and where the mounts are, and nothing that varies
- * between the sessions later created under it. A rule that depends on
- * *who* is asking is the caller's to make by naming a different
- * profile.
- */
-export function scriptContext(name: string, mounts: readonly string[]): Record<string, EvalValue> {
-  return { profile: name, mounts: [...mounts] }
-}
-
-/** The one refusal wording, so every failure arm reads alike. */
-function refuse(name: string, detail: string): PolicyError {
-  return new PolicyError(`profile '${name}' script ${detail}`)
-}
+import type { Policy } from './base.ts'
+import {
+  DEFAULT_ASK_REASON,
+  DEFAULT_DENY_REASON,
+  SCRIPT_EVAL_TIMEOUT_SECONDS,
+} from './constants.ts'
+import type {
+  Action,
+  Ask,
+  CommandContext,
+  Deny,
+  ProfileScript,
+  SessionScriptsQuery,
+} from './types.ts'
 
 /**
- * Run one profile's script and validate the permissions it produced.
+ * What a profile's script is told about one command: the
+ * `CommandContext` the coded hooks read, as plain data.
  *
- * Every failure arm throws, and none of them falls back to empty
- * permissions: permissions that say nothing restrict nothing, so a
- * script that threw, timed out or answered with the wrong shape would
- * silently produce an unrestricted session, the opposite of what
- * stating the script asked for.
+ * The same facts on both hosts, JSON-shaped because the script runs
+ * inside a sandboxed engine that a live object cannot cross into.
+ * Paths are spelled as resolved virtual paths, so a script matches what
+ * the command will actually touch, not what was typed; the raw words
+ * are in `argv` for a script that wants them.
  */
-export async function permissionsFromScript(
-  name: string,
-  script: ScriptSource,
-  context: Record<string, EvalValue>,
-  evaluator: Evaluator,
-): Promise<SessionProfile> {
-  let value: EvalValue
-  try {
-    value = await evalWithCtx(
-      script.source,
-      context,
-      evaluator,
-      SCRIPT_EVAL_TIMEOUT_SECONDS,
-      `profile '${name}' script`,
-    )
-  } catch (err) {
-    if (err instanceof CommandTimeoutError) {
-      throw refuse(name, `timed out after ${String(SCRIPT_EVAL_TIMEOUT_SECONDS)}s`)
-    }
-    if (err instanceof EvalError) {
-      throw refuse(name, `${err.syntax ? 'syntax error' : 'failed'}: ${err.message}`)
-    }
-    throw refuse(name, `failed: ${err instanceof Error ? err.message : String(err)}`)
-  }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    // No type named: python and TypeScript have different words for
-    // the same value (list/object, str/string), so quoting one would
-    // make the two hosts word one failure differently.
-    throw refuse(name, 'must end in the permissions it produces')
-  }
-  let produced: SessionProfile
-  try {
-    produced = parseSessionProfile(value, `profile '${name}' script`)
-  } catch (err) {
-    throw refuse(name, `produced permissions that are not valid: ${(err as Error).message}`)
-  }
-  if (produced.script != null) {
-    throw refuse(name, 'produced another script; a script produces permissions')
-  }
-  return produced
-}
-
-/**
- * Run every profile's script, returning the permissions per name.
- *
- * All of them run before any result is returned, so one broken profile
- * refuses the whole set rather than leaving the profiles that happened
- * to be evaluated first done and the rest still scripts; without that,
- * whether a session could be created depended on where its profile sat
- * in the mapping. Permissions are operator configuration, so a
- * workspace that cannot realize what it was given does not serve;
- * every refusal names the profile.
- *
- * Engines are shared per kind rather than built per profile: each is a
- * worker, so building one for every scripted profile would spawn N of
- * them to run N short programs.
- */
-export async function permissionsFromScripts(
-  scripted: Readonly<Record<string, SessionProfile>>,
+export function scriptContext(
+  profile: string,
+  ctx: CommandContext,
   mounts: readonly string[],
-): Promise<Record<string, SessionProfile>> {
-  const produced: Record<string, SessionProfile> = {}
-  const engines = new Map<string, Runtime & Evaluator>()
-  try {
-    for (const [name, profile] of Object.entries(scripted)) {
-      const script = profile.script
-      if (typeof script === 'string') {
-        throw new PolicyError(
-          `profile '${name}' names a script by path ('${script}'); ` +
-            `only the config door loads one, pass ScriptSource in code`,
-        )
-      }
-      if (script == null) continue
-      let engine: Runtime & Evaluator
-      try {
-        engine = scriptEngine(script, profile.runtime ?? null)
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err)
-        throw new PolicyError(`profile '${name}' ${detail}`)
-      }
-      const cached = engines.get(engine.name)
-      if (cached === undefined) engines.set(engine.name, engine)
-      else engine = cached
-      produced[name] = await permissionsFromScript(
-        name,
-        script,
-        scriptContext(name, mounts),
-        engine,
-      )
-    }
-  } finally {
-    for (const engine of engines.values()) await engine.close()
+): Record<string, EvalValue> {
+  return {
+    profile,
+    command: {
+      name: ctx.command,
+      argv: [...ctx.argv],
+      tokens: [...(ctx.tokens ?? [])],
+      program: [...(ctx.program ?? [])],
+      paths: ctx.paths.map((path) => path.virtual),
+      operands: (ctx.operands ?? []).map((path) => path.virtual),
+      tool: ctx.tool ?? true,
+      walks: ctx.walks ?? false,
+    },
+    session: {
+      id: ctx.sessionId ?? '',
+      agent: ctx.agentId ?? '',
+      cwd: ctx.cwd,
+    },
+    mounts: [...mounts],
   }
-  return produced
+}
+
+/**
+ * The policy answer a script's last expression states.
+ *
+ * The vocabulary is the `preCommand` hook's own, spelled as data: null
+ * or `'allow'` is no opinion (the command runs unless another rule
+ * refuses it, and can never override one that does), `'deny'` /
+ * `{deny: reason}` refuses, `'ask'` / `{ask: reason}` takes the line to
+ * the approval door. The bare strings carry the document's default
+ * reasons, the same ones a rule stating no reason gets.
+ *
+ * Throws a plain Error whose message is a clause about "script", for
+ * the caller to prefix with whose script it is.
+ */
+export function scriptAction(value: EvalValue): Deny | Ask | null {
+  if (value === null || value === 'allow') return null
+  if (value === 'deny') return { kind: 'deny', reason: DEFAULT_DENY_REASON }
+  if (value === 'ask') return { kind: 'ask', reason: DEFAULT_ASK_REASON }
+  if (typeof value === 'object' && !Array.isArray(value) && !(value instanceof Uint8Array)) {
+    const entries = Object.entries(value)
+    if (entries.length === 1) {
+      const first = entries[0]
+      if (first !== undefined) {
+        const [verb, reason] = first
+        if ((verb === 'deny' || verb === 'ask') && typeof reason === 'string' && reason !== '') {
+          return { kind: verb, reason }
+        }
+      }
+    }
+  }
+  throw new Error(
+    `script must answer allow, deny or ask: null or 'allow', 'deny', 'ask', ` +
+      `{deny: reason} or {ask: reason}; got ${JSON.stringify(value)}`,
+  )
+}
+
+/**
+ * Each profile's script, enforced at the admission gate.
+ *
+ * The scripted twin of `PermissionsPolicy`, registered right after it:
+ * where that policy evaluates the document's declarative rules, this
+ * one evaluates the profile's program, per command, with the same facts
+ * (`scriptContext`). It reads the session's script through the narrow
+ * `SessionScriptsQuery` by the session id the door put in the context,
+ * so a session whose profile states no script costs one lookup and
+ * nothing else.
+ *
+ * Every failure fails closed: a script that threw, timed out, answered
+ * with the wrong shape, or names an engine that cannot be built refuses
+ * the command with a reason naming the profile. Silence on failure
+ * would run exactly the commands the script existed to judge.
+ *
+ * Engines are built lazily on the first command that needs one, shared
+ * per engine name, and closed by the workspace's own close.
+ * Evaluations are serialized: the engines are workers, and two
+ * concurrent evals on one would interleave.
+ */
+export class ScriptPolicy implements Policy {
+  private readonly sessions: SessionScriptsQuery
+  private readonly mounts: () => readonly string[]
+  private readonly engines = new Map<string, Runtime & Evaluator>()
+  private queue: Promise<unknown> = Promise.resolve()
+
+  constructor(sessions: SessionScriptsQuery, mounts: () => readonly string[]) {
+    this.sessions = sessions
+    this.mounts = mounts
+  }
+
+  async preCommand(ctx: CommandContext): Promise<Action | null> {
+    const entry = this.sessions.scriptOf(ctx.sessionId ?? '')
+    if (entry === null) return null
+    let value: EvalValue
+    try {
+      value = await this.evaluate(entry, ctx)
+    } catch (err) {
+      if (err instanceof CommandTimeoutError) {
+        return failed(entry, `timed out after ${String(SCRIPT_EVAL_TIMEOUT_SECONDS)}s`)
+      }
+      if (err instanceof EvalError) {
+        return failed(entry, `${err.syntax ? 'syntax error' : 'failed'}: ${err.message}`)
+      }
+      // scriptEngine's refusal (the engine cannot be built) is already
+      // a clause about "script".
+      return failed(entry, err instanceof Error ? err.message : String(err), '')
+    }
+    try {
+      return scriptAction(value)
+    } catch (err) {
+      return failed(entry, err instanceof Error ? err.message : String(err), '')
+    }
+  }
+
+  /** Close every engine a script was evaluated on. */
+  async close(): Promise<void> {
+    const engines = [...this.engines.values()]
+    this.engines.clear()
+    for (const engine of engines) await engine.close()
+  }
+
+  /** One command through one profile's script, serialized. */
+  private async evaluate(entry: ProfileScript, ctx: CommandContext): Promise<EvalValue> {
+    const run = this.queue.then(async () => {
+      let engine = this.engines.get(entry.runtime)
+      if (engine === undefined) {
+        engine = scriptEngine(entry.script, entry.runtime)
+        this.engines.set(entry.runtime, engine)
+      }
+      return evalWithCtx(
+        entry.script.source,
+        scriptContext(entry.profile, ctx, this.mounts()),
+        engine,
+        SCRIPT_EVAL_TIMEOUT_SECONDS,
+        `profile '${entry.profile}' script`,
+      )
+    })
+    this.queue = run.catch(() => undefined)
+    return run
+  }
+}
+
+/** The fail-closed refusal: one wording however the script broke. */
+function failed(entry: ProfileScript, detail: string, prefix = 'script '): Deny {
+  return { kind: 'deny', reason: `profile '${entry.profile}' ${prefix}${detail}` }
 }

@@ -3,7 +3,7 @@ import { CommandTimeoutError } from '../commands/builtin/utils/limit.ts'
 import { EvalError } from './errors.ts'
 import { EVALUATOR, isEvaluator, type Evaluator } from './mixin.ts'
 import { ScriptSource } from './policy/types.ts'
-import { CTX_GLOBAL, DEFAULT_SCRIPT_ENGINES, evalWithCtx, scriptEngine } from './script.ts'
+import { CTX_GLOBAL, evalWithCtx, scriptEngine } from './script.ts'
 import type { EvalResult, EvalValue } from './types.ts'
 
 class Recorder implements Evaluator {
@@ -64,22 +64,10 @@ describe('evalWithCtx', () => {
 })
 
 describe('scriptEngine', () => {
-  it('names monty for python, not the host default', () => {
-    // Deliberately not DEFAULT_PYTHON: the two hosts disagree about
-    // that (pyodide here) for a reason that is about agent code reading
-    // files, which a config script never does. Naming one engine keeps
-    // one source producing one answer on either host.
-    expect(DEFAULT_SCRIPT_ENGINES).toEqual({ python: 'monty', js: 'quickjs' })
-  })
-
-  it('defaults to the language engine', () => {
-    const engine = scriptEngine(new ScriptSource('...', 'python'))
+  it('builds the named runtime', () => {
+    const engine = scriptEngine(new ScriptSource('...', 'python'), 'monty')
     expect(engine.name).toBe('monty')
     expect(isEvaluator(engine)).toBe(true)
-  })
-
-  it('takes the named runtime', () => {
-    expect(scriptEngine(new ScriptSource('...', 'python'), 'monty').name).toBe('monty')
   })
 
   it('refuses a runtime that cannot evaluate', () => {

@@ -28,7 +28,22 @@ const DEC = new TextDecoder()
 
 const DOC = parseSessionProfile({
   commands: {
-    allow: ['cat', 'rm', 'ls', 'ln', 'echo', 'head', 'grep', 'rg', 'cd', 'xargs', 'sh', 'mkdir'],
+    allow: [
+      'cat',
+      'rm',
+      'ls',
+      'ln',
+      'echo',
+      'head',
+      'grep',
+      'rg',
+      'cd',
+      'xargs',
+      'sh',
+      'mkdir',
+      'eval',
+      'source',
+    ],
     deny: [
       { reason: 'sealed', commands: { cat: ['/data/secret*'] } },
       {

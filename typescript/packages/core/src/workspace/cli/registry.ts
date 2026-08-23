@@ -15,7 +15,7 @@
 import type { CLISpec } from '../../commands/cli/types.ts'
 import { BUILTIN_SPECS } from '../../commands/spec/builtins.ts'
 import { snakeToCamel } from '../../utils/normalize.ts'
-import { JOB_BUILTINS, KEYWORDS, NAMESPACE_COMMANDS, SHELL_NAMES } from '../route/constants.ts'
+import { JOB_BUILTINS, KEYWORDS, NAMESPACE_COMMANDS, SHELL_NAMES } from '../lookup/constants.ts'
 import { z } from 'zod'
 
 import type { CLIInstall } from './types.ts'

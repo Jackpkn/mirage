@@ -5,9 +5,45 @@ import { MountMode } from '../types.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
 
-const GOOD = "({commands: {allow: ['ls', 'cat', 'echo']}, cwd: '/data'})"
+// A per-command judge: deny cat under /data/sealed/ with a computed
+// reason, take shred to the approval door, stay silent otherwise.
+const JUDGE = `\
+const c = ctx.command
+const sealed = c.name === 'cat' && c.paths.some((p) => p.startsWith('/data/sealed/'))
+sealed ? { deny: 'sealed by ' + ctx.profile } : c.name === 'shred' ? { ask: 'sign-off' } : null
+`
 
-async function build(profiles: Record<string, unknown>, runtimes?: string[], profile?: string) {
+// The python spelling of the same judge, for the engines that speak it.
+const JUDGE_PY = `\
+c = ctx['command']
+hit = False
+for p in c['paths']:
+    if p.startswith('/data/sealed/'):
+        hit = True
+verdict = None
+if c['name'] == 'cat' and hit:
+    verdict = {'deny': 'sealed by ' + ctx['profile']}
+if c['name'] == 'shred':
+    verdict = {'ask': 'sign-off'}
+verdict
+`
+
+// One scripted profile named release: the per-command program and
+// nothing else, so what runs is purely the script's decision.
+function scripted(source = JUDGE, runtime = 'quickjs', language: 'js' | 'python' = 'js') {
+  return {
+    release: {
+      script: new ScriptSource(source, language),
+      runtime,
+    },
+  }
+}
+
+async function build(
+  profiles: Record<string, unknown>,
+  runtimes?: string[],
+  profile?: string,
+): Promise<Workspace> {
   const shellParser = await getTestParser()
   return new Workspace(
     { '/data/': new RAMResource() },
@@ -22,131 +58,171 @@ async function build(profiles: Record<string, unknown>, runtimes?: string[], pro
 }
 
 describe('profile scripts', () => {
-  it('runs a python profile script on monty, the engine both hosts name', async () => {
-    const src = "{'commands': {'allow': ['ls', 'echo']}, 'cwd': '/data'}"
-    const ws = await build({ release: { script: new ScriptSource(src, 'python') } })
-    await ws.ensureSessionsLoaded()
-    ws.createSession('s', { profile: 'release' })
-    expect((await ws.execute('echo hi', { sessionId: 's' })).exitCode).toBe(0)
-    expect(ws.getSession('s').cwd).toBe('/data')
-    await ws.close()
-  }, 120000)
-
-  it('runs a python profile script on pyodide when the profile names it', async () => {
-    // pyodide is this host's default python engine for *agent* code but
-    // not for profile scripts, so naming it is the only way it produces
-    // one; that makes this the explicit-`runtime:` path against a real
-    // engine.
-    const src = "{'commands': {'allow': ['ls', 'echo']}, 'cwd': '/data'}"
-    const ws = await build({
-      release: { script: new ScriptSource(src, 'python'), runtime: 'pyodide' },
-    })
-    await ws.ensureSessionsLoaded()
-    ws.createSession('s', { profile: 'release' })
-    expect((await ws.execute('echo hi', { sessionId: 's' })).exitCode).toBe(0)
-    expect(ws.getSession('s').cwd).toBe('/data')
-    await ws.close()
-  }, 180000)
-
-  it('shows the script one ctx global, not its keys spread', async () => {
-    // The python host wraps the context as `ctx`; spreading it here
-    // would put `profile` in scope on one host and nowhere on the other,
-    // which no fake evaluator can catch.
-    // The allow list is derived from ctx, so an unbound ctx throws at
-    // hydration and a spread one allows 'nope' instead of 'echo'.
-    const src = "({commands: {allow: ['ls', ctx.profile === 'release' ? 'echo' : 'nope']}})"
-    const ws = await build({ release: { script: new ScriptSource(src, 'js') } })
-    await ws.ensureSessionsLoaded()
-    ws.createSession('s', { profile: 'release' })
-    expect((await ws.execute('echo bound', { sessionId: 's' })).exitCode).toBe(0)
-    await ws.close()
-  })
-
-  it('produces the permissions and enforces them', async () => {
-    const ws = await build({ release: { script: new ScriptSource(GOOD, 'js') } })
-    await ws.ensureSessionsLoaded()
-    ws.createSession('s', { profile: 'release' })
-    expect((await ws.execute('echo hi', { sessionId: 's' })).exitCode).toBe(0)
-    expect((await ws.execute('rm /data/x', { sessionId: 's' })).exitCode).toBe(127)
-    expect(ws.getSession('s').cwd).toBe('/data')
-    await ws.close()
-  })
-
-  it('refuses createSession before hydration', async () => {
-    const ws = await build({ release: { script: new ScriptSource(GOOD, 'js') } })
-    expect(() => ws.createSession('s', { profile: 'release' })).toThrow(/ensureSessionsLoaded/)
-    await ws.close()
-  })
-
-  it.each([
-    ['throws', "(() => { throw new Error('boom') })()", /script failed/],
-    ['returns a non-document', '([1, 2, 3])', /must end in the permission/],
-    ['writes an invalid document', "({commands: {allow: 'ls'}})", /not valid/],
-  ])('refuses a script that %s', async (_label, src, pattern) => {
-    const ws = await build({ release: { script: new ScriptSource(src, 'js') } })
-    await expect(ws.ensureSessionsLoaded()).rejects.toThrow(pattern)
-    await ws.close()
-  })
-
-  it.each([[['bad', 'good']], [['good', 'bad']]])(
-    'one broken profile refuses every scripted profile (%s)',
-    async (order) => {
-      const sources: Record<string, string> = {
-        good: GOOD,
-        bad: "(() => { throw new Error('boom') })()",
-      }
-      const profiles: Record<string, unknown> = {}
-      for (const n of order) profiles[n] = { script: new ScriptSource(sources[n] ?? GOOD, 'js') }
-      const ws = await build(profiles)
-      await expect(ws.ensureSessionsLoaded()).rejects.toThrow(/profile 'bad' script/)
-      expect(() => ws.createSession('s', { profile: 'good' })).toThrow(/ensureSessionsLoaded/)
+  it('judges each command, with the facts as ctx', async () => {
+    const ws = await build(scripted())
+    try {
+      await ws.execute('mkdir -p /data/sealed && echo k > /data/sealed/k')
+      ws.createSession('s', { profile: 'release' })
+      expect((await ws.execute('echo hi', { sessionId: 's' })).exitCode).toBe(0)
+      const denied = await ws.execute('cat /data/sealed/k', { sessionId: 's' })
+      expect(denied.exitCode).toBe(126)
+      expect(denied.stderrText).toBe('cat: policy denied: sealed by release\n')
+    } finally {
       await ws.close()
-    },
-  )
-
-  it('runs in a world with no evaluator', async () => {
-    const ws = await build({ release: { script: new ScriptSource(GOOD, 'js') } }, ['vfs'])
-    await ws.ensureSessionsLoaded()
-    ws.createSession('s', { profile: 'release' })
-    expect((await ws.execute('echo hi', { sessionId: 's' })).exitCode).toBe(0)
-    await ws.close()
+    }
   })
 
-  it('refuses an engine that cannot evaluate', async () => {
-    const ws = await build({ release: { script: new ScriptSource(GOOD, 'js'), runtime: 'vfs' } })
-    await expect(ws.ensureSessionsLoaded()).rejects.toThrow(/cannot evaluate one/)
-    await ws.close()
+  it('reads resolved paths, not typed words', async () => {
+    // `cd /data && cat sealed/k` names no /data/sealed word; the gate
+    // hands the script the resolved operand, so the deny still lands.
+    const ws = await build(scripted())
+    try {
+      ws.createSession('s', { profile: 'release' })
+      const denied = await ws.execute('cd /data && cat sealed/k', { sessionId: 's' })
+      expect(denied.exitCode).toBe(126)
+      expect(denied.stderrText).toBe('cat: policy denied: sealed by release\n')
+    } finally {
+      await ws.close()
+    }
   })
 
-  it('refuses a runtime of the wrong language', async () => {
+  it('a script-only profile installs everything', async () => {
+    // No allow list, so nothing is hidden: a command no document names
+    // runs whenever the script stays silent on it.
+    const ws = await build(scripted())
+    try {
+      await ws.execute('echo x > /data/x')
+      ws.createSession('s', { profile: 'release' })
+      expect((await ws.execute('rm /data/x', { sessionId: 's' })).exitCode).toBe(0)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a document may ride beside the script', async () => {
+    // Optional, not required: a profile stating both keeps the allow
+    // list's hiding, and the script adds its verdicts beside it.
+    const profiles = scripted()
     const ws = await build({
-      release: { script: new ScriptSource(GOOD, 'js'), runtime: 'pyodide' },
+      release: { ...profiles.release, commands: { allow: ['ls', 'cat', 'echo'] } },
     })
-    await expect(ws.ensureSessionsLoaded()).rejects.toThrow(/but names runtime 'pyodide'/)
-    await ws.close()
+    try {
+      ws.createSession('s', { profile: 'release' })
+      expect((await ws.execute('rm /data/x', { sessionId: 's' })).exitCode).toBe(127)
+      const denied = await ws.execute('cat /data/sealed/k', { sessionId: 's' })
+      expect(denied.exitCode).toBe(126)
+      expect(denied.stderrText).toBe('cat: policy denied: sealed by release\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('takes an ask it computed to the approval door', async () => {
+    const ws = await build(scripted())
+    try {
+      ws.createSession('s', { profile: 'release' })
+      const held = await ws.execute('shred /data/x', { sessionId: 's' })
+      expect(held.exitCode).toBe(126)
+      expect(held.stderrText).toMatch(/^shred: requires approval: sign-off/)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('leaves other sessions alone', async () => {
+    const ws = await build(scripted())
+    try {
+      await ws.execute('mkdir -p /data/sealed && echo k > /data/sealed/k')
+      ws.createSession('s', { profile: 'release' })
+      const read = await ws.execute('cat /data/sealed/k')
+      expect(read.exitCode).toBe(0)
+    } finally {
+      await ws.close()
+    }
   })
 
   it('a scripted default profile shapes the default session', async () => {
-    // The constructor compiles the default profile before its script
-    // runs, which is the script-only placeholder; hydration recompiles
-    // it, or the primary agent keeps running under empty permissions.
-    const ws = await build(
-      { release: { script: new ScriptSource(GOOD, 'js') } },
-      undefined,
-      'release',
-    )
-    await ws.ensureSessionsLoaded()
-    expect((await ws.execute('echo hi')).exitCode).toBe(0)
-    expect((await ws.execute('rm /data/x')).exitCode).toBe(127)
-    await ws.close()
+    const ws = await build(scripted(), undefined, 'release')
+    try {
+      expect((await ws.execute('echo hi')).exitCode).toBe(0)
+      const denied = await ws.execute('cat /data/sealed/k')
+      expect(denied.exitCode).toBe(126)
+      expect(denied.stderrText).toBe('cat: policy denied: sealed by release\n')
+    } finally {
+      await ws.close()
+    }
   })
 
-  it('hydrating twice runs the script once', async () => {
-    const ws = await build({ release: { script: new ScriptSource(GOOD, 'js') } })
-    await ws.ensureSessionsLoaded()
-    await ws.ensureSessionsLoaded()
-    ws.createSession('s', { profile: 'release' })
-    expect((await ws.execute('echo hi', { sessionId: 's' })).exitCode).toBe(0)
-    await ws.close()
+  it('runs a python judge on monty, the engine both hosts carry', async () => {
+    const ws = await build(scripted(JUDGE_PY, 'monty', 'python'))
+    try {
+      ws.createSession('s', { profile: 'release' })
+      const denied = await ws.execute('cat /data/sealed/k', { sessionId: 's' })
+      expect(denied.exitCode).toBe(126)
+      expect(denied.stderrText).toBe('cat: policy denied: sealed by release\n')
+    } finally {
+      await ws.close()
+    }
+  }, 120000)
+
+  it('runs in a world with no evaluator', async () => {
+    // A profile is operator configuration, so the engine that judges
+    // for it is a property of the profile, built fresh and never
+    // resolved out of the runtime world.
+    const ws = await build(scripted(), ['vfs'])
+    try {
+      ws.createSession('s', { profile: 'release' })
+      const denied = await ws.execute('cat /data/sealed/k', { sessionId: 's' })
+      expect(denied.exitCode).toBe(126)
+      expect(denied.stderrText).toBe('cat: policy denied: sealed by release\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a broken script fails closed per command', async () => {
+    // Silence on failure would run exactly the commands the script
+    // existed to judge.
+    const ws = await build(scripted("(() => { throw new Error('boom') })()"))
+    try {
+      ws.createSession('s', { profile: 'release' })
+      const refused = await ws.execute('echo hi', { sessionId: 's' })
+      expect(refused.exitCode).toBe(126)
+      expect(refused.stderrText).toMatch(/profile 'release' script failed/)
+      expect((await ws.execute('echo hi')).exitCode).toBe(0)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an engine that cannot evaluate fails closed', async () => {
+    const ws = await build(scripted(JUDGE, 'vfs'))
+    try {
+      ws.createSession('s', { profile: 'release' })
+      const refused = await ws.execute('echo hi', { sessionId: 's' })
+      expect(refused.exitCode).toBe(126)
+      expect(refused.stderrText).toMatch(/cannot evaluate one/)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a profile script states its runtime', async () => {
+    await expect(build({ release: { script: new ScriptSource(JUDGE, 'js') } })).rejects.toThrow(
+      /set runtime beside script/,
+    )
+  })
+
+  it('an inline document may not add a script', async () => {
+    const ws = await build(scripted())
+    try {
+      expect(() =>
+        ws.createSession('s', {
+          permissions: { script: new ScriptSource(JUDGE, 'js'), runtime: 'quickjs' },
+        }),
+      ).toThrow(/not a script/)
+    } finally {
+      await ws.close()
+    }
   })
 })

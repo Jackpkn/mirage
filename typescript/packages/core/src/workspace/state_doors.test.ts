@@ -1150,6 +1150,11 @@ describe('command permissions end to end', () => {
         'wc',
         'man',
         'find',
+        'type',
+        'command',
+        'which',
+        'cd',
+        '[',
       ],
       deny: [
         { reason: 'no deletes in the repo', commands: { rm: ['/repo/*'] } },
@@ -1159,7 +1164,9 @@ describe('command permissions end to end', () => {
     mounts: { '/repo': REPO_SECTION },
   })
   const REVIEWER: SessionProfile = parseSessionProfile({
-    commands: { allow: ['ls', 'cat', 'echo', 'git log', 'git status', 'xargs'] },
+    commands: {
+      allow: ['ls', 'cat', 'echo', 'git log', 'git status', 'xargs', 'type', 'eval'],
+    },
     mounts: { '/repo': REPO_SECTION },
   })
 
@@ -1206,11 +1213,15 @@ describe('command permissions end to end', () => {
     expect(out).toContain('- cat')
     expect(out).not.toContain('- sort')
     expect((await line(ws, 'man sort'))[0]).toBe(1)
-    // Grammar-tier builtins and functions are not subjects; a listed
-    // tool runs; the workspace's own session is bound like any other.
+    // Builtins are subjects like everything else: the listed cd and [
+    // run, the unlisted pwd and history are not commands at all.
+    // Functions are the one exemption, and every line of a body passes
+    // the gate itself.
     expect(await line(ws, 'cd /repo && [ -f d/x ] && echo yes')).toEqual([0, 'yes\n', ''])
     expect(await line(ws, 'f() { echo in-f; }; f')).toEqual([0, 'in-f\n', ''])
     expect((await line(ws, 'cat /repo/d/x'))[0]).toBe(0)
+    expect(await line(ws, 'pwd')).toEqual([127, '', 'pwd: command not found\n'])
+    expect(await line(ws, 'type pwd; echo $?')).toEqual([0, '1\n', 'type: pwd: not found\n'])
     // `history` is a tool-tier builtin: hidden when unlisted.
     expect(await line(ws, 'history')).toEqual([127, '', 'history: command not found\n'])
   })

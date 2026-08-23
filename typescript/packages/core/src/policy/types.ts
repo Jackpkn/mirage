@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { ScriptSource } from '../runtime/policy/types.ts'
 import type { Limit, PathSpec, Producer } from '../types.ts'
 
 /**
@@ -275,6 +276,31 @@ export interface SessionCommandsQuery {
   commandsOf(sessionId: string): AdmissionRules | null
 }
 
+/**
+ * One profile's script, as a session carries it: the program, the
+ * engine it runs on, and the profile it speaks for. Compiled off
+ * `SessionProfile.script` beside the admission rules, and evaluated per
+ * command by `ScriptPolicy` with the command's facts as `ctx`; its
+ * answer is allow (no opinion), deny or ask. `profile` is the
+ * profile's name, which the script reads as `ctx.profile`; empty for a
+ * profile document passed to `createSession` without a name.
+ */
+export interface ProfileScript {
+  readonly profile: string
+  readonly script: ScriptSource
+  readonly runtime: string
+}
+
+/**
+ * The one session question the script policy asks, satisfied the same
+ * way `SessionCommandsQuery` is: the policy reads a session's script by
+ * the id the door put in the context, falling back to the default
+ * profile's for an id the manager does not know.
+ */
+export interface SessionScriptsQuery {
+  scriptOf(sessionId: string): ProfileScript | null
+}
+
 /** Facts about one classified command, as preCommand hooks see it. */
 export interface CommandContext {
   command: string
@@ -312,10 +338,11 @@ export interface CommandContext {
   /** The head of `tokens` that names what runs: the name plus a CLI's verb path. */
   program?: readonly string[]
   /**
-   * Whether the word is a tool the allow lists govern. The door clears
-   * it for the shell's own grammar (the grammar-tier builtins), the
-   * agent's own function where the function is what runs, and an
-   * executed path: none of those is tool use, so an allow list never
+   * Whether the word is a tool the allow lists govern, which every
+   * named command is, shell builtins included. The door clears it for
+   * the agent's own function where the function is what runs, and for
+   * an executed path: neither is a name a list could hold, and every
+   * line either runs passes the gate itself, so an allow list never
    * refuses them, though a deny rule still can. Absent reads as true.
    */
   tool?: boolean

@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
-from mirage.policy.types import AdmissionRules, CommandRule
+from mirage.policy.types import AdmissionRules, CommandRule, ProfileScript
 from mirage.runtime.types import ScriptSource
 from mirage.types import HiddenPaths, HiddenVars, MountMode, parse_mount_mode
 from mirage.utils.hidden import is_glob
@@ -281,9 +281,11 @@ class CommandsBlock(BaseModel):
     ``allow`` lists the command patterns the profile installs; a name none
     of them starts with is not a command for the session (127, absent
     from ``type`` / ``which`` / ``man``), a line no pattern covers is
-    refused. The shell's own grammar builtins and the agent's functions
-    are not subjects. ``ask`` rules are admitted only with a host
-    approval; ``deny`` rules refuse with a reason. A bare string in
+    refused. Shell builtins are subjects like everything else: a list
+    stating only ``cat`` leaves no ``echo`` and no ``cd``. The agent's
+    own functions are the one exemption, safe because every line of a
+    body passes the gate itself. ``ask`` rules are admitted only with a
+    host approval; ``deny`` rules refuse with a reason. A bare string in
     either is one command pattern with the default reason.
 
     Args:
@@ -416,11 +418,14 @@ class SessionProfile(BaseModel):
     hide, is read by anchor depth: the deeper entry wins, ties break by
     verb.
 
-    A profile may instead be *written by a script*, which states ``script``
-    and nothing else. The script runs once per profile when the workspace
-    hydrates, and what it returns is validated as one of these, so every
-    reader below this point sees a plain document and neither ``explain``
-    nor the resolver has a second shape to handle.
+    A profile may also state a ``script``: a program evaluated at the
+    admission gate for every command a session under the profile runs.
+    It is handed the command's facts as one ``ctx`` value and its last
+    expression answers allow (no opinion), deny or ask, so it expresses
+    the conditions a declarative rule cannot; like every policy, it can
+    only restrict, never grant past a deny. The document is optional
+    beside it: a profile stating only ``script`` and ``runtime`` hides
+    nothing, and the script is its whole admission policy.
 
     Args:
         cwd (str | None): the session's working directory at creation.
@@ -434,16 +439,16 @@ class SessionProfile(BaseModel):
         vars (VarsBlock | None): the profile's hidden variables.
         commands (CommandsBlock | None): the profile's allow list and its
             ask / deny rules, absolute paths.
-        script (ScriptSource | str | None): a program that writes this
-            profile. A ``str`` is the path form the config door accepts and
-            loads; code passes the loaded ``ScriptSource``, so a path
+        script (ScriptSource | str | None): the profile's per-command
+            program. A ``str`` is the path form the config door accepts
+            and loads; code passes the loaded ``ScriptSource``, so a path
             still spelled as a string when the workspace reads it means
             the config layer never saw it, and is refused there.
-        runtime (str | None): the engine ``script`` runs on. Unset picks
-            the sandboxed engine for the script's language, which is the
-            only one either language has today. Meaningless without a
-            script, so stating one there is an error rather than a knob
-            that does nothing.
+        runtime (str | None): the engine ``script`` runs on, required
+            beside it: there is no default engine, because an engine the
+            operator never chose should not be the one their policy runs
+            on. Meaningless without a script, so stating one there is an
+            error rather than a knob that does nothing.
     """
 
     model_config = _DOC
@@ -478,25 +483,20 @@ class SessionProfile(BaseModel):
         return entries
 
     @model_validator(mode="after")
-    def _v_script_alone(self) -> "SessionProfile":
-        # A scripted profile is written by its program, so an inline field
-        # beside it would be a second author for one document with no
-        # rule saying which wins. Refused at load rather than merged.
+    def _v_script_runtime(self) -> "SessionProfile":
+        # The pair travels together: a script must say what runs it (no
+        # default engine exists to guess one), and a runtime without a
+        # script names an engine for a program that does not exist.
         if self.script is None:
             if self.runtime is not None:
                 raise ValueError(
                     "runtime names the engine a script runs on, and this "
                     "profile states no script")
             return self
-        written = [
-            name
-            for name in ("cwd", "env", "mounts", "paths", "vars", "commands")
-            if getattr(self, name) is not None
-        ]
-        if written:
+        if self.runtime is None:
             raise ValueError(
-                f"a profile states either script or its document, not both; "
-                f"script is set beside {', '.join(written)}")
+                "a profile script states the engine it runs on; set runtime "
+                "beside script")
         return self
 
     @model_validator(mode="after")
@@ -533,6 +533,8 @@ class CompiledProfile:
         cwd (str | None): the working directory to start in.
         commands (AdmissionRules | None): the profile's admission rules,
             its own and its mount sections' in one list.
+        script (ProfileScript | None): the profile's per-command script,
+            which ``ScriptPolicy`` evaluates at the admission gate.
     """
 
     mount_modes: dict[str, MountMode] | None
@@ -541,3 +543,4 @@ class CompiledProfile:
     env: dict[str, str] | None
     cwd: str | None
     commands: AdmissionRules | None = None
+    script: ProfileScript | None = None

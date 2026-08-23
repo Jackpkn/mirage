@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from './constants.ts'
-import type { CommandRule, AdmissionRules } from './types.ts'
+import type { CommandRule, AdmissionRules, ProfileScript } from './types.ts'
 import { ScriptSource } from '../runtime/policy/types.ts'
 import type { HiddenPaths, HiddenVars } from '../types.ts'
 import { type MountMode, parseMountMode } from '../types.ts'
@@ -41,8 +41,10 @@ export interface VarsBlock {
  * `commands:` at the top level of a profile. `allow` lists the command
  * patterns the profile installs; a name none of them starts with is not a
  * command for the session (127, absent from `type` / `which` / `man`),
- * a line no pattern covers is refused. The shell's own grammar builtins
- * and the agent's functions are not subjects. `ask` rules are admitted
+ * a line no pattern covers is refused. Shell builtins are subjects like
+ * everything else: a list stating only `cat` leaves no `echo` and no
+ * `cd`. The agent's own functions are the one exemption, safe because
+ * every line of a body passes the gate itself. `ask` rules are admitted
  * only with a host approval; `deny` rules refuse with a reason. A bare
  * string in either is one command pattern with the default reason.
  * `allow` null or absent (unstated) installs everything.
@@ -118,23 +120,31 @@ export interface SessionProfile {
   readonly vars?: VarsBlock | null
   readonly commands?: CommandsBlock | null
   /**
-   * A program that writes this profile, instead of the fields above. A
+   * The profile's per-command program, evaluated at the admission gate
+   * for every command a session under the profile runs; its last
+   * expression answers allow (no opinion), deny or ask. The document is
+   * optional beside it: a profile stating only `script` and `runtime`
+   * hides nothing, and the script is its whole admission policy. A
    * string is the path form the config door accepts and loads; code
    * passes the loaded ScriptSource, so a path still spelled as a string
    * when the workspace reads it means the config layer never saw it.
    */
   readonly script?: ScriptSource | string | null
   /**
-   * The engine `script` runs on. Unset picks the sandboxed engine for
-   * the script's language. Meaningless without a script, so stating one
-   * there is an error rather than a knob that does nothing.
+   * The engine `script` runs on, required beside it: there is no
+   * default engine, because an engine the operator never chose should
+   * not be the one their policy runs on. Meaningless without a script,
+   * so stating one there is an error rather than a knob that does
+   * nothing.
    */
   readonly runtime?: string | null
 }
 
 /**
  * The session fields a profile compiles to. `commands` is the profile's
- * admission rules, its own and its mount sections' in one list.
+ * admission rules, its own and its mount sections' in one list;
+ * `script` is its per-command program, which `ScriptPolicy` evaluates
+ * at the admission gate.
  */
 export interface CompiledProfile {
   readonly mountModes: ReadonlyMap<string, MountMode> | null
@@ -143,6 +153,7 @@ export interface CompiledProfile {
   readonly env: Readonly<Record<string, string>> | null
   readonly cwd: string | null
   readonly commands: AdmissionRules | null
+  readonly script?: ProfileScript | null
 }
 
 const RULE_FIELDS = ['reason', 'commands', 'paths'] as const
@@ -161,11 +172,6 @@ const PROFILE_FIELDS = [
   'script',
   'runtime',
 ] as const
-
-// The fields a scripted profile may not also state: its script writes them,
-// so one beside it would be a second author for one document with no
-// rule saying which wins.
-const PROFILE_DOCUMENT_FIELDS = ['cwd', 'env', 'mounts', 'paths', 'vars', 'commands'] as const
 
 // A document mapping, not merely "an object": a Set, a Date or any class
 // instance has no own enumerable string keys, so Object.entries would read
@@ -444,15 +450,6 @@ export function parseSessionProfile(raw: unknown, where = 'profile'): SessionPro
     if (!(obj.script instanceof ScriptSource) && typeof obj.script !== 'string') {
       throw new Error(`${where}.script must be a script path or source`)
     }
-    const stated = PROFILE_DOCUMENT_FIELDS.filter(
-      (field) => obj[field] !== undefined && obj[field] !== null,
-    )
-    if (stated.length > 0) {
-      throw new Error(
-        `${where} states either script or its document, not both; ` +
-          `script is set beside ${stated.join(', ')}`,
-      )
-    }
     out.script = obj.script
   }
   if (obj.runtime !== undefined && obj.runtime !== null) {
@@ -463,6 +460,13 @@ export function parseSessionProfile(raw: unknown, where = 'profile'): SessionPro
       )
     }
     out.runtime = obj.runtime
+  }
+  // The pair travels together: a script must say what runs it (no
+  // default engine exists to guess one).
+  if (out.script !== undefined && out.runtime === undefined) {
+    throw new Error(
+      `${where}: a profile script states the engine it runs on; set runtime beside script`,
+    )
   }
   if (obj.cwd !== undefined && obj.cwd !== null) {
     if (typeof obj.cwd !== 'string') throw new Error(`${where}.cwd must be a string`)

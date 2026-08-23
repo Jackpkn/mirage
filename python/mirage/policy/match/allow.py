@@ -41,9 +41,9 @@ def head_visible(name: str, rules: AdmissionRules | None) -> bool:
     """Whether a session can see a command at all.
 
     A profile without an allow list hides nothing; a profile with one hides
-    every name none of its patterns start with. Grammar-tier builtins
-    and shell functions are the caller's exemptions, not this one's.
-    The head-word case of :func:`node_visible`.
+    every name none of its patterns start with, builtins included.
+    Shell functions are the caller's exemption, not this one's. The
+    head-word case of :func:`node_visible`.
 
     Args:
         name (str): the command name.
@@ -66,9 +66,9 @@ def line_allowed(ctx: CommandContext, rules: AdmissionRules | None) -> bool:
     """Whether the profile's allow list has a pattern for the line.
 
     A profile that states no list installs everything. A word that is not
-    a tool (``ctx.tool`` cleared by the door: shell grammar, the
-    agent's own function, an executed path) is always allowed here; a
-    deny rule is the only thing that can refuse it.
+    a tool (``ctx.tool`` cleared by the door: the agent's own function,
+    an executed path) is always allowed here; a deny rule is the only
+    thing that can refuse it.
 
     Args:
         ctx (CommandContext): the classified command.

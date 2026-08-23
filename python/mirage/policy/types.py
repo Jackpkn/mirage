@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, ClassVar, Protocol
 
+from mirage.runtime.types import ScriptSource
 from mirage.types import Limit, PathSpec, Producer
 
 
@@ -346,6 +347,30 @@ class AdmissionRules:
 LiveRules = Sequence[tuple[Outcome, CommandRule]]
 
 
+@dataclass(frozen=True, slots=True)
+class ProfileScript:
+    """One profile's script, as a session carries it: the program, the
+    engine it runs on, and the profile it speaks for.
+
+    Compiled off ``SessionProfile.script`` beside the admission rules,
+    and evaluated per command by ``ScriptPolicy`` with the command's
+    facts as ``ctx``; its answer is allow (no opinion), deny or ask.
+
+    Args:
+        profile (str): the profile's name, which the script reads as
+            ``ctx["profile"]`` and every refusal about it prints; empty
+            for a profile document passed to ``create_session`` without
+            a name.
+        script (ScriptSource): the program, as the config door loaded
+            it.
+        runtime (str): the engine the profile named for it.
+    """
+
+    profile: str
+    script: ScriptSource
+    runtime: str
+
+
 class SessionCommandsQuery(Protocol):
     """The one session question the permissions policy asks.
 
@@ -358,6 +383,25 @@ class SessionCommandsQuery(Protocol):
         """The compiled admission rules of one session; the default
         profile's for an id the manager does not know, the empty id of an
         unbound door included.
+
+        Args:
+            session_id (str): the session, empty when none is bound.
+        """
+        ...
+
+
+class SessionScriptsQuery(Protocol):
+    """The one session question the script policy asks.
+
+    The SessionManager satisfies it structurally, the same way it
+    satisfies ``SessionCommandsQuery``, so the policy reads a session's
+    script by the id the door put in the context.
+    """
+
+    def script_of(self, session_id: str) -> "ProfileScript | None":
+        """The script of the profile one session runs under; the
+        default profile's for an id the manager does not know, None for
+        a profile that states none.
 
         Args:
             session_id (str): the session, empty when none is bound.
@@ -397,12 +441,13 @@ class CommandContext:
             words; for anything else the name and the raw argv.
         program (tuple[str, ...]): the head of ``tokens`` that names
             what runs: the name plus a CLI's verb path.
-        tool (bool): whether the word is a tool the allow lists govern.
-            The door clears it for the shell's own grammar (the
-            grammar-tier builtins), the agent's own function where the
-            function is what runs, and an executed path: none of those
-            is tool use, so an allow list never refuses them, though a
-            deny rule still can.
+        tool (bool): whether the word is a tool the allow lists govern,
+            which every named command is, shell builtins included. The
+            door clears it for the agent's own function where the
+            function is what runs, and for an executed path: neither is
+            a name a list could hold, and every line either runs passes
+            the gate itself, so an allow list never refuses them,
+            though a deny rule still can.
         walks (bool): whether the command descends its directory
             operands (``find``, ``du``, ``tree``, ``rg``, ``grep -r``,
             ``ls -R``), so a mount whose root sits under one of its

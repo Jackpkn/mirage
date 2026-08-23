@@ -20,7 +20,7 @@ from typing import Any
 
 from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.types import ByteSource
-from mirage.policy.types import AdmissionRules, Decision
+from mirage.policy.types import AdmissionRules, Decision, ProfileScript
 from mirage.shell.array import ShellArray
 from mirage.shell.constants import SHELL_ARGV0
 from mirage.shell.types import FunctionBody
@@ -29,10 +29,10 @@ from mirage.shell.variable import (ShellVar, VarAttr, attrs_from_letters,
 from mirage.types import HiddenPaths, HiddenVars, MountMode
 from mirage.workspace.session.constants import (CHILD_SHELL_FIELDS,
                                                 INHERITED_FIELDS)
-from mirage.workspace.session.serialize import (commands_from_dict,
-                                                commands_to_dict,
-                                                decision_from_dict,
-                                                decision_to_dict)
+
+from mirage.workspace.session.serialize import (  # isort: skip
+    commands_from_dict, commands_to_dict, decision_from_dict, decision_to_dict,
+    script_from_dict, script_to_dict)
 
 
 def copy_state(value: Any) -> Any:
@@ -153,6 +153,10 @@ class Session:
     # so there is nothing above it to join with. A durable restriction
     # like hidden_paths, so it persists with the session record.
     commands: AdmissionRules | None = None
+    # The profile's per-command script, evaluated by ScriptPolicy at the
+    # admission gate. A durable restriction like commands, so it
+    # persists with the session record.
+    script: ProfileScript | None = None
     # The host's standing answers to asked lines (design 3.9): session
     # state like functions and cwd, persisted, read and written through
     # the manager by id so a fork shares them, never another session's.
@@ -270,6 +274,8 @@ class Session:
             }
         if self.commands is not None:
             data["commands"] = commands_to_dict(self.commands)
+        if self.script is not None:
+            data["script"] = script_to_dict(self.script)
         if self.decisions:
             data["decisions"] = [decision_to_dict(d) for d in self.decisions]
         return data
@@ -292,9 +298,11 @@ class Session:
         paths = data.get("hidden_paths")
         vars_ = data.get("hidden_vars")
         commands = data.get("commands")
+        script = data.get("script")
         decisions = data.get("decisions")
         if (modes is not None or paths is not None or vars_ is not None
-                or commands is not None or decisions is not None):
+                or commands is not None or script is not None
+                or decisions is not None):
             data = dict(data)
         if modes is not None:
             data["mount_modes"] = {
@@ -311,6 +319,8 @@ class Session:
                 patterns=tuple(vars_.get("patterns", ())))
         if commands is not None:
             data["commands"] = commands_from_dict(commands)
+        if script is not None:
+            data["script"] = script_from_dict(script)
         if decisions is not None:
             data["decisions"] = tuple(decision_from_dict(d) for d in decisions)
         return cls(**data)

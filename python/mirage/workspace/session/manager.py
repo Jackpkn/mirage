@@ -17,7 +17,7 @@ import copy
 from collections.abc import Mapping
 
 from mirage.policy.profile import CompiledProfile
-from mirage.policy.types import AdmissionRules, Decision
+from mirage.policy.types import AdmissionRules, Decision, ProfileScript
 from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
 from mirage.workspace.session.ram import RAMSessionStore
@@ -98,6 +98,24 @@ class SessionManager:
             return (self._default_profile.commands
                     if self._default_profile is not None else None)
         return session.commands
+
+    def script_of(self, session_id: str) -> ProfileScript | None:
+        """The profile script one session runs under
+        (SessionScriptsQuery).
+
+        The default profile's for an id this manager does not know, the
+        same fallback ``commands_of`` makes and for the same reason: a
+        door that names no session is judged like a session that named
+        no profile.
+
+        Args:
+            session_id (str): the session, empty when none is bound.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return (self._default_profile.script
+                    if self._default_profile is not None else None)
+        return session.script
 
     def decision_sessions(self) -> tuple[str, ...]:
         """Every session id holding ledger records

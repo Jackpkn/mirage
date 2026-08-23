@@ -180,7 +180,7 @@ describe('--help and man through the executor', () => {
   it('man lists only the CLI verbs the profile can reach', async () => {
     const ws = await cliWs()
     ws.createSession('narrow', {
-      profile: { commands: { allow: ['man', 'linear issue'], ask: [], deny: [] } },
+      profile: { commands: { allow: ['man', 'linear issue', 'which'], ask: [], deny: [] } },
     })
     const page = stdoutStr(await ws.execute('man linear', { sessionId: 'narrow' }))
     expect(page).toContain('issue')

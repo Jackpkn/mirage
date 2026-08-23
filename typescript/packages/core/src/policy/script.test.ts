@@ -1,137 +1,170 @@
-import { describe, expect, it } from 'vitest'
-
-import { EVALUATOR, type Evaluator } from '../runtime/mixin.ts'
-import { EvalError } from '../runtime/errors.ts'
+import { afterEach, describe, expect, it } from 'vitest'
 import { ScriptSource } from '../runtime/policy/types.ts'
-import type { EvalResult, EvalValue } from '../runtime/types.ts'
-import { PolicyError } from './errors.ts'
-import { parseSessionProfile } from './profile.ts'
-import { permissionsFromScript, permissionsFromScripts, scriptContext } from './script.ts'
+import { PathSpec } from '../types.ts'
+import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from './constants.ts'
+import { ScriptPolicy, scriptAction, scriptContext } from './script.ts'
+import type { CommandContext, ProfileScript } from './types.ts'
 
-const DOC = { commands: { allow: ['ls', 'cat'] }, cwd: '/repo' }
+const JUDGE = `\
+const c = ctx.command
+const sealed = c.name === 'cat' && c.paths.some((p) => p.startsWith('/repo/sealed/'))
+sealed ? { deny: 'sealed by ' + ctx.profile } : c.name === 'shred' ? { ask: 'sign-off' } : null
+`
 
-class FakeEngine implements Evaluator {
-  readonly [EVALUATOR] = true as const
-  seen: Record<string, EvalValue> = {}
-  code = ''
+function path(virtual: string): PathSpec {
+  return new PathSpec({
+    virtual,
+    directory: virtual,
+    resourcePath: '',
+    rawPath: virtual,
+    resolved: true,
+  })
+}
 
-  constructor(
-    private readonly value: EvalValue = null,
-    private readonly error: Error | null = null,
-  ) {}
-
-  eval(
-    code: string,
-    opts?: { inputs?: Record<string, EvalValue>; session?: string },
-  ): Promise<EvalResult> {
-    this.code = code
-    this.seen = { ...(opts?.inputs ?? {}) }
-    if (this.error !== null) return Promise.reject(this.error)
-    return Promise.resolve({
-      value: this.value,
-      stdout: new Uint8Array(),
-      stderr: null,
-      exitCode: 0,
-      status: 'complete',
-    })
+function ctx(command = 'cat', sessionId = 's'): CommandContext {
+  return {
+    command,
+    paths: [path('/repo/sealed/k')],
+    operands: [path('/repo/sealed/k')],
+    argv: ['/repo/sealed/k'],
+    cwd: '/repo',
+    registry: { isMountRoot: () => false },
+    sessionId,
+    agentId: 'agent-1',
+    tokens: [command, '/repo/sealed/k'],
+    program: [command],
   }
 }
 
+function entry(source = JUDGE, runtime = 'quickjs'): ProfileScript {
+  return { profile: 'release', script: new ScriptSource(source, 'js'), runtime }
+}
+
+function policyOf(script: ProfileScript | null): ScriptPolicy {
+  return new ScriptPolicy({ scriptOf: () => script }, () => ['/repo/', '/scratch/'])
+}
+
+const open: ScriptPolicy[] = []
+
+function track(policy: ScriptPolicy): ScriptPolicy {
+  open.push(policy)
+  return policy
+}
+
+afterEach(async () => {
+  for (const policy of open.splice(0)) await policy.close()
+})
+
 describe('scriptContext', () => {
-  it('names the profile and the mounts', () => {
-    expect(scriptContext('release', ['/repo/', '/scratch/'])).toEqual({
+  it('is the command context as data', () => {
+    expect(scriptContext('release', ctx(), ['/repo/', '/scratch/'])).toEqual({
       profile: 'release',
+      command: {
+        name: 'cat',
+        argv: ['/repo/sealed/k'],
+        tokens: ['cat', '/repo/sealed/k'],
+        program: ['cat'],
+        paths: ['/repo/sealed/k'],
+        operands: ['/repo/sealed/k'],
+        tool: true,
+        walks: false,
+      },
+      session: { id: 's', agent: 'agent-1', cwd: '/repo' },
       mounts: ['/repo/', '/scratch/'],
     })
   })
+})
 
-  it('carries nothing per session', () => {
-    // The script runs once for the profile, so a per-session fact
-    // reaching it would be a promise the one evaluation cannot keep.
-    const ctx = scriptContext('release', [])
-    expect('session_id' in ctx).toBe(false)
-    expect('agent_id' in ctx).toBe(false)
+describe('scriptAction', () => {
+  it.each([[null], ['allow']])('reads %j as no opinion', (value) => {
+    expect(scriptAction(value)).toBeNull()
+  })
+
+  it('turns a deny answer into a whole-command deny', () => {
+    expect(scriptAction({ deny: 'sealed' })).toEqual({ kind: 'deny', reason: 'sealed' })
+  })
+
+  it('takes an ask answer to the approval door', () => {
+    const action = scriptAction({ ask: 'sign-off' })
+    expect(action).toEqual({ kind: 'ask', reason: 'sign-off' })
+  })
+
+  it("gives the bare verbs the document's default reasons", () => {
+    expect(scriptAction('deny')).toEqual({ kind: 'deny', reason: DEFAULT_DENY_REASON })
+    expect(scriptAction('ask')).toEqual({ kind: 'ask', reason: DEFAULT_ASK_REASON })
+  })
+
+  it.each([
+    [[1, 2]],
+    [7],
+    ['nope'],
+    [{}],
+    [{ deny: '' }],
+    [{ deny: 3 }],
+    [{ allow: true }],
+    [{ deny: 'a', ask: 'b' }],
+  ])('refuses %j', (value) => {
+    expect(() => scriptAction(value)).toThrow(/must answer allow, deny or ask/)
   })
 })
 
-describe('permissionsFromScript', () => {
-  it('validates the produced permissions', async () => {
-    const produced = await permissionsFromScript(
-      'release',
-      new ScriptSource('...', 'js'),
-      scriptContext('release', ['/repo/']),
-      new FakeEngine(DOC),
+describe('ScriptPolicy', () => {
+  it('does not judge a session without a script', async () => {
+    const policy = track(policyOf(null))
+    expect(await policy.preCommand(ctx())).toBeNull()
+  })
+
+  it('refuses a command with a deny it computed', async () => {
+    const policy = track(policyOf(entry()))
+    expect(await policy.preCommand(ctx('cat'))).toEqual({
+      kind: 'deny',
+      reason: 'sealed by release',
+    })
+  })
+
+  it('stays silent on a command the script allows', async () => {
+    const policy = track(policyOf(entry()))
+    expect(await policy.preCommand(ctx('ls'))).toBeNull()
+  })
+
+  it('takes an ask it computed to the door', async () => {
+    const policy = track(policyOf(entry()))
+    expect(await policy.preCommand(ctx('shred'))).toEqual({ kind: 'ask', reason: 'sign-off' })
+  })
+
+  it('fails closed when the script throws', async () => {
+    // Silence on failure would run exactly the commands the script
+    // existed to judge, so every failure arm refuses instead.
+    const policy = track(policyOf(entry("(() => { throw new Error('boom') })()")))
+    const action = await policy.preCommand(ctx())
+    expect(action).toMatchObject({ kind: 'deny' })
+    expect((action as { reason: string }).reason).toMatch(/profile 'release' script failed/)
+  })
+
+  it('fails closed on a wrong answer shape', async () => {
+    const policy = track(policyOf(entry('[1, 2]')))
+    const action = await policy.preCommand(ctx())
+    expect((action as { reason: string }).reason).toMatch(/profile 'release' script must answer/)
+  })
+
+  it('fails closed on an engine it cannot build', async () => {
+    const policy = track(policyOf(entry(JUDGE, 'ghost')))
+    const action = await policy.preCommand(ctx())
+    expect((action as { reason: string }).reason).toMatch(
+      /profile 'release' script names runtime 'ghost'/,
     )
-    expect(produced.cwd).toBe('/repo')
-    expect(produced.commands?.allow).toEqual(['ls', 'cat'])
   })
 
-  it('shows the script its context', async () => {
-    const engine = new FakeEngine(DOC)
-    const ctx = scriptContext('release', ['/repo/'])
-    await permissionsFromScript('release', new ScriptSource('SOURCE', 'js'), ctx, engine)
-    expect(engine.code).toBe('SOURCE')
-    expect(engine.seen).toEqual({ ctx })
+  it('fails closed on an engine that cannot evaluate', async () => {
+    const policy = track(policyOf(entry(JUDGE, 'vfs')))
+    const action = await policy.preCommand(ctx())
+    expect((action as { reason: string }).reason).toMatch(/cannot evaluate one/)
   })
 
-  it('refuses a script that threw', async () => {
-    const engine = new FakeEngine(null, new EvalError('boom'))
-    await expect(
-      permissionsFromScript('release', new ScriptSource('...', 'js'), {}, engine),
-    ).rejects.toThrow(/script failed: boom/)
-  })
-
-  it('names a syntax error as one', async () => {
-    const engine = new FakeEngine(null, new EvalError('bad token', { syntax: true }))
-    await expect(
-      permissionsFromScript('release', new ScriptSource('...', 'js'), {}, engine),
-    ).rejects.toThrow(/script syntax error/)
-  })
-
-  it.each([[null], [[1, 2]], ['commands'], [7]])(
-    'refuses %j instead of permissions',
-    async (value) => {
-      // Empty permissions restrict nothing, so a wrong shape must never
-      // coerce to one; every arm here has to throw rather than fall back.
-      const engine = new FakeEngine(value as EvalValue)
-      await expect(
-        permissionsFromScript('release', new ScriptSource('...', 'js'), {}, engine),
-      ).rejects.toThrow(/must end in the permissions/)
-    },
-  )
-
-  it('refuses permissions that are not valid', async () => {
-    const engine = new FakeEngine({ commands: { allow: 'ls' } })
-    await expect(
-      permissionsFromScript('release', new ScriptSource('...', 'js'), {}, engine),
-    ).rejects.toThrow(/not valid/)
-  })
-
-  it('refuses a script that produced a script', async () => {
-    const engine = new FakeEngine({ script: 'roles/other.py' })
-    await expect(
-      permissionsFromScript('release', new ScriptSource('...', 'js'), {}, engine),
-    ).rejects.toThrow(/produced another script/)
-  })
-
-  it('names the profile in every refusal', async () => {
-    const engine = new FakeEngine([])
-    await expect(
-      permissionsFromScript('release', new ScriptSource('...', 'js'), {}, engine),
-    ).rejects.toThrow(/profile 'release' script/)
-  })
-
-  it('throws the policy error type', async () => {
-    const engine = new FakeEngine([])
-    await expect(
-      permissionsFromScript('release', new ScriptSource('...', 'js'), {}, engine),
-    ).rejects.toBeInstanceOf(PolicyError)
-  })
-})
-
-describe('permissionsFromScripts', () => {
-  it('refuses a script still spelled as a path', async () => {
-    const scripted = { release: parseSessionProfile({ script: 'roles/x.py' }) }
-    await expect(permissionsFromScripts(scripted, [])).rejects.toThrow(/names a script by path/)
+  it('reuses one engine across commands and closes it', async () => {
+    const policy = policyOf(entry())
+    expect(await policy.preCommand(ctx('cat'))).not.toBeNull()
+    expect(await policy.preCommand(ctx('ls'))).toBeNull()
+    await policy.close()
   })
 })

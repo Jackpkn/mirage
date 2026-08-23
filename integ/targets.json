@@ -152,6 +152,12 @@
         "QDRANT_HOST"
       ]
     },
+    "quickjs": {
+      "python": [
+        "MIRAGE_QUICKJS_HOME"
+      ],
+      "typescript": []
+    },
     "redis": {
       "python": [],
       "typescript": []
@@ -2478,7 +2484,8 @@
             }
           }
         },
-        "scripted": "scripted"
+        "scripted": "scripted",
+        "scriptedask": "scriptedask"
       },
       "profile": "default",
       "profiles": {
@@ -2508,7 +2515,14 @@
               "stat",
               "file",
               "wc",
-              "zip"
+              "zip",
+              "echo",
+              "cd",
+              "test",
+              "[",
+              "type",
+              "command",
+              "which"
             ],
             "ask": [
               {
@@ -2627,15 +2641,73 @@
               "cat",
               "git log",
               "git status",
-              "xargs"
+              "xargs",
+              "type",
+              "eval",
+              "cd",
+              "echo"
             ]
           }
         },
         "scripted": {
           "script": {
             "language": "python",
-            "source": "allow = ['ls', 'cat', 'echo']\nrule = {'reason': 'written by ' + ctx['profile'],\n        'commands': {'cat': ['/repo/sealed/*']}}\n{'commands': {'allow': allow, 'deny': [rule]}}\n"
+            "source": "c = ctx['command']\nhit = False\nfor p in c['paths']:\n    if p.startswith('/repo/sealed/'):\n        hit = True\nverdict = None\nif c['name'] == 'cat' and hit:\n    verdict = {'deny': 'written by ' + ctx['profile']}\nverdict\n"
+          },
+          "runtime": "monty"
+        },
+        "scriptedask": {
+          "script": {
+            "language": "python",
+            "source": "c = ctx['command']\nhit = False\nfor p in c['paths']:\n    if p.startswith('/scratch/askme/'):\n        hit = True\nverdict = None\nif c['name'] == 'rm' and hit:\n    verdict = {'ask': 'scripted sign-off'}\nverdict\n"
+          },
+          "runtime": "monty"
+        }
+      }
+    },
+    {
+      "id": "ram-scripted",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "service": "quickjs",
+      "mounts": [
+        {
+          "path": "/repo",
+          "resource": "ram",
+          "backend": "memory"
+        },
+        {
+          "path": "/scratch",
+          "resource": "ram",
+          "backend": "memory"
+        }
+      ],
+      "sessions": {
+        "scriptedjs": "scriptedjs"
+      },
+      "profile": "default",
+      "profiles": {
+        "default": {
+          "commands": {
+            "allow": [
+              "ls",
+              "cat",
+              "echo",
+              "head",
+              "mkdir",
+              "touch",
+              "rm"
+            ]
           }
+        },
+        "scriptedjs": {
+          "script": {
+            "language": "js",
+            "source": "const c = ctx.command\nconst hit = c.name === 'cat' && c.paths.some((p) => p.startsWith('/repo/sealed/'))\nhit ? {deny: 'sealed by ' + ctx.profile} : null\n"
+          },
+          "runtime": "quickjs"
         }
       }
     }

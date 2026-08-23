@@ -31,7 +31,7 @@ DOC = {
     "commands": {
         "allow": [
             "cat", "rm", "ls", "ln", "echo", "head", "grep", "rg", "cd",
-            "xargs", "sh", "mkdir"
+            "xargs", "sh", "mkdir", "eval", "source"
         ],
         "deny": [{
             "reason": "sealed",

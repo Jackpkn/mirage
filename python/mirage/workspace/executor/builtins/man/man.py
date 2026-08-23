@@ -25,8 +25,8 @@ from mirage.workspace.cli.types import CLIInstall
 from mirage.workspace.executor.builtins.man.types import ManEntry
 from mirage.workspace.executor.builtins.shared import Result
 from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.lookup import command_visible, verb_visible
 from mirage.workspace.mount.registry import DEV_PREFIX, MountRegistry
-from mirage.workspace.route import command_visible, verb_visible
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 

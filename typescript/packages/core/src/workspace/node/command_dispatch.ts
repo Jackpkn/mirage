@@ -67,7 +67,7 @@ import { globPattern } from '../../utils/glob_walk.ts'
 import { CycleError } from '../../utils/path.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
-import { SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, followsLastComponent } from '../route/index.ts'
+import { SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, followsLastComponent } from '../lookup/index.ts'
 import { Admitted, admit } from './admission.ts'
 import type { Session } from '../session/session.ts'
 import { ensureVarVisible, sessionView } from '../session/state.ts'
@@ -487,7 +487,7 @@ async function runArgv(
   // passes through: shell builtins, namespace-routed commands (touch/
   // chmod/ln -s), job builtins, shell functions, and mount commands all
   // route below, so the gate must fire here, not in handleCommand.
-  // Checked ahead of the BUILTINS table, which runs before route(); the
+  // Checked ahead of the BUILTINS table, which runs before lookup(); the
   // enumerators read the same visibility filter through layers().
   // Refusals win over flag parsing, routing, and runtime placement.
   let admitted: Admitted | null = null

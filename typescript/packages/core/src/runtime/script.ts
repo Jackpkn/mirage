@@ -4,58 +4,37 @@ import { LanguageRuntime } from './language.ts'
 import { isEvaluator, type Evaluator } from './mixin.ts'
 import type { ScriptSource } from './policy/types.ts'
 import { buildRuntime } from './table.ts'
-import type { EvalValue, RuntimeLanguage } from './types.ts'
+import type { EvalValue } from './types.ts'
 
 export const CTX_GLOBAL = 'ctx'
 
 /**
- * The sandboxed default engine per config-script language. A config
- * script is operator configuration, so its engine is built fresh and
- * never picked out of a workspace's runtime world: the world is the
- * ordered set that serves *agent* code, it is mutable after
- * construction, and an entry drops out of it silently when an optional
- * dependency is missing.
+ * Build the engine a config script runs on: the one the config named,
+ * and the config always names one.
  *
- * monty on BOTH hosts, deliberately not DEFAULT_PYTHON. The two hosts
- * disagree about the default python engine (pyodide here, monty in
- * Python) because `@pydantic/monty` cannot answer builtin `open()`
- * calls yet, and agent code reads files. A config script does no file
- * I/O at all: it is handed a context and returns a value. So the
- * reason for that split does not reach here, and naming one engine
- * means one source produces one answer on either host rather than two
- * engines that could disagree about the same program.
+ * There is no default engine to fall back to: a script without a
+ * `runtime` is refused where the config is validated, because a default
+ * the operator never wrote is an engine they never chose. The engine is
+ * built fresh and never picked out of a workspace's runtime world: the
+ * world is the ordered set that serves *agent* code, it is mutable
+ * after construction, and an entry drops out of it silently when an
+ * optional dependency is missing. Throws a plain Error whose message is
+ * a clause about "script", for the caller to prefix with whose script
+ * it is.
  */
-export const DEFAULT_SCRIPT_ENGINES: Readonly<Record<RuntimeLanguage, string>> = {
-  python: 'monty',
-  js: 'quickjs',
-}
-
-/**
- * Build the engine a config script runs on.
- *
- * The engine the config named when it names one, else the sandboxed
- * default for the script's language. Throws a plain Error whose
- * message is a clause about "script", for the caller to prefix with
- * whose script it is.
- */
-export function scriptEngine(
-  script: ScriptSource,
-  runtime: string | null = null,
-): Runtime & Evaluator {
-  const wanted = runtime ?? DEFAULT_SCRIPT_ENGINES[script.language]
+export function scriptEngine(script: ScriptSource, runtime: string): Runtime & Evaluator {
   let built: Runtime
   try {
-    built = buildRuntime(wanted)
+    built = buildRuntime(runtime)
   } catch (err) {
     // An engine reports a missing dependency as its own error, each
     // carrying its own install hint.
     const detail = err instanceof Error ? err.message : String(err)
-    throw new Error(`script names runtime '${wanted}': ${detail}`)
+    throw new Error(`script names runtime '${runtime}': ${detail}`)
   }
   if (!isEvaluator(built)) {
     throw new Error(
-      `script names runtime '${wanted}', which runs programs but cannot evaluate one; ` +
-        `use '${DEFAULT_SCRIPT_ENGINES[script.language]}'`,
+      `script names runtime '${runtime}', which runs programs but cannot evaluate one`,
     )
   }
   // `language` is declared by LanguageRuntime, not by Runtime, so an
@@ -63,7 +42,7 @@ export function scriptEngine(
   // is left to the evaluation arm rather than compared against nothing.
   if (built instanceof LanguageRuntime && built.language !== script.language) {
     throw new Error(
-      `script is ${script.language}, but names runtime '${wanted}', which speaks ${built.language}`,
+      `script is ${script.language}, but names runtime '${runtime}', which speaks ${built.language}`,
     )
   }
   return built

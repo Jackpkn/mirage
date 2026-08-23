@@ -874,8 +874,28 @@ def test_profile_script_path_rebases_on_the_config_dir(tmp_path, monkeypatch):
     # build-context rule the cli path form follows; without rebasing it
     # resolves against the process cwd and only works by luck.
     (tmp_path / "roles").mkdir()
-    (tmp_path / "roles" /
-     "x.py").write_text("{'commands': {'allow': ['ls']}}\n")
+    (tmp_path / "roles" / "x.py").write_text("None\n")
+    cfg_file = tmp_path / "ws.yaml"
+    cfg_file.write_text("""\
+mounts:
+  /data:
+    resource: ram
+profiles:
+  release: {script: roles/x.py, runtime: monty}
+""")
+    monkeypatch.chdir(tmp_path.parent)
+    cfg = load_config(cfg_file)
+    release = cfg.to_workspace_kwargs()["profiles"]["release"]
+    assert isinstance(release.script, ScriptSource)
+    assert release.script.source == "None\n"
+    assert release.runtime == "monty"
+
+
+def test_profile_script_states_its_runtime(tmp_path):
+    # There is no default engine: a script the config does not pin to an
+    # engine is refused at load, not guessed at the gate.
+    (tmp_path / "roles").mkdir()
+    (tmp_path / "roles" / "x.py").write_text("None\n")
     cfg_file = tmp_path / "ws.yaml"
     cfg_file.write_text("""\
 mounts:
@@ -884,8 +904,5 @@ mounts:
 profiles:
   release: {script: roles/x.py}
 """)
-    monkeypatch.chdir(tmp_path.parent)
-    cfg = load_config(cfg_file)
-    release = cfg.to_workspace_kwargs()["profiles"]["release"]
-    assert isinstance(release.script, ScriptSource)
-    assert "allow" in release.script.source
+    with pytest.raises(ValueError, match="set runtime beside script"):
+        load_config(cfg_file)

@@ -73,7 +73,7 @@ import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
 import { parseProfileMounts, type SessionProfile } from '../../policy/profile.ts'
 import { applyProfile, compileProfile, resolveProfile, withInline } from '../session/resolve.ts'
-import { permissionsFromScripts } from '../../policy/script.ts'
+import { ScriptPolicy } from '../../policy/script.ts'
 import { newSessionId, newWorkspaceId } from '../../utils/ids.ts'
 import type { WatchRuntime } from '../../watch/base.ts'
 import { resolveControlStores } from './build.ts'
@@ -118,6 +118,7 @@ export class Workspace {
   private readonly runtimes: Runtimes
   private readonly policyRouter: PolicyRouter
   private readonly policy: PolicyFn | null
+  private readonly scriptPolicy: ScriptPolicy
   private readonly profiles: Record<string, SessionProfile>
   private readonly defaultProfileName: string | null
   // True when the workspace auto-added an empty `/` anchor (no user `/` mount).
@@ -185,14 +186,36 @@ export class Workspace {
     if (this.defaultProfileName !== null && !(this.defaultProfileName in this.profiles)) {
       throw new PolicyError(`unknown profile ${JSON.stringify(this.defaultProfileName)}`)
     }
+    // The config door validates the pairing too, but a typed caller
+    // does not pass that door, and the python host refuses the same
+    // profiles at construction.
+    for (const [name, profile] of Object.entries(this.profiles)) {
+      if (profile.script != null && profile.runtime == null) {
+        throw new PolicyError(
+          `profile '${name}': a profile script states the engine it runs on; ` +
+            `set runtime beside script`,
+        )
+      }
+      if (profile.script == null && profile.runtime != null) {
+        throw new PolicyError(
+          `profile '${name}': runtime names the engine a script runs on, ` +
+            `and this profile states no script`,
+        )
+      }
+    }
     // Admission policies, consulted in registration order after the
     // built-ins the registry seeds: the document's command tiers
     // (PermissionsPolicy, reading each session's compiled layers from
-    // the manager by the id the door puts in the context), then Policy
-    // instances, then anything added later through ws.policies.add().
-    // The runtime policy (policy option) is the line-level counterpart
-    // until it is absorbed as a hook.
+    // the manager by the id the door puts in the context), the
+    // profile's script (ScriptPolicy, evaluated per command through the
+    // same manager), then Policy instances, then anything added later
+    // through ws.policies.add(). The runtime policy (policy option) is
+    // the line-level counterpart until it is absorbed as a hook.
     this.registry.policies.add(new PermissionsPolicy(this.sessionManager))
+    this.scriptPolicy = new ScriptPolicy(this.sessionManager, () =>
+      this.mounts().map((entry) => entry.prefix),
+    )
+    this.registry.policies.add(this.scriptPolicy)
     for (const entry of options.policies ?? []) this.registry.policies.add(entry)
     // The approval door an Ask is taken to (design 3.9): grants live on
     // the sessions, the host answers through `onAsk` (or just records
@@ -246,7 +269,8 @@ export class Workspace {
     // so `profiles.default` shapes it too (design 3.4): the primary
     // agent is not the one agent the document cannot reach.
     const defaultBase = this.baseProfile(null)
-    this.sessionManager.defaultProfile = defaultBase === null ? null : compileProfile(defaultBase)
+    this.sessionManager.defaultProfile =
+      defaultBase === null ? null : compileProfile(defaultBase, this.profileName(null))
     for (const resource of [...this.registry.allMounts().map((m) => m.resource), this.cache]) {
       const resourceOps = resource.ops?.()
       if (resourceOps === undefined) continue
@@ -509,6 +533,17 @@ export class Workspace {
   }
 
   /**
+   * The name of the profile `baseProfile` resolves, which its script
+   * reads as `ctx.profile`; empty for a profile document passed without
+   * one.
+   */
+  private profileName(profile: string | SessionProfile | null): string {
+    if (typeof profile === 'string') return profile
+    if (profile === null && this.defaultProfileName !== null) return this.defaultProfileName
+    return ''
+  }
+
+  /**
    * Create a session under one profile, with an optional inline
    * document of its own.
    *
@@ -534,21 +569,14 @@ export class Workspace {
     } = {},
   ): Session {
     const base = this.baseProfile(options.profile ?? null)
-    if (base?.script != null) {
-      // Still a script means hydration has not run, and running it needs
-      // an await this door does not have. Every caller that creates a
-      // session already takes that door first, so this names it rather
-      // than guessing on their behalf.
-      throw new PolicyError(
-        'a profile that states a script is ready only after ' +
-          'ensureSessionsLoaded(); await it before createSession()',
-      )
-    }
     let inline: SessionProfile | null = options.permissions ?? null
     if (options.mounts != null) {
       inline = withInline(inline, { mounts: parseProfileMounts(options.mounts) })
     }
-    const compiled = compileProfile(withInline(base, inline))
+    const compiled = compileProfile(
+      withInline(base, inline),
+      this.profileName(options.profile ?? null),
+    )
     checkCliVerbs(compiled.commands, this.cliVerbs())
     const session = this.sessionManager.create(sessionId)
     applyProfile(session, compiled)
@@ -588,39 +616,11 @@ export class Workspace {
   /**
    * Hydrate sessions from the session store (idempotent). The discovery
    * record resolves first so a minted default session id can adopt the
-   * stored pointer before hydration keys off it. Profile scripts run
-   * here too, once each, because this is the async door every caller
-   * already takes before it creates a session.
+   * stored pointer before hydration keys off it.
    */
   async ensureSessionsLoaded(): Promise<void> {
     await this.meta.ensure()
-    await this.evaluateProfileScripts()
     await this.sessionManager.ensureLoaded()
-  }
-
-  /**
-   * Replace each profile's script with the permissions it produced.
-   *
-   * One call into the policy layer, which runs every script before
-   * returning anything, so one broken profile refuses the whole set
-   * (see permissionsFromScripts). Idempotent by construction: a profile
-   * that has been evaluated no longer states a script, so a second
-   * hydration finds nothing left to run.
-   */
-  private async evaluateProfileScripts(): Promise<void> {
-    const scripted = Object.fromEntries(
-      Object.entries(this.profiles).filter(([, profile]) => profile.script != null),
-    )
-    if (Object.keys(scripted).length === 0) return
-    const mounts = this.mounts().map((entry) => entry.prefix)
-    Object.assign(this.profiles, await permissionsFromScripts(scripted, mounts))
-    if (this.defaultProfileName !== null && this.defaultProfileName in scripted) {
-      // The constructor compiled the default profile before its script
-      // ran, which is the script-only placeholder, so without this the
-      // default session keeps running under empty permissions.
-      const produced = this.profiles[this.defaultProfileName]
-      this.sessionManager.defaultProfile = produced === undefined ? null : compileProfile(produced)
-    }
   }
 
   /**
@@ -1065,6 +1065,7 @@ export class Workspace {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    await this.scriptPolicy.close()
     await closeWorkspace({
       watch: this.watchManager,
       cache: this.cache,

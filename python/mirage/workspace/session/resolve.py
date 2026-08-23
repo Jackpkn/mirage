@@ -15,7 +15,7 @@
 from collections.abc import Mapping
 
 from mirage.policy.errors import PolicyError
-from mirage.policy.types import AdmissionRules, CommandRule
+from mirage.policy.types import AdmissionRules, CommandRule, ProfileScript
 from mirage.types import HiddenPaths, MountMode, weaker_mode
 from mirage.utils.hidden import classify_paths, classify_vars
 from mirage.workspace.session.constants import DEFAULT_PROFILE
@@ -166,19 +166,28 @@ def with_inline(base: SessionProfile | None,
     """A profile with the inline document of one ``create_session`` added.
 
     The one rule about combining two documents: an inline document may
-    add ask and deny rules and hides, never an allow list, and that
-    holds even when there is no profile to add to. Modes take the weaker
-    of the two, ``cwd`` and ``env`` are the inline document's when it
-    states them (they are session presets, not permissions). Either
-    side None returns the other unchanged.
+    add ask and deny rules and hides, never an allow list and never a
+    script, and that holds even when there is no profile to add to.
+    Modes take the weaker of the two, ``cwd`` and ``env`` are the
+    inline document's when it states them (they are session presets,
+    not permissions). Either side None returns the other unchanged; the
+    profile's script survives the merge, since the inline document can
+    only add rules beside it.
 
     Args:
         base (SessionProfile | None): the resolved profile.
         inline (SessionProfile | None): what ``create_session`` added.
+
+    Raises:
+        PolicyError: the inline document states an allow list or a
+            script.
     """
     if inline is None:
         return base
     refuse_allow(inline.commands)
+    if inline.script is not None:
+        raise PolicyError("inline permissions may add ask and deny rules, "
+                          "not a script; state one on the profile")
     if base is None:
         return inline
     hide_paths = _union_hide(base.paths, inline.paths)
@@ -205,6 +214,8 @@ def with_inline(base: SessionProfile | None,
         vars=(VarsBlock(hide=hide_vars) if
               (base.vars is not None or inline.vars is not None) else None),
         commands=_add_commands(base.commands, inline.commands),
+        script=base.script,
+        runtime=base.runtime,
     )
 
 
@@ -326,13 +337,46 @@ def _modes(profile: SessionProfile) -> dict[str, MountMode] | None:
     return modes or None
 
 
-def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
+def compile_script(effective: SessionProfile,
+                   name: str) -> ProfileScript | None:
+    """The profile's per-command script, compiled onto the session.
+
+    Args:
+        effective (SessionProfile): the resolved profile.
+        name (str): the profile's name, empty for a document passed
+            without one; what the script reads as ``ctx["profile"]``.
+
+    Raises:
+        PolicyError: the script is still a path, which means it reached
+            the workspace without passing the config door that loads
+            one.
+    """
+    if effective.script is None:
+        return None
+    if isinstance(effective.script, str):
+        raise PolicyError(
+            f"profile {name!r} names a script by path "
+            f"({effective.script!r}); only the config door loads one, pass "
+            f"ScriptSource in code")
+    # The validator refuses a script without a runtime, so this narrows
+    # a fact already established.
+    assert effective.runtime is not None
+    return ProfileScript(profile=name,
+                         script=effective.script,
+                         runtime=effective.runtime)
+
+
+def compile_profile(effective: SessionProfile | None,
+                    name: str = "") -> CompiledProfile:
     """The session fields a profile compiles to.
 
     Args:
         effective (SessionProfile | None): the resolved profile with any
             inline document already added; None is an unrestricted
             session.
+        name (str): the profile's name, empty for a document passed
+            without one; carried onto its script for ``ctx["profile"]``
+            and for refusals to print.
     """
     if effective is None:
         return CompiledProfile(mount_modes=None,
@@ -351,14 +395,16 @@ def compile_profile(effective: SessionProfile | None) -> CompiledProfile:
         env=dict(effective.env) if effective.env is not None else None,
         cwd=effective.cwd,
         commands=commands,
+        script=compile_script(effective, name),
     )
 
 
 def narrow(session: Session, compiled: CompiledProfile) -> None:
     """Stamp a compiled profile's narrowing onto a session.
 
-    The four fields no shell line can edit: the per-mount modes, hidden
-    paths, hidden variables, the admission rules. Applied at creation
+    The five fields no shell line can edit: the per-mount modes, hidden
+    paths, hidden variables, the admission rules, the profile's
+    script. Applied at creation
     and again whenever a stored record could carry a stale copy (the
     default session after hydration), so the document, not the store,
     is what an agent runs under.
@@ -372,6 +418,7 @@ def narrow(session: Session, compiled: CompiledProfile) -> None:
     session.hidden_paths = compiled.hidden_paths
     session.hidden_vars = compiled.hidden_vars
     session.commands = compiled.commands
+    session.script = compiled.script
 
 
 def apply_profile(session: Session, compiled: CompiledProfile) -> None:

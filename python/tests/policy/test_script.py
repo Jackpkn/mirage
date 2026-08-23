@@ -2,15 +2,23 @@ import asyncio
 
 import pytest
 
-from mirage.policy.errors import PolicyError
-from mirage.policy.profile import SessionProfile
-from mirage.policy.script import (permissions_from_script,
-                                  permissions_from_scripts, script_context)
+from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
+from mirage.policy.script import ScriptPolicy, script_action, script_context
+from mirage.policy.types import (Ask, CommandContext, Deny, DenyScope,
+                                 ProfileScript)
 from mirage.runtime.errors import EvalError
 from mirage.runtime.mixin import EvaluatorMixin
 from mirage.runtime.types import EvalResult, EvalValue, ScriptSource
+from mirage.types import PathSpec
 
-DOC = {"commands": {"allow": ["ls", "cat"]}, "cwd": "/repo"}
+DENY_ANSWER = {"deny": "sealed"}
+
+
+class FakeRegistry:
+    """The one registry question a CommandContext carries."""
+
+    def is_mount_root(self, path: str) -> bool:
+        return False
 
 
 class FakeEngine(EvaluatorMixin):
@@ -49,165 +57,218 @@ class FakeEngine(EvaluatorMixin):
         self.closed = True
 
 
+class OneScript:
+    """A sessions query holding one script for every known session."""
+
+    def __init__(self, entry: ProfileScript | None) -> None:
+        self.entry = entry
+
+    def script_of(self, session_id: str) -> ProfileScript | None:
+        return self.entry
+
+
 @pytest.fixture(autouse=True)
 def _reset_built():
     FakeEngine.built = []
 
 
-def _scripted(**runtimes: str | None) -> dict[str, SessionProfile]:
-    """Profiles stating one script each, keyed by profile name.
+def _entry(runtime: str = "monty") -> ProfileScript:
+    return ProfileScript(profile="release",
+                         script=ScriptSource("SOURCE"),
+                         runtime=runtime)
 
-    Args:
-        runtimes (str | None): the engine each named profile states,
-            None for the language default.
-    """
-    return {
-        name: SessionProfile(script=ScriptSource("..."), runtime=runtime)
-        for name, runtime in runtimes.items()
+
+def _path(virtual: str) -> PathSpec:
+    return PathSpec(virtual=virtual,
+                    directory="/",
+                    resource_path=virtual.lstrip("/"),
+                    raw_path=virtual)
+
+
+def _ctx(command: str = "cat", session_id: str = "s") -> CommandContext:
+    return CommandContext(command=command,
+                          paths=(_path("/repo/sealed/k"), ),
+                          argv=("/repo/sealed/k", ),
+                          cwd="/repo",
+                          registry=FakeRegistry(),
+                          operands=(_path("/repo/sealed/k"), ),
+                          session_id=session_id,
+                          agent_id="agent-1",
+                          tokens=(command, "/repo/sealed/k"),
+                          program=(command, ))
+
+
+def _mounts() -> list[str]:
+    return ["/repo/", "/scratch/"]
+
+
+def _policy(value: EvalValue = None,
+            error: Exception | None = None,
+            delay: float = 0.0,
+            entry: ProfileScript | None = None) -> ScriptPolicy:
+    policy = ScriptPolicy(OneScript(entry if entry is not None else _entry()),
+                          _mounts)
+    policy._engines["monty"] = FakeEngine(value, error, delay)
+    return policy
+
+
+def test_script_context_is_the_command_context_as_data():
+    ctx = script_context("release", _ctx(), _mounts())
+    assert ctx == {
+        "profile": "release",
+        "command": {
+            "name": "cat",
+            "argv": ["/repo/sealed/k"],
+            "tokens": ["cat", "/repo/sealed/k"],
+            "program": ["cat"],
+            "paths": ["/repo/sealed/k"],
+            "operands": ["/repo/sealed/k"],
+            "tool": True,
+            "walks": False,
+        },
+        "session": {
+            "id": "s",
+            "agent": "agent-1",
+            "cwd": "/repo",
+        },
+        "mounts": ["/repo/", "/scratch/"],
     }
 
 
-def test_script_context_names_the_profile_and_the_mounts():
-    ctx = script_context("release", ["/repo/", "/scratch/"])
-    assert ctx == {"profile": "release", "mounts": ["/repo/", "/scratch/"]}
+@pytest.mark.parametrize("value", [None, "allow"])
+def test_allow_and_silence_are_no_opinion(value):
+    assert script_action(value) is None
 
 
-def test_script_context_carries_nothing_per_session():
-    # The script runs once for the profile, so a per-session fact
-    # reaching it would be a promise the one evaluation cannot keep.
-    ctx = script_context("release", [])
-    assert "session_id" not in ctx
-    assert "agent_id" not in ctx
+def test_a_deny_answer_becomes_a_whole_command_deny():
+    action = script_action({"deny": "sealed"})
+    assert action == Deny("sealed", DenyScope.COMMAND)
+
+
+def test_an_ask_answer_goes_to_the_approval_door():
+    action = script_action({"ask": "sign-off"})
+    assert action == Ask("sign-off")
+    assert action.rule is None
+
+
+def test_bare_verbs_carry_the_documents_default_reasons():
+    assert script_action("deny") == Deny(DEFAULT_DENY_REASON)
+    assert script_action("ask") == Ask(DEFAULT_ASK_REASON)
+
+
+@pytest.mark.parametrize("value", [
+    [1, 2],
+    7,
+    "nope",
+    {},
+    {
+        "deny": ""
+    },
+    {
+        "deny": 3
+    },
+    {
+        "allow": True
+    },
+    {
+        "deny": "a",
+        "ask": "b"
+    },
+])
+def test_anything_else_is_refused(value):
+    with pytest.raises(ValueError, match="must answer allow, deny or ask"):
+        script_action(value)
 
 
 @pytest.mark.asyncio
-async def test_the_produced_permissions_are_validated():
-    engine = FakeEngine(DOC)
-    produced = await permissions_from_script(
-        "release", ScriptSource("..."), script_context("release", ["/repo/"]),
-        engine)
-    assert produced.cwd == "/repo"
-    assert produced.commands is not None
-    assert produced.commands.allow == ("ls", "cat")
+async def test_a_session_without_a_script_is_not_judged():
+    policy = ScriptPolicy(OneScript(None), _mounts)
+    assert await policy.pre_command(_ctx()) is None
+    assert FakeEngine.built == []
 
 
 @pytest.mark.asyncio
-async def test_the_script_is_shown_its_context():
-    engine = FakeEngine(DOC)
-    ctx = script_context("release", ["/repo/"])
-    await permissions_from_script("release", ScriptSource("SOURCE"), ctx,
-                                  engine)
+async def test_the_script_is_shown_the_commands_facts():
+    policy = _policy(None)
+    assert await policy.pre_command(_ctx()) is None
+    engine = FakeEngine.built[0]
     assert engine.code == "SOURCE"
-    assert engine.seen == {"ctx": ctx}
+    assert engine.seen == {"ctx": script_context("release", _ctx(), _mounts())}
 
 
 @pytest.mark.asyncio
-async def test_a_script_that_raised_is_refused():
-    engine = FakeEngine(error=EvalError("boom"))
-    with pytest.raises(PolicyError, match="script failed: boom"):
-        await permissions_from_script("release", ScriptSource("..."), {},
-                                      engine)
+async def test_a_deny_it_computed_refuses_the_command():
+    policy = _policy(DENY_ANSWER)
+    assert await policy.pre_command(_ctx()) == Deny("sealed")
+
+
+@pytest.mark.asyncio
+async def test_an_ask_it_computed_reaches_the_door():
+    policy = _policy({"ask": "sign-off"})
+    assert await policy.pre_command(_ctx()) == Ask("sign-off")
+
+
+@pytest.mark.asyncio
+async def test_the_engine_is_built_once_and_reused():
+    policy = _policy(None)
+    await policy.pre_command(_ctx("cat"))
+    await policy.pre_command(_ctx("ls"))
+    assert len(FakeEngine.built) == 1
+    assert FakeEngine.built[0].evals == 2
+
+
+@pytest.mark.asyncio
+async def test_close_closes_the_engines():
+    policy = _policy(None)
+    await policy.pre_command(_ctx())
+    await policy.close()
+    assert FakeEngine.built[0].closed
+
+
+@pytest.mark.asyncio
+async def test_a_script_that_raised_fails_closed():
+    # Silence on failure would run exactly the commands the script
+    # existed to judge, so every failure arm refuses instead.
+    policy = _policy(error=EvalError("boom"))
+    action = await policy.pre_command(_ctx())
+    assert action == Deny("profile 'release' script failed: boom")
 
 
 @pytest.mark.asyncio
 async def test_a_syntax_error_is_named_as_one():
-    engine = FakeEngine(error=EvalError("bad token", syntax=True))
-    with pytest.raises(PolicyError, match="script syntax error"):
-        await permissions_from_script("release", ScriptSource("..."), {},
-                                      engine)
+    policy = _policy(error=EvalError("bad token", syntax=True))
+    action = await policy.pre_command(_ctx())
+    assert isinstance(action, Deny)
+    assert "profile 'release' script syntax error" in action.reason
 
 
 @pytest.mark.asyncio
-async def test_a_script_that_timed_out_is_refused(monkeypatch):
+async def test_a_script_that_timed_out_fails_closed(monkeypatch):
     monkeypatch.setattr("mirage.policy.script.SCRIPT_EVAL_TIMEOUT_SECONDS",
                         0.01)
-    engine = FakeEngine(DOC, delay=0.2)
-    with pytest.raises(PolicyError, match="timed out"):
-        await permissions_from_script("release", ScriptSource("..."), {},
-                                      engine)
+    policy = _policy(None, delay=0.2)
+    action = await policy.pre_command(_ctx())
+    assert isinstance(action, Deny)
+    assert "profile 'release' script timed out" in action.reason
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("value", [None, [1, 2], "commands", 7])
-async def test_anything_but_permissions_is_refused(value):
-    # Empty permissions restrict nothing, so a wrong shape must never
-    # coerce to one; every arm here has to raise rather than fall back.
-    engine = FakeEngine(value)
-    with pytest.raises(PolicyError, match="must end in the permissions"):
-        await permissions_from_script("release", ScriptSource("..."), {},
-                                      engine)
+async def test_a_wrong_answer_shape_fails_closed():
+    policy = _policy([1, 2])
+    action = await policy.pre_command(_ctx())
+    assert isinstance(action, Deny)
+    assert "profile 'release' script must answer" in action.reason
 
 
-@pytest.mark.asyncio
-async def test_permissions_that_are_not_valid_are_refused():
-    engine = FakeEngine({"commands": {"allow": "ls"}})
-    with pytest.raises(PolicyError, match="not valid"):
-        await permissions_from_script("release", ScriptSource("..."), {},
-                                      engine)
-
-
-@pytest.mark.asyncio
-async def test_a_script_that_produced_a_script_is_refused():
-    engine = FakeEngine({"script": "roles/other.py"})
-    with pytest.raises(PolicyError, match="produced another script"):
-        await permissions_from_script("release", ScriptSource("..."), {},
-                                      engine)
-
-
-@pytest.mark.asyncio
-async def test_every_refusal_names_the_profile():
-    engine = FakeEngine([])
-    with pytest.raises(PolicyError, match="profile 'release' script"):
-        await permissions_from_script("release", ScriptSource("..."), {},
-                                      engine)
-
-
-@pytest.mark.asyncio
-async def test_a_script_still_spelled_as_a_path_is_refused():
-    scripted = {
-        "release": SessionProfile.model_validate({"script": "roles/x.py"})
-    }
-    with pytest.raises(PolicyError, match="names a script by path"):
-        await permissions_from_scripts(scripted, [])
-
-
-def _no_engine(script: ScriptSource, runtime: str | None = None) -> FakeEngine:
+def _no_engine(script: ScriptSource, runtime: str) -> FakeEngine:
     raise ValueError(f"script names runtime {runtime!r}: nope")
 
 
-def _good_engine(script: ScriptSource,
-                 runtime: str | None = None) -> FakeEngine:
-    return FakeEngine(DOC)
-
-
-def _broken_engine(script: ScriptSource,
-                   runtime: str | None = None) -> FakeEngine:
-    return FakeEngine(error=EvalError("boom"))
-
-
 @pytest.mark.asyncio
-async def test_an_engine_refusal_is_worded_for_the_profile(monkeypatch):
+async def test_an_engine_it_cannot_build_fails_closed(monkeypatch):
     monkeypatch.setattr("mirage.policy.script.script_engine", _no_engine)
-    with pytest.raises(PolicyError,
-                       match="profile 'release' script names runtime"):
-        await permissions_from_scripts(_scripted(release="ghost"), [])
-
-
-@pytest.mark.asyncio
-async def test_profiles_of_one_language_share_one_engine(monkeypatch):
-    monkeypatch.setattr("mirage.policy.script.script_engine", _good_engine)
-    produced = await permissions_from_scripts(_scripted(a=None, b=None), [])
-    assert set(produced) == {"a", "b"}
-    # One engine is built per call, but only the first of a kind is
-    # kept: both scripts ran on it, and it alone was closed.
-    kept = FakeEngine.built[0]
-    assert kept.evals == 2
-    assert kept.closed
-
-
-@pytest.mark.asyncio
-async def test_the_engine_is_closed_when_a_script_fails(monkeypatch):
-    monkeypatch.setattr("mirage.policy.script.script_engine", _broken_engine)
-    with pytest.raises(PolicyError, match="profile 'release' script failed"):
-        await permissions_from_scripts(_scripted(release=None), [])
-    assert FakeEngine.built[0].closed
+    policy = ScriptPolicy(OneScript(_entry("ghost")), _mounts)
+    action = await policy.pre_command(_ctx())
+    assert isinstance(action, Deny)
+    assert action.reason == "profile 'release' script names runtime " \
+                            "'ghost': nope"

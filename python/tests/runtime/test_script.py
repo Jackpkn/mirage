@@ -4,9 +4,7 @@ import pytest
 
 from mirage.runtime.errors import EvalError
 from mirage.runtime.mixin import EvaluatorMixin
-from mirage.runtime.script import (CTX_GLOBAL, DEFAULT_SCRIPT_ENGINES,
-                                   eval_with_ctx, script_engine)
-from mirage.runtime.table import NAMED
+from mirage.runtime.script import CTX_GLOBAL, eval_with_ctx, script_engine
 from mirage.runtime.types import EvalResult, EvalValue, ScriptSource
 
 
@@ -65,28 +63,10 @@ async def test_an_eval_failure_reaches_the_caller_unworded():
         await eval_with_ctx("...", {}, Recorder(error=EvalError("boom")), 1.0)
 
 
-def test_default_engines_name_monty_not_the_host_default():
-    # Deliberately not DEFAULT_PYTHON: the two hosts disagree about that
-    # (pyodide in TypeScript) for a reason that is about agent code
-    # reading files, which a config script never does. Naming one engine
-    # keeps one source producing one answer on either host.
-    assert DEFAULT_SCRIPT_ENGINES == {"python": "monty", "js": "quickjs"}
-
-
-def test_every_default_engine_can_actually_evaluate():
-    for language, runtime in DEFAULT_SCRIPT_ENGINES.items():
-        assert issubclass(NAMED[runtime], EvaluatorMixin), language
-
-
-def test_script_engine_defaults_to_the_language_engine():
-    engine = script_engine(ScriptSource("..."))
-    assert engine.name == "monty"
-    assert isinstance(engine, EvaluatorMixin)
-
-
-def test_script_engine_takes_the_named_runtime():
+def test_script_engine_builds_the_named_runtime():
     engine = script_engine(ScriptSource("..."), "monty")
     assert engine.name == "monty"
+    assert isinstance(engine, EvaluatorMixin)
 
 
 def test_script_engine_refuses_a_runtime_that_cannot_evaluate():

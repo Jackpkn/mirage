@@ -377,11 +377,32 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       EMAIL_HOST: localhost
       MONGODB_URI: mongodb://localhost:27017
+      QUICKJS_BUILD: v0.15.1
+      MIRAGE_QUICKJS_HOME: /tmp/quickjs
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/integ-battery-setup
         with:
           build-packages: "false"
+
+      # The ram-scripted target's js profile script runs on quickjs,
+      # which on the python host is the quickjs-ng WASI build.
+      - name: Cache the quickjs WASI build
+        id: quickjs-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/quickjs
+          key: quickjs-wasi-${{ env.QUICKJS_BUILD }}
+
+      - name: Download the quickjs WASI build
+        if: steps.quickjs-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/quickjs
+          gh release download "$QUICKJS_BUILD" -R quickjs-ng/quickjs \
+            -p qjs-wasi.wasm -O /tmp/quickjs/qjs-wasi.wasm
+
       - name: Run declarative battery (python hosts)
         run: ./python/.venv/bin/python integ/runners/python/main.py --facet core --strict --allow-skip chroma,lancedb,nextcloud,notion,postgres,qdrant
 
