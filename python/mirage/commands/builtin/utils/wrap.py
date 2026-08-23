@@ -47,6 +47,13 @@ def mount_parent_readdir(
     the command once per descendant mount and concatenates. Listing them
     here would search each one twice.
 
+    The visible descendants, not every descendant. Answering at all
+    tells the session the directory is there, and a directory that
+    exists only because of a mount it may not be told about is a
+    directory it may not be told about either: a hidden mount under an
+    otherwise absent parent has to keep reading as absence, the same
+    way the mount itself does.
+
     Args:
         readdir (Callable): the bound readdir the walk uses.
         mounts (MountView | None): the mount boundaries; without them
@@ -60,7 +67,7 @@ def mount_parent_readdir(
             return await readdir(path)
         except WALK_ERRORS:
             virtual = path.virtual if isinstance(path, PathSpec) else path
-            if mounts.descendants(virtual):
+            if mounts.visible_descendants(virtual):
                 return []
             raise
 
@@ -83,8 +90,11 @@ def mount_parent_stat(
     answer for paths inside the descendant mounts too, which is exactly
     what the primary run must not see: the fan-out searches each of them
     separately, so claiming their entries here would search them twice.
-    A path with mounts strictly under it is the only case, and its row is
-    a directory with no size, the same row the namespace serves.
+    A path with visible mounts strictly under it is the only case, and
+    its row is a directory with no size, the same row the namespace
+    serves. Visible, because a row is a disclosure: the parent of a
+    mount this session may not be told about stays absent, which is
+    what every other verb already answers there.
 
     Args:
         stat (Callable): the bound stat the walk uses.
@@ -99,7 +109,7 @@ def mount_parent_stat(
             return await stat(path)
         except WALK_ERRORS:
             virtual = path.virtual if isinstance(path, PathSpec) else path
-            if not mounts.descendants(virtual):
+            if not mounts.visible_descendants(virtual):
                 raise
             return FileStat(name=operand_name(to_pathspec(virtual)),
                             type=FileType.DIRECTORY)

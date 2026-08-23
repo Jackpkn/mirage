@@ -89,6 +89,12 @@ export async function operandStat(
  * Empty rather than the mount names, because the fan-out already runs the
  * command once per descendant mount and concatenates. Listing them here
  * would search each one twice.
+ *
+ * The visible descendants, not every descendant. Answering at all tells
+ * the session the directory is there, and a directory that exists only
+ * because of a mount it may not be told about is a directory it may not be
+ * told about either: a hidden mount under an otherwise absent parent has
+ * to keep reading as absence, the same way the mount itself does.
  */
 export function mountParentReaddir(
   readdir: (p: string) => Promise<string[]>,
@@ -100,7 +106,7 @@ export function mountParentReaddir(
       return await readdir(p)
     } catch (e) {
       if (!isFsError(e)) throw e
-      if (mounts.descendants(p).length === 0) throw e
+      if (mounts.visibleDescendants(p).length === 0) throw e
       return []
     }
   }
@@ -118,6 +124,10 @@ export function mountParentReaddir(
  * answer for paths inside the descendant mounts too, which is exactly what
  * the primary run must not see: the fan-out searches each of them
  * separately, so claiming their entries here would search them twice.
+ *
+ * Visible descendants only, because a row is a disclosure: the parent of a
+ * mount this session may not be told about stays absent, which is what
+ * every other verb already answers there.
  */
 export function mountParentStat(
   stat: (p: string) => Promise<FileStat>,
@@ -129,7 +139,7 @@ export function mountParentStat(
       return await stat(p)
     } catch (e) {
       if (!isFsError(e)) throw e
-      if (mounts.descendants(p).length === 0) throw e
+      if (mounts.visibleDescendants(p).length === 0) throw e
       return new FileStat({ name: operandName(p), type: FileType.DIRECTORY })
     }
   }
