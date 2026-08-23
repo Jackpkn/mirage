@@ -110,6 +110,41 @@
       "flags": [
         "c"
       ]
+    },
+    {
+      "id": "stat_mount_root_names_the_operand",
+      "note": "A mount root's name comes from the operand, never from the backend serving it. A backend names its own root the way its store spells one: ram answers `/` and disk answers the host directory's basename, which put a real host path in the answer to a question asked about a virtual one. `%n` was always the operand (seq 94), so only the default render could carry that, and only the name field is asserted because size and mtime are legitimately per-backend.",
+      "seq": 95,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "hf",
+        "hf-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "stat /data | cut -d' ' -f1",
+      "expect": {
+        "exit": 0,
+        "stdout": "name=data\n",
+        "stderr": ""
+      }
     }
   ]
 }

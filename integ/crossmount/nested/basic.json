@@ -377,6 +377,189 @@
         "stdout": "name=deep size=None modified=None type=directory\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "nest_namespace_ancestor_rg",
+      "note": "The rg twin of seq 950027. Both walk with the same wrapped readdir and operand stat, so a fix applied to one and not the other is invisible until a case names it.",
+      "seq": 950030,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "rg ghost /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "/ghost/deep/g.txt:ghost\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_grep_is_a_directory",
+      "note": "The synthesized row is a directory row, not merely a present one. Without -r grep refuses a directory operand, and it can only word that refusal if the stat it got back said directory; a file row would have made it read the path and fail as absent.",
+      "seq": 950031,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "grep -c ghost /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "grep: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_stat_format_spec",
+      "note": "`%n` is the operand as typed, and the name override that fixed the default render must not reach it: the two fields answer different questions (`name=` is a basename for a file too) and only the default one was ever wrong.",
+      "seq": 950032,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "stat -c %n /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "/ghost\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_ls",
+      "note": "ls, find and du already answered on a namespace-only ancestor; they are the reference the other verbs were made to agree with, so they are pinned here rather than left implied.",
+      "seq": 950033,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "ls /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "deep\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_find",
+      "seq": 950034,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "find /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "/ghost\n/ghost/deep\n/ghost/deep/g.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_du",
+      "seq": 950035,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "du /ghost",
+      "expect": {
+        "exit": 0,
+        "stdout": "6\t/ghost/deep\n6\t/ghost\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_test_d",
+      "seq": 950036,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "test -d /ghost && echo yes",
+      "expect": {
+        "exit": 0,
+        "stdout": "yes\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_mount_root_file_names_the_path",
+      "note": "The file twin of seq 950029: a mount root reached under a namespace-only parent.",
+      "seq": 950037,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "file /ghost/deep",
+      "expect": {
+        "exit": 0,
+        "stdout": "/ghost/deep: directory\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_grep",
+      "note": "A session that hides the only mount under /ghost leaves nothing there to find, and the parent has to go back to reading as absent. The mount table is not session state, so the wrappers ask for the visible descendants: keyed on every descendant they answered an ordinary no-match here, which told the session /ghost exists when every other verb says it does not.",
+      "seq": 950038,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "grep -r ghost /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "grep: /ghost: No such file or directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_rg",
+      "seq": 950039,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "rg ghost /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "rg: /ghost: No such file or directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_grep_operand",
+      "note": "The operand stat is the other half: seq 950031 gets a directory row here, and under the hide it must get nothing rather than a row saying the path is there.",
+      "seq": 950040,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "grep -c ghost /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "grep: /ghost: No such file or directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_stat",
+      "note": "What the answer above is required to match. stat reads the namespace through the dispatcher, which filters the hides already, so it is the verb the search pair had drifted away from.",
+      "seq": 950041,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "stat /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "stat: /ghost: No such file or directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_sibling_still_searchable",
+      "note": "The hide withholds one mount, not the session's whole search surface.",
+      "seq": 950042,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "grep -r top /data",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/top.txt:top\n",
+        "stderr": ""
+      }
     }
   ]
 }
