@@ -17,6 +17,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./readdir.ts', () => ({
   readdir: vi.fn(),
+  schemaGuard: vi.fn(),
+  entityGuard: vi.fn(),
 }))
 
 import { PostgresAccessor } from '../../accessor/postgres.ts'

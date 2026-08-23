@@ -42,6 +42,9 @@ export async function statOrNull(dispatch: DispatchFn, path: PathSpec): Promise<
 // path with [] rather than raising, and cannot hold an empty directory
 // anyway (one with no keys under it does not exist). Measured across every
 // integ target: an implicit directory answers here, a missing path does not.
+// That holds only while a backend's readdir refuses a path it cannot prove:
+// postgres answered tables/views under any first segment, and every absent
+// schema read as a directory here.
 export async function resolvePathStat(
   dispatch: DispatchFn,
   path: PathSpec,

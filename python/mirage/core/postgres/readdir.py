@@ -18,6 +18,32 @@ from mirage.core.hierarchy.readdir import make_readdir
 from mirage.core.hierarchy.scope import ScopeMatch
 from mirage.core.postgres import client
 from mirage.core.postgres.scope import ENTITY_FILES, KIND_DIRS, detect_scope
+from mirage.utils.errors import enoent
+
+
+async def schema_guard(accessor: PostgresAccessor, match: ScopeMatch,
+                       virtual: str) -> None:
+    pool = await accessor.pool()
+    async with pool.acquire() as conn:
+        schemas = await client.list_schemas(conn, accessor.config.schemas)
+    if match.slots["schema"] not in schemas:
+        raise enoent(virtual)
+
+
+async def entity_guard(accessor: PostgresAccessor, match: ScopeMatch,
+                       virtual: str) -> None:
+    schema = match.slots["schema"]
+    kind = match.slots["kind"]
+    pool = await accessor.pool()
+    async with pool.acquire() as conn:
+        if kind == "tables":
+            names = await client.list_tables(conn, schema)
+        else:
+            views = await client.list_views(conn, schema)
+            mviews = await client.list_matviews(conn, schema)
+            names = sorted(set(views) | set(mviews))
+    if match.slots["entity"] not in names:
+        raise enoent(virtual)
 
 
 async def _list_root(accessor: PostgresAccessor,
@@ -88,5 +114,15 @@ readdir = make_readdir(
         "schema": _list_schema,
         "kind": _list_entities,
         "entity": _list_entity_files,
+    },
+    # Every lister below answers from the path alone, so without these a
+    # schema or entity that does not exist reads as a real directory:
+    # tables/ and views/ under any first segment, the entity files under
+    # any third, and an empty listing (not ENOENT) for a missing schema's
+    # tables/. Same guards stat runs, so the two answer alike.
+    guards={
+        "schema": schema_guard,
+        "kind": schema_guard,
+        "entity": entity_guard,
     },
 )
