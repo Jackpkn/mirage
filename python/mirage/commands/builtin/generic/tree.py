@@ -11,7 +11,7 @@ from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import MountView, ReaddirPath, StatPath
 from mirage.types import FileStat, FileType, PathSpec, ReaddirFn
-from mirage.utils.errors import WALK_ERRORS
+from mirage.utils.errors import MISS_ERRORS, WALK_ERRORS
 from mirage.utils.fnmatch import fnmatch
 from mirage.utils.key_prefix import rekey
 
@@ -124,7 +124,11 @@ async def _walk(
     try:
         entries = sorted(await readdir(path, index))
     except WALK_ERRORS as exc:
-        if not child_mounts:
+        # An absence only. A directory the backend refused (EACCES,
+        # ENOTSUP) is there and holds data, so it stays a warning and an
+        # unopened row even when mounts sit under it; swallowing that to
+        # draw the children would report a readable tree that is not.
+        if not (child_mounts and isinstance(exc, MISS_ERRORS)):
             warnings.append(f"tree: '{path.raw_path}': {exc}")
             return lines, dirs, files, 1
         entries = []

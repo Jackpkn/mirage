@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import type { MountView } from '../../../ops/types.ts'
 import type { FileStat } from '../../../types.ts'
 import { FileType, PathSpec } from '../../../types.ts'
-import { enoent } from '../../../utils/errors.ts'
+import { eacces, enoent } from '../../../utils/errors.ts'
 import { mountParentReaddir, mountParentStat, resolveScript, splitReadable } from './operands.ts'
 
 function spec(virtual: string): PathSpec {
@@ -83,6 +83,7 @@ function mountsOf(descendants: string[], hidden: string[] = []): MountView {
 }
 
 const absentDir = (p: string) => Promise.reject(enoent(spec(p)))
+const deniedDir = (p: string) => Promise.reject(eacces(spec(p)))
 
 describe('mountParentReaddir', () => {
   it('lists a mount parent as empty', async () => {
@@ -131,6 +132,11 @@ describe('mountParentStat', () => {
   it('rethrows where no mount sits below', async () => {
     const st = mountParentStat(absentStat, mountsOf(['/ghost/deep']))
     await expect(st('/nope')).rejects.toThrow()
+  })
+
+  it('rethrows a refusal that is not an absence', async () => {
+    const st = mountParentStat(deniedDir, mountsOf(['/ghost/deep']))
+    await expect(st('/ghost')).rejects.toThrow()
   })
 
   it('rethrows when the only mount below is hidden', async () => {

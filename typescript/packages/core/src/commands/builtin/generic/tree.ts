@@ -18,7 +18,7 @@ import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import { FileType, PathSpec, type FileStat } from '../../../types.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
-import { enoent, isWalkError } from '../../../utils/errors.ts'
+import { enoent, isMissError, isWalkError } from '../../../utils/errors.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import type { MountView } from '../../../ops/types.ts'
 import { fnmatch } from '../../../utils/fnmatch.ts'
@@ -92,7 +92,13 @@ async function walkTree(
     entries = await readdir(path)
   } catch (err) {
     if (!isWalkError(err)) throw err
-    if (nested.length === 0) return { dirs, files, failed: true, unopened: 1 }
+    // An absence only. A directory the backend refused (EACCES, ENOTSUP) is
+    // there and holds data, so it stays a warning and an unopened row even
+    // when mounts sit under it; swallowing that to draw the children would
+    // report a readable tree that is not.
+    if (nested.length === 0 || !isMissError(err)) {
+      return { dirs, files, failed: true, unopened: 1 }
+    }
     entries = []
   }
   if (nested.length > 0) entries = [...new Set([...entries, ...nested])]

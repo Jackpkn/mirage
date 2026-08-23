@@ -18,7 +18,7 @@ from typing import Any
 from mirage.commands.builtin.utils.operands import operand_name
 from mirage.ops.types import MountView
 from mirage.types import FileStat, FileType, PathSpec
-from mirage.utils.errors import WALK_ERRORS
+from mirage.utils.errors import MISS_ERRORS
 from mirage.utils.key_prefix import mount_key
 
 
@@ -47,6 +47,13 @@ def mount_parent_readdir(
     the command once per descendant mount and concatenates. Listing them
     here would search each one twice.
 
+    Only for an absence, which is why the catch is ``MISS_ERRORS`` and
+    not the walk's own wider set: a directory the backend refused with
+    EACCES or ENOTSUP is there and holds data this run cannot read, and
+    calling it empty would let ``grep -r`` print the descendant mount's
+    hits and exit 0 while silently omitting it. A refusal that is not
+    absence keeps propagating and gets reported.
+
     The visible descendants, not every descendant. Answering at all
     tells the session the directory is there, and a directory that
     exists only because of a mount it may not be told about is a
@@ -65,7 +72,7 @@ def mount_parent_readdir(
     async def listing(path: str | PathSpec) -> list[str]:
         try:
             return await readdir(path)
-        except WALK_ERRORS:
+        except MISS_ERRORS:
             virtual = path.virtual if isinstance(path, PathSpec) else path
             if mounts.visible_descendants(virtual):
                 return []
@@ -96,6 +103,10 @@ def mount_parent_stat(
     mount this session may not be told about stays absent, which is
     what every other verb already answers there.
 
+    An absence only, the same as its readdir twin: a backend that
+    refused the path rather than not having it is reporting something
+    the run must not paper over with a synthesized row.
+
     Args:
         stat (Callable): the bound stat the walk uses.
         mounts (MountView | None): the mount boundaries; without them
@@ -107,7 +118,7 @@ def mount_parent_stat(
     async def probe(path: str | PathSpec) -> FileStat:
         try:
             return await stat(path)
-        except WALK_ERRORS:
+        except MISS_ERRORS:
             virtual = path.virtual if isinstance(path, PathSpec) else path
             if not mounts.visible_descendants(virtual):
                 raise

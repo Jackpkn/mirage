@@ -16,7 +16,7 @@ import { IOResult, materialize } from '../../../io/types.ts'
 import type { MountView, StatPath } from '../../../ops/types.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
 import { mountKey } from '../../../utils/key_prefix.ts'
-import { eisdir, fsErrorLine, isFsError } from '../../../utils/errors.ts'
+import { eisdir, fsErrorLine, isFsError, isMissError } from '../../../utils/errors.ts'
 import { resolvePath } from '../../../utils/path.ts'
 import { stripSlash } from '../../../utils/slash.ts'
 
@@ -95,6 +95,13 @@ export async function operandStat(
  * because of a mount it may not be told about is a directory it may not be
  * told about either: a hidden mount under an otherwise absent parent has
  * to keep reading as absence, the same way the mount itself does.
+ *
+ * Only for an absence, which is why the catch is `isMissError` and not the
+ * walk's own wider set: a directory the backend refused with EACCES or
+ * ENOTSUP is there and holds data this run cannot read, and calling it
+ * empty would let `grep -r` print the descendant mount's hits and exit 0
+ * while silently omitting it. A refusal that is not absence keeps
+ * propagating and gets reported.
  */
 export function mountParentReaddir(
   readdir: (p: string) => Promise<string[]>,
@@ -105,7 +112,7 @@ export function mountParentReaddir(
     try {
       return await readdir(p)
     } catch (e) {
-      if (!isFsError(e)) throw e
+      if (!isMissError(e)) throw e
       if (mounts.visibleDescendants(p).length === 0) throw e
       return []
     }
@@ -128,6 +135,10 @@ export function mountParentReaddir(
  * Visible descendants only, because a row is a disclosure: the parent of a
  * mount this session may not be told about stays absent, which is what
  * every other verb already answers there.
+ *
+ * An absence only, the same as its readdir twin: a backend that refused the
+ * path rather than not having it is reporting something the run must not
+ * paper over with a synthesized row.
  */
 export function mountParentStat(
   stat: (p: string) => Promise<FileStat>,
@@ -138,7 +149,7 @@ export function mountParentStat(
     try {
       return await stat(p)
     } catch (e) {
-      if (!isFsError(e)) throw e
+      if (!isMissError(e)) throw e
       if (mounts.visibleDescendants(p).length === 0) throw e
       return new FileStat({ name: operandName(p), type: FileType.DIRECTORY })
     }

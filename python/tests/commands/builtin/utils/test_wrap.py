@@ -40,6 +40,10 @@ async def _absent(path):
     raise FileNotFoundError(path)
 
 
+async def _denied(path):
+    raise PermissionError(path)
+
+
 async def _listing(path):
     return ["a.txt"]
 
@@ -120,4 +124,21 @@ async def test_stat_re_raises_when_the_only_mount_below_is_hidden():
         _absent,
         _mounts(descendants=("/ghost/deep", ), hidden=("/ghost/deep", )))
     with pytest.raises(FileNotFoundError):
+        await st("/ghost")
+
+
+@pytest.mark.asyncio
+async def test_readdir_re_raises_a_refusal_that_is_not_an_absence():
+    # A directory the backend refused is there and holds data this run
+    # cannot read. Calling it empty would let grep -r print the mount
+    # below it and exit 0 while silently omitting the parent.
+    st = mount_parent_readdir(_denied, _mounts(descendants=("/ghost/deep", )))
+    with pytest.raises(PermissionError):
+        await st("/ghost")
+
+
+@pytest.mark.asyncio
+async def test_stat_re_raises_a_refusal_that_is_not_an_absence():
+    st = mount_parent_stat(_denied, _mounts(descendants=("/ghost/deep", )))
+    with pytest.raises(PermissionError):
         await st("/ghost")
