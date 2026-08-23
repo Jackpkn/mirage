@@ -311,11 +311,12 @@ async def test_a_coded_policy_holds_the_line_without_a_document(coded):
     assert "/data/a.txt" in await coded.ops.readdir("/data")
 
 
-async def _allow_once(record):
+async def _allow_once(record, cancel=None):
     """Answer every question ALLOW the moment it is raised.
 
     Args:
         record (Decision): the question the ledger raised.
+        cancel (asyncio.Event | None): the run's kill channel, unused.
     """
     return dataclasses.replace(record, outcome=Outcome.ALLOW, scope=Scope.ONCE)
 

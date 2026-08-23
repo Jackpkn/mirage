@@ -29,6 +29,7 @@ interface AskedRequest {
   toolName: string
   callId: string
   reason: string
+  signal?: AbortSignal
 }
 
 interface World {
@@ -45,15 +46,21 @@ const worlds: Workspace[] = []
  * default session, so the role's own rules do not refuse the setup at the
  * op door, and the shell is bound to a session carrying the role.
  */
-async function world(role: unknown, outcome?: ApprovalOutcome): Promise<World> {
+async function world(
+  role: unknown,
+  outcome?: ApprovalOutcome,
+  answer?: (req: AskedRequest) => Promise<ApprovalOutcome>,
+): Promise<World> {
   const asked: AskedRequest[] = []
+  const fixed = outcome === undefined ? null : () => Promise.resolve(outcome)
+  const respond = answer ?? fixed
   const ctx = new Context()
-  if (outcome !== undefined) {
+  if (respond !== null) {
     ctx.provide('approval')
     ctx.set('approval', {
       request: (req: AskedRequest) => {
         asked.push(req)
-        return Promise.resolve(outcome)
+        return respond(req)
       },
     })
   }
@@ -267,6 +274,80 @@ describe('the sandbox facts a refused run reports', () => {
     const { shell } = await world(ASK_RM, 'allowed-once')
     const run = await shell.run(shell.resolve({ command: 'cat /data/no-such-file.txt' }))
     expect(run.exitCode).not.toBe(0)
+    expect(run.sandbox?.denied).toBe(false)
+  })
+})
+
+/** A channel that takes the request and never comes back with an answer. */
+function neverAnswers(): Promise<ApprovalOutcome> {
+  return new Promise<ApprovalOutcome>(() => {
+    // Deliberately never settled: the human is still looking at it.
+  })
+}
+
+describe('an ask that outlives the run that raised it', () => {
+  it('reports the timeout instead of waiting on the human forever', async () => {
+    const { shell, ws } = await world(ASK_RM, undefined, neverAnswers)
+    const run = await shell.run(shell.resolve({ command: 'rm /data/notes.txt', timeoutMs: 200 }))
+    // Without a bound on the wait this call never returned at all: the
+    // run sat inside the approval request, deaf to its own deadline.
+    expect(run.timedOut).toBe(true)
+    expect(run.exitCode).toBeNull()
+    expect(run.signal).toBe('SIGTERM')
+    expect(await ws.fs.exists('/data/notes.txt')).toBe(true)
+  })
+
+  it('hands the run signal to the channel, live, so its prompt can be dismissed', async () => {
+    const { shell, asked } = await world(ASK_RM, undefined, (req) => {
+      expect(req.signal?.aborted).toBe(false)
+      return Promise.resolve('allowed-once')
+    })
+    expect((await shell.run(shell.resolve({ command: 'rm /data/notes.txt' }))).exitCode).toBe(0)
+    const signal = asked[0]?.signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('drops a yes that arrives after the kill rather than banking it', async () => {
+    const { shell, ws } = await world(ASK_RM, undefined, () => {
+      return new Promise((resolve) =>
+        setTimeout(() => {
+          resolve('allowed-once')
+        }, 400),
+      )
+    })
+    const killed = await shell.run(shell.resolve({ command: 'rm /data/notes.txt', timeoutMs: 150 }))
+    expect(killed.timedOut).toBe(true)
+    await new Promise((settle) => setTimeout(settle, 500))
+    // The human said yes to a line that no longer existed. Banking that
+    // as a spent-once grant would hand it to the next identical line
+    // with nobody asked, so the question stays open instead.
+    expect(await ws.fs.exists('/data/notes.txt')).toBe(true)
+    expect(ws.decisions.pending('agent')).toHaveLength(1)
+    expect(ws.decisions.list('agent')[0]?.outcome).toBeNull()
+  })
+})
+
+describe('a refusal the line redirected away from stderr', () => {
+  it('is still reported as denied when 2>&1 puts it on stdout', async () => {
+    const { shell } = await world({
+      commands: { deny: [{ reason: 'no removes', commands: ['rm'] }] },
+    })
+    const run = await shell.run(shell.resolve({ command: 'rm /data/notes.txt 2>&1' }))
+    expect(run.exitCode).toBe(126)
+    expect(run.stderr.text).toBe('')
+    expect(run.stdout.text).toBe('rm: policy denied: no removes\n')
+    // Read off stderr alone this run looked allowed, so dsh offered no
+    // escalation for a refusal it never saw.
+    expect(run.sandbox?.denied).toBe(true)
+  })
+
+  it('does not read the same words as a refusal when a line prints them as data', async () => {
+    const { shell } = await world(ASK_RM, 'allowed-once')
+    const run = await shell.run(shell.resolve({ command: "echo 'rm: policy denied: not really'" }))
+    expect(run.exitCode).toBe(0)
+    expect(run.stdout.text).toBe('rm: policy denied: not really\n')
+    // Stdout is the command's own data channel, so the exit code has to
+    // agree before the words there are read as a ruling.
     expect(run.sandbox?.denied).toBe(false)
   })
 })

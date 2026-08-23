@@ -126,6 +126,12 @@ export function approvalReason(record: Decision): string {
  * its own escalations, where `approveEscalation` throws on a rejection,
  * a cancellation and an unanswerable ask alike.
  *
+ * The run's own signal rides along, so a prompt raised for a line whose
+ * run is then killed or times out is dismissed with it rather than left
+ * on somebody's screen for a command that no longer exists. The ledger
+ * stops waiting either way — it bounds the wait by the same signal — but
+ * only the channel can take its prompt down.
+ *
  * With no approver on the context the handler answers null, which is
  * mirage's "nobody has answered yet": the ask stays pending in the
  * ledger. That is deliberate, and it is why the service installs this
@@ -142,7 +148,7 @@ export function approvalReason(record: Decision): string {
  * @returns the handler to pass as `onAsk`.
  */
 export function askThroughApproval(ctx: Context): AskHandler {
-  return async (record: Decision): Promise<Decision | null> => {
+  return async (record: Decision, signal?: AbortSignal): Promise<Decision | null> => {
     const approver = approverOf(ctx)
     if (approver === null) return null
     const outcome = await approver.request({
@@ -150,6 +156,7 @@ export function askThroughApproval(ctx: Context): AskHandler {
       toolName: APPROVAL_TOOL_NAME,
       callId: record.id,
       reason: approvalReason(record),
+      ...(signal !== undefined ? { signal } : {}),
     })
     const verb = outcome === 'allowed-once' ? Outcome.ALLOW : Outcome.DENY
     return { ...record, outcome: verb, scope: Scope.ONCE }

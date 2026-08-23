@@ -170,6 +170,16 @@ An **ask** is put to the human through dsh's own approval channel, `ctx.approval
 
 Only `allowed-once` is a yes, and it grants exactly the line that asked; a single nod is never widened into a standing grant. The three refusals match what dsh does with the same vocabulary for its own escalations, where a rejection, a dismissal and an unanswerable ask all fail closed. A refused retry of the same line is answered from the record rather than prompting again, so a human who said no is not asked twice about it.
 
+A question never outlives the run that raised it. The run's abort signal goes to the channel with the request, so a prompt can take itself down, and the ledger stops waiting on the same signal — a line whose approval is still unanswered when its timeout expires (or when the caller kills it) comes back as the kill it was given, not as a refusal:
+
+```ts
+const run = await ctx.shell.run(ctx.shell.resolve({ command: 'rm /data/notes.txt', timeoutMs: 5000 }))
+// run.timedOut  true
+// run.exitCode  null
+```
+
+Whatever the human says afterwards is dropped rather than recorded. Banking a late yes would leave a spend-once grant in the ledger for the next identical line to take, with nobody asked; the question stays open instead.
+
 A rule can also be scoped to one mount, so it applies only to a line working inside it. That is how a role asks about deletes in scratch space while leaving its own housekeeping elsewhere alone:
 
 ```yaml
@@ -198,7 +208,9 @@ await ctx.mirage.decisions.answer(waiting.id, Outcome.ALLOW, Scope.SESSION)
 
 `ONCE` passes the retry of that one line; `SESSION` passes every line the same rule covers for the rest of the session. Nothing reaches further — an answer is never inherited by another session, and never re-opens a deny rule, which is consulted first.
 
-A refused line is reported as refused, whatever refused it: `result.sandbox.denied` is set for a policy deny and for an unanswered ask, not only for the read-only narrowing, and under `workspace-write` as readily as under `read-only`. A mode describes what the mounts allow and says nothing about whether a rule forbids the line. One gap is worth naming: a rule scoped to a path refuses one operand in GNU's own voice (`cat: /data/notes/a.txt: no notes`, exit 1), which carries no fixed marker, so that shape is not flagged — Mirage has no out-of-band denial channel on `ExecuteResult`, and inventing a marker would report ordinary command failures as policy refusals.
+A refused line is reported as refused, whatever refused it: `result.sandbox.denied` is set for a policy deny and for an unanswered ask, not only for the read-only narrowing, and under `workspace-write` as readily as under `read-only`. A mode describes what the mounts allow and says nothing about whether a rule forbids the line. It holds for a line that redirects its diagnostics too (`rm secrets 2>&1` leaves stderr empty and the refusal on stdout), where the exit code has to agree before words on stdout are read as a ruling, so a command printing the phrase as data is not mistaken for one.
+
+One gap is worth naming: a rule scoped to a path refuses one operand in GNU's own voice (`cat: /data/notes/a.txt: no notes`, exit 1), which carries no fixed marker, so that shape is not flagged — Mirage has no out-of-band denial channel on `ExecuteResult`, and inventing a marker would report ordinary command failures as policy refusals.
 
 Through `ctx.fs`, a rule refusal arrives as `FS_SANDBOX_DENIED` rather than `FS_PERMISSION_DENIED`, which is what makes dsh's tool layer attach its escalation hint. A plain mount-mode refusal keeps `FS_PERMISSION_DENIED`: a mode is the shape of this world, while a rule is a confinement the call may be entitled to escalate past.
 

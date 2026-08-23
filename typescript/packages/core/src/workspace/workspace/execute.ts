@@ -25,7 +25,7 @@ import type { JobTable } from '../../shell/job_table/index.ts'
 import { findSyntaxError, findUnterminatedBacktick, type ShellParser } from '../../shell/parse.ts'
 import type { ProvisionResult } from '../../provision/types.ts'
 import { errorVirtualPath, gnuStrerror } from '../../utils/errors.ts'
-import { makeAbortError } from '../abort.ts'
+import { makeAbortError, mergeSignals } from '../abort.ts'
 import type { Dispatcher } from '../dispatcher/index.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import { PolicyDeny, type PolicyDecision } from '../../runtime/policy/index.ts'
@@ -320,6 +320,9 @@ async function runParsedLine(
       env.namespace,
       callAgentId,
       reparse,
+      // The session's kill channel folded in, as the dispatcher folds it
+      // for the tree: a question put to a host has to answer to both.
+      mergeSignals(deps.signal, effectiveSession.abortSignal),
     )
     if (refusal !== null) {
       targetSession.lastExitCode = refusal.exitCode

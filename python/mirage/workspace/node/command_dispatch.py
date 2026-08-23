@@ -374,7 +374,8 @@ async def _run_argv(
                               namespace,
                               agent_id,
                               stdin,
-                              redirects=redirects)
+                              redirects=redirects,
+                              cancel=cancel)
         if isinstance(verdict, Refusal):
             cmd_str = " ".join([name, *argv.args])
             return None, IOResult(exit_code=verdict.exit_code,

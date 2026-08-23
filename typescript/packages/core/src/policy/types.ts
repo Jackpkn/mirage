@@ -229,6 +229,21 @@ export interface Pending {
 }
 
 /**
+ * The question was abandoned: the run that raised it was killed while
+ * the host was still deciding, so the ledger stopped waiting.
+ *
+ * The record is left waiting, and whatever the host eventually answers
+ * is dropped rather than recorded — an answer banked against a run that
+ * no longer exists would be taken by the next identical line with
+ * nobody asked. The door turns this into the same abort every other
+ * killed wait raises; the ledger states the fact in its own vocabulary
+ * because execution is not its to know about.
+ */
+export interface Abandoned {
+  kind: 'abandoned'
+}
+
+/**
  * The session questions the approval door asks. The SessionManager
  * satisfies it structurally, so the door reads and writes a session's
  * grants by id without this package importing the workspace, and always

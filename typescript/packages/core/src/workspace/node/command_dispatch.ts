@@ -502,6 +502,7 @@ async function runArgv(
       agentId,
       stdin,
       redirects,
+      signal,
     )
     if (!(verdict instanceof Admitted)) {
       return [

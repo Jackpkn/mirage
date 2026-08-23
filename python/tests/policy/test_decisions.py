@@ -12,14 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import dataclasses
 
 import pytest
 
 from mirage.policy.decisions import Decisions, ask_rule, covers, decision_id
 from mirage.policy.match import Outcome
-from mirage.policy.types import (Ask, CommandContext, CommandRule, Decision,
-                                 Deny, Pending, Scope)
+from mirage.policy.types import (Abandoned, Ask, CommandContext, CommandRule,
+                                 Decision, Deny, Pending, Scope)
 
 RULE = CommandRule(reason="sign-off", commands=("git push", ))
 
@@ -163,7 +164,7 @@ async def test_answering_rejects_ask_and_an_unknown_id():
 @pytest.mark.asyncio
 async def test_a_host_that_answers_inside_the_line_leaves_nothing_waiting():
 
-    async def allow(record: Decision) -> Decision:
+    async def allow(record: Decision, cancel: object = None) -> Decision:
         return dataclasses.replace(record,
                                    outcome=Outcome.ALLOW,
                                    scope=Scope.SESSION)
@@ -173,13 +174,96 @@ async def test_a_host_that_answers_inside_the_line_leaves_nothing_waiting():
     assert ledger.pending() == ()
     assert len(ledger.list()) == 1
 
-    async def undecided(record: Decision) -> Decision | None:
+    async def undecided(record: Decision,
+                        cancel: object = None) -> Decision | None:
         return None
 
     waiting = Decisions(on_ask=undecided)
     action = await waiting.resolve(_ctx(), Ask("sign-off", rule=RULE))
     assert isinstance(action, Pending)
     assert len(waiting.pending()) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_run_kill_channel_reaches_the_host():
+    seen: list[asyncio.Event | None] = []
+    cancel = asyncio.Event()
+
+    async def allow(record: Decision, kill: object = None) -> Decision:
+        seen.append(kill)
+        return dataclasses.replace(record,
+                                   outcome=Outcome.ALLOW,
+                                   scope=Scope.ONCE)
+
+    ledger = Decisions(on_ask=allow)
+    assert await ledger.resolve(_ctx(), Ask("sign-off", rule=RULE),
+                                cancel) is None
+    assert seen == [cancel]
+
+
+@pytest.mark.asyncio
+async def test_the_ledger_stops_waiting_when_the_run_is_killed():
+    cancel = asyncio.Event()
+    started = asyncio.Event()
+
+    async def never(record: Decision, kill: object = None) -> Decision:
+        # A host that never answers: without the bound, the run waiting
+        # on this would outlive its own deadline entirely.
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    ledger = Decisions(on_ask=never)
+    asked = asyncio.ensure_future(
+        ledger.resolve(_ctx(), Ask("sign-off", rule=RULE), cancel))
+    await started.wait()
+    cancel.set()
+    assert isinstance(await asked, Abandoned)
+    # Nobody answered, so the question is still open for whoever asks next.
+    assert len(ledger.pending()) == 1
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_put_to_a_host_for_a_run_already_over():
+    cancel = asyncio.Event()
+    cancel.set()
+    asked = False
+
+    async def allow(record: Decision, kill: object = None) -> Decision:
+        nonlocal asked
+        asked = True
+        return dataclasses.replace(record, outcome=Outcome.ALLOW)
+
+    ledger = Decisions(on_ask=allow)
+    action = await ledger.resolve(_ctx(), Ask("sign-off", rule=RULE), cancel)
+    assert isinstance(action, Abandoned)
+    assert asked is False
+    assert len(ledger.pending()) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_answer_after_the_kill_is_dropped_not_recorded():
+    cancel = asyncio.Event()
+    started = asyncio.Event()
+
+    async def slow_yes(record: Decision, kill: object = None) -> Decision:
+        started.set()
+        await asyncio.sleep(0.2)
+        return dataclasses.replace(record,
+                                   outcome=Outcome.ALLOW,
+                                   scope=Scope.ONCE)
+
+    ledger = Decisions(on_ask=slow_yes)
+    asked = asyncio.ensure_future(
+        ledger.resolve(_ctx(), Ask("sign-off", rule=RULE), cancel))
+    await started.wait()
+    cancel.set()
+    assert isinstance(await asked, Abandoned)
+    await asyncio.sleep(0.3)
+    # Recording it would leave a spent-once grant behind, and the next
+    # identical line would take it without anybody being asked.
+    assert len(ledger.pending()) == 1
+    assert ledger.list()[0].outcome is None
 
 
 @pytest.mark.asyncio

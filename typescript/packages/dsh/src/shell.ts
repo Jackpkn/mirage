@@ -91,6 +91,14 @@ const DENIAL_SIGNATURES = ['read-only mount at ', ': Permission denied']
 // refusal.
 const POLICY_SIGNATURES = [': policy denied: ', ': requires approval: ']
 
+// The exit code both of those renders carry. Corroboration for reading
+// the same signatures off stdout, where `2>&1` puts them: stdout is the
+// command's own data channel, so a line that merely prints the phrase
+// (`cat audit.log`, `grep denied`) must not be reported as refused. A
+// refusal that reaches stdout reached it by duplication, and the
+// duplicated stream keeps the refusal's status.
+const POLICY_EXIT_CODE = 126
+
 /** Configuration for the mirage shell executor. */
 export interface MirageShellConfig {
   /**
@@ -553,7 +561,8 @@ export class MirageShellExecutor extends ShellExecutor {
    *
    * mirage has no out-of-band denial channel: a refused line fails
    * in-band with a nonzero exit, the way EROFS would. So the fact is
-   * read back off stderr, from two independent vocabularies.
+   * read back off the captured output, from two independent
+   * vocabularies.
    *
    * The narrowing's signatures are read only for a call that ran
    * read-only, where this executor is what imposed it. The document's
@@ -563,12 +572,41 @@ export class MirageShellExecutor extends ShellExecutor {
    * the mounts allow, and says nothing about whether a rule forbids the
    * line.
    *
+   * Stdout is read for the document's signatures too, because a line
+   * that duplicates its diagnostics (`rm secrets 2>&1`) leaves stderr
+   * empty and the refusal is then the only thing on stdout — reading
+   * stderr alone reported such a run as allowed and dsh offered no
+   * escalation for a refusal it never saw. The exit code has to agree
+   * there, so that a command printing the phrase as data is not read as
+   * a refusal; on stderr no corroboration is asked for, since a refusal
+   * whose line goes on to succeed (`rm secrets; echo done`) still
+   * happened and the line's status is no longer its own.
+   *
+   * A stderr-derived fact is the only one available: `ExecuteResult`
+   * carries stdout, stderr and an exit code and no ruling, so an
+   * operand-scoped deny (`rm: letters.txt: <reason>`, exit 1) cannot be
+   * told from an ordinary failure at all. Carrying the ruling on the
+   * result is what would retire this whole function.
+   *
    * @param spec the resolved spec this run was built from.
    * @param stderr the run's captured standard error.
+   * @param stdout the run's captured standard output.
+   * @param exitCode the line's exit code.
    * @returns true when something refused the run.
    */
-  private wasDenied(spec: ShellExecSpec, stderr: string): boolean {
+  private wasDenied(
+    spec: ShellExecSpec,
+    stderr: string,
+    stdout: string,
+    exitCode: number,
+  ): boolean {
     if (POLICY_SIGNATURES.some((signature) => stderr.includes(signature))) return true
+    if (
+      exitCode === POLICY_EXIT_CODE &&
+      POLICY_SIGNATURES.some((signature) => stdout.includes(signature))
+    ) {
+      return true
+    }
     if (this.modeFor(spec) !== 'read-only') return false
     return DENIAL_SIGNATURES.some((signature) => stderr.includes(signature))
   }
@@ -754,7 +792,10 @@ export class MirageShellExecutor extends ShellExecutor {
         executeOptions(spec, workdir, controller.signal, sessionId, bound, this.workdir, console_),
       )
       const captured = await this.collectFrom(console_, spec)
-      const settled = this.sandboxInfo(spec, this.wasDenied(spec, captured.stderr.text))
+      const settled = this.sandboxInfo(
+        spec,
+        this.wasDenied(spec, captured.stderr.text, captured.stdout.text, result.exitCode),
+      )
       return {
         exitCode: result.exitCode,
         signal: null,

@@ -209,7 +209,7 @@ async def execute_line(
             # visibility and admission gate as the tree, per parsed
             # command, before the runtime sees a byte of it.
             refusal = await admit_line(ast, effective_session, ws._registry,
-                                       ws._namespace, agent or "")
+                                       ws._namespace, agent or "", cancel)
             if refusal is not None:
                 io = IOResult(exit_code=refusal.exit_code,
                               stderr=refusal.stderr)
