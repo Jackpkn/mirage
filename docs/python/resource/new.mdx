@@ -16,12 +16,19 @@ Everything an out-of-tree backend needs is exported from `mirage.sdk` — that m
 ```python
 from functools import partial
 
+from pydantic import BaseModel, SecretStr
+
 from mirage.sdk import (Accessor, CommandIO, FileStat, GenericResource,
                         stream_from_bytes)
 
 
+class JiraConfig(BaseModel):
+    site: str
+    token: SecretStr
+
+
 class JiraAccessor(Accessor):
-    def __init__(self, config):
+    def __init__(self, config: JiraConfig) -> None:
         self.client = make_client(config)
 
 
