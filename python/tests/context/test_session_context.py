@@ -14,10 +14,13 @@
 
 import pytest
 
-from mirage.context import (effective_mount_mode, get_current_session,
-                            get_current_session_for, reset_current_session,
-                            set_current_session)
-from mirage.types import MountMode, weaker_mode
+from mirage.context import (effective_mount_mode, effective_path_mode,
+                            get_current_session, get_current_session_for,
+                            hidden_paths_intersect, reset_current_session,
+                            session_path_allowed, set_current_session,
+                            strongest_mode_under)
+from mirage.types import (HiddenPaths, MountMode, ShowEntry, ShownPaths,
+                          weaker_mode)
 from mirage.workspace.session import Session, SessionManager
 
 
@@ -215,3 +218,88 @@ def test_the_admission_binding_is_scoped_to_one_command():
         reset_admission(token)
     assert get_admission() is None
     assert not path_rules_active()
+
+
+def test_effective_path_mode_is_the_anchor_depth_rule():
+    sess = Session(session_id="agent",
+                   mount_modes={"/repo": MountMode.READ},
+                   shown_paths=ShownPaths(entries=(
+                       ShowEntry("/repo/build", MountMode.WRITE),
+                       ShowEntry("/repo/tools", MountMode.EXEC),
+                   )))
+    token = set_current_session(sess)
+    try:
+        # The mount cap holds where no deeper entry speaks...
+        assert effective_path_mode("/repo/README.md", "/repo",
+                                   MountMode.EXEC) == MountMode.READ
+        # ...and the deeper show entry wins below its anchor.
+        assert effective_path_mode("/repo/build/out", "/repo",
+                                   MountMode.EXEC) == MountMode.WRITE
+        assert effective_path_mode("/repo/tools/go.py", "/repo",
+                                   MountMode.EXEC) == MountMode.EXEC
+        # The configured mode stays the strongest answer possible.
+        assert effective_path_mode("/repo/tools/go.py", "/repo",
+                                   MountMode.READ) == MountMode.READ
+    finally:
+        reset_current_session(token)
+
+
+def test_effective_path_mode_without_a_session_is_the_mounts_own():
+    assert effective_path_mode("/a/x", "/a", MountMode.WRITE) \
+        == MountMode.WRITE
+
+
+def test_an_equal_depth_pair_takes_the_weaker():
+    sess = Session(
+        session_id="agent",
+        mount_modes={"/repo": MountMode.EXEC},
+        shown_paths=ShownPaths(entries=(ShowEntry("/repo", MountMode.READ), )))
+    token = set_current_session(sess)
+    try:
+        assert effective_path_mode("/repo/x", "/repo",
+                                   MountMode.EXEC) == MountMode.READ
+    finally:
+        reset_current_session(token)
+
+
+def test_strongest_mode_under_counts_a_show_grant():
+    sess = Session(session_id="agent",
+                   mount_modes={"/repo": MountMode.READ},
+                   shown_paths=ShownPaths(
+                       entries=(ShowEntry("/repo/build", MountMode.WRITE), )))
+    token = set_current_session(sess)
+    try:
+        # The mount-wide mode is READ, but a deeper grant makes a write
+        # command runnable; the op door then refuses per path.
+        assert strongest_mode_under("/repo", MountMode.EXEC) \
+            == MountMode.WRITE
+        # Capped by the configured mode, and other mounts unaffected.
+        assert strongest_mode_under("/repo", MountMode.READ) \
+            == MountMode.READ
+        assert strongest_mode_under("/other", MountMode.READ) \
+            == MountMode.READ
+    finally:
+        reset_current_session(token)
+
+
+def test_hidden_paths_intersect_is_per_operand():
+    sess = Session(session_id="agent",
+                   hidden_paths=HiddenPaths(paths=("/repo/.env", )))
+    token = set_current_session(sess)
+    try:
+        assert hidden_paths_intersect("/repo")
+        assert hidden_paths_intersect("/repo/.env")
+        assert not hidden_paths_intersect("/s3")
+    finally:
+        reset_current_session(token)
+    assert not hidden_paths_intersect("/repo")
+
+
+def test_a_show_reaches_the_session_predicate():
+    sess = Session(
+        session_id="agent",
+        hidden_paths=HiddenPaths(paths=("/repo", )),
+        shown_paths=ShownPaths(entries=(ShowEntry("/repo/public", None), )))
+    assert session_path_allowed(sess, "/repo/public/index.html")
+    assert session_path_allowed(sess, "/repo")
+    assert not session_path_allowed(sess, "/repo/secrets")

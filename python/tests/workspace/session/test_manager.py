@@ -19,10 +19,11 @@ import pytest
 from mirage.policy.match import Outcome
 from mirage.policy.profile import CompiledProfile
 from mirage.policy.types import (AdmissionRules, CommandRule, Decision,
-                                 ProfileScript, Scope)
+                                 HideReason, ProfileScript, Scope)
 from mirage.resource.ram import RAMResource
 from mirage.runtime.types import ScriptSource
-from mirage.types import HiddenPaths, HiddenVars, MountMode
+from mirage.types import (HiddenPaths, HiddenVars, MountMode, ShowEntry,
+                          ShownPaths)
 from mirage.workspace import Workspace
 from mirage.workspace.session import RAMSessionStore, SessionManager
 from mirage.workspace.session.state import seed_var
@@ -224,6 +225,52 @@ async def test_manager_default_adopts_stored_hidden_specs():
     assert default.hidden_paths == HiddenPaths(paths=("/s3/secrets", ),
                                                patterns=("*.key", ))
     assert default.hidden_vars == HiddenVars(names=("SLACK_TOKEN", ))
+
+
+@pytest.mark.asyncio
+async def test_manager_default_adopts_stored_path_axis():
+    # The show half and the reasons table are durable restrictions like
+    # the hides beside them: dropped here, a restarted daemon's carve-out
+    # would vanish (every show subtree reads ENOENT again) and the next
+    # flush would erase both from the store.
+    store = RAMSessionStore()
+    await store.set(
+        "default", {
+            "session_id":
+            "default",
+            "cwd":
+            "/w",
+            "env": {},
+            "hidden_paths": {
+                "paths": ["/repo"],
+                "patterns": [],
+            },
+            "shown_paths": {
+                "entries": [{
+                    "path": "/repo/public",
+                    "mode": "read"
+                }, {
+                    "path": "/repo/notes"
+                }],
+            },
+            "hide_reasons": [{
+                "patterns": ["/repo"],
+                "reason": "keep the bulk out of context",
+            }],
+        })
+    mgr = SessionManager("default", store=store)
+    await mgr.ensure_loaded()
+    default = mgr.get("default")
+    assert default.shown_paths == ShownPaths(entries=(
+        ShowEntry("/repo/public", MountMode.READ),
+        ShowEntry("/repo/notes", None),
+    ))
+    assert default.hide_reasons == (HideReason(
+        patterns=("/repo", ), reason="keep the bulk out of context"), )
+    assert mgr.hide_reasons_of("default") == default.hide_reasons
+    # An id this manager does not know reads the default profile's
+    # table, the same fallback commands_of makes.
+    assert mgr.hide_reasons_of("stranger") == ()
 
 
 @pytest.mark.asyncio

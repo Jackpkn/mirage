@@ -74,6 +74,12 @@ class DispatchFn(Protocol):
         ...
 
 
+# Whether code may be loaded from one virtual path: the per-script exec
+# question an interpreter command asks about a file operand. Defined
+# beside DispatchFn for the same reason: the consumer receives it, the
+# workspace provides it.
+ExecPathFn: TypeAlias = Callable[[str], bool]
+
 # Live view of the workspace mount prefixes, read per run so mounts
 # added or removed after construction are always picked up.
 PrefixSource: TypeAlias = Callable[[], list[str]]

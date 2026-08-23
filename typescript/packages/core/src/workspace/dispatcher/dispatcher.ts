@@ -21,7 +21,7 @@ import { getExtension } from '../../commands/resolve.ts'
 import { IOResult, type OpReport } from '../../io/types.ts'
 import {
   eacces,
-  eaccesReadOnly,
+  erofsReadOnly,
   eexist,
   einval,
   enoent,
@@ -64,11 +64,7 @@ import {
   POLICY_WRITE_OPS,
   SETATTR_KEYS,
 } from './constants.ts'
-import {
-  effectiveMountMode,
-  getCurrentSession,
-  pathAllowed,
-} from '../../context/session_context.ts'
+import { effectivePathMode, getCurrentSession, pathAllowed } from '../../context/session_context.ts'
 
 const NOOP_ACCESSOR_INSTANCE = new NOOPAccessor()
 
@@ -310,10 +306,10 @@ export class Dispatcher {
       }
     }
     if (
-      effectiveMountMode(mountPrefix, mode) === MountMode.READ &&
-      this.opsRegistry.find(opName, resource.kind)?.write === true
+      this.opsRegistry.find(opName, resource.kind)?.write === true &&
+      effectivePathMode(p.virtual, mountPrefix, mode) === MountMode.READ
     ) {
-      throw eaccesReadOnly(`mount at '${p.virtual}' is read-only`, p)
+      throw erofsReadOnly(`mount at '${p.virtual}' is read-only`, p)
     }
     // Ops registered under a rendered filetype (gdocs/gsheets/gslides/
     // gmail reads) resolve by the path's extension; Python reaches them

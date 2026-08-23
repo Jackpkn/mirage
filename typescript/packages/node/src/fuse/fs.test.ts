@@ -22,6 +22,7 @@ import { MirageFS, type FuseAttr } from './fs.ts'
 const ENOENT = -2
 const ENOTEMPTY = -66
 const EACCES = -13
+const EROFS = -30
 
 // Invoke a MirageFS op through its ops() surface — covers the same dispatch
 // path that @zkochan/fuse-native uses in production. Returns the callback args
@@ -158,7 +159,7 @@ describe('MirageFS — read-only mount write consistency', () => {
     const mfs = new MirageFS(readonlyWs.fs)
 
     const [createCode] = await callOp<[number]>(mfs, 'create', '/data/new.txt', 0o100644)
-    expect(createCode).toBe(EACCES)
+    expect(createCode).toBe(EROFS)
 
     const [openCode, fh] = await callOp<[number, number]>(mfs, 'open', '/data/existing.txt', 0x8401)
     expect(openCode).toBe(0)
@@ -179,7 +180,7 @@ describe('MirageFS — read-only mount write consistency', () => {
     // Mirage commits buffered FUSE writes, so it must enforce the same READ-mode
     // restriction as create.
     const [flushCode] = await callOp<[number]>(mfs, 'flush', '/data/existing.txt', fh)
-    expect(flushCode).toBe(EACCES)
+    expect(flushCode).toBe(EROFS)
     expect(new TextDecoder().decode(await seedWs.fs.readFile('/data/existing.txt'))).toBe('seed')
   })
 })

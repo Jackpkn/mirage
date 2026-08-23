@@ -12,7 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { HiddenPaths, HiddenVars } from '../types.ts'
+import type { HiddenPaths, HiddenVars, MountMode, ShowEntry, ShownPaths } from '../types.ts'
+import { weakerMode } from '../types.ts'
 import { fnmatch } from './fnmatch.ts'
 import { stripSlash } from './slash.ts'
 
@@ -85,19 +86,6 @@ function normAbs(path: string): string {
 }
 
 /**
- * Whether the session's spec hides this virtual path.
- *
- * The two planes of the spec, in the order they cost: an exact entry
- * hides the path and its whole subtree (prefix containment, no
- * globbing); a component pattern (no `/`) hides any path carrying a
- * matching name segment, which covers the subtree below a matching
- * directory for free; an anchored pattern (contains `/`) is tested
- * against the path and each of its ancestors, so a directory the
- * pattern hides keeps its descendants hidden too. Patterns match with
- * the repo fnmatch dialect, `*` crossing slashes as GNU `find -path`
- * does.
- */
-/**
  * The fixed directory above an anchored pattern's first glob segment,
  * normalized (`/x/locked/*` -> `/x/locked`).
  */
@@ -140,37 +128,204 @@ export function pathCovers(
   return ancestors && heads.some((head) => norm === '/' || head.startsWith(norm + '/'))
 }
 
+/**
+ * Whether an exact entry covers this normalized path: the entry itself
+ * or anything in its subtree (prefix containment, no globbing).
+ */
+function matchesExact(entry: string, norm: string): boolean {
+  const p = normAbs(entry)
+  return norm === p || norm.startsWith(p + '/') || p === '/'
+}
+
+/**
+ * Whether a slashless pattern hits any name component of the path,
+ * which covers the subtree below a matching directory for free.
+ */
+function matchesComponent(pattern: string, parts: readonly string[]): boolean {
+  return parts.some((seg) => fnmatch(seg, pattern))
+}
+
+/**
+ * Whether an anchored pattern matches the path or an ancestor of it,
+ * so a directory the pattern covers keeps its descendants covered.
+ * Patterns match with the repo fnmatch dialect, `*` crossing slashes
+ * as GNU `find -path` does.
+ */
+function matchesAnchored(pattern: string, parts: readonly string[]): boolean {
+  const normPat = normAbs(pattern)
+  let prefix = ''
+  for (const seg of parts) {
+    prefix = `${prefix}/${seg}`
+    if (fnmatch(prefix, normPat)) return true
+  }
+  return false
+}
+
+/**
+ * The deepest hide entry covering this virtual path, as its anchor
+ * depth; null when none does.
+ *
+ * Depth is a property of the entry, never of where it matched: an
+ * anchored pattern that covers a path through an ancestor still scores
+ * its own `anchorDepth`, and a component pattern scores 0 wherever it
+ * hits, since it anchors nothing.
+ */
+export function hideDepth(hidden: HiddenPaths | null | undefined, virtual: string): number | null {
+  if (hidden == null) return null
+  const paths = hidden.paths ?? []
+  const patterns = hidden.patterns ?? []
+  if (paths.length === 0 && patterns.length === 0) return null
+  const norm = normAbs(virtual)
+  const parts = norm.split('/').filter((seg) => seg !== '')
+  let best: number | null = null
+  for (const entry of paths) {
+    if (matchesExact(entry, norm)) {
+      const depth = anchorDepth(entry)
+      if (best === null || depth > best) best = depth
+    }
+  }
+  for (const pat of patterns) {
+    if (pat.includes('/')) {
+      if (matchesAnchored(pat, parts)) {
+        const depth = anchorDepth(pat)
+        if (best === null || depth > best) best = depth
+      }
+    } else if (best === null && matchesComponent(pat, parts)) {
+      best = 0
+    }
+  }
+  return best
+}
+
+/**
+ * Whether the session's spec hides this virtual path, before any show
+ * entry is consulted: what a rule's paths match through, and the hide
+ * half of `pathVisible`.
+ */
 export function pathHidden(hidden: HiddenPaths | null | undefined, virtual: string): boolean {
+  return hideDepth(hidden, virtual) !== null
+}
+
+/**
+ * The place a show entry anchors to: the entry itself when exact, the
+ * fixed directory above its first glob segment when a pattern.
+ */
+export function showHead(entry: string): string {
+  return isGlob(entry) ? patternHead(entry) : normAbs(entry)
+}
+
+/**
+ * The deepest show entry covering this virtual path, as its anchor
+ * depth; null when none does.
+ *
+ * A show entry is always anchored (validation refuses a slashless
+ * pattern), so it covers its own subtree the way an exact hide does; a
+ * stray slashless pattern from a typed constructor covers nothing,
+ * failing toward refusal.
+ */
+export function showDepth(shown: ShownPaths | null | undefined, virtual: string): number | null {
+  if (shown == null || shown.entries.length === 0) return null
+  const norm = normAbs(virtual)
+  const parts = norm.split('/').filter((seg) => seg !== '')
+  let best: number | null = null
+  for (const entry of shown.entries) {
+    if (isGlob(entry.path)) {
+      if (!entry.path.includes('/') || !matchesAnchored(entry.path, parts)) continue
+    } else if (!matchesExact(entry.path, norm)) continue
+    const depth = anchorDepth(entry.path)
+    if (best === null || depth > best) best = depth
+  }
+  return best
+}
+
+/**
+ * Whether one session's path axis leaves this virtual path visible:
+ * the whole composition law for the VFS axis.
+ *
+ * Three steps, each the anchor-depth rule: no hide covers the path and
+ * it is visible; a show covers it more deeply than the deepest hide
+ * and it is visible (hide wins the tie); and a hidden directory stays
+ * visible when a visible show anchors strictly below it, so the road
+ * to a carve-out exists (`hide /repo` + `show /repo/public` keeps
+ * `/repo` listable, holding only the carve-out).
+ */
+export function pathVisible(
+  hidden: HiddenPaths | null | undefined,
+  shown: ShownPaths | null | undefined,
+  virtual: string,
+): boolean {
+  const deepestHide = hideDepth(hidden, virtual)
+  if (deepestHide === null) return true
+  const deepestShow = showDepth(shown, virtual)
+  if (deepestShow !== null && deepestShow > deepestHide) return true
+  if (shown == null) return false
+  const norm = normAbs(virtual)
+  for (const entry of shown.entries) {
+    const head = showHead(entry.path)
+    if (head === norm) continue
+    if ((norm === '/' || head.startsWith(norm + '/')) && pathVisible(hidden, shown, head)) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * The deepest mode-carrying show entry covering this path, as
+ * [anchor depth, mode]; null when none does.
+ *
+ * A list-form entry (mode null) states visibility only and never
+ * answers here. Two mode entries at one depth take the weaker, failing
+ * toward refusal.
+ */
+export function shownMode(
+  shown: ShownPaths | null | undefined,
+  virtual: string,
+): [number, MountMode] | null {
+  if (shown == null || shown.entries.length === 0) return null
+  const norm = normAbs(virtual)
+  const parts = norm.split('/').filter((seg) => seg !== '')
+  let best: [number, MountMode] | null = null
+  for (const entry of shown.entries) {
+    if (entry.mode == null) continue
+    if (isGlob(entry.path)) {
+      if (!entry.path.includes('/') || !matchesAnchored(entry.path, parts)) continue
+    } else if (!matchesExact(entry.path, norm)) continue
+    const depth = anchorDepth(entry.path)
+    if (best === null || depth > best[0]) best = [depth, entry.mode]
+    else if (depth === best[0]) best = [depth, weakerMode(best[1], entry.mode)]
+  }
+  return best
+}
+
+/**
+ * Compile document show entries into the session's shape. Null when
+ * there is nothing, which is what "the document states no show" reads
+ * as, mirroring `classifyPaths`.
+ */
+export function classifyShows(entries: readonly ShowEntry[]): ShownPaths | null {
+  return entries.length > 0 ? { entries } : null
+}
+
+/**
+ * Whether the spec could hide anything at or under this path.
+ *
+ * The per-operand gate for a native fast path: a backend's find op or
+ * du total classifies the raw tree, so it must not be trusted when a
+ * hide could cover an entry inside the subtree it answers for, and can
+ * stay on when none can (a hidden `.env` under `/repo` must not force
+ * `find` on `/s3` off its native op). A component pattern names no
+ * place, so it intersects everything; otherwise an entry intersects
+ * when its head lies at or under the path, or the path itself is
+ * inside the entry's subtree.
+ */
+export function hidesIntersect(hidden: HiddenPaths | null | undefined, virtual: string): boolean {
   if (hidden == null) return false
   const paths = hidden.paths ?? []
   const patterns = hidden.patterns ?? []
   if (paths.length === 0 && patterns.length === 0) return false
-  const norm = normAbs(virtual)
-  for (const entry of paths) {
-    const p = normAbs(entry)
-    if (norm === p || norm.startsWith(p + '/') || p === '/') return true
-  }
-  if (patterns.length === 0) return false
-  const componentPats = patterns.filter((p) => !p.includes('/'))
-  const anchoredPats = patterns.filter((p) => p.includes('/')).map(normAbs)
-  const parts = norm.split('/').filter((seg) => seg !== '')
-  if (componentPats.length > 0) {
-    for (const seg of parts) {
-      for (const pat of componentPats) {
-        if (fnmatch(seg, pat)) return true
-      }
-    }
-  }
-  if (anchoredPats.length > 0) {
-    let prefix = ''
-    for (const seg of parts) {
-      prefix = `${prefix}/${seg}`
-      for (const pat of anchoredPats) {
-        if (fnmatch(prefix, pat)) return true
-      }
-    }
-  }
-  return false
+  if (patterns.some((p) => !p.includes('/'))) return true
+  return pathHidden(hidden, virtual) || pathCovers(hidden, virtual)
 }
 
 /** Whether the session's spec hides this variable name. */

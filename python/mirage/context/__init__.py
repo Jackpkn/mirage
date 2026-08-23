@@ -13,21 +13,24 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.context.session_context import (  # isort: skip
-    DEFAULT_UMASK, dotglob_active, effective_mount_mode, get_admission,
-    get_current_session, get_current_session_for, hidden_paths_active,
-    path_allowed, path_rules_active, redirect_paths_for,
-    redirect_target_judged, reset_admission, reset_current_session,
-    reset_redirect_paths, session_path_allowed, session_umask, set_admission,
-    set_current_session, set_redirect_paths)
+    DEFAULT_UMASK, dotglob_active, effective_mount_mode, effective_path_mode,
+    get_admission, get_current_session, get_current_session_for,
+    hidden_paths_active, hidden_paths_intersect, path_allowed,
+    path_rules_active, redirect_paths_for, redirect_target_judged,
+    reset_admission, reset_current_session, reset_redirect_paths,
+    session_path_allowed, session_umask, set_admission, set_current_session,
+    set_redirect_paths, strongest_mode_under)
 
 __all__ = [
     "DEFAULT_UMASK",
     "dotglob_active",
     "effective_mount_mode",
+    "effective_path_mode",
     "get_admission",
     "get_current_session",
     "get_current_session_for",
     "hidden_paths_active",
+    "hidden_paths_intersect",
     "path_allowed",
     "path_rules_active",
     "redirect_paths_for",
@@ -40,4 +43,5 @@ __all__ = [
     "set_admission",
     "set_current_session",
     "set_redirect_paths",
+    "strongest_mode_under",
 ]

@@ -16,9 +16,9 @@ import { createAsyncContext } from '../utils/async_context.ts'
 import type { SessionManager } from '../workspace/session/manager.ts'
 import type { Session } from '../workspace/session/session.ts'
 import { stripSlash } from '../utils/slash.ts'
-import { pathHidden } from '../utils/hidden.ts'
+import { anchorDepth, hidesIntersect, pathVisible, showHead, shownMode } from '../utils/hidden.ts'
 import type { EntryGate, PathSpec } from '../types.ts'
-import { MountMode, weakerMode } from '../types.ts'
+import { MOUNT_MODE_RANK, MountMode, weakerMode } from '../types.ts'
 
 /**
  * The session bound to one async context, and whose it is: `owner` is
@@ -92,10 +92,27 @@ function sessionMode(mountPrefix: string): MountMode {
  * Whether the current session hides any paths at all.
  *
  * For a summarizing fast path (du -s asks the backend for one total)
- * that must not be trusted when hidden leaves could be inside it.
+ * that must not be trusted when hidden leaves could be inside it. Show
+ * entries do not trip it: a show without a covering hide restricts
+ * nothing, and modes never change what a walk enumerates.
  */
 export function hiddenPathsActive(): boolean {
   return getCurrentSession()?.hiddenPaths != null
+}
+
+/**
+ * Whether the current session hides anything at or under this path:
+ * the per-operand form of `hiddenPathsActive`.
+ *
+ * The native fast paths (find's native op, du's summarize total)
+ * classify the raw backend tree, so they fork to the guarded walk when
+ * a hide could cover an entry inside the subtree they answer for, and
+ * stay on when none can: one hidden `.env` under `/repo` must not
+ * force `find` on `/s3` off its native op.
+ */
+export function hiddenPathsIntersect(virtual: string): boolean {
+  const sess = getCurrentSession()
+  return sess != null && hidesIntersect(sess.hiddenPaths, virtual)
 }
 
 export const DEFAULT_UMASK = 0o022
@@ -122,15 +139,15 @@ export function dotglobActive(): boolean {
 }
 
 /**
- * Whether a session's hidden-paths specs, its own and the workspace-bound
- * one, leave this path visible. The explicit-session form of
- * `pathAllowed`, for a door that holds the session rather than running
- * under it: the admission gate drops a hidden operand before any policy
- * reads it, so a rule or an ask never names a path the session cannot
- * see.
+ * Whether a session's path axis leaves this path visible: its hides,
+ * re-opened where a deeper show entry says so. The explicit-session
+ * form of `pathAllowed`, for a door that holds the session rather than
+ * running under it: the admission gate drops a hidden operand before
+ * any policy reads it, so a rule or an ask never names a path the
+ * session cannot see.
  */
 export function sessionPathAllowed(sess: Session, virtual: string): boolean {
-  return !(sess.hiddenPaths != null && pathHidden(sess.hiddenPaths, virtual))
+  return pathVisible(sess.hiddenPaths, sess.shownPaths, virtual)
 }
 
 /**
@@ -239,4 +256,82 @@ export function redirectTargetJudged(virtual: string): boolean {
  */
 export function effectiveMountMode(mountPrefix: string, mountMode: MountMode): MountMode {
   return weakerMode(mountMode, sessionMode(mountPrefix))
+}
+
+/**
+ * The mode in force at one path: the whole VFS axis on the one
+ * anchor-depth rule.
+ *
+ * The mount's configured mode is narrowed by the deepest session
+ * statement covering the path, where a statement is the profile's
+ * per-mount mode (scored at the mount prefix's own depth) or a
+ * mode-carrying show entry (scored at its anchor depth). Deeper wins,
+ * so `mounts: {/repo: r}` with `show: {"/repo/build": rw}` reads the
+ * repo and writes only the build tree; an equal-depth pair takes the
+ * weaker, failing toward refusal. The configured mode stays the
+ * strongest answer possible: the document never grants past it.
+ */
+export function effectivePathMode(
+  virtual: string,
+  mountPrefix: string,
+  mountMode: MountMode,
+): MountMode {
+  const sess = getCurrentSession()
+  if (sess == null) return mountMode
+  const prefix = normPrefix(mountPrefix)
+  const cap = sess.mountModes?.get(prefix) ?? null
+  let bestDepth = cap != null ? anchorDepth(prefix) : null
+  let bestMode: MountMode | null = cap
+  const deepest = shownMode(sess.shownPaths, virtual)
+  if (deepest != null) {
+    const [depth, mode] = deepest
+    if (bestDepth === null || depth > bestDepth) {
+      bestDepth = depth
+      bestMode = mode
+    } else if (depth === bestDepth && bestMode != null) {
+      bestMode = weakerMode(bestMode, mode)
+    }
+  }
+  if (bestMode == null) return mountMode
+  return weakerMode(mountMode, bestMode)
+}
+
+/**
+ * Whether a show anchor could cover any path under a mount prefix: the
+ * anchor lies at or under the prefix, or the prefix inside the
+ * anchor's subtree.
+ */
+function reachesUnder(head: string, prefix: string): boolean {
+  return (
+    head === '/' ||
+    prefix === '/' ||
+    head === prefix ||
+    head.startsWith(prefix + '/') ||
+    prefix.startsWith(head + '/')
+  )
+}
+
+/**
+ * The strongest mode the current session reaches anywhere under a
+ * mount: its mount-wide effective mode, or a deeper show grant, still
+ * capped by the mount's configured mode.
+ *
+ * What the whole-mount gates read: a write command stays runnable on a
+ * mount whose only writable region is a show entry (the op door then
+ * refuses per path), and the interpreters' any-`x` rule counts a show
+ * grant the way it counts a whole mount.
+ */
+export function strongestModeUnder(mountPrefix: string, mountMode: MountMode): MountMode {
+  let best = effectiveMountMode(mountPrefix, mountMode)
+  const sess = getCurrentSession()
+  if (sess?.shownPaths == null) return best
+  const prefix = normPrefix(mountPrefix)
+  for (const entry of sess.shownPaths.entries) {
+    if (entry.mode == null) continue
+    if (reachesUnder(showHead(entry.path), prefix)) {
+      const reached = weakerMode(mountMode, entry.mode)
+      if (MOUNT_MODE_RANK[reached] > MOUNT_MODE_RANK[best]) best = reached
+    }
+  }
+  return best
 }

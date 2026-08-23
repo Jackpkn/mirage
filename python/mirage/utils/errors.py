@@ -31,6 +31,21 @@ class OperationNotSupportedError(OSError):
     """
 
 
+class ReadOnlyError(PermissionError):
+    """A write into a region whose mode stops below ``w``.
+
+    Raised by the mode gate (``Mount.execute_op``) with ``errno.EROFS``
+    stamped and the op's path as ``filename``, so a command chokepoint
+    renders GNU's ``<cmd>: <path>: Read-only file system`` and a kernel
+    adapter reports EROFS: the below-mode voice, distinct from both the
+    hide voice (ENOENT) and the policy voice (EACCES). A
+    ``PermissionError`` subclass because every catch site that tolerates
+    a refused write already names that class; the strerror table lists
+    this subclass first, and the classifiers read the errno, so the
+    voice stays EROFS everywhere.
+    """
+
+
 class NoMountError(ValueError):
     """A path no mount owns: the registry's miss, and nothing else.
 
@@ -47,6 +62,7 @@ _FS_STRERROR: list[tuple[type[OSError], str]] = [
     (NotADirectoryError, "Not a directory"),
     (IsADirectoryError, "Is a directory"),
     (FileExistsError, "File exists"),
+    (ReadOnlyError, "Read-only file system"),
     (PermissionError, "Permission denied"),
     (OperationNotSupportedError, "Operation not supported"),
 ]

@@ -96,6 +96,44 @@ describe('Session', () => {
     expect('mount_modes' in s.toJSON()).toBe(false)
     expect(Session.fromJSON({ session_id: 'x' }).mountModes).toBeNull()
   })
+
+  it('round-trips the path axis through toJSON/fromJSON', () => {
+    const original = new Session({
+      sessionId: 'x',
+      shownPaths: {
+        entries: [
+          { path: '/repo/public', mode: MountMode.READ },
+          { path: '/repo/notes', mode: null },
+        ],
+      },
+      hideReasons: [{ patterns: ['/repo/vendor'], reason: 'licensing noise' }],
+    })
+    const json = original.toJSON()
+    expect(json.shown_paths).toEqual({
+      entries: [{ path: '/repo/public', mode: 'read' }, { path: '/repo/notes' }],
+    })
+    expect(json.hide_reasons).toEqual([{ patterns: ['/repo/vendor'], reason: 'licensing noise' }])
+    const restored = Session.fromJSON(
+      json as {
+        session_id: string
+        shown_paths?: { entries?: { path: string; mode?: MountMode }[] } | null
+        hide_reasons?: { patterns?: string[]; reason?: string }[] | null
+      },
+    )
+    expect(restored.shownPaths).toEqual(original.shownPaths)
+    expect(restored.hideReasons).toEqual(original.hideReasons)
+    const forked = restored.fork({ sessionId: 'y' })
+    expect(forked.shownPaths).toEqual(original.shownPaths)
+    expect(forked.hideReasons).toEqual(original.hideReasons)
+  })
+
+  it('toJSON omits the path axis when the document states none', () => {
+    const s = new Session({ sessionId: 'x' })
+    expect('shown_paths' in s.toJSON()).toBe(false)
+    expect('hide_reasons' in s.toJSON()).toBe(false)
+    expect(Session.fromJSON({ session_id: 'x' }).shownPaths).toBeNull()
+    expect(Session.fromJSON({ session_id: 'x' }).hideReasons).toEqual([])
+  })
 })
 
 describe('Session.fork', () => {

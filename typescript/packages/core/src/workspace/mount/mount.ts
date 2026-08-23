@@ -40,9 +40,13 @@ import type { Resource } from '../../resource/base.ts'
 import { type Limit, ConsistencyPolicy, MountMode, PathSpec } from '../../types.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
-import { eaccesReadOnly, enotsup } from '../../utils/errors.ts'
+import { enotsup, erofsReadOnly } from '../../utils/errors.ts'
 import { rstripSlash } from '../../utils/slash.ts'
-import { effectiveMountMode } from '../../context/session_context.ts'
+import {
+  effectiveMountMode,
+  effectivePathMode,
+  strongestModeUnder,
+} from '../../context/session_context.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
 type CmdKey = string
@@ -390,6 +394,7 @@ export class MountEntry {
       env?: Record<string, string>
       sessionView?: SessionView
       execAllowed?: boolean
+      execPathAllowed?: (virtual: string) => boolean
       runtime?: Runtime
       ns?: NamespaceView
       statPath?: StatPath
@@ -445,6 +450,7 @@ export class MountEntry {
       ...(opts.env !== undefined ? { env: opts.env } : {}),
       ...(opts.sessionView !== undefined ? { sessionView: opts.sessionView } : {}),
       ...(opts.execAllowed !== undefined ? { execAllowed: opts.execAllowed } : {}),
+      ...(opts.execPathAllowed !== undefined ? { execPathAllowed: opts.execPathAllowed } : {}),
       ...(opts.runtime !== undefined ? { runtime: opts.runtime } : {}),
       ...(opts.ns !== undefined ? { ns: opts.ns } : {}),
       ...(opts.statPath !== undefined ? { statPath: opts.statPath } : {}),
@@ -461,7 +467,14 @@ export class MountEntry {
             // answers them like GNU instead of refusing them as writes.
             const infoOnly = flags.help === true || flags.version === true
             for (const cmd of handlers) {
-              if (cmd.write && !infoOnly && this.effectiveMode() === MountMode.READ) {
+              // strongestModeUnder, not effectiveMode: a mount whose
+              // only writable region is a show entry still runs the
+              // command, and the op door refuses per path.
+              if (
+                cmd.write &&
+                !infoOnly &&
+                strongestModeUnder(this.prefix, this.mode) === MountMode.READ
+              ) {
                 return [
                   null,
                   new IOResult({
@@ -549,8 +562,13 @@ export class MountEntry {
     if (levels.length === 0) {
       throw enotsup(this.resource.kind, opName, path)
     }
-    if (this.effectiveMode() === MountMode.READ && levels.some((o) => o.write)) {
-      throw eaccesReadOnly(`mount ${this.prefix} is read-only`, path)
+    // Per path, not per mount: a show entry can hold one subtree below
+    // `w` on a writable mount, or one writable region on a read mount.
+    if (
+      levels.some((o) => o.write) &&
+      effectivePathMode(path, this.prefix, this.mode) === MountMode.READ
+    ) {
+      throw erofsReadOnly(`mount ${this.prefix} is read-only`, path)
     }
     const mountPrefix = rstripSlash(this.prefix)
     const lastSlash = path.lastIndexOf('/')

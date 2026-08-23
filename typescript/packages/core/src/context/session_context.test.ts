@@ -15,15 +15,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   effectiveMountMode,
+  effectivePathMode,
   getAdmission,
   getCurrentSession,
   getCurrentSessionFor,
   hiddenPathsActive,
+  hiddenPathsIntersect,
   pathAllowed,
   pathRulesActive,
   runWithAdmission,
   runWithSession,
   sessionPathAllowed,
+  strongestModeUnder,
 } from './session_context.ts'
 import { asyncContextIsolatesTasks } from '../utils/async_context.ts'
 import { MountMode, weakerMode } from '../types.ts'
@@ -203,6 +206,91 @@ describe('hides', () => {
       expect(pathAllowed('/repo/.env')).toBe(true)
       return Promise.resolve()
     })
+  })
+})
+
+describe('the path axis modes', () => {
+  it('effectivePathMode is the anchor-depth rule', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      mountModes: new Map([['/repo', MountMode.READ]]),
+      shownPaths: {
+        entries: [
+          { path: '/repo/build', mode: MountMode.WRITE },
+          { path: '/repo/tools', mode: MountMode.EXEC },
+        ],
+      },
+    })
+    await runWithSession(sess, () => {
+      // The mount cap holds where no deeper entry speaks...
+      expect(effectivePathMode('/repo/README.md', '/repo', MountMode.EXEC)).toBe(MountMode.READ)
+      // ...and the deeper show entry wins below its anchor.
+      expect(effectivePathMode('/repo/build/out', '/repo', MountMode.EXEC)).toBe(MountMode.WRITE)
+      expect(effectivePathMode('/repo/tools/go.py', '/repo', MountMode.EXEC)).toBe(MountMode.EXEC)
+      // The configured mode stays the strongest answer possible.
+      expect(effectivePathMode('/repo/tools/go.py', '/repo', MountMode.READ)).toBe(MountMode.READ)
+      return Promise.resolve()
+    })
+  })
+
+  it("effectivePathMode without a session is the mount's own", () => {
+    expect(effectivePathMode('/a/x', '/a', MountMode.WRITE)).toBe(MountMode.WRITE)
+  })
+
+  it('an equal-depth pair takes the weaker', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      mountModes: new Map([['/repo', MountMode.EXEC]]),
+      shownPaths: { entries: [{ path: '/repo', mode: MountMode.READ }] },
+    })
+    await runWithSession(sess, () => {
+      expect(effectivePathMode('/repo/x', '/repo', MountMode.EXEC)).toBe(MountMode.READ)
+      return Promise.resolve()
+    })
+  })
+
+  it('strongestModeUnder counts a show grant', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      mountModes: new Map([['/repo', MountMode.READ]]),
+      shownPaths: { entries: [{ path: '/repo/build', mode: MountMode.WRITE }] },
+    })
+    await runWithSession(sess, () => {
+      // The mount-wide mode is READ, but a deeper grant makes a write
+      // command runnable; the op door then refuses per path.
+      expect(strongestModeUnder('/repo', MountMode.EXEC)).toBe(MountMode.WRITE)
+      // Capped by the configured mode, and other mounts unaffected.
+      expect(strongestModeUnder('/repo', MountMode.READ)).toBe(MountMode.READ)
+      expect(strongestModeUnder('/other', MountMode.READ)).toBe(MountMode.READ)
+      return Promise.resolve()
+    })
+  })
+})
+
+describe('the per-operand hide gate', () => {
+  it('hiddenPathsIntersect answers per operand', async () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      hiddenPaths: { paths: ['/repo/.env'] },
+    })
+    await runWithSession(sess, () => {
+      expect(hiddenPathsIntersect('/repo')).toBe(true)
+      expect(hiddenPathsIntersect('/repo/.env')).toBe(true)
+      expect(hiddenPathsIntersect('/s3')).toBe(false)
+      return Promise.resolve()
+    })
+    expect(hiddenPathsIntersect('/repo')).toBe(false)
+  })
+
+  it('a show reaches the session predicate', () => {
+    const sess = new Session({
+      sessionId: 'agent',
+      hiddenPaths: { paths: ['/repo'] },
+      shownPaths: { entries: [{ path: '/repo/public', mode: null }] },
+    })
+    expect(sessionPathAllowed(sess, '/repo/public/index.html')).toBe(true)
+    expect(sessionPathAllowed(sess, '/repo')).toBe(true)
+    expect(sessionPathAllowed(sess, '/repo/secrets')).toBe(false)
   })
 })
 

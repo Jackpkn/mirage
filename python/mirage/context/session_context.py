@@ -16,8 +16,10 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from mirage.types import EntryGate, MountMode, PathSpec, weaker_mode
-from mirage.utils.hidden import path_hidden
+from mirage.types import (MOUNT_MODE_RANK, EntryGate, MountMode, PathSpec,
+                          weaker_mode)
+from mirage.utils.hidden import (anchor_depth, hides_intersect, path_visible,
+                                 show_head, shown_mode)
 
 if TYPE_CHECKING:
     from mirage.workspace.session.manager import SessionManager
@@ -117,12 +119,31 @@ def hidden_paths_active() -> bool:
 
     For a summarizing fast path (du -s asks the backend for one total)
     that must not be trusted when hidden leaves could be inside it.
+    Show entries do not trip it: a show without a covering hide
+    restricts nothing, and modes never change what a walk enumerates.
 
     Args:
         None
     """
     sess = get_current_session()
     return sess is not None and sess.hidden_paths is not None
+
+
+def hidden_paths_intersect(virtual: str) -> bool:
+    """Whether the current session hides anything at or under this
+    path: the per-operand form of :func:`hidden_paths_active`.
+
+    The native fast paths (find's native op, du's summarize total)
+    classify the raw backend tree, so they fork to the guarded walk
+    when a hide could cover an entry inside the subtree they answer
+    for, and stay on when none can: one hidden ``.env`` under ``/repo``
+    must not force ``find`` on ``/s3`` off its native op.
+
+    Args:
+        virtual (str): absolute virtual path of the walk's start point.
+    """
+    sess = get_current_session()
+    return sess is not None and hides_intersect(sess.hidden_paths, virtual)
 
 
 DEFAULT_UMASK = 0o022
@@ -161,8 +182,8 @@ def dotglob_active() -> bool:
 
 
 def session_path_allowed(sess: "Session", virtual: str) -> bool:
-    """Whether a session's hidden-paths specs, its own and the
-    workspace-bound one, leave this path visible.
+    """Whether a session's path axis leaves this path visible: its
+    hides, re-opened where a deeper show entry says so.
 
     The explicit-session form of ``path_allowed``, for a door that
     holds the session rather than running under it: the admission
@@ -173,8 +194,7 @@ def session_path_allowed(sess: "Session", virtual: str) -> bool:
         sess (Session): the session asking.
         virtual (str): absolute virtual path.
     """
-    return not (sess.hidden_paths is not None
-                and path_hidden(sess.hidden_paths, virtual))
+    return path_visible(sess.hidden_paths, sess.shown_paths, virtual)
 
 
 def path_allowed(virtual: str) -> bool:
@@ -319,3 +339,85 @@ def effective_mount_mode(mount_prefix: str,
         mount_mode (MountMode): the mount's configured mode.
     """
     return weaker_mode(mount_mode, _session_mode(mount_prefix))
+
+
+def effective_path_mode(virtual: str, mount_prefix: str,
+                        mount_mode: MountMode) -> MountMode:
+    """The mode in force at one path: the whole VFS axis on the one
+    anchor-depth rule.
+
+    The mount's configured mode is narrowed by the deepest session
+    statement covering the path, where a statement is the profile's
+    per-mount mode (scored at the mount prefix's own depth) or a
+    mode-carrying show entry (scored at its anchor depth). Deeper wins,
+    so ``mounts: {/repo: r}`` with ``show: {"/repo/build": rw}`` reads
+    the repo and writes only the build tree; an equal-depth pair takes
+    the weaker, failing toward refusal. The configured mode stays the
+    strongest answer possible: the document never grants past it.
+
+    Args:
+        virtual (str): absolute virtual path the op touches.
+        mount_prefix (str): the owning mount's prefix.
+        mount_mode (MountMode): the mount's configured mode.
+    """
+    sess = get_current_session()
+    if sess is None:
+        return mount_mode
+    prefix = _norm_prefix(mount_prefix)
+    cap = (sess.mount_modes.get(prefix)
+           if sess.mount_modes is not None else None)
+    best_depth = anchor_depth(prefix) if cap is not None else None
+    best_mode = cap
+    deepest = shown_mode(sess.shown_paths, virtual)
+    if deepest is not None:
+        depth, mode = deepest
+        if best_depth is None or depth > best_depth:
+            best_depth, best_mode = depth, mode
+        elif depth == best_depth and best_mode is not None:
+            best_mode = weaker_mode(best_mode, mode)
+    if best_mode is None:
+        return mount_mode
+    return weaker_mode(mount_mode, best_mode)
+
+
+def _reaches_under(head: str, prefix: str) -> bool:
+    """Whether a show anchor could cover any path under a mount prefix:
+    the anchor lies at or under the prefix, or the prefix inside the
+    anchor's subtree.
+
+    Args:
+        head (str): the show entry's anchor, normalized.
+        prefix (str): the mount prefix, normalized.
+    """
+    return (head == "/" or prefix == "/" or head == prefix
+            or head.startswith(prefix + "/") or prefix.startswith(head + "/"))
+
+
+def strongest_mode_under(mount_prefix: str,
+                         mount_mode: MountMode) -> MountMode:
+    """The strongest mode the current session reaches anywhere under a
+    mount: its mount-wide effective mode, or a deeper show grant, still
+    capped by the mount's configured mode.
+
+    What the whole-mount gates read: a write command stays runnable on
+    a mount whose only writable region is a show entry (the op door
+    then refuses per path), and the interpreters' any-``x`` rule counts
+    a show grant the way it counts a whole mount.
+
+    Args:
+        mount_prefix (str): the mount's prefix.
+        mount_mode (MountMode): the mount's configured mode.
+    """
+    best = effective_mount_mode(mount_prefix, mount_mode)
+    sess = get_current_session()
+    if sess is None or sess.shown_paths is None:
+        return best
+    prefix = _norm_prefix(mount_prefix)
+    for entry in sess.shown_paths.entries:
+        if entry.mode is None:
+            continue
+        if _reaches_under(show_head(entry.path), prefix):
+            reached = weaker_mode(mount_mode, entry.mode)
+            if MOUNT_MODE_RANK[reached] > MOUNT_MODE_RANK[best]:
+                best = reached
+    return best

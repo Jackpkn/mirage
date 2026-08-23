@@ -2485,10 +2485,32 @@
           }
         },
         "scripted": "scripted",
-        "scriptedask": "scriptedask"
+        "scriptedask": "scriptedask",
+        "keeper": "keeper",
+        "opener": "opener"
       },
       "profile": "default",
       "profiles": {
+        "keeper": {
+          "paths": {
+            "hide": [
+              "/scratch/grove"
+            ],
+            "show": {
+              "/scratch/grove/open": "r"
+            }
+          }
+        },
+        "opener": {
+          "mounts": {
+            "/scratch": "r"
+          },
+          "paths": {
+            "show": {
+              "/scratch/grove/build": "rw"
+            }
+          }
+        },
         "default": {
           "commands": {
             "allow": [

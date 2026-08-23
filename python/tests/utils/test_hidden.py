@@ -12,8 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.types import HiddenPaths, HiddenVars
-from mirage.utils.hidden import path_covers, path_hidden, var_hidden
+from mirage.types import HiddenPaths, HiddenVars, MountMode, ShowEntry
+from mirage.utils.hidden import (classify_paths, classify_shows, hide_depth,
+                                 hides_intersect, path_covers, path_hidden,
+                                 path_visible, show_depth, show_head,
+                                 shown_mode, var_hidden)
 
 
 def test_none_hides_nothing():
@@ -147,3 +150,146 @@ def test_path_covers_is_the_directory_holding_the_scope_or_an_ancestor():
     # A component pattern names no place, so nothing is covered by it.
     assert not path_covers(HiddenPaths(paths=(), patterns=("*.pem", )), "/x")
     assert not path_covers(None, "/")
+
+
+def test_hide_depth_scores_the_entry_never_the_match_site():
+    spec = classify_paths(["/repo", "/repo/sealed/*", "*.pem"])
+    # The exact subtree scores its component count wherever it matched.
+    assert hide_depth(spec, "/repo/a/b/c") == 1
+    # The anchored pattern covers descendants through the matched
+    # ancestor and still scores its own anchor depth.
+    assert hide_depth(spec, "/repo/sealed/x/deep") == 2
+    # A component pattern anchors nothing.
+    assert hide_depth(classify_paths(["*.pem"]), "/x/k.pem/y") == 0
+    assert hide_depth(spec, "/other") is None
+    assert hide_depth(None, "/repo") is None
+
+
+def test_show_depth_covers_the_entry_subtree():
+    shown = classify_shows([
+        ShowEntry("/repo/public"),
+        ShowEntry("/repo/docs/*", MountMode.READ),
+    ])
+    assert show_depth(shown, "/repo/public/index.html") == 2
+    assert show_depth(shown, "/repo/public") == 2
+    assert show_depth(shown, "/repo/docs/a/b") == 2
+    # The pattern's fixed head itself is not matched by fnmatch, and an
+    # entry covers nothing above its anchor.
+    assert show_depth(shown, "/repo") is None
+    assert show_depth(None, "/repo/public") is None
+    # A stray slashless pattern from a typed constructor covers
+    # nothing, failing toward refusal.
+    assert show_depth(classify_shows([ShowEntry("*.md")]), "/a/x.md") is None
+
+
+def test_show_head_is_the_anchor():
+    assert show_head("/repo/public") == "/repo/public"
+    assert show_head("/repo/docs/*") == "/repo/docs"
+    assert show_head("/repo/*/x") == "/repo"
+
+
+def test_path_visible_is_the_anchor_depth_rule():
+    hidden = classify_paths(["/repo"])
+    shown = classify_shows([ShowEntry("/repo/public", MountMode.READ)])
+    # The deeper show re-opens its subtree.
+    assert path_visible(hidden, shown, "/repo/public/index.html")
+    assert path_visible(hidden, shown, "/repo/public")
+    # Everything else under the hide stays nonexistent.
+    assert not path_visible(hidden, shown, "/repo/secrets/key.pem")
+    assert not path_visible(hidden, shown, "/repo/README.md")
+    # No hide, always visible; no show, plain hiding.
+    assert path_visible(None, shown, "/anywhere")
+    assert not path_visible(hidden, None, "/repo/x")
+
+
+def test_hide_wins_the_equal_depth_tie():
+    hidden = classify_paths(["/repo/public"])
+    shown = classify_shows([ShowEntry("/repo/public", MountMode.READ)])
+    assert not path_visible(hidden, shown, "/repo/public/x")
+
+
+def test_deeper_hide_re_closes_inside_a_show():
+    hidden = classify_paths(["/repo", "/repo/public/sealed"])
+    shown = classify_shows([ShowEntry("/repo/public")])
+    assert path_visible(hidden, shown, "/repo/public/a.txt")
+    assert not path_visible(hidden, shown, "/repo/public/sealed/k")
+
+
+def test_show_outranks_a_name_pattern_only_inside_its_anchor():
+    hidden = classify_paths(["*.pem"])
+    shown = classify_shows([ShowEntry("/repo/public")])
+    assert path_visible(hidden, shown, "/repo/public/tls.pem")
+    assert not path_visible(hidden, shown, "/other/tls.pem")
+
+
+def test_ancestors_of_a_show_anchor_stay_visible():
+    # The road to the carve-out exists: `ls /repo` lists `public` even
+    # though `/repo` itself lies under the hide.
+    hidden = classify_paths(["/repo"])
+    shown = classify_shows([ShowEntry("/repo/public/docs")])
+    for virtual in ("/", "/repo", "/repo/public"):
+        assert path_visible(hidden, shown, virtual)
+    assert not path_visible(hidden, shown, "/repo/other")
+
+
+def test_a_hidden_show_anchor_opens_no_road():
+    # The show anchor is itself re-hidden at equal depth, so nothing
+    # above it gains visibility from it.
+    hidden = classify_paths(["/repo", "/repo/public"])
+    shown = classify_shows([ShowEntry("/repo/public")])
+    assert not path_visible(hidden, shown, "/repo")
+    assert not path_visible(hidden, shown, "/repo/public/x")
+
+
+def test_shown_mode_is_the_deepest_mode_entry():
+    shown = classify_shows([
+        ShowEntry("/repo", MountMode.READ),
+        ShowEntry("/repo/build", MountMode.WRITE),
+        ShowEntry("/repo/public"),
+    ])
+    assert shown_mode(shown, "/repo/src/a.py") == (1, MountMode.READ)
+    assert shown_mode(shown, "/repo/build/out") == (2, MountMode.WRITE)
+    # A list-form entry states visibility only.
+    assert shown_mode(shown, "/repo/public/x") == (1, MountMode.READ)
+    assert shown_mode(shown, "/elsewhere") is None
+    assert shown_mode(None, "/repo") is None
+
+
+def test_shown_mode_equal_depth_takes_the_weaker():
+    shown = classify_shows([
+        ShowEntry("/repo/docs", MountMode.EXEC),
+        ShowEntry("/repo/*", MountMode.READ),
+    ])
+    assert shown_mode(shown, "/repo/docs/a") == (2, MountMode.EXEC)
+    # Both anchor at depth 1 for a path only the pattern reaches; a
+    # second depth-1 statement can only weaken the first.
+    both = classify_shows([
+        ShowEntry("/repo", MountMode.EXEC),
+        ShowEntry("/repo/*", MountMode.READ),
+    ])
+    assert shown_mode(both, "/repo/x") == (1, MountMode.READ)
+
+
+def test_classify_shows_empty_is_none():
+    assert classify_shows([]) is None
+    assert classify_shows([ShowEntry("/a")]) is not None
+
+
+def test_hides_intersect_is_the_per_operand_gate():
+    spec = classify_paths(["/repo/.env"])
+    # The walk that could reach the entry loses its fast path...
+    assert hides_intersect(spec, "/repo")
+    assert hides_intersect(spec, "/")
+    assert hides_intersect(spec, "/repo/.env")
+    # ...and a sibling mount keeps its native op.
+    assert not hides_intersect(spec, "/s3")
+    assert not hides_intersect(spec, "/repo/open")
+    # A component pattern names no place, so it intersects everything.
+    assert hides_intersect(classify_paths(["*.pem"]), "/s3")
+    # An anchored pattern intersects through its fixed head, and inside
+    # its own subtree.
+    sealed = classify_paths(["/repo/sealed/*"])
+    assert hides_intersect(sealed, "/repo")
+    assert hides_intersect(sealed, "/repo/sealed/x")
+    assert not hides_intersect(sealed, "/repo/open")
+    assert not hides_intersect(None, "/")
