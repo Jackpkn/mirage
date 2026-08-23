@@ -43,6 +43,30 @@ def requires_privilege(platform: str | None = None) -> bool:
             if platform is None else platform).startswith(PRIVILEGED_PLATFORMS)
 
 
+def check_platform_nfs(platform: str | None = None) -> None:
+    """Refuse a platform whose mount command this backend cannot build.
+
+    macOS and Linux both ship a kernel NFS client and a mount command
+    the argv builder knows. Windows does not qualify yet: the client is
+    Pro-only, ``mount.exe`` speaks a different grammar, and none of it
+    has been exercised -- refusing loudly beats emitting a Linux-shaped
+    command that cannot work, the same advisory stance the repo takes
+    on FUSE-over-WinFsp.
+
+    Args:
+        platform (str | None): platform tag to test; defaults to the
+            running one.
+
+    Raises:
+        RuntimeError: the platform is Windows.
+    """
+    tag = sys.platform if platform is None else platform
+    if tag.startswith("win"):
+        raise RuntimeError(
+            "the nfs mount backend does not support Windows yet; use "
+            "backend='fuse' with WinFsp")
+
+
 def prepare_nfs_backend(value: "str | MountBackend | None") -> MountBackend:
     """Resolve and validate a backend for an NFS mount.
 
@@ -137,6 +161,7 @@ def prepare_nfs_mount(value: "str | MountBackend | None",
         MountBackend: the validated backend.
     """
     backend = prepare_nfs_backend(value)
+    check_platform_nfs()
     check_port_available(config.host, config.port)
     check_sizes_nfs(ops, root_prefix)
     if requires_privilege():

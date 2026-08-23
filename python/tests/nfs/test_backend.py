@@ -16,8 +16,9 @@ import socket
 
 import pytest
 
-from mirage.nfs.backend import (check_port_available, check_sizes_nfs,
-                                prepare_nfs_backend, requires_privilege)
+from mirage.nfs.backend import (check_platform_nfs, check_port_available,
+                                check_sizes_nfs, prepare_nfs_backend,
+                                requires_privilege)
 from mirage.types import MountBackend
 
 
@@ -73,3 +74,17 @@ def test_no_warning_when_every_mount_can_size_its_files(caplog):
 def test_privilege_requirement_is_platform_specific():
     assert requires_privilege("darwin") is False
     assert requires_privilege("linux") is True
+
+
+def test_windows_is_refused_with_a_clear_error():
+    # mount_args has no win32 branch and the Windows NFS client (Pro
+    # only, mount.exe grammar) is untested; refusing loudly beats
+    # emitting a Linux-shaped command that cannot work.
+    with pytest.raises(RuntimeError) as exc:
+        check_platform_nfs("win32")
+    assert "windows" in str(exc.value).lower()
+
+
+def test_macos_and_linux_pass_the_platform_check():
+    check_platform_nfs("darwin")
+    check_platform_nfs("linux")
