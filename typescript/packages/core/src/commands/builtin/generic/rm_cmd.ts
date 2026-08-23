@@ -26,6 +26,7 @@ import {
 import { specOf } from '../../spec/builtins.ts'
 import { FlagView } from '../../spec/types.ts'
 import { resolveGlobOf, type CommandIO } from '../generic_bind/index.ts'
+import { withWriteGuards } from '../generic_bind/adapter.ts'
 import { formatRecords } from '../utils/output.ts'
 
 const ENC = new TextEncoder()
@@ -37,13 +38,17 @@ type UnlinkFn<A> = (accessor: A, path: PathSpec, index?: IndexCacheStore) => Pro
  *
  * Every API-backed mount spells the same GNU behaviour: report the operand
  * it could not remove, keep removing the rest, and exit 1 if any failed.
+ * The unlink is wrapped with the same hidden/rule/mode chain the factory
+ * gives the generic rm's slots, so this family enforces the session's
+ * path axis like the command it stands in for.
  */
 export function makeRm<A extends Accessor>(
   resource: ResourceName,
   io: CommandIO<A>,
-  unlink: UnlinkFn<A>,
+  rawUnlink: UnlinkFn<A>,
 ): RegisteredCommand[] {
   const resolveGlob = resolveGlobOf(io)
+  const unlink = withWriteGuards(rawUnlink)
   return command({
     name: 'rm',
     resource,

@@ -2,14 +2,16 @@ from dataclasses import replace
 from functools import partial
 
 from mirage.accessor.dify import DifyAccessor
-from mirage.commands.builtin.dify.io import resolve_glob
-from mirage.commands.builtin.generic.find import find_generic
+from mirage.commands.builtin.dify.io import IO, resolve_glob
+from mirage.commands.builtin.generic.find import (find_generic,
+                                                  find_walk_generic)
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.builtin.utils.paths import default_paths
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
+from mirage.context import hidden_paths_intersect, path_rules_active
 from mirage.core.dify.find import find as find_core
 from mirage.core.dify.stat import stat as stat_core
 from mirage.core.dify.stat import stat_light
@@ -72,6 +74,20 @@ async def find(
     stat_fn = (partial(stat_core, accessor, index=opts.index)
                if fl.as_str("mtime") is not None else partial(
                    stat_light, accessor, index=opts.index))
+    # A native find op classifies on the raw backend tree, so under
+    # hidden paths or a path rule it would answer for entries the
+    # session cannot see; the walk classifies through readdir/stat and
+    # filters each entry through the gate, the same fork the factory
+    # builder takes (rung 0).
+    if (path_rules_active()
+            or any(hidden_paths_intersect(p.virtual) for p in paths)):
+        stdout, io = await find_walk_generic(paths,
+                                             _expr_texts(texts),
+                                             replace(opts, flags=bag),
+                                             readdir=partial(
+                                                 IO.readdir, accessor),
+                                             stat=partial(IO.stat, accessor))
+        return await _normalize_find_output(stdout, search_path), io
     stdout, io = await find_generic(paths,
                                     _expr_texts(texts),
                                     replace(opts, flags=bag),

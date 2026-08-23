@@ -62,7 +62,8 @@ async function py(ws: Workspace, label: string, code: string): Promise<void> {
 
 async function main(): Promise<void> {
   const ws = new Workspace({}, { mode: MountMode.EXEC })
-  ws.addMount('/ram', new RAMResource(), MountMode.WRITE)
+  // The demo scripts live under /ram, so the mount carries x.
+  ws.addMount('/ram', new RAMResource(), MountMode.EXEC)
 
   const linear = buildLinear()
   if (linear !== undefined) ws.addMount('/linear', new LinearResource(linear), MountMode.READ)

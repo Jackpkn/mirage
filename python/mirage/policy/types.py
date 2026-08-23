@@ -131,6 +131,27 @@ class CommandRule:
 
 
 @dataclass(frozen=True, slots=True)
+class HideReason:
+    """Why one group of hide entries exists, for the operator only.
+
+    The document may state a hide as ``{patterns: [...], reason: ...}``;
+    the patterns compile into the flat hide spec like any other entry,
+    and this side table keeps the reason beside them for the host's
+    doors (audit, read-back). It is never rendered to the agent: a hide
+    answers ENOENT, and a reason on a nonexistent path would confirm
+    the path exists.
+
+    Args:
+        patterns (tuple[str, ...]): the group's entries, as compiled
+            (a mount section's entries anchored to its root).
+        reason (str): why the operator hid them.
+    """
+
+    patterns: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class Ruling:
     """The profile's answer about one line, and what produced it.
 

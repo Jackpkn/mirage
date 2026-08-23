@@ -22,7 +22,7 @@ from mirage.commands.builtin.generic.find import (find_generic,
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           overlaid_stat)
 from mirage.commands.config import CommandOpts
-from mirage.context import hidden_paths_active, path_rules_active
+from mirage.context import hidden_paths_intersect, path_rules_active
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import FileStat, PathSpec
 
@@ -59,8 +59,11 @@ async def find(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     # path rule it would list a directory the rule refuses to open. The
     # walk classifies through the guarded readdir/stat, so it sees
     # exactly the visible tree and reports the refusal where GNU does;
-    # same trade du makes for its summarize fast path.
-    if ops.find is None or hidden_paths_active() or path_rules_active():
+    # same trade du makes for its summarize fast path. Per operand, not
+    # per session: a hidden .env under /repo must not force find on
+    # /s3 off its native op.
+    if (ops.find is None or path_rules_active()
+            or any(hidden_paths_intersect(p.virtual) for p in resolved)):
         # -mtime must see namespace times (touch results, observed
         # writes on mtime-less backends), same as ls.
         walk_stat: Callable[...,

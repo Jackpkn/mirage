@@ -2,10 +2,12 @@ import pytest
 
 from mirage.policy.errors import PolicyError
 from mirage.policy.match.rule import match_op, rule_scope
-from mirage.policy.types import AdmissionRules, CommandRule, OpsContext
+from mirage.policy.types import (AdmissionRules, CommandRule, HideReason,
+                                 OpsContext)
 from mirage.shell.variable import VarAttr
-from mirage.types import HiddenPaths, HiddenVars, MountMode, PathSpec
-from mirage.utils.hidden import path_hidden
+from mirage.types import (HiddenPaths, HiddenVars, MountMode, PathSpec,
+                          ShowEntry, ShownPaths)
+from mirage.utils.hidden import path_hidden, path_visible
 from mirage.workspace.session.session import Session
 
 from mirage.policy.profile import (  # isort: skip
@@ -288,3 +290,108 @@ def test_narrow_carries_the_role_s_admission_rules_onto_the_session():
     narrow(session, compiled)
     assert session.commands == compiled.commands
     assert compile_profile(SessionProfile(cwd="/x")).commands is None
+
+
+def test_with_inline_cannot_add_show_and_the_bases_survives():
+    base = SessionProfile(paths=PathsBlock(
+        hide=("/repo", ),
+        show=(ShowEntry(path="/repo/public", mode=None), ),
+        reasons=(HideReason(patterns=("/repo", ), reason="sealed"), )))
+    inline = SessionProfile(paths=PathsBlock(
+        hide=("/repo/extra", ),
+        reasons=(HideReason(patterns=("/repo/extra", ), reason="audit"), )))
+    out = with_inline(base, inline)
+    # The profile's show and both sides' reasons survive the merge.
+    assert out.paths.show == base.paths.show
+    assert out.paths.hide == ("/repo", "/repo/extra")
+    assert out.paths.reasons == base.paths.reasons + inline.paths.reasons
+    with pytest.raises(PolicyError, match="not show entries"):
+        with_inline(
+            base,
+            SessionProfile(paths=PathsBlock(
+                show=(ShowEntry(path="/repo/secrets", mode=None), ))))
+    # The mount-section spelling is the same statement.
+    with pytest.raises(PolicyError, match="not show entries"):
+        with_inline(
+            base,
+            SessionProfile(
+                mounts={
+                    "/repo":
+                    ProfileMount(paths=PathsBlock(
+                        show=(ShowEntry(path="/repo/secrets", mode=None), )))
+                }))
+    # And with no profile to add to, same rule as the allow list.
+    with pytest.raises(PolicyError, match="not show entries"):
+        with_inline(
+            None,
+            SessionProfile(paths=PathsBlock(
+                show=(ShowEntry(path="/x", mode=None), ))))
+
+
+def test_with_inline_keeps_a_mount_sections_show():
+    base = SessionProfile(
+        mounts={
+            "/repo":
+            ProfileMount(paths=PathsBlock(
+                hide=("/repo", ),
+                show=(ShowEntry(path="/repo/public", mode=MountMode.READ), )))
+        })
+    inline = SessionProfile(
+        mounts={
+            "/repo": ProfileMount(paths=PathsBlock(hide=("/repo/extra", )))
+        })
+    entry = with_inline(base, inline).mounts["/repo"]
+    assert entry.paths.show == (ShowEntry(path="/repo/public",
+                                          mode=MountMode.READ), )
+    assert entry.paths.hide == ("/repo", "/repo/extra")
+
+
+def test_compile_profile_collects_the_shows_of_every_mount_section():
+    out = compile_profile(
+        SessionProfile(
+            paths=PathsBlock(hide=("/repo", ),
+                             show=(ShowEntry(path="/repo/public",
+                                             mode=None), )),
+            mounts={
+                "/data":
+                ProfileMount(
+                    paths=PathsBlock(hide=("/data", ),
+                                     show=(ShowEntry(path="/data/out",
+                                                     mode=MountMode.WRITE), )))
+            }))
+    assert out.shown_paths == ShownPaths(
+        entries=(ShowEntry(path="/repo/public", mode=None),
+                 ShowEntry(path="/data/out", mode=MountMode.WRITE)))
+    # The axis reads them together: the show reopens its subtree.
+    assert path_visible(out.hidden_paths, out.shown_paths, "/repo/public/a")
+    assert not path_visible(out.hidden_paths, out.shown_paths, "/repo/x")
+
+
+def test_compile_profile_anchors_a_mount_sections_reasons():
+    out = compile_profile(
+        SessionProfile(
+            paths=PathsBlock(reasons=(
+                HideReason(patterns=("/shared", ), reason="global"), )),
+            mounts={
+                "/repo":
+                ProfileMount(paths=PathsBlock(reasons=(
+                    HideReason(patterns=("*.pem", ), reason="credentials"), )))
+            }))
+    assert out.hide_reasons == (
+        HideReason(patterns=("/shared", ), reason="global"),
+        HideReason(patterns=("/repo/*.pem", ), reason="credentials"),
+    )
+
+
+def test_narrow_stamps_the_path_axis():
+    compiled = compile_profile(
+        SessionProfile(paths=PathsBlock(
+            hide=("/repo", ),
+            show=(ShowEntry(path="/repo/public", mode=None), ),
+            reasons=(HideReason(patterns=("/repo", ), reason="sealed"), ))))
+    session = Session(session_id="s")
+    narrow(session, compiled)
+    assert session.shown_paths == compiled.shown_paths
+    assert session.hide_reasons == compiled.hide_reasons
+    empty = compile_profile(None)
+    assert empty.shown_paths is None and empty.hide_reasons == ()

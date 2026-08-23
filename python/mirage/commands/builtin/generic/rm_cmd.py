@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from mirage.accessor.base import Accessor
+from mirage.commands.builtin.generic_bind.adapter import with_write_guards
 from mirage.commands.builtin.utils.output import format_optional_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
@@ -36,7 +37,10 @@ def make_rm(
 
     For backends whose unlink resolves ids through the cache index; the
     factory rm builder calls ``ops.unlink(path)`` without an
-    index, so those backends bind this wrapper instead.
+    index, so those backends bind this wrapper instead. The unlink is
+    wrapped with the same hidden/rule/mode chain the factory gives the
+    generic rm's slots, so this family enforces the session's path
+    axis like the command it stands in for.
 
     Args:
         resource (str): resource name the command registers under.
@@ -44,6 +48,7 @@ def make_rm(
             index)``.
         unlink (Callable): backend unlink ``(accessor, path, index)``.
     """
+    unlink = with_write_guards(unlink)
 
     @command("rm", resource=resource, spec=SPECS["rm"], write=True)
     async def rm(

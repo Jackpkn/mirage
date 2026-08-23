@@ -65,11 +65,12 @@ async def main():
 
         print("\n--- read-only mount ---")
         # The mount mode is the access control, so a write verb is
-        # refused at the door rather than reaching the disk.
+        # refused at the door with the read-only errno rather than
+        # reaching the disk.
         try:
             os.remove("/data/example.json")
         except OSError as exc:
-            refused = "EACCES" if exc.errno == errno.EACCES else exc.errno
+            refused = errno.errorcode.get(exc.errno, str(exc.errno))
             print(f"  os.remove: {refused}")
         print(f"  access W_OK: {os.access('/data/example.json', os.W_OK)}")
 

@@ -18,6 +18,7 @@ import pytest
 
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
+from mirage.utils.errors import ReadOnlyError
 from mirage.workspace import Workspace
 from mirage.workspace.session import reset_current_session, set_current_session
 
@@ -331,7 +332,7 @@ def test_read_grant_blocks_redirect_write():
 
     io = asyncio.run(run())
     assert io.exit_code != 0
-    assert io.stderr == b"/a/y.txt: Permission denied\n"
+    assert io.stderr == b"/a/y.txt: Read-only file system\n"
     assert "/y.txt" not in a._store.files
 
 
@@ -358,7 +359,7 @@ def test_grant_cannot_widen_read_mount():
 
     io = asyncio.run(run())
     assert io.exit_code != 0
-    assert io.stderr == b"/a/y.txt: Permission denied\n"
+    assert io.stderr == b"/a/y.txt: Read-only file system\n"
 
 
 def test_the_user_root_mount_is_governed_like_any_other():
@@ -392,7 +393,7 @@ def test_the_user_root_mount_is_governed_like_any_other():
     assert b"No such file or directory" in (denied.stderr or b"")
     assert read_ok.exit_code == 0 and b"top" in (read_ok.stdout or b"")
     assert write_denied.exit_code != 0
-    assert write_denied.stderr == b"/root.txt: Permission denied\n"
+    assert write_denied.stderr == b"/root.txt: Read-only file system\n"
 
 
 def test_implicit_root_keeps_pathless_commands_working():
@@ -433,9 +434,9 @@ def test_ops_facade_respects_read_grant():
         token = set_current_session(sess)
         try:
             assert await ws.ops.read("/a/x.txt") == b"hi"
-            with pytest.raises(PermissionError, match="read-only"):
+            with pytest.raises(ReadOnlyError, match="Read-only"):
                 await ws.ops.write("/a/y.txt", b"leaked")
-            with pytest.raises(PermissionError, match="read-only"):
+            with pytest.raises(ReadOnlyError, match="Read-only"):
                 await ws.ops.rename("/a/x.txt", "/a/z.txt")
         finally:
             reset_current_session(token)

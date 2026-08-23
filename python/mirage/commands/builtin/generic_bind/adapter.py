@@ -25,10 +25,11 @@ from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.generic.du import (DEFAULT_MAX_DU_ENTRIES,
                                                 DuEntries)
 from mirage.commands.config import CommandFnResult, CommandOpts, ProvisionFn
-from mirage.context import get_admission, path_allowed
+from mirage.context import (effective_path_mode, get_admission, get_mount_gate,
+                            path_allowed, readonly_below)
 from mirage.ops.types import ChildMounts, StatOverlay
-from mirage.types import FileStat, FileType, PathSpec
-from mirage.utils.errors import MISS_ERRORS, eisdir
+from mirage.types import FileStat, FileType, MountMode, PathSpec
+from mirage.utils.errors import MISS_ERRORS, ReadOnlyError, eisdir
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES, make_resolve_glob
 from mirage.utils.path import norm, parent
 
@@ -541,6 +542,90 @@ def _rule_call(fn: OperationFn, *args: Any, **kwargs: Any) -> Any:
     return fn(*args, **kwargs)
 
 
+# slot -> (skip_first, subtree): whether the leading PathSpec is a
+# read-only source (the copy slots), and whether the op mutates the
+# whole subtree under its written paths in one backend call.
+_MODE_SLOTS: dict[str, tuple[bool, bool]] = {
+    "write": (False, False),
+    "mkdir": (False, False),
+    "append": (False, False),
+    "create": (False, False),
+    "truncate": (False, False),
+    "unlink": (False, False),
+    "rmdir": (False, False),
+    "set_attrs": (False, False),
+    "rm_r": (False, True),
+    "rename": (False, True),
+    "copy": (True, False),
+    "dir_copy": (True, True),
+}
+
+
+def _mode_call(fn: OperationFn, skip_first: bool, subtree: bool, *args: Any,
+               **kwargs: Any) -> Any:
+    """Call a backend mutation op after holding each written path to
+    its region's effective mode.
+
+    The write-command gate admits a command when any shown subtree
+    grants writes, so each individual write must still answer for its
+    own path: ``mkdir /repo/private/x`` on a mount whose only writable
+    region is ``/repo/build`` refuses here. A copy's source is a read,
+    so the first PathSpec is skipped for the copy slots; a rename
+    mutates both endpoints, so both are held. An op that covers a
+    whole subtree also answers for the regions below its operand
+    (``readonly_below``): a native ``rm -r`` would otherwise delete a
+    read-only carve-out in one backend call no per-path check ever
+    sees. Sync like ``_guarded_call``, and inert with no mount bound
+    (a generic invoked outside a mount's command).
+
+    Args:
+        fn (OperationFn): the raw backend op.
+        skip_first (bool): whether the first PathSpec is read-only
+            (the copy slots' source).
+        subtree (bool): whether the op mutates everything under its
+            written paths in one call.
+        *args: the call's positionals, PathSpecs among them.
+        **kwargs: forwarded untouched.
+    """
+    gate = get_mount_gate()
+    if gate is not None:
+        prefix, mode = gate
+        specs = [arg for arg in args if isinstance(arg, PathSpec)]
+        for spec in (specs[1:] if skip_first else specs):
+            if effective_path_mode(spec.virtual, prefix,
+                                   mode) == MountMode.READ:
+                raise ReadOnlyError(errno.EROFS, "Read-only file system",
+                                    spec.virtual)
+            if subtree:
+                blame = readonly_below(spec.virtual, prefix, mode)
+                if blame is not None:
+                    raise ReadOnlyError(errno.EROFS, "Read-only file system",
+                                        blame)
+    return fn(*args, **kwargs)
+
+
+def with_mode_guard(ops: CommandIO) -> CommandIO:
+    """Return ``ops`` whose mutation slots hold each written path to
+    its region's effective mode.
+
+    The per-path half of the mount's write gate, innermost of the three
+    guards: hides answer ENOENT first, rules refuse next, and only a
+    path both leave standing is judged for its mode, the same order the
+    op door applies. Reads are never wrapped, because ``READ`` allows
+    them everywhere the other guards do.
+
+    Args:
+        ops (CommandIO): the backend's IO adapter.
+    """
+    changes: dict[str, Any] = {}
+    for slot, (skip_first, subtree) in _MODE_SLOTS.items():
+        fn = getattr(ops, slot)
+        if fn is not None:
+            changes[slot] = functools.partial(_mode_call, fn, skip_first,
+                                              subtree)
+    return replace(ops, **changes)
+
+
 def with_rule_guard(ops: CommandIO) -> CommandIO:
     """Return ``ops`` whose content and mutation slots ask the admitted
     command's gate before touching a path.
@@ -569,6 +654,39 @@ def with_rule_guard(ops: CommandIO) -> CommandIO:
         if fn is not None:
             changes[slot] = functools.partial(_rule_call, fn)
     return replace(ops, **changes)
+
+
+def with_path_guards(ops: CommandIO) -> CommandIO:
+    """Return ``ops`` under the whole path axis: hides answer ENOENT
+    first, rules refuse next, the mode speaks last.
+
+    The one spelling of the guard chain, used by the commands factory
+    for every generic command and by a bespoke command family that
+    consumes a ``CommandIO`` directly (the object-store overrides), so
+    an override enforces the session's path axis exactly like the
+    generic it replaces.
+
+    Args:
+        ops (CommandIO): the backend's IO adapter.
+    """
+    return with_hidden_guard(with_rule_guard(with_mode_guard(ops)))
+
+
+def with_write_guards(fn: OperationFn) -> OperationFn:
+    """Guard one bare backend write the way the adapter guards a slot.
+
+    For a bespoke command wired from loose functions rather than a
+    ``CommandIO`` (the google ``rm`` family binds an index-threaded
+    unlink): the same chain in the same order, judging the call's
+    PathSpec positionals. A hidden path answers ENOENT, the flavor of
+    the flat mutation slots.
+
+    Args:
+        fn (OperationFn): the raw backend write.
+    """
+    guarded: OperationFn = functools.partial(_mode_call, fn, False, False)
+    guarded = functools.partial(_rule_call, guarded)
+    return functools.partial(_guarded_call, guarded, False)
 
 
 async def _is_implicit_dir(ops: CommandIO, accessor: Accessor, path: PathSpec,

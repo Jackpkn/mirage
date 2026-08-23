@@ -324,6 +324,43 @@ class HiddenPaths:
 
 
 @dataclass(frozen=True, slots=True)
+class ShowEntry:
+    """One ``show`` entry of a profile's path axis, compiled.
+
+    Args:
+        path (str): the entry as written: an exact subtree or an
+            anchored pattern, always absolute. A slashless name pattern
+            is refused at validation, because a show anchors to a place
+            and a name pattern names none.
+        mode (MountMode | None): the mode the entry states for its
+            subtree; None for a list-form entry, which inherits the
+            mount's.
+    """
+
+    path: str
+    mode: MountMode | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ShownPaths:
+    """The ``show`` half of one session's path axis.
+
+    A sibling of ``HiddenPaths``: per-session state the doors read,
+    None-on-the-session means the document states no show. An entry
+    does two things, each on the one anchor-depth rule: it re-opens a
+    subtree inside a hidden region when its anchor is deeper than the
+    hide's, and it states the mode in force below its anchor when it
+    carries one.
+
+    Args:
+        entries (tuple[ShowEntry, ...]): the entries, in document
+            order.
+    """
+
+    entries: tuple[ShowEntry, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class HiddenVars:
     """What the session door treats as unset for one session.
 

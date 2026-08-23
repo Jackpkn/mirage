@@ -19,7 +19,7 @@ import pytest
 
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode, PathSpec
-from mirage.utils.errors import OperationNotSupportedError
+from mirage.utils.errors import OperationNotSupportedError, ReadOnlyError
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.mount import MountEntry
 
@@ -63,7 +63,7 @@ def test_read_only_blocks_write_ops():
     reg = MountRegistry()
     reg.mount("/ro/", RAMResource(), MountMode.READ)
     mount = reg.mount_for("/ro/file.txt")
-    with pytest.raises(PermissionError, match="read-only"):
+    with pytest.raises(ReadOnlyError, match="Read-only"):
         _run(mount.execute_op("write", "/file.txt", data=b"x"))
 
 

@@ -26,7 +26,7 @@ describe('Workspace + Python mount', () => {
     const ops = new OpsRegistry()
     ops.registerResource(ram)
     const ws = new Workspace({}, { mode: MountMode.EXEC, ops, shellParser: parser })
-    ws.addMount('/ram', ram, MountMode.WRITE)
+    ws.addMount('/ram', ram, MountMode.EXEC)
     await ws.fs.writeFile('/ram/hello.txt', 'world')
     const io = await ws.execute(`python3 -c "with open('/ram/hello.txt') as f: print(f.read())"`)
     expect(io.exitCode).toBe(0)
@@ -40,7 +40,7 @@ describe('Workspace + Python mount', () => {
     const ops = new OpsRegistry()
     ops.registerResource(ram)
     const ws = new Workspace({}, { mode: MountMode.EXEC, ops, shellParser: parser })
-    ws.addMount('/ram', ram, MountMode.WRITE)
+    ws.addMount('/ram', ram, MountMode.EXEC)
     const io = await ws.execute(
       `python3 -c "with open('/ram/out.txt', 'wb') as f: f.write(b'data')"`,
     )
@@ -56,7 +56,7 @@ describe('Workspace + Python mount', () => {
     const ops = new OpsRegistry()
     ops.registerResource(ram)
     const ws = new Workspace({}, { mode: MountMode.EXEC, ops, shellParser: parser })
-    ws.addMount('/ram', ram, MountMode.WRITE)
+    ws.addMount('/ram', ram, MountMode.EXEC)
     await ws.fs.writeFile('/ram/never.txt', 'unused')
     const io = await ws.execute('echo hello')
     expect(io.exitCode).toBe(0)
@@ -70,7 +70,7 @@ describe('Workspace + Python mount', () => {
     const ops = new OpsRegistry()
     ops.registerResource(ram)
     const ws = new Workspace({}, { mode: MountMode.EXEC, ops, shellParser: parser })
-    ws.addMount('/ram', ram, MountMode.WRITE)
+    ws.addMount('/ram', ram, MountMode.EXEC)
     await ws.fs.writeFile('/ram/seed.txt', 'seed')
     const io = await ws.execute(`python3 -c "pass"`)
     expect(io.exitCode).toBe(0)
@@ -89,7 +89,7 @@ describe('Workspace + Python mount', () => {
     const ops = new OpsRegistry()
     ops.registerResource(ram)
     const ws = new Workspace({}, { mode: MountMode.EXEC, ops, shellParser: parser })
-    ws.addMount('/ram', ram, MountMode.WRITE)
+    ws.addMount('/ram', ram, MountMode.EXEC)
     const code =
       "data = b'X' * 1024\n" +
       "with open('/ram/big.bin', 'wb') as f:\n" +
@@ -119,7 +119,7 @@ describe('Workspace + Python mount', () => {
         python: { autoLoadFromImports: true },
       },
     )
-    ws.addMount('/ram', ram, MountMode.WRITE)
+    ws.addMount('/ram', ram, MountMode.EXEC)
     const code =
       'from PIL import Image\n' +
       "img = Image.new('RGB', (4, 4), color='red')\n" +

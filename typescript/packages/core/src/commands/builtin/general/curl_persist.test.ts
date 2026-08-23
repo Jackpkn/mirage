@@ -86,7 +86,7 @@ describe('curl -o persists to mount', () => {
     const ws = await makeWs()
     const io = await ws.execute('curl -sS https://x.test/file -o /readonly/foo.bin')
     expect(io.exitCode).toBe(23)
-    expect(io.stderrText).toMatch(/read-only/)
+    expect(io.stderrText).toMatch(/Read-only/)
     expect(io.stderrText).toContain('/readonly/foo.bin')
     await ws.close()
   })

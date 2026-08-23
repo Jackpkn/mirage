@@ -1,0 +1,176 @@
+{
+  "cases": [
+    {
+      "id": "carve_prep",
+      "seq": 923300,
+      "targets": ["ram-commands"],
+      "command": "mkdir -p /scratch/grove/open /scratch/grove/store && echo pub > /scratch/grove/open/index.txt && echo sec > /scratch/grove/store/key.txt",
+      "expect": { "exit": 0, "stdout": "", "stderr": "" }
+    },
+    {
+      "id": "carve_ls_lists_only_the_shown_subtree",
+      "seq": 923301,
+      "targets": ["ram-commands"],
+      "session": "keeper",
+      "command": "ls /scratch/grove",
+      "expect": { "exit": 0, "stdout": "open\n", "stderr": "" }
+    },
+    {
+      "id": "carve_read_inside_the_shown_subtree",
+      "seq": 923302,
+      "targets": ["ram-commands"],
+      "session": "keeper",
+      "command": "cat /scratch/grove/open/index.txt",
+      "expect": { "exit": 0, "stdout": "pub\n", "stderr": "" }
+    },
+    {
+      "id": "carve_hidden_sibling_reads_as_absent",
+      "seq": 923303,
+      "targets": ["ram-commands"],
+      "session": "keeper",
+      "command": "cat /scratch/grove/store/key.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /scratch/grove/store/key.txt: No such file or directory\n"
+      }
+    },
+    {
+      "id": "carve_find_agrees_with_ls",
+      "seq": 923304,
+      "targets": ["ram-commands"],
+      "session": "keeper",
+      "command": "find /scratch/grove",
+      "expect": {
+        "exit": 0,
+        "stdout": "/scratch/grove\n/scratch/grove/open\n/scratch/grove/open/index.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "carve_write_below_the_shown_mode_is_read_only",
+      "seq": 923305,
+      "targets": ["ram-commands"],
+      "session": "keeper",
+      "command": "echo x > /scratch/grove/open/new.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "/scratch/grove/open/new.txt: Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_create_into_hidden_space_is_refused",
+      "seq": 923306,
+      "targets": ["ram-commands"],
+      "session": "keeper",
+      "command": "echo x > /scratch/grove/store/new.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "/scratch/grove/store/new.txt: Permission denied\n"
+      }
+    },
+    {
+      "id": "carve_show_mode_opens_a_writable_region",
+      "seq": 923307,
+      "targets": ["ram-commands"],
+      "session": "opener",
+      "command": "mkdir /scratch/grove/build && echo out > /scratch/grove/build/a.txt && cat /scratch/grove/build/a.txt",
+      "expect": { "exit": 0, "stdout": "out\n", "stderr": "" }
+    },
+    {
+      "id": "carve_the_mount_cap_holds_outside_the_shown_region",
+      "seq": 923308,
+      "targets": ["ram-commands"],
+      "session": "opener",
+      "command": "echo x > /scratch/grove/open/index.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "/scratch/grove/open/index.txt: Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_a_script_outside_x_is_refused",
+      "seq": 923309,
+      "targets": ["ram-commands"],
+      "session": "opener",
+      "command": "python3 /scratch/grove/open/index.txt",
+      "expect": {
+        "exit": 126,
+        "stdout": "",
+        "stderr": "python3: /scratch/grove/open/index.txt: not in EXEC mode\n"
+      }
+    },
+    {
+      "id": "carve_the_write_gate_holds_per_path_inside_an_admitted_command",
+      "seq": 923310,
+      "targets": ["ram-commands"],
+      "session": "opener",
+      "command": "mkdir /scratch/grove/probe",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mkdir: cannot create directory '/scratch/grove/probe': Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_a_move_whose_destination_is_read_only_is_refused",
+      "seq": 923311,
+      "targets": ["ram-commands"],
+      "session": "opener",
+      "command": "mv /scratch/grove/build/a.txt /scratch/grove/moved.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: cannot move '/scratch/grove/build/a.txt' to '/scratch/grove/moved.txt': Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_subtree_seed",
+      "seq": 923312,
+      "targets": ["ram-commands"],
+      "command": "mkdir -p /scratch/pine/keep && echo kept > /scratch/pine/keep/f.txt && echo open > /scratch/pine/open.txt",
+      "expect": { "exit": 0, "stdout": "", "stderr": "" }
+    },
+    {
+      "id": "carve_a_recursive_remove_answers_for_the_regions_below_it",
+      "seq": 923313,
+      "targets": ["ram-commands"],
+      "session": "pruner",
+      "command": "rm -r /scratch/pine",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: cannot remove '/scratch/pine/keep': Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_a_directory_move_answers_for_the_regions_below_it",
+      "seq": 923314,
+      "targets": ["ram-commands"],
+      "session": "pruner",
+      "command": "mv /scratch/pine /scratch/oak",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: cannot move '/scratch/pine' to '/scratch/oak': Read-only file system\n"
+      }
+    },
+    {
+      "id": "carve_the_refused_subtree_kept_its_content",
+      "seq": 923315,
+      "targets": ["ram-commands"],
+      "command": "cat /scratch/pine/keep/f.txt /scratch/pine/open.txt",
+      "expect": { "exit": 0, "stdout": "kept\nopen\n", "stderr": "" }
+    },
+    {
+      "id": "carve_subtree_cleanup",
+      "seq": 923316,
+      "targets": ["ram-commands"],
+      "command": "rm -r /scratch/pine",
+      "expect": { "exit": 0, "stdout": "", "stderr": "" }
+    }
+  ]
+}

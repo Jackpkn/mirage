@@ -2494,10 +2494,40 @@
           }
         },
         "scripted": "scripted",
-        "scriptedask": "scriptedask"
+        "scriptedask": "scriptedask",
+        "keeper": "keeper",
+        "opener": "opener",
+        "pruner": "pruner"
       },
       "profile": "default",
       "profiles": {
+        "keeper": {
+          "paths": {
+            "hide": [
+              "/scratch/grove"
+            ],
+            "show": {
+              "/scratch/grove/open": "r"
+            }
+          }
+        },
+        "opener": {
+          "mounts": {
+            "/scratch": "r"
+          },
+          "paths": {
+            "show": {
+              "/scratch/grove/build": "rw"
+            }
+          }
+        },
+        "pruner": {
+          "paths": {
+            "show": {
+              "/scratch/pine/keep": "r"
+            }
+          }
+        },
         "default": {
           "commands": {
             "allow": [

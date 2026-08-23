@@ -88,7 +88,7 @@ async def test_curl_o_readonly_mount_fails(multi_mount_ws, mock_http):
         "curl -sS https://x.test/file -o /readonly/foo.bin")
     assert io.exit_code == 23
     err = (io.stderr or b"").decode()
-    assert "read-only" in err
+    assert "Read-only file system" in err
     assert "/readonly/foo.bin" in err
 
 
@@ -131,7 +131,7 @@ async def test_wget_O_readonly_mount_fails(multi_mount_ws, mock_http):
         "wget -O /readonly/wget.bin https://x.test/file")
     assert io.exit_code == 1
     err = (io.stderr or b"").decode()
-    assert "read-only" in err
+    assert "Read-only file system" in err
 
 
 @pytest.fixture

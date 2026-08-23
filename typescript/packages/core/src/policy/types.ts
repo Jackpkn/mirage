@@ -101,6 +101,21 @@ export interface CommandRule {
   mount?: string
 }
 
+/**
+ * Why one group of hide entries exists, for the operator only.
+ *
+ * The document may state a hide as `{patterns: [...], reason: ...}`;
+ * the patterns compile into the flat hide spec like any other entry,
+ * and this side table keeps the reason beside them for the host's
+ * doors (audit, read-back). It is never rendered to the agent: a hide
+ * answers ENOENT, and a reason on a nonexistent path would confirm the
+ * path exists.
+ */
+export interface HideReason {
+  readonly patterns: readonly string[]
+  readonly reason: string
+}
+
 /** The profile's answer about one line, and what produced it. */
 export interface Ruling {
   /** Which verb spoke. */

@@ -29,9 +29,9 @@ function codeOf(err: unknown): string | null {
 }
 
 // mirage stamps POSIX codes on its errors (ENOENT, EISDIR, ENOTDIR, EACCES,
-// EXDEV; PolicyDenied carries EACCES too), so the dsh taxonomy is derived
-// from the stamp rather than from message sniffing or class checks that
-// would couple this adapter to mirage internals.
+// EROFS, EXDEV; PolicyDenied carries EACCES too), so the dsh taxonomy is
+// derived from the stamp rather than from message sniffing or class checks
+// that would couple this adapter to mirage internals.
 function codeFor(err: unknown): FsErrorCode {
   if (isMissingPath(err)) return 'FS_NOT_FOUND'
   switch (codeOf(err)) {
@@ -41,6 +41,7 @@ function codeFor(err: unknown): FsErrorCode {
       return 'FS_NOT_DIRECTORY'
     case 'EACCES':
     case 'EPERM':
+    case 'EROFS':
       return 'FS_PERMISSION_DENIED'
     default:
       return 'FS_IO_ERROR'

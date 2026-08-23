@@ -17,7 +17,7 @@ import type { AsyncLineIterator } from '../../io/async_line_iterator.ts'
 import type { ShellArray } from '../../shell/array.ts'
 import type { ShellVar } from '../../shell/variable.ts'
 import { attrsFromLetters, makeVar, storedAttrs, VarAttr, withValue } from '../../shell/variable.ts'
-import type { AdmissionRules, Decision, ProfileScript } from '../../policy/types.ts'
+import type { AdmissionRules, Decision, HideReason, ProfileScript } from '../../policy/types.ts'
 import {
   commandsFromJSON,
   commandsToJSON,
@@ -29,7 +29,8 @@ import {
   type DecisionJSON,
   type ScriptJSON,
 } from './serialize.ts'
-import type { HiddenPaths, HiddenVars, MountMode } from '../../types.ts'
+import type { HiddenPaths, HiddenVars, ShowEntry, ShownPaths } from '../../types.ts'
+import type { MountMode } from '../../types.ts'
 
 /**
  * What a child shell gets its own copy of, and the parent gets back
@@ -132,7 +133,18 @@ export interface SessionInit {
    * session door for vars), fork carries them, toJSON serializes.
    */
   hiddenPaths?: HiddenPaths | null
+  /**
+   * The show half of the path axis: re-opened subtrees and per-subtree
+   * modes, resolved against hiddenPaths by anchor depth.
+   */
+  shownPaths?: ShownPaths | null
   hiddenVars?: HiddenVars | null
+  /**
+   * The operator's reasons for grouped hides: never rendered to the
+   * agent (a reason on ENOENT would confirm the path exists),
+   * persisted so the host's read-back doors survive a restart.
+   */
+  hideReasons?: readonly HideReason[]
   /**
    * The session's own command tier (`profiles.<n>.commands` tightened
    * by the inline document): allow patterns, ask and deny rules. A
@@ -306,7 +318,9 @@ export class Session {
   localFrames: Map<string, ShellVar | null>[] = []
   mountModes: ReadonlyMap<string, MountMode> | null
   hiddenPaths: HiddenPaths | null
+  shownPaths: ShownPaths | null
   hiddenVars: HiddenVars | null
+  hideReasons: readonly HideReason[]
   commands: AdmissionRules | null
   script: ProfileScript | null
   decisions: readonly Decision[]
@@ -329,7 +343,9 @@ export class Session {
     this.shellOptions = init.shellOptions ?? {}
     this.mountModes = init.mountModes ?? null
     this.hiddenPaths = init.hiddenPaths ?? null
+    this.shownPaths = init.shownPaths ?? null
     this.hiddenVars = init.hiddenVars ?? null
+    this.hideReasons = init.hideReasons ?? []
     this.commands = init.commands ?? null
     this.script = init.script ?? null
     this.decisions = init.decisions ?? []
@@ -382,7 +398,9 @@ export class Session {
       shellOptions: overrides.shellOptions ?? { ...this.shellOptions },
       mountModes: overrides.mountModes ?? this.mountModes,
       hiddenPaths: overrides.hiddenPaths ?? this.hiddenPaths,
+      shownPaths: overrides.shownPaths ?? this.shownPaths,
       hiddenVars: overrides.hiddenVars ?? this.hiddenVars,
+      hideReasons: overrides.hideReasons ?? this.hideReasons,
       commands: overrides.commands ?? this.commands,
       script: overrides.script ?? this.script,
       decisions: overrides.decisions ?? this.decisions,
@@ -563,6 +581,19 @@ export class Session {
         patterns: [...(this.hiddenPaths.patterns ?? [])],
       }
     }
+    if (this.shownPaths !== null) {
+      data.shown_paths = {
+        entries: this.shownPaths.entries.map((e) =>
+          e.mode == null ? { path: e.path } : { path: e.path, mode: e.mode },
+        ),
+      }
+    }
+    if (this.hideReasons.length > 0) {
+      data.hide_reasons = this.hideReasons.map((g) => ({
+        patterns: [...g.patterns],
+        reason: g.reason,
+      }))
+    }
     if (this.hiddenVars !== null) {
       data.hidden_vars = {
         names: [...(this.hiddenVars.names ?? [])],
@@ -583,6 +614,8 @@ export class Session {
     created_at?: number
     mount_modes?: Record<string, MountMode> | null
     hidden_paths?: { paths?: string[]; patterns?: string[] } | null
+    shown_paths?: { entries?: { path: string; mode?: MountMode }[] } | null
+    hide_reasons?: { patterns?: string[]; reason?: string }[] | null
     hidden_vars?: { names?: string[]; patterns?: string[] } | null
     commands?: CommandsJSON | null
     script?: ScriptJSON | null
@@ -612,10 +645,22 @@ export class Session {
         data.hidden_paths != null
           ? { paths: data.hidden_paths.paths ?? [], patterns: data.hidden_paths.patterns ?? [] }
           : null,
+      shownPaths:
+        data.shown_paths != null
+          ? {
+              entries: (data.shown_paths.entries ?? []).map(
+                (e): ShowEntry => ({ path: e.path, mode: e.mode ?? null }),
+              ),
+            }
+          : null,
       hiddenVars:
         data.hidden_vars != null
           ? { names: data.hidden_vars.names ?? [], patterns: data.hidden_vars.patterns ?? [] }
           : null,
+      hideReasons:
+        data.hide_reasons != null
+          ? data.hide_reasons.map((g) => ({ patterns: g.patterns ?? [], reason: g.reason ?? '' }))
+          : [],
       commands: data.commands != null ? commandsFromJSON(data.commands) : null,
       script: data.script != null ? scriptFromJSON(data.script) : null,
       decisions: data.decisions != null ? data.decisions.map(decisionFromJSON) : [],
