@@ -43,6 +43,45 @@ jobs:
               - 'integ/fixtures/cli/**'
               - '.github/workflows/test_cli.yml'
 
+  typescript-build:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.hit == 'true') }}
+    name: TypeScript build bootstrap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 10.32.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install TypeScript dependencies
+        working-directory: typescript
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TypeScript packages
+        working-directory: typescript
+        run: pnpm -r build
+
+      - name: Upload TypeScript build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-typescript-dist
+          path: typescript/packages/*/dist
+          if-no-files-found: error
+          retention-days: 1
+
   python:
     needs: changes
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.hit == 'true') }}
@@ -64,10 +103,6 @@ jobs:
       - name: Install Python dependencies
         working-directory: python
         run: uv sync --all-extras --no-extra camel
-
-      - name: Install mirage package
-        working-directory: python
-        run: uv pip install .
 
       - name: Smoke test exit code propagation
         working-directory: python
@@ -326,7 +361,7 @@ jobs:
           fi
 
   typescript:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.hit == 'true') }}
     name: TypeScript CLI
     runs-on: ubuntu-latest
@@ -352,9 +387,11 @@ jobs:
         working-directory: typescript
         run: pnpm install --frozen-lockfile
 
-      - name: Build TypeScript packages
-        working-directory: typescript
-        run: pnpm -r build
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-typescript-dist
+          path: typescript/packages
 
       - name: Smoke test exit code propagation
         working-directory: typescript
@@ -606,7 +643,7 @@ jobs:
           fi
 
   cross:
-    needs: changes
+    needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.hit == 'true') }}
     name: Cross-language snapshot interop
     runs-on: ubuntu-latest
@@ -653,10 +690,6 @@ jobs:
         working-directory: python
         run: uv sync --all-extras --no-extra camel
 
-      - name: Install mirage package
-        working-directory: python
-        run: uv pip install .
-
       - name: Install pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
@@ -666,14 +699,18 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: "24"
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
 
       - name: Install TypeScript dependencies
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
-      - name: Build TypeScript packages
-        working-directory: typescript
-        run: pnpm -r build
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-typescript-dist
+          path: typescript/packages
 
       - name: Start MinIO
         run: |
@@ -737,7 +774,7 @@ jobs:
   gate:
     name: cli-gate
     runs-on: ubuntu-latest
-    needs: [changes, python, typescript, cross]
+    needs: [changes, typescript-build, python, typescript, cross]
     if: always()
     steps:
       - name: Check required jobs
