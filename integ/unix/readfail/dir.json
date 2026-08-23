@@ -839,6 +839,48 @@
         "stdout": "a\nb\nc\nd\n",
         "stderr": "cat: /data/rfdir: Is a directory\n"
       }
+    },
+    {
+      "id": "readfail_zcat_error_outranks_warning",
+      "seq": 963069,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "zcat /data/rfdir /data/rfnope",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "zcat: /data/rfdir: Is a directory\nzcat: /data/rfnope: No such file or directory\n"
+      }
+    },
+    {
+      "id": "readfail_zcat_error_outranks_warning_reversed",
+      "seq": 963070,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "zcat /data/rfnope /data/rfdir",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "zcat: /data/rfnope: No such file or directory\nzcat: /data/rfdir: Is a directory\n"
+      }
+    },
+    {
+      "id": "readfail_zcat_warning_alone_stays_a_warning",
+      "seq": 963071,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "zcat /data/rfdir /data/rfdir",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "zcat: /data/rfdir: Is a directory\nzcat: /data/rfdir: Is a directory\n"
+      }
     }
   ]
 }

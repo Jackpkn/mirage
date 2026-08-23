@@ -1,7 +1,7 @@
 from mirage.commands.spec.usage import (  # yapf: disable
     ambiguous_option_error, extra_operand_error, invalid_argument_error,
     invalid_float_error, invalid_int_error, missing_required_error,
-    missing_value_error, old_option_error, read_fail_exit,
+    missing_value_error, old_option_error, read_fail_exit, read_fail_exit_line,
     unknown_option_error, usage_exit_code)
 
 
@@ -143,3 +143,31 @@ def test_read_fail_exit_ignores_anything_that_is_not_a_failed_read():
     assert read_fail_exit("sed", ValueError("bad script")) == 1
     assert read_fail_exit("sort", PermissionError("/locked")) == 1
     assert read_fail_exit("sort", RuntimeError("transport")) == 1
+
+
+def test_read_fail_exit_line_reads_the_terminal_errno():
+    # The cross-mount stream path only has the rendered line, and the
+    # errno is its LAST field. A path is free to spell a strerror itself,
+    # and scanning the whole line read this directory as ENOENT.
+    line = b"sed: /ram/No such file or directory: Is a directory\n"
+    assert read_fail_exit_line("sed", line) == 4
+    assert read_fail_exit_line("cat", line) == 1
+    assert read_fail_exit_line(
+        "sed", b"sed: /ram/Is a directory: No such file or directory\n") == 2
+
+
+def test_read_fail_exit_line_takes_the_most_severe_of_a_blob():
+    # One fetch renders several lines when the operand was a glob the
+    # owning mount expanded, and sed's rule is the most severe.
+    blob = (b"sed: /ram/nope: No such file or directory\n"
+            b"sed: /ram/dir: Is a directory\n")
+    assert read_fail_exit_line("sed", blob) == 4
+    assert read_fail_exit_line("sort", blob) == 2
+
+
+def test_read_fail_exit_line_keeps_the_catch_all_for_anything_else():
+    # A line that carries no strerror is not a failed read, and neither
+    # is one whose only strerror sits inside the path.
+    assert read_fail_exit_line("sed", b"sed: -e expression #1: unknown\n") == 1
+    assert read_fail_exit_line("sed", b"") == 1
+    assert read_fail_exit_line("sed", b"sed: /ram/Is a directory\n") == 1

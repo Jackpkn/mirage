@@ -125,6 +125,34 @@
         "stdout": "b\na\n",
         "stderr": "cat: /data2/xrf_dir: Is a directory\n"
       }
+    },
+    {
+      "id": "xrf_seed_named_dir",
+      "seq": 963109,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "mkdir -p '/data2/No such file or directory' && echo ok",
+      "expect": {
+        "exit": 0,
+        "stdout": "ok\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "xrf_sed_dir_named_for_another_errno",
+      "seq": 963110,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "sed -n p /data/xrf.txt '/data2/No such file or directory'",
+      "expect": {
+        "exit": 4,
+        "stdout": "b\na\n",
+        "stderr": "sed: '/data2/No such file or directory': Is a directory\n"
+      }
     }
   ]
 }

@@ -72,6 +72,25 @@ export function readFailExitCode(cmdName: string, err: unknown): number {
 }
 
 /**
+ * The code one rendered stderr line's terminal errno asks for.
+ *
+ * Read off the LAST field, not searched for anywhere in the line: the
+ * renderer writes `<cmd>: <path>: <strerror>` and a path is free to spell
+ * a strerror itself, so a directory named `No such file or directory` read
+ * as ENOENT under a global scan and sed answered 2 where GNU answers 4.
+ * Null when the terminal field is not a strerror this family knows, which
+ * is what a line that is not a failed read looks like.
+ */
+function lineReadFailCode(cmdName: string, line: string): number | null {
+  const cut = line.lastIndexOf(': ')
+  const terminal = cut === -1 ? line : line.slice(cut + 2)
+  for (const code of READ_FAIL_CODES) {
+    if (gnuStrerror(code) === terminal) return readFailCode(cmdName, code === 'EISDIR')
+  }
+  return null
+}
+
+/**
  * The same code, for a read failure known only as a rendered line.
  *
  * The cross-mount stream path fetches each operand with a native `cat`
@@ -80,19 +99,24 @@ export function readFailExitCode(cmdName: string, err: unknown): number {
  * command's voice, and the exit code has to follow it or `sort a
  * /other/missing` answers 1 while `sort missing` answers 2, a split GNU
  * does not have. Classified against the very strerrors the renderer
- * wrote, so the forward and backward directions cannot drift; a line that
- * carries none of them is not a failed read and keeps the catch-all 1.
+ * wrote, so the forward and backward directions cannot drift; a blob that
+ * carries no failed-read line keeps the catch-all 1.
+ *
+ * One fetch can render several lines, because one operand can be a glob
+ * the owning mount expanded, and the most severe code is the answer: sed
+ * is the only stream command whose code depends on the errno, and its rule
+ * is the most severe (4 beats 2), which is also how the caller folds one
+ * operand's code into the next.
  *
  * Mirrors the python `read_fail_exit_line`.
  */
 export function readFailExitCodeFromLine(cmdName: string, rendered: string): number {
-  for (const code of READ_FAIL_CODES) {
-    const strerror = gnuStrerror(code)
-    if (strerror !== null && rendered.includes(strerror)) {
-      return readFailCode(cmdName, code === 'EISDIR')
-    }
+  let code = 0
+  for (const line of rendered.split('\n')) {
+    const one = lineReadFailCode(cmdName, line)
+    if (one !== null) code = Math.max(code, one)
   }
-  return 1
+  return code || 1
 }
 
 /**

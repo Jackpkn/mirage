@@ -131,6 +131,21 @@ const GNU_MULTI: [string, number, string, string][] = [
     '',
     'zcat: /ram/dir: Is a directory\nzcat: /ram/nope: No such file or directory\n',
   ],
+  // gzip's error outranks its warning in EITHER order, so the reversed line
+  // is 1 too: `progerror` assigns ERROR outright while `WARN` assigns only
+  // when nothing has failed yet. Two warnings and no error stay 2.
+  [
+    'zcat /ram/nope /ram/dir',
+    1,
+    '',
+    'zcat: /ram/nope: No such file or directory\nzcat: /ram/dir: Is a directory\n',
+  ],
+  [
+    'zcat /ram/dir /ram/dir',
+    2,
+    '',
+    'zcat: /ram/dir: Is a directory\nzcat: /ram/dir: Is a directory\n',
+  ],
 ]
 
 describe('a multi-operand read failure answers like GNU', () => {

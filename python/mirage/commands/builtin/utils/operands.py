@@ -94,15 +94,22 @@ async def split_readable_coded(
 ) -> tuple[list[PathSpec], bytes, int]:
     """``split_readable``, plus the exit code the failures add up to.
 
-    The code is the LAST failed operand's, which is the gzip family's
-    rule and the only reason this variant exists. gzip reports a
-    directory as a warning (2) and a missing file as an error (1), and
-    processes operands in order, so ``zcat dir nope`` is 1 while ``zcat
-    dir ok.gz`` is 2 (pinned, gzip 1.13). A command whose code does not
-    depend on the errno gets the same number whichever failure is asked,
-    so ``split_readable`` just drops this one. A command whose rule is
-    different has to own its own loop: GNU sed takes the most severe code
-    rather than the last, and ``sed_generic`` does that itself.
+    The code is the gzip family's, which is the only reason this variant
+    exists: gzip reports a directory as a warning (2) and a missing file
+    as an error (1), where every other command in the family answers the
+    same number whichever failure is asked, so ``split_readable`` just
+    drops this one.
+
+    Its rule is not "the last failure wins". An error is recorded
+    outright while a warning is recorded only when nothing has failed
+    yet, so the error outranks the warning in either order: ``zcat nope
+    dir`` and ``zcat dir nope`` are both 1, and only an invocation with
+    no error at all (``zcat dir ok.gz``) is 2. That is gzip's own code:
+    ``progerror`` assigns ``exit_code = ERROR`` unconditionally while the
+    ``WARN`` macro assigns ``only if (exit_code == OK)`` (gzip 1.13,
+    pinned on debian:stable-slim). A command whose rule is different
+    again has to own its own loop: GNU sed takes the most severe code,
+    and ``sed_generic`` does that itself.
 
     Args:
         paths (list[PathSpec]): Glob-resolved operands in command order.
@@ -118,18 +125,25 @@ async def split_readable_coded(
     err = b""
     code = 0
     for p in paths:
+        failure: BaseException | None = None
         try:
             st = await stat(p)
         except FS_ERRORS as exc:
-            err += fs_error_line(cmd_name, p, exc).encode()
-            code = read_fail_exit(cmd_name, exc)
+            failure = exc
+        else:
+            if getattr(st, "type", None) == FileType.DIRECTORY:
+                failure = eisdir(p)
+        if failure is None:
+            readable.append(p)
             continue
-        if getattr(st, "type", None) == FileType.DIRECTORY:
-            failure = eisdir(p)
-            err += fs_error_line(cmd_name, p, failure).encode()
+        err += fs_error_line(cmd_name, p, failure).encode()
+        # A directory is gzip's warning and everything else its error, so
+        # the directory yields to a code already recorded. Keyed on the
+        # errno rather than on which branch reported it, because a keyed
+        # backend raises EISDIR from the stat where an explicit directory
+        # returns a row.
+        if code == 0 or not isinstance(failure, IsADirectoryError):
             code = read_fail_exit(cmd_name, failure)
-            continue
-        readable.append(p)
     return readable, err, code
 
 

@@ -83,6 +83,28 @@ def read_fail_exit(cmd_name: str, exc: BaseException) -> int:
     return _read_fail_code(cmd_name, isinstance(exc, IsADirectoryError))
 
 
+def _line_read_fail_code(cmd_name: str, line: str) -> int | None:
+    """The code one rendered stderr line's terminal errno asks for.
+
+    Read off the LAST field, not searched for anywhere in the line: the
+    renderer writes ``<cmd>: <path>: <strerror>`` and a path is free to
+    spell a strerror itself, so a directory named ``No such file or
+    directory`` read as ENOENT under a global scan and sed answered 2
+    where GNU answers 4. None when the terminal field is not a strerror
+    this family knows, which is what a line that is not a failed read
+    looks like.
+
+    Args:
+        cmd_name (str): the command the line was respelled into.
+        line (str): one rendered stderr line, newline already stripped.
+    """
+    terminal = line.rsplit(": ", 1)[-1]
+    for exc_type in _READ_FAIL_ERRORS:
+        if fs_strerror(exc_type()) == terminal:
+            return _read_fail_code(cmd_name, exc_type is IsADirectoryError)
+    return None
+
+
 def read_fail_exit_line(cmd_name: str, rendered: bytes) -> int:
     """The same code, for a read failure known only as a rendered line.
 
@@ -92,19 +114,25 @@ def read_fail_exit_line(cmd_name: str, rendered: bytes) -> int:
     command's voice, and the exit code has to follow it or `sort a
     /other/missing` answers 1 while `sort missing` answers 2, a split GNU
     does not have. Classified against the very strerrors the renderer
-    wrote, so the forward and backward directions cannot drift; a line
-    that carries none of them is not a failed read and keeps the
-    catch-all 1.
+    wrote, so the forward and backward directions cannot drift; a blob
+    that carries no failed-read line keeps the catch-all 1.
+
+    One fetch can render several lines, because one operand can be a glob
+    the owning mount expanded, and the most severe code is the answer:
+    sed is the only stream command whose code depends on the errno, and
+    its rule is the most severe (4 beats 2), which is also how the caller
+    folds one operand's code into the next.
 
     Args:
         cmd_name (str): the command the line was respelled into.
         rendered (bytes): the fetch's stderr, GNU-formatted.
     """
-    for exc_type in _READ_FAIL_ERRORS:
-        strerror = fs_strerror(exc_type())
-        if strerror is not None and strerror.encode() in rendered:
-            return _read_fail_code(cmd_name, exc_type is IsADirectoryError)
-    return 1
+    code = 0
+    for line in rendered.decode("utf-8", "replace").splitlines():
+        one = _line_read_fail_code(cmd_name, line)
+        if one is not None:
+            code = max(code, one)
+    return code or 1
 
 
 def python_option_error(cmd_name: str, line: str) -> tuple[bytes, int]:

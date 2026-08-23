@@ -16,7 +16,7 @@ import { IOResult, materialize } from '../../../io/types.ts'
 import type { MountView, StatPath } from '../../../ops/types.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
 import { mountKey } from '../../../utils/key_prefix.ts'
-import { eisdir, fsErrorLine, isFsError, isMissError } from '../../../utils/errors.ts'
+import { eisdir, fsErrorLine, isEisdir, isFsError, isMissError } from '../../../utils/errors.ts'
 import { readFailExitCode } from '../../spec/usage.ts'
 import { resolvePath } from '../../../utils/path.ts'
 import { stripSlash } from '../../../utils/slash.ts'
@@ -217,14 +217,20 @@ export interface ReadOperand {
 // generics so every wrapper — factory builders and bespoke backend commands
 // alike — inherits the behavior. Non-filesystem errors keep propagating.
 // readOperands, plus the exit code the failures add up to. The code is the
-// LAST failed operand's, which is the gzip family's rule and the only reason
-// this variant exists: gzip reports a directory as a warning (2) and a
-// missing file as an error (1), and processes operands in order, so `zcat dir
-// nope` is 1 while `zcat dir ok.gz` is 2 (pinned, gzip 1.13). A command whose
-// code does not depend on the errno gets the same number whichever failure is
-// asked, so readOperands just drops this one. A command whose rule is
-// different has to own its own loop: GNU sed takes the most severe code
-// rather than the last, and sedGeneric does that itself. The python twin is
+// gzip family's, which is the only reason this variant exists: gzip reports a
+// directory as a warning (2) and a missing file as an error (1), where every
+// other command in the family answers the same number whichever failure is
+// asked, so readOperands just drops this one.
+//
+// Its rule is not "the last failure wins". An error is recorded outright
+// while a warning is recorded only when nothing has failed yet, so the error
+// outranks the warning in either order: `zcat nope dir` and `zcat dir nope`
+// are both 1, and only an invocation with no error at all (`zcat dir ok.gz`)
+// is 2. That is gzip's own code: `progerror` assigns `exit_code = ERROR`
+// unconditionally while the `WARN` macro assigns only `if (exit_code == OK)`
+// (gzip 1.13, pinned on debian:stable-slim). A command whose rule is
+// different again has to own its own loop: GNU sed takes the most severe
+// code, and sedGeneric does that itself. The python twin is
 // `split_readable_coded`, which sits on the stat-based split because python's
 // zcat partitions there rather than on the read.
 export async function readOperandsCoded(
@@ -241,7 +247,9 @@ export async function readOperandsCoded(
     } catch (e) {
       if (!isFsError(e)) throw e
       err += fsErrorLine(cmdName, p, e)
-      code = readFailExitCode(cmdName, e)
+      // A directory is gzip's warning and everything else its error, so the
+      // directory yields to a code already recorded.
+      if (code === 0 || !isEisdir(e)) code = readFailExitCode(cmdName, e)
     }
   }
   return [ok, err, code]

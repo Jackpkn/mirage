@@ -24,6 +24,7 @@ import {
   oldOptionError,
   unknownOptionError,
   readFailExitCode,
+  readFailExitCodeFromLine,
   usageExitCode,
 } from './usage.ts'
 
@@ -201,5 +202,33 @@ describe('readFailExitCode', () => {
     expect(readFailExitCode('sed', new Error('bad script'))).toBe(1)
     expect(readFailExitCode('sort', fsErr('EACCES'))).toBe(1)
     expect(readFailExitCode('sort', new Error('transport'))).toBe(1)
+  })
+})
+
+describe('readFailExitCodeFromLine', () => {
+  it('reads the terminal errno, not one spelled inside the path', () => {
+    // The cross-mount stream path only has the rendered line, and the
+    // errno is its LAST field. A path is free to spell a strerror itself,
+    // and scanning the whole line read this directory as ENOENT.
+    const line = 'sed: /ram/No such file or directory: Is a directory\n'
+    expect(readFailExitCodeFromLine('sed', line)).toBe(4)
+    expect(readFailExitCodeFromLine('cat', line)).toBe(1)
+    expect(
+      readFailExitCodeFromLine('sed', 'sed: /ram/Is a directory: No such file or directory\n'),
+    ).toBe(2)
+  })
+
+  it('takes the most severe of a multi-line blob', () => {
+    // One fetch renders several lines when the operand was a glob the
+    // owning mount expanded, and sed's rule is the most severe.
+    const blob = 'sed: /ram/nope: No such file or directory\nsed: /ram/dir: Is a directory\n'
+    expect(readFailExitCodeFromLine('sed', blob)).toBe(4)
+    expect(readFailExitCodeFromLine('sort', blob)).toBe(2)
+  })
+
+  it('keeps the catch-all for anything that is not a failed read', () => {
+    expect(readFailExitCodeFromLine('sed', 'sed: -e expression #1: unknown\n')).toBe(1)
+    expect(readFailExitCodeFromLine('sed', '')).toBe(1)
+    expect(readFailExitCodeFromLine('sed', 'sed: /ram/Is a directory\n')).toBe(1)
   })
 })

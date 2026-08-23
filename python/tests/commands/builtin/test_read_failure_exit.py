@@ -157,6 +157,15 @@ GNU_SED_MULTI = [
      "cat: /ram/dir: Is a directory\n"),
     ("zcat /ram/dir /ram/nope", 1, "", "zcat: /ram/dir: Is a directory\n"
      "zcat: /ram/nope: No such file or directory\n"),
+    # gzip's error outranks its warning in EITHER order, so the reversed
+    # line is 1 too: `progerror` assigns ERROR outright while `WARN`
+    # assigns only when nothing has failed yet. Two warnings and no error
+    # stay 2.
+    ("zcat /ram/nope /ram/dir", 1, "",
+     "zcat: /ram/nope: No such file or directory\n"
+     "zcat: /ram/dir: Is a directory\n"),
+    ("zcat /ram/dir /ram/dir", 2, "", "zcat: /ram/dir: Is a directory\n"
+     "zcat: /ram/dir: Is a directory\n"),
 ]
 
 
