@@ -16,9 +16,10 @@ from mirage.accessor.box import BoxAccessor
 from mirage.cache.context import invalidate_subtree
 from mirage.core.box.api import (delete_file, delete_folder, update_file,
                                  update_folder)
+from mirage.core.box.client import BoxApiError
 from mirage.core.box.resolve import path_parts, resolve_item, resolve_parent_id
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import enoent, enotempty
 
 
 async def rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec) -> None:
@@ -33,11 +34,18 @@ async def rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec) -> None:
         raise enoent(dst.virtual)
     new_name = dst_parts[-1]
     # GNU mv overwrites the destination; Box 409s on a name clash, so clear
-    # an existing dst of the same kind first.
+    # an existing dst first. A file or an empty folder goes; a non-empty
+    # folder is mv's "Directory not empty", which recursive=false gets from
+    # Box for free, exactly as rmdir does.
     existing = await resolve_item(accessor, dst_parts)
     if existing is not None and existing["id"] != item["id"]:
         if existing.get("type") == "folder":
-            await delete_folder(tm, existing["id"], recursive=True)
+            try:
+                await delete_folder(tm, existing["id"], recursive=False)
+            except BoxApiError as exc:
+                if exc.status == 409:
+                    raise enotempty(dst) from exc
+                raise
         else:
             await delete_file(tm, existing["id"])
     if item.get("type") == "folder":

@@ -45,7 +45,7 @@ import {
   invalidateSubtree,
 } from '../../cache/context.ts'
 import { PathSpec } from '../../types.ts'
-import type { BoxTokenManager } from './client.ts'
+import { BoxApiError, type BoxTokenManager } from './client.ts'
 import * as api from './api.ts'
 import { copy, mkdir, rename, rmR, rmdir, unlink, write } from './write.ts'
 
@@ -143,6 +143,56 @@ describe('box write ops', () => {
     expect(evicted).toEqual(['/data/b.txt', '/data/a.txt'])
     expect(vi.mocked(invalidateAfterUnlink)).not.toHaveBeenCalled()
     expect(vi.mocked(invalidateAfterWrite)).not.toHaveBeenCalled()
+  })
+
+  it('rename replaces an empty folder destination', async () => {
+    vi.mocked(api.updateFile).mockClear()
+    await rename(makeAccessor(), spec('/data/a.txt'), spec('/data/sub'))
+    expect(vi.mocked(api.deleteFolder)).toHaveBeenCalledWith(STUB_TM, '300', false)
+    expect(vi.mocked(api.updateFile)).toHaveBeenCalledWith(STUB_TM, '200', {
+      name: 'sub',
+      parentId: '100',
+    })
+  })
+
+  it('rename refuses a non-empty folder destination with ENOTEMPTY', async () => {
+    // Box decides the emptiness, not us: recursive=false 409s on a folder
+    // with children, and that is mv's "Directory not empty".
+    vi.mocked(api.updateFile).mockClear()
+    vi.mocked(api.deleteFolder).mockRejectedValueOnce(new BoxApiError('conflict', 409))
+    await expect(
+      rename(makeAccessor(), spec('/data/a.txt'), spec('/data/sub')),
+    ).rejects.toMatchObject({ code: 'ENOTEMPTY' })
+    expect(vi.mocked(api.updateFile)).not.toHaveBeenCalled()
+  })
+
+  it('rename propagates a destination error Box did not call a conflict', async () => {
+    vi.mocked(api.updateFile).mockClear()
+    vi.mocked(api.deleteFolder).mockRejectedValueOnce(new BoxApiError('boom', 500))
+    await expect(
+      rename(makeAccessor(), spec('/data/a.txt'), spec('/data/sub')),
+    ).rejects.toBeInstanceOf(BoxApiError)
+    expect(vi.mocked(api.updateFile)).not.toHaveBeenCalled()
+  })
+
+  it('copy refuses a file onto an existing folder with EISDIR', async () => {
+    // cp refuses a type mismatch rather than replacing: this branch used to
+    // recursively delete the destination folder.
+    vi.mocked(api.copyFile).mockClear()
+    vi.mocked(api.deleteFile).mockClear()
+    await expect(
+      copy(makeAccessor(), spec('/data/a.txt'), spec('/data/sub')),
+    ).rejects.toMatchObject({ code: 'EISDIR' })
+    expect(vi.mocked(api.copyFile)).not.toHaveBeenCalled()
+    expect(vi.mocked(api.deleteFile)).not.toHaveBeenCalled()
+  })
+
+  it('copy refuses a folder onto an existing file with ENOTDIR', async () => {
+    vi.mocked(api.deleteFile).mockClear()
+    await expect(
+      copy(makeAccessor(), spec('/data/sub'), spec('/data/a.txt')),
+    ).rejects.toMatchObject({ code: 'ENOTDIR' })
+    expect(vi.mocked(api.deleteFile)).not.toHaveBeenCalled()
   })
 
   it('copy copies a file into the dst parent', async () => {
