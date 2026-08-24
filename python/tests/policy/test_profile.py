@@ -1584,7 +1584,7 @@ async def test_an_asked_line_is_refused_until_the_host_answers():
         assert code == 126
         (request, ) = ws.decisions.pending()
         assert err == (f"rm: requires approval: sign-off "
-                       f"(approval {request.id})\n")
+                       f"(ask {request.id})\n")
         assert (request.command, request.argv, request.cwd,
                 request.paths) == ("rm", ("/scratch/z", ), "/",
                                    ("/scratch/z", ))
@@ -1693,7 +1693,7 @@ async def test_a_coded_ask_routes_to_the_same_door():
         assert code == 126
         (request, ) = ws.decisions.pending()
         assert err == (f"wc: requires approval: looks risky "
-                       f"(approval {request.id})\n")
+                       f"(ask {request.id})\n")
         # The synthesized rule names the program, so a session grant
         # covers every wc line.
         assert request.rule == CommandRule(reason="looks risky",

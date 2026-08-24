@@ -51,13 +51,13 @@ export function renderDeny(subject: string, deny: Deny): [Uint8Array, number] {
 
 /**
  * The command plane's rendering of an unanswered ask: refused for now
- * at 126, naming the approval the agent should quote, so the retry
- * after the host grants it passes.
+ * at 126, naming the ask id the agent should quote, so the retry
+ * after the host allows it passes.
  */
 export function renderPending(subject: string, pending: Pending): [Uint8Array, number] {
   return [
     new TextEncoder().encode(
-      `${subject}: requires approval: ${pending.reason} (approval ${pending.id})\n`,
+      `${subject}: requires approval: ${pending.reason} (ask ${pending.id})\n`,
     ),
     POLICY_DENIED_EXIT,
   ]

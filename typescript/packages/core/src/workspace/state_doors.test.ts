@@ -1762,7 +1762,7 @@ describe('ask end to end', () => {
     const [code, , err] = await line(ws, 'rm /scratch/z')
     expect(code).toBe(126)
     const request = pendingRequest(ws)
-    expect(err).toBe(`rm: requires approval: sign-off (approval ${request.id})\n`)
+    expect(err).toBe(`rm: requires approval: sign-off (ask ${request.id})\n`)
     expect([request.command, request.argv, request.cwd, request.paths]).toEqual([
       'rm',
       ['/scratch/z'],
@@ -1866,7 +1866,7 @@ describe('ask end to end', () => {
     const [code, , err] = await line(ws, 'wc -c /scratch/z')
     expect(code).toBe(126)
     const request = pendingRequest(ws)
-    expect(err).toBe(`wc: requires approval: looks risky (approval ${request.id})\n`)
+    expect(err).toBe(`wc: requires approval: looks risky (ask ${request.id})\n`)
     // The synthesized rule names the program, so a session grant covers
     // every wc line.
     expect(request.rule).toEqual({ reason: 'looks risky', commands: ['wc'] })

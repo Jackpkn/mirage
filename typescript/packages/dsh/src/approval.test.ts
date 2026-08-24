@@ -232,9 +232,7 @@ describe('an asked line with no approval channel', () => {
     expect(run.exitCode).toBe(126)
     // The operator's document said `ask`; the refusal says so too, and
     // names the approval a host can grant.
-    expect(run.stderr.text).toMatch(
-      /^rm: requires approval: deletes are reviewed \(approval \w+\)$/m,
-    )
+    expect(run.stderr.text).toMatch(/^rm: requires approval: deletes are reviewed \(ask \w+\)$/m)
     expect(await ws.fs.exists('/data/notes.txt')).toBe(true)
     const pending = ws.decisions.pending('agent')
     expect(pending).toHaveLength(1)
