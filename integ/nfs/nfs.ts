@@ -233,9 +233,17 @@ async function main(): Promise<void> {
   await runBattery(result);
   await runSizeless(result);
   await runBigfile(result);
-  process.stdout.write(JSON.stringify(result) + "\n");
   // The addon's idle-flush task holds its callback for the process's
-  // lifetime, so stopping the server does not release this event loop.
+  // lifetime, so stopping the server does not release this event loop
+  // and the run has to exit itself. The write is awaited before that
+  // exit because node's stdout is asynchronous when it is a pipe, which
+  // is how CI runs this (`... | check_json.py`), and a pending write is
+  // dropped by process.exit().
+  await new Promise<void>((flushed) => {
+    process.stdout.write(JSON.stringify(result) + "\n", () => {
+      flushed();
+    });
+  });
   process.exit(0);
 }
 

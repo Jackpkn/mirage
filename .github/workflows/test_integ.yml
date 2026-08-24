@@ -33,6 +33,7 @@ jobs:
       database: ${{ steps.filter.outputs.database }}
       data: ${{ steps.filter.outputs.data }}
       fuse: ${{ steps.filter.outputs.fuse }}
+      nfs: ${{ steps.filter.outputs.nfs }}
       observability: ${{ steps.filter.outputs.observability }}
     steps:
       - uses: dorny/paths-filter@v4
@@ -114,6 +115,17 @@ jobs:
               - 'typescript/packages/node/src/workspace.ts'
               - '.github/workflows/test_integ.yml'
               - '.github/actions/integ-battery-setup/action.yml'
+            nfs:
+              - 'integ/nfs/**'
+              - 'integ/check_json.py'
+              - 'integ/package.json'
+              - 'python/mirage/nfs/**'
+              - 'python/mirage/workspace/nfs.py'
+              - 'python/mirage-nfs/**'
+              - 'typescript/packages/node/src/nfs/**'
+              - 'typescript/packages/node/src/workspace/nfs.ts'
+              - 'typescript/packages/mirage-nfs/**'
+              - '.github/workflows/test_integ.yml'
 
   typescript-build:
     needs: changes
@@ -1030,6 +1042,93 @@ jobs:
           log show --last 3m --style compact \
             --predicate '(process == "fskitd" OR process == "fskit_agent") AND messageType == error' \
             2>/dev/null | tail -40 || true
+
+  integ-nfs-macos:
+    needs: [changes, typescript-build]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.nfs == 'true') }}
+    runs-on: macos-15
+    # Not in the gate yet. This is the first job in the repo to build
+    # either NFS extension -- nothing has ever run cargo in CI -- and a
+    # loopback NFS mount on a hosted runner is unproven. Both batteries
+    # are verified on a developer Mac, where each prints the same 22 keys
+    # and check_json.py accepts them against integ/nfs/truth_nfs.json.
+    # Promote by adding integ-nfs-macos to gate.needs after a green run.
+    #
+    # macOS rather than linux because a loopback NFS mount needs no
+    # privileges there: linux reserves mount(2) for root, and neither
+    # battery elevates the mount command.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show the toolchain (the runner image ships rust)
+        run: |
+          sw_vers
+          cargo --version
+          rustc --version
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        working-directory: python
+        run: uv sync
+
+      - name: Build and install the mirage-nfs wheel
+        # maturin is its build backend, so a plain install builds the
+        # crate; it is not declared as an extra of mirage-ai yet.
+        working-directory: python
+        run: uv pip install ./mirage-nfs
+
+      - name: Run the Python NFS battery and check
+        run: |
+          ./python/.venv/bin/python integ/nfs/nfs.py 2>&1 \
+            | ./python/.venv/bin/python integ/check_json.py integ/nfs/truth_nfs.json
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 10.32.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: typescript
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages
+
+      - name: Build the napi addon
+        # cargo names the artifact lib<crate>.dylib; the loader wants a
+        # .node, which is what the battery and smoke.mjs require by path
+        # until the package is published to npm.
+        working-directory: typescript/packages/mirage-nfs
+        run: |
+          cargo build --release
+          cp target/release/libmirage_nfs_node.dylib mirage_nfs_node.node
+
+      - name: Run the TypeScript NFS battery and check
+        working-directory: integ
+        env:
+          MIRAGE_NFS_ADDON: ${{ github.workspace }}/typescript/packages/mirage-nfs/mirage_nfs_node.node
+        run: |
+          pnpm exec tsx nfs/nfs.ts 2>&1 \
+            | ../python/.venv/bin/python check_json.py nfs/truth_nfs.json
 
   integ-runtime:
     needs: [changes, typescript-build]
