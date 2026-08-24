@@ -16,7 +16,13 @@ description: Set up the Python command runtime in either Mirage SDK.
     the [Python runtime reference](/python/runtime/python).
   </Tab>
   <Tab title="TypeScript SDK" icon="/images/typescript-logo.svg">
-    Pyodide is included and selected by default. Monty is optional:
+    Pyodide is the default. Install its package:
+
+    ```bash
+    pnpm add pyodide
+    ```
+
+    Monty is an optional alternative:
 
     ```bash
     pnpm add @pydantic/monty

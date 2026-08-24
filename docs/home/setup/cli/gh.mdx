@@ -14,9 +14,8 @@ existing `ws`. Commands: [Python](/python/cli/gh) ·
     from mirage.commands.cli.builtin.gh import GH
     from mirage.core.github.config import GhConfig
 
-    ws.register_cli(
-        "gh", GH, GhConfig(token="github_pat_...", repo="acme/tools")
-    )
+    config = GhConfig(token="github_pat_...", repo="acme/tools")
+    ws.register_cli("gh", GH, config.model_dump())
     ```
   </Tab>
   <Tab title="TypeScript" icon="/images/typescript-logo.svg">
