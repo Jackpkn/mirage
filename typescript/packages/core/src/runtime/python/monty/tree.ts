@@ -54,6 +54,12 @@ function fromEnd(all: string[], back: number): string {
   return all[all.length - back] ?? ''
 }
 
+/** Whether `child` lies strictly below `dir`, compared segment-wise. */
+function isUnder(dir: string[], child: string[]): boolean {
+  if (child.length <= dir.length) return false
+  return dir.every((part, i) => child[i] === part)
+}
+
 function notFound(where: string): Error {
   return treeError('FileNotFoundError', `[Errno 2] No such file or directory: '${where}'`)
 }
@@ -289,6 +295,13 @@ export class ScratchTree {
     const entry = this.entryAt(src)
     if (entry === null) {
       throw treeError('FileNotFoundError', `[Errno 2] No such file or directory: ${where}`)
+    }
+    // A directory cannot move into its own subtree: detaching it and
+    // re-inserting inside the detached map would orphan the data.
+    // EINVAL is rename(2)'s answer, so it is CPython's too. (monty's
+    // own tree misses this guard, like the rename re-key above.)
+    if (isDir(entry) && isUnder(parts(src), parts(dst))) {
+      throw treeError('OSError', `[Errno 22] Invalid argument: ${where}`)
     }
     const srcParent = this.parentOf(src)
     const dstParent = this.parentOf(dst)

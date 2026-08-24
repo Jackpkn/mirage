@@ -52,6 +52,11 @@
    "typescript_only": {
     "_test_util": "The FakeDropboxRpc transport fake shared by rmdir.test.ts and rename.test.ts. TypeScript colocates tests with sources, so a shared test helper lands in the source directory; python keeps the same fake in tests/core/dropbox/conftest.py, which this gate does not scan. core/gdrive carries an identical _test_util.ts, still counted in the baseline rather than excused here."
    }
+  },
+  "runtime/python/monty": {
+   "typescript_only": {
+    "tree": "The guest's scratch filesystem for unmounted paths. Python needs no twin: its binding hands monty an OSAccess subclass whose base class (pydantic_monty.os_access) already carries this tree, while the JS binding is a bare callback with no tree behind it, so the TypeScript side implements the same semantics itself (message spellings pinned to the python binding's)."
+   }
   }
  }
 }

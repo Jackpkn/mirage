@@ -203,4 +203,23 @@ describe('ScratchTree rename', () => {
     expect(tree.readText('/dst/f')).toBe('x')
     expect(tree.exists('/src')).toBe(false)
   })
+
+  it('refuses to move a directory into its own subtree, as rename(2) does', () => {
+    // Detach-then-insert would orphan the data inside the detached map;
+    // EINVAL is what CPython raises for exactly this move.
+    const tree = new ScratchTree()
+    tree.mkdir('/src', false, false)
+    tree.mkdir('/src/sub', false, false)
+    tree.write('/src/f', 'x')
+    expect(() => {
+      tree.rename('/src', '/src/sub/moved')
+    }).toThrowError("[Errno 22] Invalid argument: '/src' -> '/src/sub/moved'")
+    // Nothing moved and nothing was orphaned.
+    expect(tree.readText('/src/f')).toBe('x')
+    expect(tree.isDir('/src/sub')).toBe(true)
+    // A sibling whose name merely extends the prefix is not a descendant.
+    tree.mkdir('/srcx', false, false)
+    tree.rename('/srcx', '/src/sub/ok')
+    expect(tree.isDir('/src/sub/ok')).toBe(true)
+  })
 })
