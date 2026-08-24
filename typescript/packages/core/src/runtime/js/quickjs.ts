@@ -183,10 +183,16 @@ export class QuickJsRuntime extends JsRuntime implements Evaluator {
   async run(args: RunArgs): Promise<RunResult> {
     const newAsyncModule = await this.loadModule()
     const QuickJS = await newAsyncModule()
-    const runtime: QuickJSAsyncRuntime = QuickJS.newRuntime()
+    // Module-owned context, not newRuntime(): the async module's runtime
+    // disposer unregisters callbacks before QTS_FreeRuntime, so a runtime
+    // that ever defined an asyncified host fn throws on dispose
+    // (justjake/quickjs-emscripten#261). newContext() hands the runtime
+    // to the context as an owned lifetime, which tears down in the safe
+    // order; ctx.dispose() ends both.
+    const ctx = QuickJS.newContext()
+    const runtime: QuickJSAsyncRuntime = ctx.runtime
     runtime.setMemoryLimit(MEMORY_LIMIT)
     runtime.setMaxStackSize(STACK_SIZE)
-    const ctx = runtime.newContext()
     const out: string[] = []
     const err: string[] = []
     const exit = { code: 0, called: false }
@@ -239,7 +245,6 @@ export class QuickJsRuntime extends JsRuntime implements Evaluator {
       }
     } finally {
       ctx.dispose()
-      runtime.dispose()
     }
   }
 
@@ -263,10 +268,16 @@ export class QuickJsRuntime extends JsRuntime implements Evaluator {
     }
     const newAsyncModule = await this.loadModule()
     const QuickJS = await newAsyncModule()
-    const runtime: QuickJSAsyncRuntime = QuickJS.newRuntime()
+    // Module-owned context, not newRuntime(): the async module's runtime
+    // disposer unregisters callbacks before QTS_FreeRuntime, so a runtime
+    // that ever defined an asyncified host fn throws on dispose
+    // (justjake/quickjs-emscripten#261). newContext() hands the runtime
+    // to the context as an owned lifetime, which tears down in the safe
+    // order; ctx.dispose() ends both.
+    const ctx = QuickJS.newContext()
+    const runtime: QuickJSAsyncRuntime = ctx.runtime
     runtime.setMemoryLimit(MEMORY_LIMIT)
     runtime.setMaxStackSize(STACK_SIZE)
-    const ctx = runtime.newContext()
     const out: string[] = []
     const err: string[] = []
     // Bounded like a policy evaluation must be: a looping script would
@@ -323,7 +334,6 @@ export class QuickJsRuntime extends JsRuntime implements Evaluator {
       }
     } finally {
       ctx.dispose()
-      runtime.dispose()
     }
   }
 

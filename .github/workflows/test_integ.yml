@@ -409,7 +409,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       EMAIL_HOST: localhost
       MONGODB_URI: mongodb://localhost:27017
-      QUICKJS_BUILD: v0.15.1
+      QUICKJS_BUILD: v0.16.2
       MIRAGE_QUICKJS_HOME: /tmp/quickjs
     steps:
       - uses: actions/checkout@v7
@@ -1060,8 +1060,8 @@ jobs:
       S3_ENDPOINT: http://localhost:9000
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio123
-      QUICKJS_BUILD: v0.15.1
-      WASI_BUILD: python-3.14.6-wasi_sdk-24
+      QUICKJS_BUILD: v0.16.2
+      WASI_BUILD: python-3.14.7-wasi_sdk-24
       MIRAGE_QUICKJS_HOME: /tmp/quickjs
       MIRAGE_WASI_HOME: /tmp/cpython-wasi
       MIRAGE_INTEG_DOCKER_CONTAINER: mirage-integ-runtime-box
@@ -1142,7 +1142,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p /tmp/cpython-wasi
-          gh release download v3.14.6 -R brettcannon/cpython-wasi-build \
+          gh release download v3.14.7 -R brettcannon/cpython-wasi-build \
             -p "$WASI_BUILD.zip" -O /tmp/wasi-build.zip
           unzip -q /tmp/wasi-build.zip -d /tmp/cpython-wasi
 

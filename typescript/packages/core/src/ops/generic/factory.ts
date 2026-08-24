@@ -174,10 +174,16 @@ export function makeGenericOps<A extends Accessor>(
     emit('create', (accessor, path) => create(asA(accessor), path), true)
   }
   if (mkdir) {
+    // A per-call `parents: true` kwarg (pathlib's mkdir(parents=True)
+    // through a runtime bridge) forwards like python's registry, which
+    // hands dispatch kwargs to the op; `mkdirParents` still forces it
+    // for backends whose core requires the flag (disk).
     emit(
       'mkdir',
-      (accessor, path) =>
-        options.mkdirParents ? mkdir(asA(accessor), path, true) : mkdir(asA(accessor), path),
+      (accessor, path, _args, kwargs) =>
+        options.mkdirParents || kwargs.parents === true
+          ? mkdir(asA(accessor), path, true)
+          : mkdir(asA(accessor), path),
       true,
     )
   }
