@@ -128,3 +128,23 @@ def test_buffers_are_independent_per_handle():
     buf.append(2, 0, b"two")
     assert _drain(buf, 1) == b"one"
     assert buf.has_pending(2)
+
+
+def test_overlay_reads_through_overlapping_writes():
+    # The read path must resolve overlap exactly as the flush will:
+    # a client that copies a file with overlapping WRITEs (observed
+    # from the macOS client; corrupts nfsserve's own demo) reads back
+    # inside the flush window and must see the final bytes.
+    buf = _buffer()
+    buf.append(7, 0, b"AAAAAA")
+    buf.append(7, 3, b"BBB")
+    buf.append(7, 5, b"CC")
+    assert buf.overlay(7, b"0123456789", 0, 10) == b"AAABBCC789"
+
+
+def test_clip_preserves_overlap_resolution():
+    buf = _buffer()
+    buf.append(7, 0, b"AAAAAA")
+    buf.append(7, 4, b"BBBB")
+    buf.clip(7, 6)
+    assert WriteBuffer.merge(b"", buf.take(7)) == b"AAAABB"

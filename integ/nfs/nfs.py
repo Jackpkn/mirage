@@ -13,9 +13,11 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import tempfile
 
 from mirage import MountMode, Workspace
 from mirage.nfs.backend import check_platform_nfs
@@ -164,6 +166,48 @@ async def run_sizeless(result: dict[str, object]) -> None:
                                     for r in records)
 
 
+async def run_bigfile(result: dict[str, object]) -> None:
+    """Multi-chunk md5 round-trip through a kernel mount.
+
+    A 1 MiB copy arrives as dozens of WRITEs, and the macOS client has
+    been observed issuing them out of order and overlapping -- the
+    behavior that silently corrupts nfsserve's own demo example. The
+    read-back happens BEFORE any flush, so it exercises the overlay
+    path over the full chunk set; the workspace check after close
+    proves the merged flush stored the same bytes.
+
+    Args:
+        result (dict): probe results.
+    """
+    payload = bytes(range(256)) * 4096
+    want = hashlib.md5(payload).hexdigest()
+    host_dir = tempfile.mkdtemp(prefix="mirage-nfs-big-")
+    src = os.path.join(host_dir, "src.bin")
+    back = os.path.join(host_dir, "back.bin")
+    with open(src, "wb") as fh:
+        fh.write(payload)
+
+    ws = Workspace({"/": RAMResource()}, mode=MountMode.WRITE)
+    manager = NFSManager()
+    try:
+        mnt = await manager.setup(ws.ops, "/")
+        code, _ = await sh("cp", src, f"{mnt}/big.bin")
+        result["bigfile_cp_in"] = code == 0
+        code, _ = await sh("cp", f"{mnt}/big.bin", back)
+        result["bigfile_cp_out"] = code == 0
+        with open(back, "rb") as fh:
+            result["bigfile_md5_pre_flush"] = hashlib.md5(
+                fh.read()).hexdigest() == want
+    finally:
+        await manager.close()
+    # Verified at the ops tier, not through the executor: `cat` is the
+    # agent surface and its output is capped by the post gate (a 1 MiB
+    # file comes back truncated by design), while ops.read(raw=True)
+    # answers the stored bytes themselves.
+    stored = await ws.ops.read("/big.bin", raw=True)
+    result["bigfile_md5_persisted"] = hashlib.md5(stored).hexdigest() == want
+
+
 async def main() -> None:
     result: dict[str, object] = {}
     try:
@@ -174,6 +218,7 @@ async def main() -> None:
 
     await run_battery(result)
     await run_sizeless(result)
+    await run_bigfile(result)
     print(json.dumps(result))
 
 
