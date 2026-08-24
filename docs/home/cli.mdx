@@ -300,7 +300,10 @@ mirage workspace clone demo --at <version> --id demo_at_v1
 | `mirage workspace checkout ID REF` | Restore the live state in place to a version id or branch. |
 | `mirage workspace snapshot ID PATH.tar` | Snapshot to a tar file. |
 | `mirage workspace load PATH.tar [CONFIG] [--id NAME]` | Restore from tar; optional config re-supplies redacted creds. |
-| `mirage session create WS [--id NAME] [-m /prefix[:mode]]...` | Add a named session (own cwd + env), optionally restricted to mounts with a mode ceiling (`read`/`write`/`exec` or `r`/`rw`/`rwx`). |
+| `mirage workspace list-asks WS [--session S] [--all]` | Pending [asks](/home/permissions#asks) raised by `ask` rules; `--all` includes settled decisions. |
+| `mirage workspace allow WS ASK_ID [--scope session] [--note ...]` | Allow a pending ask; default scope `once` answers exactly that line. |
+| `mirage workspace deny WS ASK_ID [--note ...]` | Deny a pending ask; the retry is refused, once. |
+| `mirage session create WS [--id NAME] [--profile NAME] [-m /prefix[:mode]]...` | Add a named session (own cwd + env), optionally under a [permission profile](/home/permissions) or restricted to mounts with a mode ceiling (`read`/`write`/`exec` or `r`/`rw`/`rwx`). |
 | `mirage session list WS` | List sessions for a workspace. |
 | `mirage session delete WS SESSION` | Close a session. |
 | `mirage execute --workspace_id WS [--session_id S] [--background] --command "..."` | Run a command. Pipes stdin automatically when stdout is not a TTY. |

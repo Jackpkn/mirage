@@ -659,9 +659,7 @@ describe('Ask in the chain', () => {
 
   it('renderPending names the approval', () => {
     const [err, code] = renderPending('git', { kind: 'pending', id: 'abc123', reason: 'sign-off' })
-    expect(new TextDecoder().decode(err)).toBe(
-      'git: requires approval: sign-off (approval abc123)\n',
-    )
+    expect(new TextDecoder().decode(err)).toBe('git: requires approval: sign-off (ask abc123)\n')
     expect(code).toBe(126)
   })
 })

@@ -53,15 +53,15 @@ def render_deny(subject: str, deny: Deny) -> tuple[bytes, int]:
 
 def render_pending(subject: str, pending: Pending) -> tuple[bytes, int]:
     """The command plane's rendering of an unanswered ask: refused for
-    now at 126, naming the approval the agent should quote, so the
-    retry after the host grants it passes.
+    now at 126, naming the ask id the agent should quote, so the
+    retry after the host allows it passes.
 
     Args:
         subject (str): the command name.
         pending (Pending): the door's answer.
     """
     return (f"{subject}: requires approval: {pending.reason} "
-            f"(approval {pending.id})\n".encode(), POLICY_DENIED_EXIT)
+            f"(ask {pending.id})\n".encode(), POLICY_DENIED_EXIT)
 
 
 async def pre_ops_gate(policies: "Policies",

@@ -337,5 +337,5 @@ async def test_an_ask_is_illegal_off_the_command_plane():
 
 def test_render_pending_names_the_approval():
     err, code = render_pending("git", Pending("abc123", "sign-off"))
-    assert err == b"git: requires approval: sign-off (approval abc123)\n"
+    assert err == b"git: requires approval: sign-off (ask abc123)\n"
     assert code == 126
