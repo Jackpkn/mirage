@@ -1,0 +1,31 @@
+---
+title: GWS
+icon: google
+description: Set up the Google Workspace CLI with Python or TypeScript.
+---
+
+Create OAuth credentials in [Google Workspace setup](/home/setup/google), then
+register them on an existing `ws`. Commands: [Python](/python/cli/gws) ·
+[TypeScript](/typescript/cli/gws).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.gws import GWS
+    from mirage.core.google.config import GoogleConfig
+
+    config = GoogleConfig(
+        client_id="...", client_secret="...", refresh_token="..."
+    )
+    ws.register_cli("gws", GWS, config.model_dump())
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { GWS } from '@struktoai/mirage-core'
+
+    const config = { clientId: '...', clientSecret: '...', refreshToken: '...' }
+    ws.registerCli('gws', GWS, config)
+    ```
+  </Tab>
+</Tabs>

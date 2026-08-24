@@ -1,0 +1,39 @@
+---
+title: Himalaya
+icon: envelope
+description: Set up the Himalaya mail CLI with Python or TypeScript.
+---
+
+Create credentials in [Email setup](/home/setup/email), then register them on
+an existing `ws`. Commands: [Python](/python/cli/himalaya) ·
+[TypeScript](/typescript/cli/himalaya).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.himalaya import HIMALAYA
+    from mirage.core.email.config import EmailConfig
+
+    config = EmailConfig(
+        imap_host="imap.example.com",
+        smtp_host="smtp.example.com",
+        username="agent@example.com",
+        password="app-password",
+    )
+    ws.register_cli("himalaya", HIMALAYA, config.model_dump())
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { HIMALAYA } from '@struktoai/mirage-node'
+
+    const config = {
+      imapHost: 'imap.example.com',
+      smtpHost: 'smtp.example.com',
+      username: 'agent@example.com',
+      password: 'app-password',
+    }
+    ws.registerCli('himalaya', HIMALAYA, config)
+    ```
+  </Tab>
+</Tabs>

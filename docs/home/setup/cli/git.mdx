@@ -1,0 +1,26 @@
+---
+title: git
+icon: git-alt
+description: Set up the credential-free git CLI with Python or TypeScript.
+---
+
+`git` needs no account config and reads repositories through existing mounts.
+Register it on `ws`. Commands: [Python](/python/cli/git) ·
+[TypeScript](/typescript/cli/git).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.git import GIT
+
+    ws.register_cli("git", GIT)
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { GIT } from '@struktoai/mirage-core'
+
+    ws.registerCli('git', GIT)
+    ```
+  </Tab>
+</Tabs>

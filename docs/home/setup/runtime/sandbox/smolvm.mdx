@@ -1,0 +1,33 @@
+---
+title: smolvm
+icon: /images/smolvm-logo.svg
+description: Connect either Mirage SDK to an existing smolvm microVM.
+---
+
+Create and start the machine. Details: [Python](/python/runtime/sandbox/smolvm) ·
+[TypeScript](/typescript/runtime/sandbox/smolvm).
+
+```bash
+smolvm machine create --net --name mirage-box --image my-mirage-image
+smolvm machine start --name mirage-box
+```
+
+<Tabs>
+  <Tab title="Python SDK" icon="/images/python-logo.svg">
+    ```python
+    from mirage.runtime.sandbox.smolvm import SmolvmRuntime
+
+    runtime = SmolvmRuntime(captures=["python3"], config={"machine": "mirage-box"})
+    ```
+  </Tab>
+  <Tab title="TypeScript SDK" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { SmolvmRuntime } from '@struktoai/mirage-node'
+
+    const runtime = new SmolvmRuntime({
+      captures: ['python3'],
+      config: { machine: 'mirage-box' },
+    })
+    ```
+  </Tab>
+</Tabs>

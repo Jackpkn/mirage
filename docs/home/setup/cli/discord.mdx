@@ -1,0 +1,29 @@
+---
+title: Discord
+icon: discord
+description: Set up the Discord CLI with Python or TypeScript.
+---
+
+Create a bot token in [Discord setup](/home/setup/discord), then register it on
+an existing `ws`. Commands: [Python](/python/cli/discord) ·
+[TypeScript](/typescript/cli/discord).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.discord import DISCORD
+    from mirage.core.discord.config import DiscordConfig
+
+    config = DiscordConfig(token="bot-token")
+    ws.register_cli("discord", DISCORD, config.model_dump())
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { DISCORD } from '@struktoai/mirage-core'
+
+    const config = { token: 'bot-token' }
+    ws.registerCli('discord', DISCORD, config)
+    ```
+  </Tab>
+</Tabs>

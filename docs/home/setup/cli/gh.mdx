@@ -1,0 +1,29 @@
+---
+title: gh
+icon: github
+description: Set up the GitHub CLI with Python or TypeScript.
+---
+
+Create a token in [GitHub setup](/home/setup/github), then register it on an
+existing `ws`. Commands: [Python](/python/cli/gh) ·
+[TypeScript](/typescript/cli/gh).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.gh import GH
+    from mirage.core.github.config import GhConfig
+
+    ws.register_cli(
+        "gh", GH, GhConfig(token="github_pat_...", repo="acme/tools")
+    )
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { GH } from '@struktoai/mirage-core'
+
+    ws.registerCli('gh', GH, { token: 'github_pat_...', repo: 'acme/tools' })
+    ```
+  </Tab>
+</Tabs>

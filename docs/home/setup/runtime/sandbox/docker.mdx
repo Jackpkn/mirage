@@ -1,0 +1,34 @@
+---
+title: Docker
+icon: /images/docker-logo.svg
+description: Connect either Mirage SDK to an existing Docker container.
+---
+
+Start the container yourself. Live FUSE mounts require `SYS_ADMIN` and
+`/dev/fuse` on Linux. Details: [Python](/python/runtime/sandbox/docker) ·
+[TypeScript](/typescript/runtime/sandbox/docker).
+
+```bash
+docker run -d --cap-add SYS_ADMIN --device /dev/fuse \
+  --name my-sandbox mirage-python-fuse sleep infinity
+```
+
+<Tabs>
+  <Tab title="Python SDK" icon="/images/python-logo.svg">
+    ```python
+    from mirage.runtime.sandbox.docker import DockerRuntime
+
+    runtime = DockerRuntime(captures=["python3"], config={"container": "my-sandbox"})
+    ```
+  </Tab>
+  <Tab title="TypeScript SDK" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { DockerRuntime } from '@struktoai/mirage-node'
+
+    const runtime = new DockerRuntime({
+      captures: ['python3'],
+      config: { container: 'my-sandbox' },
+    })
+    ```
+  </Tab>
+</Tabs>

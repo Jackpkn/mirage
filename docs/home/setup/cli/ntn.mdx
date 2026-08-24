@@ -1,0 +1,29 @@
+---
+title: ntn
+icon: /images/notion-logo.svg
+description: Set up the Notion CLI with Python or TypeScript.
+---
+
+Create a token in [Notion setup](/home/setup/notion), then register it on an
+existing `ws`. Commands: [Python](/python/cli/ntn) ·
+[TypeScript](/typescript/cli/ntn).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.ntn import NTN
+    from mirage.core.notion.config import NotionConfig
+
+    config = NotionConfig(api_key="secret_...")
+    ws.register_cli("ntn", NTN, config.model_dump())
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { NTN } from '@struktoai/mirage-core'
+
+    const config = { apiKey: 'secret_...' }
+    ws.registerCli('ntn', NTN, config)
+    ```
+  </Tab>
+</Tabs>

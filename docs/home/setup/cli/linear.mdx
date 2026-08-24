@@ -1,0 +1,29 @@
+---
+title: Linear
+icon: /images/linear-logo.svg
+description: Set up the Linear CLI with Python or TypeScript.
+---
+
+Create an API key in [Linear setup](/home/setup/linear), then register it on an
+existing `ws`. Commands: [Python](/python/cli/linear) ·
+[TypeScript](/typescript/cli/linear).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.linear import LINEAR
+    from mirage.core.linear.config import LinearConfig
+
+    config = LinearConfig(api_key="lin_api_...")
+    ws.register_cli("linear", LINEAR, config.model_dump())
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { LINEAR } from '@struktoai/mirage-core'
+
+    const config = { apiKey: 'lin_api_...' }
+    ws.registerCli('linear', LINEAR, config)
+    ```
+  </Tab>
+</Tabs>
