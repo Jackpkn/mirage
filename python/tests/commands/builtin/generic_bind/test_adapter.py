@@ -605,3 +605,85 @@ async def test_guarded_rmdir_answers_a_cascade_failure_with_the_refusal(
         await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink,
                                      NOOPAccessor(), spec)
     assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_counts_a_visible_mounted_child_as_content(
+        monkeypatch):
+    # The backend listing holds only hidden entries, but the namespace
+    # owes the directory a visible mounted child no backend can list.
+    # The children fact joins the emptiness judgment, so the refusal
+    # stays and the cascade never starts.
+    removed: list[str] = []
+
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, path):
+        removed.append(path.virtual)
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v in
+                        ("/m/d", "/m/d/m"))
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir,
+                                     readdir,
+                                     stat_fn,
+                                     unlink,
+                                     NOOPAccessor(),
+                                     spec,
+                                     children=lambda _v: ["m"])
+    assert exc.value.errno == errno.ENOTEMPTY
+    assert removed == []
+
+
+@pytest.mark.asyncio
+async def test_with_namespace_children_hands_the_fact_to_the_rmdir_guard(
+        monkeypatch):
+    # The hidden guard's rmdir is bound before any invocation exists,
+    # so the per-invocation stamp rebinds the slot with the namespace
+    # children; the builder keeps calling ops.rmdir unchanged and a
+    # visible mounted child still keeps the refusal.
+    removed: list[str] = []
+
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, path):
+        removed.append(path.virtual)
+
+    async def unused(*_args):
+        raise AssertionError("not used")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v in
+                        ("/m/d", "/m/d/m"))
+    base = CommandIO(readdir=readdir,
+                     read_bytes=unused,
+                     read_stream=unused,
+                     stat=stat_fn,
+                     is_mounted=lambda _a: True,
+                     unlink=unlink,
+                     rmdir=rmdir)
+    ops = adapter.with_namespace_children(adapter.with_hidden_guard(base),
+                                          lambda _v: ["m"])
+    assert ops.glob_children is not None
+    assert ops.rmdir is not None
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await ops.rmdir(NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+    assert removed == []

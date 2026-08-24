@@ -480,6 +480,34 @@ def test_a_read_only_hidden_remnant_keeps_the_refusal():
     assert (kept.stdout or b"") == b"h\n"
 
 
+def test_a_mounted_child_keeps_the_command_planes_refusal():
+    # Command-plane twin of the ops door's merged emptiness: the
+    # backend listing holds only hidden entries, but the namespace owes
+    # the directory a visible mounted child no backend can list. The
+    # stamped children join the guard's emptiness judgment, so the
+    # not-empty refusal stays instead of the cascade destroying the
+    # hidden remnant and reporting success while the mount remains.
+    ws = Workspace({
+        "/repo": RAMResource(),
+        "/repo/only/m": RAMResource()
+    },
+                   mode=MountMode.WRITE)
+
+    async def seed():
+        io = await ws.execute(
+            "mkdir -p /repo/only && printf 'h\\n' > /repo/only/h")
+        assert io.exit_code == 0, io.stderr
+
+    asyncio.run(seed())
+    ws.create_session("rev", profile={"paths": {"hide": ["/repo/only/h"]}})
+    refused = _run(ws, "rmdir /repo/only")
+    assert refused.exit_code == 1
+    assert (refused.stderr or b"") == (
+        b"rmdir: failed to remove '/repo/only': Directory not empty\n")
+    kept = _host(ws, "cat /repo/only/h")
+    assert (kept.stdout or b"") == b"h\n"
+
+
 def test_ops_rmdir_keeps_the_refusal_when_a_mounted_child_remains():
     # Ops-plane twin of the visible-child rule: the backend cannot see
     # a mount nested below the directory, so the remnant arm judges

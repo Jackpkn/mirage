@@ -448,6 +448,36 @@ describe('subtree mutations against hides', () => {
     const kept = await ws.execute('cat /repo/only/h')
     expect(stdoutStr(kept)).toBe('h\n')
   })
+
+  it('a mounted child keeps the command plane refusal', async () => {
+    // Command-plane twin of the ops door's merged emptiness: the
+    // backend listing holds only hidden entries, but the namespace
+    // owes the directory a visible mounted child no backend can list.
+    // The stamped children join the guard's emptiness judgment, so the
+    // not-empty refusal stays instead of the cascade destroying the
+    // hidden remnant and reporting success while the mount remains.
+    const parser = await getTestParser()
+    const repo = new RAMResource()
+    const m = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(repo)
+    registry.registerResource(m)
+    const ws = new Workspace(
+      { '/repo': [repo, MountMode.WRITE] as const, '/repo/only/m': [m, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute("mkdir -p /repo/only && printf 'h\\n' > /repo/only/h")
+    expect(io.exitCode).toBe(0)
+    ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/repo/only/h'] } }),
+    })
+    const refused = await ws.execute('rmdir /repo/only', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toBe("rmdir: failed to remove '/repo/only': Directory not empty\n")
+    const kept = await ws.execute('cat /repo/only/h')
+    expect(stdoutStr(kept)).toBe('h\n')
+  })
 })
 
 describe('the ops door against hides', () => {

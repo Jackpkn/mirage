@@ -23,10 +23,13 @@ import {
   dirAwareStream,
   makeResolveGlob,
   withDirGuard,
+  withHiddenGuard,
+  withNamespaceChildren,
   withRuleGuard,
   type CommandIO,
 } from './adapter.ts'
-import { runWithAdmission } from '../../../context/session_context.ts'
+import { runWithAdmission, runWithSession } from '../../../context/session_context.ts'
+import { Session } from '../../../workspace/session/session.ts'
 
 const accessor = {} as never
 // No namespace facts, which is what a command bound outside a workspace
@@ -461,5 +464,50 @@ describe('withDirGuard', () => {
     await expect(
       ops.readBytes(accessor, PathSpec.fromStrPath('/locked.txt'), undefined),
     ).rejects.toMatchObject({ code: 'EACCES' })
+  })
+})
+
+describe('withNamespaceChildren', () => {
+  it('a visible mounted child keeps the rmdir refusal', async () => {
+    // The hidden guard's rmdir closure is bound before any invocation
+    // exists, so the per-invocation stamp rebinds the slot with the
+    // namespace children; the builder keeps calling ops.rmdir
+    // unchanged, the visible mounted child joins the emptiness
+    // judgment, and the not-empty refusal stays with the cascade never
+    // started.
+    const removed: string[] = []
+    const notEmpty = (): Error => {
+      const err = new Error('ENOTEMPTY: directory not empty') as Error & { code: string }
+      err.code = 'ENOTEMPTY'
+      return err
+    }
+    const base: CommandIO = {
+      readdir: () => Promise.resolve(['h']),
+      readBytes: () => Promise.reject(new Error('not used')),
+      readStream: () => {
+        throw new Error('not used')
+      },
+      stat: (_a, path) =>
+        Promise.resolve(new FileStat({ name: path.virtual, type: FileType.TEXT })),
+      isMounted: () => true,
+      unlink: (_a, path) => {
+        removed.push(path.virtual)
+        return Promise.resolve()
+      },
+      rmdir: () => Promise.reject(notEmpty()),
+    }
+    const ops = withNamespaceChildren(withHiddenGuard(base), (parent) =>
+      parent === '/m/d' ? ['m'] : [],
+    )
+    expect(ops.globChildren).toBeDefined()
+    const rmdir = ops.rmdir
+    if (rmdir === undefined) throw new Error('rmdir slot missing')
+    const sess = new Session({ sessionId: 'narrowed' })
+    sess.hiddenPaths = { paths: ['/m/d/h'] }
+    const spec = new PathSpec({ virtual: '/m/d', directory: '/m', resourcePath: 'd' })
+    await runWithSession(sess, async () => {
+      await expect(rmdir(accessor, spec)).rejects.toMatchObject({ code: 'ENOTEMPTY' })
+    })
+    expect(removed).toEqual([])
   })
 })

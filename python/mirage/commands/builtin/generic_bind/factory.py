@@ -22,9 +22,8 @@ from mirage.cache.context import active_cache_manager
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.cache.read_through import (cache_aware_read_bytes,
                                        cache_aware_read_stream)
-from mirage.commands.builtin.generic_bind.adapter import (CommandIO,
-                                                          with_dir_guard,
-                                                          with_path_guards)
+from mirage.commands.builtin.generic_bind.adapter import (
+    CommandIO, with_dir_guard, with_namespace_children, with_path_guards)
 from mirage.commands.builtin.generic_bind.builders import _BUILDERS
 from mirage.commands.builtin.generic_bind.provision import default_provision
 from mirage.commands.config import CommandOpts, command
@@ -196,7 +195,7 @@ async def _run_with_namespace_globs(ops: CommandIO, fn: Callable[..., Any],
         opts (CommandOpts): the per-invocation option bag.
     """
     children = opts.ns.child_mounts if opts.ns is not None else None
-    bound = with_dir_guard(replace(ops, glob_children=children))
+    bound = with_dir_guard(with_namespace_children(ops, children))
     return await fn(bound, accessor, paths, texts, opts)
 
 

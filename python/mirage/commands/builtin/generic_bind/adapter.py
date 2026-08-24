@@ -451,6 +451,7 @@ async def _guarded_rmdir(fn: OperationFn,
                          unlink: OperationFn | None,
                          *args: Any,
                          index: IndexCacheStore = NULL_INDEX,
+                         children: ChildMounts | None = None,
                          **kwargs: Any) -> Any:
     """rmdir that removes a directory the session sees as empty.
 
@@ -476,6 +477,13 @@ async def _guarded_rmdir(fn: OperationFn,
         index (IndexCacheStore): the invocation's cache index, threaded
             by the callers so the fallback listing resolves on an
             indexed backend the way the command's own listings did.
+        children (ChildMounts | None): child names the namespace owes
+            the directory (nested mount roots and symlinks), prebound
+            per invocation by ``with_namespace_children``. They join
+            the emptiness judgment, never the walk: a visible mounted
+            child keeps the refusal exactly as the ops plane's merged
+            listing does, while the cascade itself only ever removes
+            what the backend holds.
         **kwargs: forwarded untouched.
     """
     target: PathSpec | None = None
@@ -497,7 +505,10 @@ async def _guarded_rmdir(fn: OperationFn,
                 break
             lead.append(arg)
         entries = await readdir(*lead, target, index=index)
-        if not entries or visible_below(target.virtual, entries, path_allowed):
+        merged = list(entries)
+        if children is not None:
+            merged.extend(children(target.virtual))
+        if not entries or visible_below(target.virtual, merged, path_allowed):
             raise
         channel = _SlotChannel(tuple(lead), index, readdir, stat, unlink, fn)
         try:
@@ -724,6 +735,36 @@ def with_hidden_guard(ops: CommandIO) -> CommandIO:
     if ops.exists is not None:
         changes["exists"] = functools.partial(_guarded_exists, ops.exists)
     return replace(ops, **changes)
+
+
+def with_namespace_children(ops: CommandIO,
+                            children: ChildMounts | None) -> CommandIO:
+    """Return ``ops`` carrying the invocation's namespace children.
+
+    The adapter is built once per backend while the child names a
+    directory owes to nested mounts and symlinks are session-scoped, so
+    the fact lands here, per invocation. Two consumers read it: glob
+    resolution and the dir guard read the ``glob_children`` field off
+    the stamped copy, and the hidden guard's rmdir was bound before any
+    invocation exists, so its slot is rebound with the fact as the
+    ``children`` keyword ``_guarded_rmdir`` declares. That keyword is
+    only ever prebound here, onto the guard the factory installed two
+    lines earlier, so no backend rmdir can receive it.
+
+    Args:
+        ops (CommandIO): the backend's IO adapter, path-guarded by the
+            factory.
+        children (ChildMounts | None): the invocation's namespace child
+            fact, from ``opts.ns.child_mounts``.
+    """
+    stamped = replace(ops, glob_children=children)
+    if children is None or stamped.rmdir is None:
+        return stamped
+    # OperationFn rather than RmdirOp: the keyword belongs to the
+    # guard's own signature, not the backend op contract the slot is
+    # typed as.
+    slot: OperationFn = stamped.rmdir
+    return replace(stamped, rmdir=functools.partial(slot, children=children))
 
 
 _RULE_SLOTS = ("read_bytes", "read_stream", "read_range", "write", "append",

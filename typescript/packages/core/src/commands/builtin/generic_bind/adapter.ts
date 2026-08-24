@@ -78,10 +78,14 @@ type PathOp<A extends Accessor = Accessor> = (accessor: A, path: PathSpec) => Pr
 // guard turns a refused rmdir into a raw listing of the same directory,
 // and an indexed backend cannot list a nested path without it. Backend
 // rmdirs keep their two-parameter shape and simply never receive it.
+// `children` widens the type the same structural way for the same
+// guard: the namespace children join its emptiness judgment, prebound
+// per invocation by `withNamespaceChildren`, and no backend reads them.
 type RmdirOp<A extends Accessor = Accessor> = (
   accessor: A,
   path: PathSpec,
   index?: IndexCacheStore,
+  children?: ChildMounts,
 ) => Promise<void>
 
 type MkdirOp<A extends Accessor = Accessor> = (
@@ -336,7 +340,7 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
     const rawReaddir = ops.readdir
     const rawStat = ops.stat
     const rawUnlink = ops.unlink
-    guarded.rmdir = async (accessor, path, index) => {
+    guarded.rmdir = async (accessor, path, index, children) => {
       refuseHidden(path, false)
       try {
         await rd(accessor, path, index)
@@ -351,7 +355,12 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
           throw exc
         }
         const entries = await rawReaddir(accessor, path, index)
-        if (entries.length === 0 || visibleBelow(path.virtual, entries, pathAllowed)) {
+        // The namespace children join the emptiness judgment, never
+        // the walk: a visible mounted child keeps the refusal exactly
+        // as the ops plane's merged listing does, while the cascade
+        // itself only ever removes what the backend holds.
+        const merged = children === undefined ? entries : [...entries, ...children(path.virtual)]
+        if (entries.length === 0 || visibleBelow(path.virtual, merged, pathAllowed)) {
           throw exc
         }
         const channel: RemnantChannel = {
@@ -708,6 +717,36 @@ export function withModeGuard<A extends Accessor = Accessor>(ops: CommandIO<A>):
  */
 export function withPathGuards<A extends Accessor = Accessor>(ops: CommandIO<A>): CommandIO<A> {
   return withHiddenGuard(withRuleGuard(withModeGuard(ops)))
+}
+
+/**
+ * Return `ops` carrying the invocation's namespace children.
+ *
+ * The adapter is built once per backend while the child names a
+ * directory owes to nested mounts and symlinks are session-scoped, so
+ * the fact lands here, per invocation. Two consumers read it: glob
+ * resolution and the dir guard read the `globChildren` field off the
+ * stamped copy, and the hidden guard's rmdir closure was bound before
+ * any invocation exists, so its slot is rebound with the fact as the
+ * trailing `children` parameter the guard declares. Backend rmdirs
+ * keep their shorter shape and simply never read it, the same
+ * structural widening `index` rode in on. An absent namespace returns
+ * `ops` untouched because exactOptionalPropertyTypes refuses an
+ * explicit `undefined` for an optional field; Python's `glob_children`
+ * is `| None` and takes the uniform path.
+ */
+export function withNamespaceChildren<A extends Accessor = Accessor>(
+  ops: CommandIO<A>,
+  children: ChildMounts | undefined,
+): CommandIO<A> {
+  if (children === undefined) return ops
+  const stamped: CommandIO<A> = { ...ops, globChildren: children }
+  const slot = ops.rmdir
+  if (slot === undefined) return stamped
+  return {
+    ...stamped,
+    rmdir: (accessor, path, index) => slot(accessor, path, index, children),
+  }
 }
 
 /**

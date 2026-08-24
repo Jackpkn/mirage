@@ -25,6 +25,7 @@ from mirage.types import (ConsistencyPolicy, FileType, HiddenPaths, MountMode,
                           PathSpec)
 from mirage.workspace import Workspace
 from mirage.workspace.dispatcher import Dispatcher
+from mirage.workspace.dispatcher.dispatcher import _MountChannel
 from mirage.workspace.session import Session
 
 
@@ -332,3 +333,65 @@ async def test_symlink_refuses_an_occupied_name(occupied):
                               PathSpec.from_str_path(occupied),
                               target="elsewhere")
         assert (await ws.execute("cat /ram/a.txt")).stdout == b"hi\n"
+
+
+@pytest.mark.asyncio
+async def test_the_remnant_channel_invalidates_each_deletion():
+    # The cascade's execute_op calls run outside the cache-manager
+    # context command execution establishes, so the channel discharges
+    # the dispatcher's write invalidation itself, per deletion; the
+    # dispatch-level invalidation of the rmdir target covers only the
+    # root and its ancestors. Reads stay invalidation-free, and a
+    # failing deletion still invalidates: a missing-path failure means
+    # the tree changed under the walk, and the walk's own earlier
+    # listing must not survive it.
+    mount = MagicMock()
+    mount.execute_op = AsyncMock(return_value=["h"])
+    seen: list[str] = []
+
+    async def invalidate(spec: PathSpec) -> None:
+        seen.append(spec.virtual)
+
+    channel = _MountChannel(mount, invalidate)
+    await channel.readdir(_path("/data/d"))
+    await channel.stat(_path("/data/d/h"))
+    assert seen == []
+    await channel.unlink(_path("/data/d/h"))
+    await channel.rmdir(_path("/data/d"))
+    assert seen == ["/data/d/h", "/data/d"]
+    mount.execute_op = AsyncMock(side_effect=FileNotFoundError("/data/d/h"))
+    with pytest.raises(FileNotFoundError):
+        await channel.unlink(_path("/data/d/h"))
+    assert seen == ["/data/d/h", "/data/d", "/data/d/h"]
+
+
+@pytest.mark.asyncio
+async def test_ops_rmdir_cascade_invalidates_each_remnant(monkeypatch):
+    # A direct dispatcher caller (FUSE, ws.ops) establishes no
+    # cache-manager context, so the cores' own invalidation cannot land
+    # during the remnant cascade; every deletion must reach the
+    # dispatcher's write invalidation, not only the rmdir target, or
+    # the cached listings and bodies below the directory survive its
+    # deletion.
+    ws = Workspace({"/a": RAMResource()}, mode=MountMode.WRITE)
+    io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")
+    assert io.exit_code == 0, io.stderr
+    sess = ws.create_session("rev", profile={"paths": {"hide": ["/a/d/sec"]}})
+    recorded: list[str] = []
+    real = Dispatcher.invalidate_after_write
+
+    async def spy(self, mount, path, observed=None):
+        recorded.append(path.virtual)
+        await real(self, mount, path, observed=observed)
+
+    monkeypatch.setattr(Dispatcher, "invalidate_after_write", spy)
+    token = set_current_session(sess)
+    try:
+        await ws.ops.rmdir("/a/d")
+    finally:
+        reset_current_session(token)
+    assert "/a/d/sec/k" in recorded
+    assert "/a/d/sec" in recorded
+    assert "/a/d" in recorded
+    gone = await ws.execute("test -e /a/d")
+    assert gone.exit_code == 1

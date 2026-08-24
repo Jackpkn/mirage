@@ -13,8 +13,10 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import errno
+import functools
 import os
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -132,11 +134,25 @@ class _MountChannel:
     would. Only the dispatcher's own visibility filter sits above that
     door, which is what lets the cascade see hidden entries.
 
+    Each deletion also discharges the dispatcher's own write
+    invalidation, the way normal dispatch does for its one op and the
+    TS ``fencedCall`` does per call: ``execute_op`` runs outside the
+    cache-manager context command execution establishes, so the cores'
+    invalidation cannot land, and the dispatch-level invalidation of
+    the rmdir target covers the root and its ancestors, never the
+    cascade's descendants. Invalidation runs even when the op fails: a
+    missing-path failure means the tree changed under the walk, and
+    the walk's own earlier listing is exactly the entry that must not
+    survive.
+
     Args:
         mount (MountEntry): the mount owning the subtree.
+        invalidate (Callable): the dispatcher's write invalidation,
+            bound to that mount.
     """
 
     mount: MountEntry
+    invalidate: Callable[[PathSpec], Awaitable[None]]
 
     async def readdir(self, spec: PathSpec) -> list[str]:
         return await self.mount.execute_op("readdir", spec.virtual)
@@ -145,10 +161,16 @@ class _MountChannel:
         return await self.mount.execute_op("stat", spec.virtual)
 
     async def unlink(self, spec: PathSpec) -> None:
-        await self.mount.execute_op("unlink", spec.virtual)
+        try:
+            await self.mount.execute_op("unlink", spec.virtual)
+        finally:
+            await self.invalidate(spec)
 
     async def rmdir(self, spec: PathSpec) -> None:
-        await self.mount.execute_op("rmdir", spec.virtual)
+        try:
+            await self.mount.execute_op("rmdir", spec.virtual)
+        finally:
+            await self.invalidate(spec)
 
 
 class Dispatcher:
@@ -478,8 +500,10 @@ class Dispatcher:
             self._namespace, path.virtual)
         if not entries or visible_below(path.virtual, merged, path_allowed):
             raise refusal
+        channel = _MountChannel(
+            mount, functools.partial(self.invalidate_after_write, mount))
         try:
-            await remove_remnants(_MountChannel(mount), path_allowed, path)
+            await remove_remnants(channel, path_allowed, path)
         except OSError as exc:
             raise refusal from exc
 
