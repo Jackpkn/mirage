@@ -46,7 +46,7 @@ mirage execute -w demo -s agent_a -c "cat /repo/notes.md"
 
 In code, the same two doors: `Workspace(mounts, profiles=...)` and
 `ws.create_session("agent_a", profile="guarded")` in Python,
-`new Workspace({ mounts, profiles })` and
+`new Workspace(mounts, { profiles })` and
 `ws.createSession('agent_a', { profile: 'guarded' })` in TypeScript.
 A session that names no profile runs under `profiles.default` when the
 workspace defines one, and unrestricted otherwise; the workspace's own
@@ -101,9 +101,13 @@ A command pattern is a **prefix of the line**: `git push` covers
 The same patterns spell the `allow` list.
 
 A rule with `paths` and no command also reaches the VFS op door, so FUSE
-mounts and the cache cannot go around it. A `deny` refuses with
-`<command>: policy denied: <reason>` at exit 126. An `ask` refuses the
-same way until a host answers; see [Asks](#asks) below.
+mounts and the cache cannot go around it. A whole-command `deny` refuses
+with `<command>: policy denied: <reason>` at exit 126; a `deny` matched
+through `paths` refuses the operand instead, in the GNU voice
+`<command>: <path>: <reason>` at the command's own operand exit code
+(`cat: /vault/aws.token: credentials are never read by hand`, exit 1).
+An `ask` refuses at 126, naming an ask id, until a host answers; see
+[Asks](#asks) below.
 
 ### `paths` and `vars`: hide and show
 

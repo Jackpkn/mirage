@@ -196,7 +196,7 @@ With **no approval plugin composed** — a headless run, a cron job, CI — an a
 
 ```
 $ rm /data/notes.txt
-rm: requires approval: deletes are reviewed (approval 0efc4a8f6280)
+rm: requires approval: deletes are reviewed (ask 0efc4a8f6280)
 ```
 
 This is deliberate: the document says `ask`, and silently rewriting that as `deny` would change what the operator wrote. The question is real and answerable, through `ctx.mirage.decisions`:
