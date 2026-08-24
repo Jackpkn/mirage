@@ -311,3 +311,137 @@ describe('the path axis end to end', () => {
     expect(ok.exitCode).toBe(0)
   })
 })
+
+async function boxed(profile: object): Promise<Workspace> {
+  const parser = await getTestParser()
+  const repo = new RAMResource()
+  const registry = new OpsRegistry()
+  registry.registerResource(repo)
+  const ws = new Workspace(
+    { '/repo': [repo, MountMode.WRITE] as const },
+    { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+  )
+  open.push(ws)
+  const io = await ws.execute(
+    'mkdir -p /repo/box/sec /repo/only && ' +
+      "printf 'v\\n' > /repo/box/a.txt && " +
+      "printf 's\\n' > /repo/box/sec/k && " +
+      "printf 't\\n' > /repo/box/x.tkn && " +
+      "printf 'h\\n' > /repo/only/h",
+  )
+  expect(io.exitCode).toBe(0)
+  ws.createSession('rev', { profile: parseSessionProfile(profile) })
+  return ws
+}
+
+describe('subtree mutations against hides', () => {
+  it('mv that would reveal hidden content refuses', async () => {
+    // The hide anchors at /repo/box/sec; the move would re-anchor its
+    // content to /repo/moved/sec, which nothing hides, so it refuses
+    // in GNU's permission-denied voice and the source stays whole.
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const refused = await ws.execute('mv /repo/box /repo/moved', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toBe(
+      "mv: cannot move '/repo/box' to '/repo/moved': Permission denied\n",
+    )
+    const intact = await ws.execute('test -e /repo/box/sec/k')
+    expect(intact.exitCode).toBe(0)
+  })
+
+  it('mv rides a component-pattern hide along', async () => {
+    // *.tkn follows the name wherever the content goes, so nothing is
+    // revealed and the move proceeds, the hidden file riding along.
+    const ws = await boxed({ paths: { hide: ['*.tkn'] } })
+    const ok = await ws.execute('mv /repo/box /repo/moved', { sessionId: 'rev' })
+    expect(ok.exitCode).toBe(0)
+    const listing = await ws.execute('ls /repo/moved', { sessionId: 'rev' })
+    expect(stdoutStr(listing)).toBe('a.txt\nsec\n')
+    const survived = await ws.execute('cat /repo/moved/x.tkn')
+    expect(survived.exitCode).toBe(0)
+    expect(stdoutStr(survived)).toBe('t\n')
+  })
+
+  it('cp -r copies the visible view silently', async () => {
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const copied = await ws.execute('cp -r /repo/box /repo/copy', { sessionId: 'rev' })
+    expect(copied.exitCode).toBe(0)
+    expect(stderrStr(copied)).toBe('')
+    const listing = await ws.execute('find /repo/copy')
+    expect(stdoutStr(listing)).toBe('/repo/copy\n/repo/copy/a.txt\n/repo/copy/x.tkn\n')
+  })
+
+  it('rmdir takes hidden remnants with the directory', async () => {
+    // The session sees an empty directory; a not-empty refusal would
+    // leak that something invisible exists, so the remnants go with it.
+    const ws = await boxed({ paths: { hide: ['/repo/only/h'] } })
+    const empty = await ws.execute('ls -a /repo/only', { sessionId: 'rev' })
+    expect(stdoutStr(empty)).toBe('')
+    const removed = await ws.execute('rmdir /repo/only', { sessionId: 'rev' })
+    expect(removed.exitCode).toBe(0)
+    const gone = await ws.execute('test -e /repo/only')
+    expect(gone.exitCode).toBe(1)
+  })
+
+  it('rmdir with a visible child keeps the refusal', async () => {
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const refused = await ws.execute('rmdir /repo/box', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toContain('Directory not empty')
+  })
+
+  it('rm -r still destroys hidden content below', async () => {
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const removed = await ws.execute('rm -r /repo/box', { sessionId: 'rev' })
+    expect(removed.exitCode).toBe(0)
+    const gone = await ws.execute('test -e /repo/box')
+    expect(gone.exitCode).toBe(1)
+  })
+})
+
+async function twoMounts(profile: object): Promise<Workspace> {
+  const parser = await getTestParser()
+  const a = new RAMResource()
+  const b = new RAMResource()
+  const registry = new OpsRegistry()
+  registry.registerResource(a)
+  registry.registerResource(b)
+  const ws = new Workspace(
+    { '/a': [a, MountMode.WRITE] as const, '/b': [b, MountMode.WRITE] as const },
+    { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+  )
+  open.push(ws)
+  const io = await ws.execute(
+    'mkdir -p /a/box/sec /a/bag && ' +
+      "printf 'v\\n' > /a/box/a.txt && printf 's\\n' > /a/box/sec/k && " +
+      "printf 't\\n' > /a/bag/x.tkn && printf 'v\\n' > /a/bag/a.txt",
+  )
+  expect(io.exitCode).toBe(0)
+  ws.createSession('rev', { profile: parseSessionProfile(profile) })
+  return ws
+}
+
+describe('cross-mount moves against hides', () => {
+  it('a cross-mount mv refuses the reveal too', async () => {
+    const ws = await twoMounts({ paths: { hide: ['/a/box/sec'] } })
+    const refused = await ws.execute('mv /a/box /b/box', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toBe("mv: cannot move '/a/box' to '/b/box': Permission denied\n")
+    const intact = await ws.execute('test -e /a/box/sec/k')
+    expect(intact.exitCode).toBe(0)
+  })
+
+  it('a name-pattern hide moves the visible and drops the remnant', async () => {
+    // The filtered walk cannot copy what the session cannot see, and
+    // refusing here would make EACCES an existence oracle, so the
+    // remove phase takes the remnant with the source: destroy silently,
+    // never reveal.
+    const ws = await twoMounts({ paths: { hide: ['*.tkn'] } })
+    const moved = await ws.execute('mv /a/bag /b/bag', { sessionId: 'rev' })
+    expect(moved.exitCode).toBe(0)
+    const dest = await ws.execute('find /b/bag')
+    expect(stdoutStr(dest)).toBe('/b/bag\n/b/bag/a.txt\n')
+    const gone = await ws.execute('test -e /a/bag')
+    expect(gone.exitCode).toBe(1)
+  })
+})

@@ -292,6 +292,12 @@ export async function mvGeneric(
   index?: IndexCacheStore,
   backendKey?: BackendKeyFn,
   readdir?: ReaddirFn,
+  // Judges one (source, target) pair before a primitive move touches
+  // anything, throwing to refuse it; the adapter wires the
+  // hidden-reveal check here so a cross-mount move refuses exactly
+  // where a native rename's own slot would, instead of half-copying
+  // first.
+  guard?: (src: PathSpec, dst: PathSpec) => void,
 ): Promise<[ByteSource | null, IOResult]> {
   const keyOf = backendKey ?? backendKeyDefault
   const [sources, dstOperand] = splitOperands('mv', paths, flags.targetDir, flags.noTargetDir)
@@ -410,6 +416,17 @@ export async function mvGeneric(
     )
     if (!made.ok) continue
     if (isPrimitiveMove(strategy)) {
+      if (guard !== undefined) {
+        try {
+          guard(src, target)
+        } catch (err) {
+          if (!isFsError(err)) throw err
+          errors.push(
+            `mv: cannot move '${src.virtual}' to '${target.virtual}': ${String(fsStrerror(err))}`,
+          )
+          continue
+        }
+      }
       const entries = await cpWalk(strategy.readdir, stat, src, index)
       const { copiedAll, wroteAny } = await copyEntries(
         'mv',

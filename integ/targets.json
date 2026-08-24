@@ -2375,6 +2375,22 @@
             ]
           }
         },
+        "boxed": {
+          "paths": {
+            "hide": [
+              "/scratch/box/sec",
+              "/scratch/only/h",
+              "/scratch/gone/sec"
+            ]
+          }
+        },
+        "tagged": {
+          "paths": {
+            "hide": [
+              "*.tkn"
+            ]
+          }
+        },
         "sealed": {
           "paths": {
             "hide": [

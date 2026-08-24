@@ -27,7 +27,7 @@ from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
-from mirage.context import path_rules_active
+from mirage.context import hidden_paths_intersect, path_rules_active
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import StatOverlay
 from mirage.types import NativeCopy, PathSpec, PrimitiveCopy
@@ -97,13 +97,17 @@ async def cp(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     dir_copy = partial(ops.dir_copy, accessor) if ops.dir_copy else None
     mkdir = partial(ops.mkdir, accessor) if ops.mkdir else None
     strategy: NativeCopy | PrimitiveCopy
-    if path_rules_active() and ops.write is not None and mkdir is not None:
+    guarded = path_rules_active() or any(
+        hidden_paths_intersect(p.virtual) for p in paths)
+    if guarded and ops.write is not None and mkdir is not None:
         # A native copy moves a tree in one backend call and a native
         # find lists it, neither of which passes an entry through the
-        # guard the way a read does; while a path rule scopes cp, the
-        # primitive walk copies entry by entry (the cross-mount relay's
-        # own path), which is also where GNU's per-entry refusals are
-        # worded.
+        # guard the way a read does; while a path rule scopes cp, or a
+        # hide could cover an entry under an operand (the native find
+        # listed hidden names and the per-file read then printed them
+        # in its refusal), the primitive walk copies entry by entry
+        # (the cross-mount relay's own path), which is also where GNU's
+        # per-entry refusals are worded.
         strategy = PrimitiveCopy(read_bytes=bound_op(ops.read_bytes, accessor,
                                                      opts.index),
                                  write=partial(_write, ops.write, accessor),

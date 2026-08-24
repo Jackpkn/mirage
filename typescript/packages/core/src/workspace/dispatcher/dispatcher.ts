@@ -64,7 +64,13 @@ import {
   POLICY_WRITE_OPS,
   SETATTR_KEYS,
 } from './constants.ts'
-import { effectivePathMode, getCurrentSession, pathAllowed } from '../../context/session_context.ts'
+import {
+  effectivePathMode,
+  getCurrentSession,
+  hiddenPathsIntersect,
+  pathAllowed,
+} from '../../context/session_context.ts'
+import { moveReveals } from '../../utils/hidden.ts'
 
 const NOOP_ACCESSOR_INSTANCE = new NOOPAccessor()
 
@@ -189,6 +195,20 @@ export class Dispatcher {
     const dstArg = args?.[0]
     if (opName === 'rename' && dstArg instanceof PathSpec && !pathAllowed(dstArg.virtual)) {
       throw eacces(dstArg.virtual)
+    }
+    if (opName === 'rename' && dstArg instanceof PathSpec) {
+      // A rename re-anchors everything below its source while the hides
+      // stay where they are written, so hidden content would land at
+      // paths the session can see. Destroying hidden content is silent
+      // (rmR, the remnant rmdir below); relocating it into view is
+      // refused.
+      const sess = getCurrentSession()
+      if (
+        sess !== null &&
+        moveReveals(sess.hiddenPaths, sess.shownPaths, path.virtual, dstArg.virtual)
+      ) {
+        throw eacces(path.virtual)
+      }
     }
     if (this.tableAnswers(opName, path.virtual, kwargs)) {
       return [
@@ -375,13 +395,19 @@ export class Dispatcher {
         ),
       )
     } catch (err) {
-      const fallback = isMissingPath(err) ? this.namespaceResult(opName, p.virtual) : null
-      if (fallback === null) {
-        await this.reconciler.onOpMissing(opName, p.virtual, err)
-        throw err
+      const code = (err as { code?: string }).code
+      if (opName === 'rmdir' && (code === 'ENOTEMPTY' || code === 'EEXIST')) {
+        await this.rmdirRemnants(resource, scope, err)
+        result = null
+      } else {
+        const fallback = isMissingPath(err) ? this.namespaceResult(opName, p.virtual) : null
+        if (fallback === null) {
+          await this.reconciler.onOpMissing(opName, p.virtual, err)
+          throw err
+        }
+        result = fallback
+        memoryAnswered(report)
       }
-      result = fallback
-      memoryAnswered(report)
     }
     // The op ran, whatever invalidation, the post gate, or an output
     // cap do next: stamped here so a failure in any of them cannot
@@ -433,6 +459,87 @@ export class Dispatcher {
    * the follow below rewrote it to the target. Mirrors Python's
    * Dispatcher._table_answers.
    */
+  /**
+   * Take a visibly-empty directory's hidden remnants with it.
+   *
+   * The backend refused the rmdir because entries remain, but when the
+   * session's view of the directory is empty the refusal would leak
+   * that something invisible exists. A session's mutation may destroy
+   * what it cannot see, never learn of it, so the remnants go with the
+   * directory; a visible child, or a backend with no recursive remove
+   * to take them, re-raises the backend's refusal.
+   */
+  private async rmdirRemnants(resource: Resource, path: PathSpec, refusal: unknown): Promise<void> {
+    if (!hiddenPathsIntersect(path.virtual)) throw refusal
+    const accessor = resource.accessor ?? NOOP_ACCESSOR_INSTANCE
+    let entries: unknown
+    try {
+      entries = await this.opsRegistry.call('readdir', resource.kind, accessor, path)
+    } catch {
+      // A backend that cannot list (or later, remove) the remnants
+      // keeps the original refusal: the door has no way to take them.
+      throw refusal
+    }
+    if (!Array.isArray(entries)) throw refusal
+    const base = path.virtual.replace(/\/+$/, '')
+    const visible = entries.some((e) => {
+      const trimmed = String(e).replace(/\/+$/, '')
+      return pathAllowed(`${base}/${trimmed.slice(trimmed.lastIndexOf('/') + 1)}`)
+    })
+    if (entries.length === 0 || visible) throw refusal
+    try {
+      await this.removeSubtree(resource, path)
+    } catch {
+      throw refusal
+    }
+  }
+
+  /**
+   * Remove one directory and everything under it, entry by entry.
+   *
+   * No backend registers a recursive-remove op at this door, so the
+   * remnant removal walks the raw listings itself, children first. An
+   * entry that vanishes mid-walk is a completed removal (a prefix-store
+   * directory disappears with its last child), not an error.
+   */
+  private async removeSubtree(resource: Resource, spec: PathSpec): Promise<void> {
+    const accessor = resource.accessor ?? NOOP_ACCESSOR_INSTANCE
+    const entries = await this.opsRegistry.call('readdir', resource.kind, accessor, spec)
+    if (!Array.isArray(entries)) return
+    const base = spec.virtual.replace(/\/+$/, '')
+    const baseKey = spec.resourcePath.replace(/\/+$/, '')
+    for (const entry of entries) {
+      const trimmed = String(entry).replace(/\/+$/, '')
+      const name = trimmed.slice(trimmed.lastIndexOf('/') + 1)
+      const child = new PathSpec({
+        virtual: `${base}/${name}`,
+        directory: spec.virtual,
+        resourcePath: baseKey === '' ? name : `${baseKey}/${name}`,
+      })
+      let row: unknown
+      try {
+        row = await this.opsRegistry.call('stat', resource.kind, accessor, child)
+      } catch (err) {
+        if (isMissingPath(err)) continue
+        throw err
+      }
+      if (row instanceof FileStat && row.type === FileType.DIRECTORY) {
+        await this.removeSubtree(resource, child)
+      } else {
+        try {
+          await this.opsRegistry.call('unlink', resource.kind, accessor, child)
+        } catch (err) {
+          if (!isMissingPath(err)) throw err
+        }
+      }
+    }
+    try {
+      await this.opsRegistry.call('rmdir', resource.kind, accessor, spec)
+    } catch (err) {
+      if (!isMissingPath(err)) throw err
+    }
+  }
+
   private tableAnswers(
     opName: string,
     virtual: string,

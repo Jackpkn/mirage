@@ -123,6 +123,248 @@
         "stdout": "k\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "subtree_hidden_prep",
+      "seq": 923320,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/box/sec /scratch/only /scratch/gone/sec /scratch/bag && echo v > /scratch/box/a.txt && echo s > /scratch/box/sec/k && echo x > /scratch/only/h && echo s > /scratch/gone/sec/k && echo a > /scratch/gone/a.txt && echo t > /scratch/bag/x.tkn && echo a > /scratch/bag/a.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_mv_reveal_refused",
+      "seq": 923321,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mv /scratch/box /scratch/moved",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: cannot move '/scratch/box' to '/scratch/moved': Permission denied\n"
+      },
+      "session": "boxed"
+    },
+    {
+      "id": "subtree_mv_refusal_left_the_source",
+      "seq": 923322,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "find /scratch/box",
+      "expect": {
+        "exit": 0,
+        "stdout": "/scratch/box\n/scratch/box/a.txt\n/scratch/box/sec\n/scratch/box/sec/k\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_cp_copies_the_visible_view",
+      "seq": 923323,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cp -r /scratch/box /scratch/boxcopy",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "session": "boxed"
+    },
+    {
+      "id": "subtree_cp_copy_holds_no_hidden_name",
+      "seq": 923324,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "find /scratch/boxcopy",
+      "expect": {
+        "exit": 0,
+        "stdout": "/scratch/boxcopy\n/scratch/boxcopy/a.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_rmdir_visibly_empty_succeeds",
+      "seq": 923325,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ls -a /scratch/only && rmdir /scratch/only",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "session": "boxed"
+    },
+    {
+      "id": "subtree_rmdir_took_the_remnants",
+      "seq": 923326,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/only",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_rm_r_destroys_hidden_below",
+      "seq": 923327,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "rm -r /scratch/gone",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "session": "boxed"
+    },
+    {
+      "id": "subtree_rm_r_took_everything",
+      "seq": 923328,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/gone",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_mv_name_pattern_rides_along",
+      "seq": 923329,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mv /scratch/bag /scratch/sack",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "session": "tagged"
+    },
+    {
+      "id": "subtree_moved_file_stays_hidden",
+      "seq": 923330,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ls /scratch/sack",
+      "expect": {
+        "exit": 0,
+        "stdout": "a.txt\n",
+        "stderr": ""
+      },
+      "session": "tagged"
+    },
+    {
+      "id": "subtree_moved_content_survived",
+      "seq": 923331,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cat /scratch/sack/x.tkn",
+      "expect": {
+        "exit": 0,
+        "stdout": "t\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_cross_mount_mv_refuses_too",
+      "seq": 923332,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mv /scratch/box /repo/boxmoved",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: cannot move '/scratch/box' to '/repo/boxmoved': Permission denied\n"
+      },
+      "session": "boxed"
+    },
+    {
+      "id": "subtree_cross_mount_refusal_left_the_source",
+      "seq": 923333,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/box/sec/k",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_cross_prep",
+      "seq": 923334,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/bag2 && echo t > /scratch/bag2/y.tkn && echo a > /scratch/bag2/a.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_cross_mount_mv_under_a_name_pattern_moves_the_visible",
+      "seq": 923335,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mv /scratch/bag2 /repo/bag2",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "session": "tagged"
+    },
+    {
+      "id": "subtree_cross_move_dropped_the_hidden_remnant",
+      "seq": 923336,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ls /repo/bag2",
+      "expect": {
+        "exit": 0,
+        "stdout": "a.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_cross_move_source_fully_gone",
+      "seq": 923337,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/bag2",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": ""
+      }
     }
   ]
 }

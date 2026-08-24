@@ -347,6 +347,51 @@ export function hidesIntersect(hidden: HiddenPaths | null | undefined, virtual: 
     })
 }
 
+/**
+ * Whether relocating `src` to `dst` could surface a hidden path.
+ *
+ * The reveal half of the subtree law: a session's mutation may destroy
+ * what it cannot see (`rm -r`, a remnant `rmdir`), but may never reveal
+ * it, and a rename or a native directory copy is the relocation that
+ * would. Three arms, one per entry kind. A component pattern follows
+ * the name wherever the content goes, so it never reveals. An exact
+ * entry anchored strictly below `src` re-anchors to `dst` plus its
+ * suffix, and reveals when the session would see that mapped path (a
+ * show anchored below the mapped path counts, through `pathVisible`'s
+ * own carve-out rule). An anchored pattern's coverage does not move
+ * with the content, so any pattern whose match space could reach below
+ * `src` refuses, failing toward refusal the way `readonlyBelow` blames
+ * a pattern.
+ */
+export function moveReveals(
+  hidden: HiddenPaths | null | undefined,
+  shown: ShownPaths | null | undefined,
+  src: string,
+  dst: string,
+): boolean {
+  if (hidden == null) return false
+  const paths = hidden.paths ?? []
+  const patterns = hidden.patterns ?? []
+  if (paths.length === 0 && patterns.length === 0) return false
+  const s = normAbs(src)
+  const d = normAbs(dst)
+  if (s === '/') return true
+  for (const entry of paths) {
+    const e = normAbs(entry)
+    if (!e.startsWith(s + '/')) continue
+    const mapped = (d === '/' ? '' : d) + e.slice(s.length)
+    if (pathVisible(hidden, shown, mapped)) return true
+  }
+  for (const pat of patterns) {
+    if (!pat.includes('/')) continue
+    const head = patternHead(pat)
+    if (head === s || head.startsWith(s + '/') || head === '/' || s.startsWith(head + '/')) {
+      return true
+    }
+  }
+  return false
+}
+
 /** Whether the session's spec hides this variable name. */
 export function varHidden(hidden: HiddenVars | null | undefined, name: string): boolean {
   if (hidden == null) return false

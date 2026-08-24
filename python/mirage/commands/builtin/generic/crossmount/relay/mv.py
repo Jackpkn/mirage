@@ -20,6 +20,7 @@ from mirage.commands.builtin.generic.crossmount.utils import (
     flat_scopes, relay, transfer_primitives)
 from mirage.commands.builtin.generic.mv import mv as generic_mv
 from mirage.commands.builtin.generic.mv import parse_mv_flags
+from mirage.commands.builtin.generic_bind.adapter import refuse_reveal
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.runtime.types import DispatchFn
@@ -58,4 +59,5 @@ async def run_mv(
                                 unlink=p(relay, dispatch, "unlink"),
                                 rmdir=p(relay, dispatch, "rmdir")),
                             flags=parse_mv_flags(fl),
-                            backend_key=storage_key)
+                            backend_key=storage_key,
+                            guard=refuse_reveal)

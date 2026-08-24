@@ -21,7 +21,8 @@ from typing import Any
 from mirage.cache.file import io as cache_io
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.utils.limit import apply_op_limit
-from mirage.context import get_current_session, path_allowed
+from mirage.context import (get_current_session, hidden_paths_intersect,
+                            path_allowed)
 from mirage.io import IOResult, OpReport
 from mirage.observe.context import record
 from mirage.observe.record import OpRecord
@@ -33,6 +34,7 @@ from mirage.policy.errors import PolicyDenied, PolicyError
 from mirage.types import (ConsistencyPolicy, FileStat, FileType, PathSpec,
                           ResourceName)
 from mirage.utils.errors import MISS_ERRORS, no_mount
+from mirage.utils.hidden import move_reveals
 from mirage.utils.key_prefix import mount_key
 from mirage.utils.path import norm_dir, owner_prefix
 from mirage.utils.ranges import slice_window
@@ -223,6 +225,18 @@ class Dispatcher:
                 and not path_allowed(dst.virtual)):
             raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
                                   dst.virtual)
+        if op == "rename" and isinstance(dst, PathSpec):
+            # A rename re-anchors everything below its source while the
+            # hides stay where they are written, so hidden content would
+            # land at paths the session can see. Destroying hidden
+            # content is silent (rm_r, the remnant rmdir below);
+            # relocating it into view is refused.
+            sess = get_current_session()
+            if sess is not None and move_reveals(
+                    sess.hidden_paths, sess.shown_paths, path.virtual,
+                    dst.virtual):
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
+                                      path.virtual)
         if self._table_answers(op, path.virtual, kwargs):
             return (await self._namespace_table_op(op, path, kwargs,
                                                    report), IOResult())
@@ -325,6 +339,14 @@ class Dispatcher:
                 await self._reconciler.on_op_missing(op, path.virtual)
                 raise
             _memory_answered(report)
+        except OSError as exc:
+            if op != "rmdir" or exc.errno not in (errno.ENOTEMPTY,
+                                                  errno.EEXIST):
+                raise
+            await self._rmdir_remnants(mount, path, exc)
+            result = None
+            if report is not None:
+                report.served(None, None)
         else:
             # The op ran, whatever invalidation, the post gate, or an
             # output cap do next: stamped here so a failure in any of
@@ -363,6 +385,75 @@ class Dispatcher:
             # report above already carries the moved count.
             result = await apply_op_limit(result, bound)
         return result, IOResult()
+
+    async def _rmdir_remnants(self, mount: MountEntry, path: PathSpec,
+                              refusal: OSError) -> None:
+        """Take a visibly-empty directory's hidden remnants with it.
+
+        The backend refused the rmdir because entries remain, but when
+        the session's view of the directory is empty the refusal would
+        leak that something invisible exists. A session's mutation may
+        destroy what it cannot see, never learn of it, so the remnants
+        go with the directory; a visible child, or a backend with no
+        recursive remove to take them, re-raises the backend's refusal.
+
+        Args:
+            mount (MountEntry): the mount owning the directory.
+            path (PathSpec): the directory being removed.
+            refusal (OSError): the backend's not-empty error.
+        """
+        if not hidden_paths_intersect(path.virtual):
+            raise refusal
+        try:
+            entries = await mount.execute_op("readdir", path.virtual)
+        except OSError as exc:
+            # A backend that cannot list (or later, remove) the
+            # remnants keeps the original refusal: the door has no way
+            # to take them.
+            raise refusal from exc
+        base = path.virtual.rstrip("/")
+        if not entries or any(
+                path_allowed(f"{base}/{e.rstrip('/').rsplit('/', 1)[-1]}")
+                for e in entries):
+            raise refusal
+        try:
+            await self._remove_subtree(mount, path.virtual)
+        except OSError as exc:
+            raise refusal from exc
+
+    async def _remove_subtree(self, mount: MountEntry, virtual: str) -> None:
+        """Remove one directory and everything under it, entry by entry.
+
+        No backend registers a recursive-remove op at this door, so the
+        remnant removal walks the raw listings itself, children first.
+        An entry that vanishes mid-walk is a completed removal (a
+        prefix-store directory disappears with its last child), not an
+        error.
+
+        Args:
+            mount (MountEntry): the mount owning the subtree.
+            virtual (str): absolute virtual path of the directory.
+        """
+        entries = await mount.execute_op("readdir", virtual)
+        base = virtual.rstrip("/")
+        for entry in entries:
+            name = str(entry).rstrip("/").rsplit("/", 1)[-1]
+            child = f"{base}/{name}"
+            try:
+                row = await mount.execute_op("stat", child)
+            except FileNotFoundError:
+                continue
+            if isinstance(row, FileStat) and row.type is FileType.DIRECTORY:
+                await self._remove_subtree(mount, child)
+            else:
+                try:
+                    await mount.execute_op("unlink", child)
+                except FileNotFoundError:
+                    continue
+        try:
+            await mount.execute_op("rmdir", virtual)
+        except FileNotFoundError:
+            return
 
     def _table_answers(self, op: str, virtual: str, kwargs: dict[str,
                                                                  Any]) -> bool:

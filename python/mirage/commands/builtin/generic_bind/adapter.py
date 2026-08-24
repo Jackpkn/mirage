@@ -25,12 +25,15 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.generic.du import (DEFAULT_MAX_DU_ENTRIES,
                                                 DuEntries)
 from mirage.commands.config import CommandFnResult, CommandOpts, ProvisionFn
-from mirage.context import (effective_path_mode, get_admission, get_mount_gate,
-                            path_allowed, readonly_below)
+from mirage.context import (effective_path_mode, get_admission,
+                            get_current_session, get_mount_gate,
+                            hidden_paths_intersect, path_allowed,
+                            readonly_below)
 from mirage.ops.types import ChildMounts, StatOverlay
 from mirage.types import FileStat, FileType, MountMode, PathSpec
 from mirage.utils.errors import MISS_ERRORS, ReadOnlyError, eisdir
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES, make_resolve_glob
+from mirage.utils.hidden import move_reveals
 from mirage.utils.path import norm, parent
 
 OperationFn = Callable[..., Any]
@@ -303,6 +306,94 @@ async def _guarded_readdir(fn: OperationFn, *args: Any,
     ]
 
 
+def refuse_reveal(src: PathSpec, dst: PathSpec) -> None:
+    """Refuse a relocation that would surface a hidden path.
+
+    A rename or a native directory copy re-anchors everything below its
+    source, and a hide's coverage does not move with the content, so
+    hidden bytes would land at paths the session can see. EACCES on the
+    source, which mv and cp render in GNU's permission-denied voice.
+
+    Args:
+        src (PathSpec): the subtree being moved or copied.
+        dst (PathSpec): where it would land.
+    """
+    sess = get_current_session()
+    if sess is None:
+        return
+    if move_reveals(sess.hidden_paths, sess.shown_paths, src.virtual,
+                    dst.virtual):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
+                              src.virtual)
+
+
+def _guarded_pair(fn: OperationFn, *args: Any, **kwargs: Any) -> Any:
+    """Rename/dir-copy guard: ``_guarded_call``'s per-path checks, then
+    the subtree reveal check on the (src, dst) pair.
+
+    Args:
+        fn (OperationFn): the raw backend op.
+        *args: the call's positionals, source then destination among
+            them.
+        **kwargs: forwarded untouched.
+    """
+    specs = [arg for arg in args if isinstance(arg, PathSpec)]
+    for position, spec in enumerate(specs):
+        _refuse_hidden(spec, create=position > 0)
+    if len(specs) >= 2:
+        refuse_reveal(specs[0], specs[1])
+    return fn(*args, **kwargs)
+
+
+async def _guarded_rmdir(fn: OperationFn, readdir: OperationFn,
+                         rm_r: OperationFn | None, *args: Any,
+                         **kwargs: Any) -> Any:
+    """rmdir that removes a directory the session sees as empty.
+
+    The backend refuses a directory still holding entries, but when
+    every remaining entry is hidden the refusal would leak that
+    something invisible exists, so the remnants go with the directory:
+    a session's mutation may destroy what it cannot see, never learn of
+    it. Any visible child keeps the refusal, and a backend with no
+    recursive remove keeps it too, having no way to take the remnants.
+
+    Args:
+        fn (OperationFn): the raw backend rmdir.
+        readdir (OperationFn): the raw backend readdir, for the real
+            listing the visible/hidden split is judged on.
+        rm_r (OperationFn | None): the backend's recursive remove.
+        *args: the call's positionals; the first PathSpec is the
+            directory.
+        **kwargs: forwarded untouched.
+    """
+    target: PathSpec | None = None
+    for arg in args:
+        if isinstance(arg, PathSpec):
+            _refuse_hidden(arg, create=False)
+            if target is None:
+                target = arg
+    try:
+        return await fn(*args, **kwargs)
+    except OSError as exc:
+        if (target is None or rm_r is None
+                or exc.errno not in (errno.ENOTEMPTY, errno.EEXIST)
+                or not hidden_paths_intersect(target.virtual)):
+            raise
+        lead: list[Any] = []
+        for arg in args:
+            if isinstance(arg, PathSpec):
+                break
+            lead.append(arg)
+        entries = await readdir(*lead, target)
+        base = target.virtual.rstrip("/")
+        if not entries or any(
+                path_allowed(f"{base}/{e.rstrip('/').rsplit('/', 1)[-1]}")
+                for e in entries):
+            raise
+        await rm_r(*lead, target)
+        return None
+
+
 async def _guarded_exists(fn: OperationFn, *args: Any, **kwargs: Any) -> bool:
     """Exists that answers False for a hidden path, never a refusal.
 
@@ -477,8 +568,8 @@ class CommandIO:
 
 
 _GUARD_ENOENT_SLOTS = ("read_bytes", "read_stream", "stat", "read_range",
-                       "set_attrs", "unlink", "rmdir", "rm_r", "truncate",
-                       "rename", "copy", "dir_copy", "find")
+                       "set_attrs", "unlink", "rm_r", "truncate", "copy",
+                       "find")
 
 _GUARD_EACCES_SLOTS = ("write", "mkdir", "append", "create")
 
@@ -509,6 +600,13 @@ def with_hidden_guard(ops: CommandIO) -> CommandIO:
         fn = getattr(ops, slot)
         if fn is not None:
             changes[slot] = functools.partial(_guarded_call, fn, True)
+    for slot in ("rename", "dir_copy"):
+        fn = getattr(ops, slot)
+        if fn is not None:
+            changes[slot] = functools.partial(_guarded_pair, fn)
+    if ops.rmdir is not None:
+        changes["rmdir"] = functools.partial(_guarded_rmdir, ops.rmdir,
+                                             ops.readdir, ops.rm_r)
     if ops.exists is not None:
         changes["exists"] = functools.partial(_guarded_exists, ops.exists)
     return replace(ops, **changes)

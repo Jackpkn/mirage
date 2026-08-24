@@ -20,6 +20,7 @@ import {
   hideDepth,
   hidesIntersect,
   isGlob,
+  moveReveals,
   pathCovers,
   pathHidden,
   pathVisible,
@@ -313,5 +314,41 @@ describe('a globbed show keeps its anchor traversable', () => {
     const rehidden = classifyPaths(['/repo', '/repo/public'])
     expect(pathVisible(rehidden, shown, '/repo/public')).toBe(false)
     expect(pathVisible(rehidden, shown, '/repo/public/index.html')).toBe(false)
+  })
+})
+
+describe('moveReveals', () => {
+  it('an exact entry below the source reveals at its mapped path', () => {
+    const spec = classifyPaths(['/m/data/secret'])
+    expect(moveReveals(spec, null, '/m/data', '/m/moved')).toBe(true)
+    expect(moveReveals(spec, null, '/m/other', '/m/moved')).toBe(false)
+    // The entry itself is the source: the operand is hidden and the
+    // per-path guard answered before this predicate is asked.
+    expect(moveReveals(spec, null, '/m/data/secret/deep', '/m/x')).toBe(false)
+    expect(moveReveals(null, null, '/m/data', '/m/moved')).toBe(false)
+  })
+
+  it('no reveal when the mapped path stays hidden', () => {
+    const spec = classifyPaths(['/m/d/sec', '/m/moved/sec'])
+    expect(moveReveals(spec, null, '/m/d', '/m/moved')).toBe(false)
+    expect(moveReveals(spec, null, '/m/d', '/m/elsewhere')).toBe(true)
+  })
+
+  it('component patterns follow the name and never reveal', () => {
+    expect(moveReveals(classifyPaths(['*.env']), null, '/m/d', '/m/moved')).toBe(false)
+  })
+
+  it('anchored patterns fail toward refusal', () => {
+    expect(moveReveals(classifyPaths(['/m/d/sec/*']), null, '/m/d', '/m/moved')).toBe(true)
+    expect(moveReveals(classifyPaths(['/m/d/*']), null, '/m/d', '/m/moved')).toBe(true)
+    expect(moveReveals(classifyPaths(['/m/*/secret']), null, '/m/d', '/m/moved')).toBe(true)
+    expect(moveReveals(classifyPaths(['/other/*/secret']), null, '/m/d', '/m/moved')).toBe(false)
+  })
+
+  it('a show below the mapped path counts as a reveal', () => {
+    const hidden = classifyPaths(['/m/d/sec', '/m/moved'])
+    const shown = classifyShows([{ path: '/m/moved/sec/open', mode: null }])
+    expect(moveReveals(hidden, shown, '/m/d', '/m/moved')).toBe(true)
+    expect(moveReveals(hidden, null, '/m/d', '/m/moved')).toBe(false)
   })
 })

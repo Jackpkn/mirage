@@ -14,9 +14,9 @@
 
 from mirage.types import HiddenPaths, HiddenVars, MountMode, ShowEntry
 from mirage.utils.hidden import (classify_paths, classify_shows, hide_depth,
-                                 hides_intersect, path_covers, path_hidden,
-                                 path_visible, show_depth, show_head,
-                                 shown_mode, var_hidden)
+                                 hides_intersect, move_reveals, path_covers,
+                                 path_hidden, path_visible, show_depth,
+                                 show_head, shown_mode, var_hidden)
 
 
 def test_none_hides_nothing():
@@ -322,3 +322,51 @@ def test_a_globbed_show_keeps_its_anchor_traversable():
     rehidden = classify_paths(["/repo", "/repo/public"])
     assert not path_visible(rehidden, shown, "/repo/public")
     assert not path_visible(rehidden, shown, "/repo/public/index.html")
+
+
+def test_move_reveals_an_exact_entry_below_the_source():
+    # /m/data/secret re-anchors to /m/moved/secret, which nothing hides.
+    spec = classify_paths(["/m/data/secret"])
+    assert move_reveals(spec, None, "/m/data", "/m/moved")
+    # An entry not below the source moves nothing.
+    assert not move_reveals(spec, None, "/m/other", "/m/moved")
+    # The entry itself is the source: the operand is hidden and the
+    # per-path guard answered before this predicate is asked.
+    assert not move_reveals(spec, None, "/m/data/secret/deep", "/m/x")
+    assert not move_reveals(None, None, "/m/data", "/m/moved")
+
+
+def test_move_does_not_reveal_when_the_mapped_path_stays_hidden():
+    spec = classify_paths(["/m/d/sec", "/m/moved/sec"])
+    assert not move_reveals(spec, None, "/m/d", "/m/moved")
+    assert move_reveals(spec, None, "/m/d", "/m/elsewhere")
+
+
+def test_component_patterns_follow_the_name_and_never_reveal():
+    spec = classify_paths(["*.env"])
+    assert not move_reveals(spec, None, "/m/d", "/m/moved")
+
+
+def test_anchored_patterns_refuse_toward_refusal():
+    # The pattern's coverage does not move with the content, and its
+    # match space cannot be enumerated, so any pattern that could reach
+    # below the source refuses: head at the source, below it, or above
+    # it with the wildcard region spanning the source.
+    below = classify_paths(["/m/d/sec/*"])
+    assert move_reveals(below, None, "/m/d", "/m/moved")
+    at = classify_paths(["/m/d/*"])
+    assert move_reveals(at, None, "/m/d", "/m/moved")
+    above = classify_paths(["/m/*/secret"])
+    assert move_reveals(above, None, "/m/d", "/m/moved")
+    unrelated = classify_paths(["/other/*/secret"])
+    assert not move_reveals(unrelated, None, "/m/d", "/m/moved")
+
+
+def test_a_show_below_the_mapped_path_counts_as_a_reveal():
+    # The mapped anchor lands hidden under /m/moved, but a visible show
+    # anchored strictly below it re-opens a road in, which pathVisible's
+    # carve-out rule reports as visibility.
+    hidden = classify_paths(["/m/d/sec", "/m/moved"])
+    shown = classify_shows([ShowEntry("/m/moved/sec/open")])
+    assert move_reveals(hidden, shown, "/m/d", "/m/moved")
+    assert not move_reveals(hidden, None, "/m/d", "/m/moved")

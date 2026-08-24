@@ -336,3 +336,89 @@ def test_a_fork_carries_the_carve_out():
     assert b"No such file or directory" in (forked.stderr or b"")
     ok = _run(ws, "(cat /repo/public/index.html)")
     assert ok.exit_code == 0
+
+
+def _boxed(profile: dict) -> Workspace:
+    ws = Workspace({"/repo": RAMResource()}, mode=MountMode.WRITE)
+
+    async def seed():
+        io = await ws.execute("mkdir -p /repo/box/sec /repo/only && "
+                              "printf 'v\\n' > /repo/box/a.txt && "
+                              "printf 's\\n' > /repo/box/sec/k && "
+                              "printf 't\\n' > /repo/box/x.tkn && "
+                              "printf 'h\\n' > /repo/only/h")
+        assert io.exit_code == 0, io.stderr
+
+    asyncio.run(seed())
+    ws.create_session("rev", profile=profile)
+    return ws
+
+
+def _host(ws: Workspace, line: str):
+
+    async def go():
+        return await ws.execute(line)
+
+    return asyncio.run(go())
+
+
+def test_mv_that_would_reveal_hidden_content_refuses():
+    # The hide anchors at /repo/box/sec; the move would re-anchor its
+    # content to /repo/moved/sec, which nothing hides, so it refuses in
+    # GNU's permission-denied voice and the source stays whole.
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    refused = _run(ws, "mv /repo/box /repo/moved")
+    assert refused.exit_code == 1
+    assert (refused.stderr or b"") == (
+        b"mv: cannot move '/repo/box' to '/repo/moved': Permission denied\n")
+    intact = _host(ws, "test -e /repo/box/sec/k")
+    assert intact.exit_code == 0
+
+
+def test_mv_rides_a_component_pattern_hide_along():
+    # *.tkn follows the name wherever the content goes, so nothing is
+    # revealed and the move proceeds, the hidden file riding along.
+    ws = _boxed({"paths": {"hide": ["*.tkn"]}})
+    ok = _run(ws, "mv /repo/box /repo/moved")
+    assert ok.exit_code == 0, ok.stderr
+    listing = _run(ws, "ls /repo/moved")
+    assert (listing.stdout or b"") == b"a.txt\nsec\n"
+    survived = _host(ws, "cat /repo/moved/x.tkn")
+    assert survived.exit_code == 0 and (survived.stdout or b"") == b"t\n"
+
+
+def test_cp_r_copies_the_visible_view_silently():
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    copied = _run(ws, "cp -r /repo/box /repo/copy")
+    assert copied.exit_code == 0, copied.stderr
+    assert (copied.stderr or b"") == b""
+    listing = _host(ws, "find /repo/copy")
+    assert (listing.stdout
+            or b"") == (b"/repo/copy\n/repo/copy/a.txt\n/repo/copy/x.tkn\n")
+
+
+def test_rmdir_takes_hidden_remnants_with_the_directory():
+    # The session sees an empty directory; a not-empty refusal would
+    # leak that something invisible exists, so the remnants go with it.
+    ws = _boxed({"paths": {"hide": ["/repo/only/h"]}})
+    empty = _run(ws, "ls -a /repo/only")
+    assert (empty.stdout or b"") == b""
+    removed = _run(ws, "rmdir /repo/only")
+    assert removed.exit_code == 0, removed.stderr
+    gone = _host(ws, "test -e /repo/only")
+    assert gone.exit_code == 1
+
+
+def test_rmdir_with_a_visible_child_keeps_the_refusal():
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    refused = _run(ws, "rmdir /repo/box")
+    assert refused.exit_code == 1
+    assert b"Directory not empty" in (refused.stderr or b"")
+
+
+def test_rm_r_still_destroys_hidden_content_below():
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    removed = _run(ws, "rm -r /repo/box")
+    assert removed.exit_code == 0, removed.stderr
+    gone = _host(ws, "test -e /repo/box")
+    assert gone.exit_code == 1
