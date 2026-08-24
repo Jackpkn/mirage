@@ -1,0 +1,311 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
+import { MountMode } from '@struktoai/mirage-core/types'
+import { beforeEach, describe, expect, it } from 'vitest'
+
+import { Workspace } from '../workspace.ts'
+import { RenameIntoSelfError, StaleHandleError } from './errors.ts'
+import { MirageNFS } from './fs.ts'
+
+// The adapter is driven against a real workspace rather than a fake
+// facade: every wire bug this port hit came from a fake that was not
+// faithful (stat follows links, readdir answers in paths, a child mount
+// stats as a directory), and the real Ops cannot drift from itself.
+let ws: Workspace
+let fs: MirageNFS
+let root: number
+
+async function stored(path: string): Promise<string> {
+  return Buffer.from(await ws.fs.readFile(path, { raw: true })).toString()
+}
+
+async function missing(path: string): Promise<boolean> {
+  try {
+    await ws.fs.stat(path)
+    return false
+  } catch {
+    return true
+  }
+}
+
+beforeEach(async () => {
+  ws = new Workspace({ '/': new RAMResource() }, { mode: MountMode.WRITE })
+  await ws.fs.writeFile('/a.txt', Buffer.from('hello'))
+  await ws.fs.mkdir('/sub')
+  fs = new MirageNFS(ws.fs)
+  root = fs.rootDir()
+})
+
+describe('ids and lookup', () => {
+  it('allocates the root id rather than hardcoding one', () => {
+    expect(fs.rootDir()).toBeGreaterThan(0)
+    expect(fs.rootDir()).toBe(root)
+  })
+
+  it('returns a stable id for a child', async () => {
+    const first = await fs.lookup(root, 'a.txt')
+    expect(await fs.lookup(root, 'a.txt')).toBe(first)
+  })
+
+  it('refuses a lookup of a missing child', async () => {
+    await expect(fs.lookup(root, 'nope.txt')).rejects.toThrow()
+  })
+
+  it('reads an unknown id as stale', async () => {
+    await expect(fs.getattr(4242)).rejects.toThrow(StaleHandleError)
+  })
+})
+
+describe('getattr', () => {
+  it('reports size and type', async () => {
+    const attrs = await fs.getattr(await fs.lookup(root, 'a.txt'))
+    expect(attrs.size).toBe(5)
+    expect(attrs.isDir).toBe(false)
+  })
+
+  it('reports a directory as one, sized zero', async () => {
+    const attrs = await fs.getattr(await fs.lookup(root, 'sub'))
+    expect(attrs.isDir).toBe(true)
+    expect(attrs.size).toBe(0)
+  })
+})
+
+describe('read and write', () => {
+  it('returns the requested slice', async () => {
+    const fileid = await fs.lookup(root, 'a.txt')
+    expect((await fs.read(fileid, 1, 3)).toString()).toBe('ell')
+  })
+
+  it('buffers a write instead of storing it', async () => {
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('HELLO'))
+    expect(await stored('/a.txt')).toBe('hello')
+  })
+
+  it('shows a buffered write to read and getattr', async () => {
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('HELLO'))
+    expect((await fs.read(fileid, 0, 5)).toString()).toBe('HELLO')
+    expect((await fs.getattr(fileid)).size).toBe(5)
+  })
+
+  it('extends the reported size for a write past the end', async () => {
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 10, Buffer.from('xy'))
+    expect((await fs.getattr(fileid)).size).toBe(12)
+  })
+
+  it('merges out-of-order writes on flush', async () => {
+    // The macOS client sends overlapping and out-of-order WRITEs during
+    // a plain cp, so arrival order — not offset order — decides.
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 4, Buffer.from('dd'))
+    await fs.write(fileid, 0, Buffer.from('aa'))
+    await fs.write(fileid, 2, Buffer.from('bb'))
+    await fs.flush(fileid)
+    expect(await stored('/a.txt')).toBe('aabbdd')
+  })
+
+  it('stores every buffered file on flushAll', async () => {
+    const one = await fs.create(root, 'one.txt')
+    const two = await fs.create(root, 'two.txt')
+    await fs.write(one, 0, Buffer.from('1'))
+    await fs.write(two, 0, Buffer.from('2'))
+    await fs.flushAll()
+    expect(await stored('/one.txt')).toBe('1')
+    expect(await stored('/two.txt')).toBe('2')
+  })
+})
+
+describe('create, mkdir and remove', () => {
+  it('creates a file and returns its id', async () => {
+    const fileid = await fs.create(root, 'new.txt')
+    expect(await stored('/new.txt')).toBe('')
+    expect((await fs.getattr(fileid)).size).toBe(0)
+  })
+
+  it('makes a directory', async () => {
+    const fileid = await fs.mkdir(root, 'd')
+    expect((await fs.getattr(fileid)).isDir).toBe(true)
+  })
+
+  it('drops buffered writes when the file is removed', async () => {
+    // Storing them would bring the file back.
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('doomed'))
+    await fs.remove(root, 'a.txt')
+    expect(await missing('/a.txt')).toBe(true)
+    await fs.flushAll()
+    expect(await missing('/a.txt')).toBe(true)
+  })
+
+  it('routes a directory removal to rmdir', async () => {
+    await fs.remove(root, 'sub')
+    expect(await missing('/sub')).toBe(true)
+  })
+
+  it('invalidates the id it removed', async () => {
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.remove(root, 'a.txt')
+    await expect(fs.getattr(fileid)).rejects.toThrow(StaleHandleError)
+  })
+})
+
+describe('rename', () => {
+  it('moves the file and keeps its id', async () => {
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.rename(root, 'a.txt', root, 'b.txt')
+    expect(await stored('/b.txt')).toBe('hello')
+    expect((await fs.getattr(fileid)).size).toBe(5)
+  })
+
+  it('flushes pending writes against the old path first', async () => {
+    // They were acknowledged against it; flushing after the move would
+    // merge them onto whatever now lives at the destination.
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('moved'))
+    await fs.rename(root, 'a.txt', root, 'b.txt')
+    await fs.flushAll()
+    expect(await stored('/b.txt')).toBe('moved')
+  })
+
+  it('leaves the backend untouched for a rename into its own subtree', async () => {
+    const subid = await fs.lookup(root, 'sub')
+    await expect(fs.rename(root, 'sub', subid, 'inner')).rejects.toThrow(RenameIntoSelfError)
+    expect(await missing('/sub')).toBe(false)
+  })
+})
+
+describe('setSize', () => {
+  it('clips pending writes as well as the stored file', async () => {
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('abcdef'))
+    await fs.setSize(fileid, 3)
+    await fs.flushAll()
+    expect(await stored('/a.txt')).toBe('abc')
+  })
+
+  it('accepts and ignores an attribute change that names no size', async () => {
+    // mode, owner and the timestamps have nowhere to persist, and
+    // refusing them would fail ordinary tools.
+    const fileid = await fs.lookup(root, 'a.txt')
+    expect((await fs.setSize(fileid, 3)).size).toBe(3)
+    expect((await fs.setSize(fileid, null)).size).toBe(3)
+  })
+})
+
+describe('symlinks', () => {
+  it('presents an absolute target relative to the link', async () => {
+    // Returned raw, the client would resolve it against its own root
+    // and escape the mount.
+    const fileid = await fs.symlink(root, 'link', '/a.txt')
+    expect(await fs.readlink(fileid)).toBe('a.txt')
+  })
+
+  it('keeps a relative target verbatim', async () => {
+    const fileid = await fs.symlink(root, 'link', 'a.txt')
+    expect(await fs.readlink(fileid)).toBe('a.txt')
+  })
+
+  it('reports the link itself, not its target', async () => {
+    const fileid = await fs.symlink(root, 'link', '/a.txt')
+    const attrs = await fs.getattr(fileid)
+    expect(attrs.isSymlink).toBe(true)
+    expect(attrs.isDir).toBe(false)
+    expect(attrs.size).toBe('a.txt'.length)
+  })
+
+  it('unlinks a link to a directory without touching the target', async () => {
+    await fs.symlink(root, 'dlink', '/sub')
+    await fs.remove(root, 'dlink')
+    expect(await missing('/sub')).toBe(false)
+  })
+
+  it('removes a broken link, and finds one on lookup', async () => {
+    const made = await fs.symlink(root, 'ghost', '/nope.txt')
+    expect(await fs.lookup(root, 'ghost')).toBe(made)
+    await fs.remove(root, 'ghost')
+    await expect(fs.lookup(root, 'ghost')).rejects.toThrow()
+  })
+})
+
+describe('readdir', () => {
+  it('derives bare names from the facade paths', async () => {
+    // The facade answers in paths, a child mount with a trailing slash;
+    // /dev is mounted into every workspace, so the boundary case is
+    // real rather than staged.
+    const names = (await fs.readdir(root)).map((entry) => entry.name)
+    expect(names).toContain('a.txt')
+    expect(names).toContain('dev')
+    expect(names.some((name) => name.includes('/'))).toBe(false)
+  })
+
+  it('lists every entry with an id', async () => {
+    const entries = await fs.readdir(root)
+    expect(entries.map((entry) => entry.name)).toContain('sub')
+    expect(entries.every((entry) => entry.fileid > 0)).toBe(true)
+  })
+
+  it('skips macOS metadata names', async () => {
+    await ws.fs.writeFile('/.DS_Store', Buffer.from('x'))
+    await ws.fs.writeFile('/._shadow', Buffer.from('x'))
+    const names = (await fs.readdir(root)).map((entry) => entry.name)
+    expect(names).not.toContain('.DS_Store')
+    expect(names).not.toContain('._shadow')
+  })
+
+  it('answers a metadata lookup with ENOENT and no backend op', async () => {
+    // Finder and Spotlight probe these on every listing, so answering
+    // here keeps the probe off the backend, as MountCore does. The
+    // second half is the control: an ordinary lookup does reach it.
+    const before = ws.fs.records.length
+    await expect(fs.lookup(root, '.DS_Store')).rejects.toThrow()
+    expect(ws.fs.records.length).toBe(before)
+    await fs.lookup(root, 'a.txt')
+    expect(ws.fs.records.length).toBeGreaterThan(before)
+  })
+
+  it('marks a link entry as one', async () => {
+    await fs.symlink(root, 'link', '/a.txt')
+    const entries = new Map((await fs.readdir(root)).map((entry) => [entry.name, entry]))
+    expect(entries.get('link')?.attrs.isSymlink).toBe(true)
+    expect(entries.get('a.txt')?.attrs.isSymlink).toBe(false)
+  })
+
+  it('paginates from the cookie the client returns', async () => {
+    // The cookie is the last entry's fileid: the server crate derives
+    // the wire cookie from it and hands it back as startAfter.
+    const all = (await fs.readdir(root)).map((entry) => entry.name)
+    const first = await fs.readdir(root, 0, 1)
+    expect(first).toHaveLength(1)
+    expect(first[0]?.cookie).toBe(first[0]?.fileid)
+    const rest = await fs.readdir(root, first[0]?.cookie ?? 0)
+    expect(rest.map((entry) => entry.name)).not.toContain(first[0]?.name)
+    expect([...first, ...rest].map((entry) => entry.name)).toEqual(all)
+  })
+
+  it('resumes when id order does not match name order', async () => {
+    // Ids are minted in access order, so a later entry can carry a
+    // smaller fileid than an earlier one; resume keys on identity,
+    // never on comparing cookie magnitudes.
+    await fs.lookup(root, 'sub')
+    await ws.fs.writeFile('/0first.txt', Buffer.from('x'))
+    const all = (await fs.readdir(root)).map((entry) => entry.name)
+    const first = await fs.readdir(root, 0, 2)
+    const rest = await fs.readdir(root, first.at(-1)?.cookie ?? 0)
+    expect([...first, ...rest].map((entry) => entry.name)).toEqual(all)
+  })
+})
