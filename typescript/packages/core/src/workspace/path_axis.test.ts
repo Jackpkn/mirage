@@ -17,6 +17,7 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode } from '../types.ts'
 import { parseSessionProfile } from '../policy/profile.ts'
+import { runWithSession } from '../context/session_context.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
 
@@ -430,6 +431,84 @@ describe('subtree mutations against hides', () => {
     expect(removed.exitCode).toBe(0)
     const gone = await ws.execute('test -e /repo/box')
     expect(gone.exitCode).toBe(1)
+  })
+
+  it('a read-only hidden remnant keeps the refusal', async () => {
+    // A show may state a mode at the same anchor a hide covers (the
+    // hide wins visibility on the tie), leaving content the session
+    // cannot see that its mode still protects. Every cascade deletion
+    // answers for its own path's mode, so the protected remnant
+    // survives and the rmdir keeps a not-empty refusal.
+    const ws = await boxed({
+      paths: { hide: ['/repo/only/h'], show: { '/repo/only/h': 'r' } },
+    })
+    const refused = await ws.execute('rmdir /repo/only', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toBe("rmdir: failed to remove '/repo/only': Directory not empty\n")
+    const kept = await ws.execute('cat /repo/only/h')
+    expect(stdoutStr(kept)).toBe('h\n')
+  })
+})
+
+describe('the ops door against hides', () => {
+  it('leaves a read-only hidden remnant intact and keeps the refusal', async () => {
+    // The dispatcher's cascade routes every deletion through the same
+    // mode fence normal dispatch applies, so FUSE and ws.fs callers
+    // cannot destroy a mode-protected remnant either.
+    const parser = await getTestParser()
+    const repo = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(repo)
+    const ws = new Workspace(
+      { '/repo': [repo, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute("mkdir -p /repo/only && printf 'h\\n' > /repo/only/h")
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({
+        paths: { hide: ['/repo/only/h'], show: { '/repo/only/h': 'r' } },
+      }),
+    })
+    await runWithSession(sess, async () => {
+      await expect(ws.dispatch('rmdir', '/repo/only')).rejects.toMatchObject({
+        code: 'ENOTEMPTY',
+      })
+    })
+    const kept = await ws.execute('cat /repo/only/h')
+    expect(stdoutStr(kept)).toBe('h\n')
+  })
+
+  it('keeps the refusal when a visible mounted child remains', async () => {
+    // The backend cannot see a mount nested below the directory, so
+    // the remnant arm judges emptiness on the door's merged listing:
+    // the visible mounted child keeps the not-empty refusal instead of
+    // the arm destroying the hidden backend remnants and reporting a
+    // successful rmdir while the mount remains.
+    const parser = await getTestParser()
+    const a = new RAMResource()
+    const m = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(a)
+    registry.registerResource(m)
+    const ws = new Workspace(
+      { '/a': [a, MountMode.WRITE] as const, '/a/d/m': [m, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/a/d/sec'] } }),
+    })
+    await runWithSession(sess, async () => {
+      await expect(ws.dispatch('rmdir', '/a/d')).rejects.toMatchObject({
+        code: 'ENOTEMPTY',
+      })
+    })
+    const kept = await ws.execute('cat /a/d/sec/k')
+    expect(stdoutStr(kept)).toBe('k\n')
   })
 })
 

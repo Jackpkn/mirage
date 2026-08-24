@@ -15,6 +15,7 @@
 import errno
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -38,6 +39,7 @@ from mirage.utils.hidden import move_reveals
 from mirage.utils.key_prefix import mount_key
 from mirage.utils.path import norm_dir, owner_prefix
 from mirage.utils.ranges import slice_window
+from mirage.utils.remnants import remove_remnants, visible_below
 from mirage.workspace.mount import MountEntry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.overlay import merge_overlay_stat
@@ -120,6 +122,33 @@ def _window(kwargs: dict[str, Any]) -> tuple[int, int | None]:
     size = kwargs.get("size")
     return (offset if isinstance(offset, int) else 0,
             size if isinstance(size, int) else None)
+
+
+@dataclass(frozen=True, slots=True)
+class _MountChannel:
+    """The ops plane's remnant channel: every step goes through
+    ``Mount.execute_op``, the same door a first-class op takes, so the
+    mode axis refuses a protected path exactly as normal dispatch
+    would. Only the dispatcher's own visibility filter sits above that
+    door, which is what lets the cascade see hidden entries.
+
+    Args:
+        mount (MountEntry): the mount owning the subtree.
+    """
+
+    mount: MountEntry
+
+    async def readdir(self, spec: PathSpec) -> list[str]:
+        return await self.mount.execute_op("readdir", spec.virtual)
+
+    async def stat(self, spec: PathSpec) -> FileStat:
+        return await self.mount.execute_op("stat", spec.virtual)
+
+    async def unlink(self, spec: PathSpec) -> None:
+        await self.mount.execute_op("unlink", spec.virtual)
+
+    async def rmdir(self, spec: PathSpec) -> None:
+        await self.mount.execute_op("rmdir", spec.virtual)
 
 
 class Dispatcher:
@@ -419,8 +448,11 @@ class Dispatcher:
         the session's view of the directory is empty the refusal would
         leak that something invisible exists. A session's mutation may
         destroy what it cannot see, never learn of it, so the remnants
-        go with the directory; a visible child, or a backend with no
-        recursive remove to take them, re-raises the backend's refusal.
+        go with the directory through the shared ``remove_remnants``
+        walk; a visible child (in the backend listing or owed by the
+        namespace), or any cascade failure (a mode-protected entry, a
+        visible entry appearing mid-walk), re-raises the backend's
+        refusal.
 
         Args:
             mount (MountEntry): the mount owning the directory.
@@ -436,49 +468,20 @@ class Dispatcher:
             # remnants keeps the original refusal: the door has no way
             # to take them.
             raise refusal from exc
-        base = path.virtual.rstrip("/")
-        if not entries or any(
-                path_allowed(f"{base}/{e.rstrip('/').rsplit('/', 1)[-1]}")
-                for e in entries):
+        # Emptiness is the door's own readdir pipeline: backend entries
+        # merged with the namespace's children (nested mounts, links)
+        # and judged by visibility, so a visible child no backend can
+        # see keeps the refusal instead of reporting a successful rmdir
+        # while the mounted child remains.
+        merged = merge_readdir(
+            entries, [m.prefix for m in self._namespace.registry.mounts()],
+            self._namespace, path.virtual)
+        if not entries or visible_below(path.virtual, merged, path_allowed):
             raise refusal
         try:
-            await self._remove_subtree(mount, path.virtual)
+            await remove_remnants(_MountChannel(mount), path_allowed, path)
         except OSError as exc:
             raise refusal from exc
-
-    async def _remove_subtree(self, mount: MountEntry, virtual: str) -> None:
-        """Remove one directory and everything under it, entry by entry.
-
-        No backend registers a recursive-remove op at this door, so the
-        remnant removal walks the raw listings itself, children first.
-        An entry that vanishes mid-walk is a completed removal (a
-        prefix-store directory disappears with its last child), not an
-        error.
-
-        Args:
-            mount (MountEntry): the mount owning the subtree.
-            virtual (str): absolute virtual path of the directory.
-        """
-        entries = await mount.execute_op("readdir", virtual)
-        base = virtual.rstrip("/")
-        for entry in entries:
-            name = str(entry).rstrip("/").rsplit("/", 1)[-1]
-            child = f"{base}/{name}"
-            try:
-                row = await mount.execute_op("stat", child)
-            except FileNotFoundError:
-                continue
-            if isinstance(row, FileStat) and row.type is FileType.DIRECTORY:
-                await self._remove_subtree(mount, child)
-            else:
-                try:
-                    await mount.execute_op("unlink", child)
-                except FileNotFoundError:
-                    continue
-        try:
-            await mount.execute_op("rmdir", virtual)
-        except FileNotFoundError:
-            return
 
     def _table_answers(self, op: str, virtual: str, kwargs: dict[str,
                                                                  Any]) -> bool:

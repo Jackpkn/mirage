@@ -13,7 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import errno
 
+from mirage.context import reset_current_session, set_current_session
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
@@ -455,3 +457,63 @@ def test_rm_r_still_destroys_hidden_content_below():
     assert removed.exit_code == 0, removed.stderr
     gone = _host(ws, "test -e /repo/box")
     assert gone.exit_code == 1
+
+
+def test_a_read_only_hidden_remnant_keeps_the_refusal():
+    # A show may state a mode at the same anchor a hide covers (the
+    # hide wins visibility on the tie), leaving content the session
+    # cannot see that its mode still protects. Every cascade deletion
+    # answers for its own path's mode, so the protected remnant
+    # survives and the rmdir keeps a not-empty refusal.
+    ws = _boxed(
+        {"paths": {
+            "hide": ["/repo/only/h"],
+            "show": {
+                "/repo/only/h": "r"
+            }
+        }})
+    refused = _run(ws, "rmdir /repo/only")
+    assert refused.exit_code == 1
+    assert (refused.stderr or b"") == (
+        b"rmdir: failed to remove '/repo/only': Directory not empty\n")
+    kept = _host(ws, "cat /repo/only/h")
+    assert (kept.stdout or b"") == b"h\n"
+
+
+def test_ops_rmdir_keeps_the_refusal_when_a_mounted_child_remains():
+    # Ops-plane twin of the visible-child rule: the backend cannot see
+    # a mount nested below the directory, so the remnant arm judges
+    # emptiness on the door's merged listing. The visible mounted child
+    # keeps the not-empty refusal instead of the arm destroying the
+    # hidden backend remnants and reporting a successful rmdir while
+    # the mount remains.
+    ws = Workspace({
+        "/a": RAMResource(),
+        "/a/d/m": RAMResource()
+    },
+                   mode=MountMode.WRITE)
+
+    async def seed():
+        io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k"
+                              )
+        assert io.exit_code == 0, io.stderr
+
+    asyncio.run(seed())
+    sess = ws.create_session("rev", profile={"paths": {"hide": ["/a/d/sec"]}})
+
+    async def probe():
+        try:
+            await ws.ops.rmdir("/a/d")
+        except OSError as exc:
+            return exc
+        return None
+
+    token = set_current_session(sess)
+    try:
+        refused = asyncio.run(probe())
+    finally:
+        reset_current_session(token)
+    assert refused is not None
+    assert refused.errno in (errno.ENOTEMPTY, errno.EEXIST)
+    kept = _host(ws, "cat /a/d/sec/k")
+    assert (kept.stdout or b"") == b"k\n"

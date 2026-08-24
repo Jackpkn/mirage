@@ -459,6 +459,46 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "subtree_guarded_prep",
+      "seq": 923345,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/keep && echo h > /scratch/keep/h",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_read_only_remnant_keeps_the_refusal",
+      "seq": 923346,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "rmdir /scratch/keep",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rmdir: failed to remove '/scratch/keep': Directory not empty\n"
+      },
+      "session": "guarded"
+    },
+    {
+      "id": "subtree_read_only_remnant_survived",
+      "seq": 923347,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cat /scratch/keep/h",
+      "expect": {
+        "exit": 0,
+        "stdout": "h\n",
+        "stderr": ""
+      }
     }
   ]
 }

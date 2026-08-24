@@ -23,6 +23,7 @@ import {
   readonlyBelow,
 } from '../../../context/session_context.ts'
 import { moveReveals } from '../../../utils/hidden.ts'
+import { removeRemnants, visibleBelow, type RemnantChannel } from '../../../utils/remnants.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import type { StatOverlay } from '../../../ops/types.ts'
 import type { FindOptions } from '../../../resource/base.ts'
@@ -326,10 +327,15 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
     // something invisible exists, so the remnants go with the
     // directory: a session's mutation may destroy what it cannot see,
     // never learn of it. Any visible child keeps the refusal, and a
-    // backend with no recursive remove keeps it too, having no way to
-    // take the remnants.
+    // backend with no unlink keeps it too, having no way to take the
+    // remnants. The removal is the shared removeRemnants walk over the
+    // sibling slots, which revalidates visibility before every
+    // deletion and keeps the mode guard on each one; any cascade
+    // failure answers with the backend's original refusal, exactly as
+    // the ops plane does.
     const rawReaddir = ops.readdir
-    const rawRmR = ops.rmR
+    const rawStat = ops.stat
+    const rawUnlink = ops.unlink
     guarded.rmdir = async (accessor, path, index) => {
       refuseHidden(path, false)
       try {
@@ -338,20 +344,27 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
       } catch (exc) {
         const code = (exc as { code?: string }).code
         if (
-          rawRmR === undefined ||
+          rawUnlink === undefined ||
           (code !== 'ENOTEMPTY' && code !== 'EEXIST') ||
           !hiddenPathsIntersect(path.virtual)
         ) {
           throw exc
         }
         const entries = await rawReaddir(accessor, path, index)
-        const base = path.virtual.replace(/\/+$/, '')
-        const visible = entries.some((e) => {
-          const trimmed = e.replace(/\/+$/, '')
-          return pathAllowed(`${base}/${trimmed.slice(trimmed.lastIndexOf('/') + 1)}`)
-        })
-        if (entries.length === 0 || visible) throw exc
-        await rawRmR(accessor, path)
+        if (entries.length === 0 || visibleBelow(path.virtual, entries, pathAllowed)) {
+          throw exc
+        }
+        const channel: RemnantChannel = {
+          readdir: (at) => rawReaddir(accessor, at, index),
+          stat: (at) => rawStat(accessor, at, index),
+          unlink: (at) => rawUnlink(accessor, at),
+          rmdir: (at) => rd(accessor, at, index),
+        }
+        try {
+          await removeRemnants(channel, pathAllowed, path)
+        } catch {
+          throw exc
+        }
       }
     }
   }

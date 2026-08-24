@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 from mirage.accessor.base import Accessor
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation)
@@ -64,7 +66,20 @@ async def rmdir(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
             errors.append(f"rmdir: failed to remove '{p.raw_path}': "
                           "Directory not empty")
             continue
-        await rmdir_fn(accessor, p, index=opts.index)
+        try:
+            await rmdir_fn(accessor, p, index=opts.index)
+        except OSError as exc:
+            # The listing above showed the session an empty directory,
+            # but the slot may still refuse not-empty: the hidden-
+            # remnant guard re-raises the backend's refusal when its
+            # cascade cannot finish (a mode-protected remnant, a
+            # visible entry appearing mid-walk). GNU's voice, not the
+            # raw errno repr.
+            if exc.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                raise
+            errors.append(f"rmdir: failed to remove '{p.raw_path}': "
+                          "Directory not empty")
+            continue
         removed[p.mount_path] = b""
         if v:
             verbose_parts.append(f"rmdir: removing directory, '{p.raw_path}'")

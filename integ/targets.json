@@ -2398,6 +2398,7 @@
             ]
           }
         },
+        "guarded": "guarded",
         "sealed": {
           "paths": {
             "hide": [
@@ -2548,6 +2549,16 @@
           "paths": {
             "show": {
               "/scratch/pine/keep": "r"
+            }
+          }
+        },
+        "guarded": {
+          "paths": {
+            "hide": [
+              "/scratch/keep/h"
+            ],
+            "show": {
+              "/scratch/keep/h": "r"
             }
           }
         },

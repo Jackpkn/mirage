@@ -71,6 +71,7 @@ import {
   pathAllowed,
 } from '../../context/session_context.ts'
 import { moveReveals } from '../../utils/hidden.ts'
+import { removeRemnants, visibleBelow, type RemnantChannel } from '../../utils/remnants.ts'
 
 const NOOP_ACCESSOR_INSTANCE = new NOOPAccessor()
 
@@ -399,7 +400,7 @@ export class Dispatcher {
     } catch (err) {
       const code = (err as { code?: string }).code
       if (opName === 'rmdir' && (code === 'ENOTEMPTY' || code === 'EEXIST')) {
-        await this.rmdirRemnants(resource, scope, err)
+        await this.rmdirRemnants(resource, scope, mountPrefix, mode, err)
         result = null
       } else {
         const fallback = isMissingPath(err) ? this.namespaceResult(opName, p.virtual) : null
@@ -471,6 +472,47 @@ export class Dispatcher {
   }
 
   /**
+   * The door's own channel for internal walks: the TS twin of Python's
+   * Mount.execute_op. The same mode fence, index stamping and
+   * mount-prefix context normal dispatch applies, plus the
+   * dispatcher's own write invalidation, because raw registry calls
+   * run outside the cache context dispatch establishes, so the cores'
+   * invalidation cannot land. Invalidation runs even when the op
+   * fails: a missing-path failure means the tree changed under the
+   * walk, and the walk's own earlier listing is exactly the entry that
+   * must not survive. Only the visibility filter stays off, which is
+   * what lets a remnant walk see hidden entries. Every internal
+   * registry call in this class routes through here; a bare
+   * opsRegistry.call outside dispatch is a bug.
+   */
+  private async fencedCall(
+    resource: Resource,
+    mountPrefix: string,
+    mode: MountMode,
+    opName: string,
+    spec: PathSpec,
+  ): Promise<unknown> {
+    const write = this.opsRegistry.find(opName, resource.kind)?.write === true
+    if (write && effectivePathMode(spec.virtual, mountPrefix, mode) === MountMode.READ) {
+      throw erofsReadOnly(`mount at '${spec.virtual}' is read-only`, spec)
+    }
+    try {
+      return await runWithMountPrefix(rstripSlash(mountPrefix), () =>
+        this.opsRegistry.call(
+          opName,
+          resource.kind,
+          resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
+          spec,
+          [],
+          this.indexKwargs(resource),
+        ),
+      )
+    } finally {
+      if (write) await this.invalidateAfterWriteByPath(spec.virtual)
+    }
+  }
+
+  /**
    * Whether a rename's source stats as a directory.
    *
    * Only a directory can carry hidden content into view, so the reveal
@@ -488,16 +530,15 @@ export class Dispatcher {
       // No mount to ask; classification fails toward refusal.
       return true
     }
-    const [resource, scope] = resolved
+    const [resource, scope, mode] = resolved
     let row: unknown
     try {
-      row = await this.opsRegistry.call(
+      row = await this.fencedCall(
+        resource,
+        this.namespace.mountFor(path.virtual).prefix,
+        mode,
         'stat',
-        resource.kind,
-        resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
         scope,
-        [],
-        this.indexKwargs(resource),
       )
     } catch (err) {
       // An absent source moves nothing; the rename itself reports it.
@@ -515,100 +556,53 @@ export class Dispatcher {
    * session's view of the directory is empty the refusal would leak
    * that something invisible exists. A session's mutation may destroy
    * what it cannot see, never learn of it, so the remnants go with the
-   * directory; a visible child, or a backend with no recursive remove
-   * to take them, re-raises the backend's refusal.
+   * directory through the shared removeRemnants walk; a visible child,
+   * or any cascade failure (a mode-protected entry, a visible entry
+   * appearing mid-walk), re-raises the backend's refusal. Emptiness is
+   * the door's own readdir pipeline: backend entries merged with the
+   * namespace's children (nested mounts, links) and judged by
+   * visibility, so a visible child no backend can see keeps the
+   * refusal instead of reporting a successful rmdir while the mounted
+   * child remains.
    */
-  private async rmdirRemnants(resource: Resource, path: PathSpec, refusal: unknown): Promise<void> {
+  private async rmdirRemnants(
+    resource: Resource,
+    path: PathSpec,
+    mountPrefix: string,
+    mode: MountMode,
+    refusal: unknown,
+  ): Promise<void> {
     if (!hiddenPathsIntersect(path.virtual)) throw refusal
-    const accessor = resource.accessor ?? NOOP_ACCESSOR_INSTANCE
     let entries: unknown
     try {
-      entries = await this.opsRegistry.call(
-        'readdir',
-        resource.kind,
-        accessor,
-        path,
-        [],
-        this.indexKwargs(resource),
-      )
+      entries = await this.fencedCall(resource, mountPrefix, mode, 'readdir', path)
     } catch {
       // A backend that cannot list (or later, remove) the remnants
       // keeps the original refusal: the door has no way to take them.
       throw refusal
     }
     if (!Array.isArray(entries)) throw refusal
-    const base = path.virtual.replace(/\/+$/, '')
-    const visible = entries.some((e) => {
-      const trimmed = String(e).replace(/\/+$/, '')
-      return pathAllowed(`${base}/${trimmed.slice(trimmed.lastIndexOf('/') + 1)}`)
-    })
-    if (entries.length === 0 || visible) throw refusal
+    const names = entries.map(String)
+    const merged = mergeReaddir(names, this.namespace.mountPrefixes(), this.namespace, path.virtual)
+    if (names.length === 0 || visibleBelow(path.virtual, merged, pathAllowed)) throw refusal
+    const channel: RemnantChannel = {
+      readdir: async (at) => {
+        const listed = await this.fencedCall(resource, mountPrefix, mode, 'readdir', at)
+        return Array.isArray(listed) ? listed.map(String) : []
+      },
+      stat: (at) => this.fencedCall(resource, mountPrefix, mode, 'stat', at),
+      unlink: async (at) => {
+        await this.fencedCall(resource, mountPrefix, mode, 'unlink', at)
+      },
+      rmdir: async (at) => {
+        await this.fencedCall(resource, mountPrefix, mode, 'rmdir', at)
+      },
+    }
     try {
-      await this.removeSubtree(resource, path)
+      await removeRemnants(channel, pathAllowed, path)
     } catch {
       throw refusal
     }
-  }
-
-  /**
-   * Remove one directory and everything under it, entry by entry.
-   *
-   * No backend registers a recursive-remove op at this door, so the
-   * remnant removal walks the raw listings itself, children first. An
-   * entry that vanishes mid-walk is a completed removal (a prefix-store
-   * directory disappears with its last child), not an error. Each
-   * removal invalidates through the dispatcher's own door: the raw
-   * registry calls run outside the cache context normal dispatch
-   * establishes, so the cores' own invalidation cannot land, and the
-   * listing the walk itself put in the index would otherwise keep the
-   * removed directory answering "exists" to a readdir-backed probe.
-   */
-  private async removeSubtree(resource: Resource, spec: PathSpec): Promise<void> {
-    const accessor = resource.accessor ?? NOOP_ACCESSOR_INSTANCE
-    const kwargs = this.indexKwargs(resource)
-    const entries = await this.opsRegistry.call(
-      'readdir',
-      resource.kind,
-      accessor,
-      spec,
-      [],
-      kwargs,
-    )
-    if (!Array.isArray(entries)) return
-    const base = spec.virtual.replace(/\/+$/, '')
-    const baseKey = spec.resourcePath.replace(/\/+$/, '')
-    for (const entry of entries) {
-      const trimmed = String(entry).replace(/\/+$/, '')
-      const name = trimmed.slice(trimmed.lastIndexOf('/') + 1)
-      const child = new PathSpec({
-        virtual: `${base}/${name}`,
-        directory: spec.virtual,
-        resourcePath: baseKey === '' ? name : `${baseKey}/${name}`,
-      })
-      let row: unknown
-      try {
-        row = await this.opsRegistry.call('stat', resource.kind, accessor, child, [], kwargs)
-      } catch (err) {
-        if (isMissingPath(err)) continue
-        throw err
-      }
-      if (row instanceof FileStat && row.type === FileType.DIRECTORY) {
-        await this.removeSubtree(resource, child)
-      } else {
-        try {
-          await this.opsRegistry.call('unlink', resource.kind, accessor, child, [], kwargs)
-        } catch (err) {
-          if (!isMissingPath(err)) throw err
-        }
-        await this.invalidateAfterWriteByPath(child.virtual)
-      }
-    }
-    try {
-      await this.opsRegistry.call('rmdir', resource.kind, accessor, spec, [], kwargs)
-    } catch (err) {
-      if (!isMissingPath(err)) throw err
-    }
-    await this.invalidateAfterWriteByPath(spec.virtual)
   }
 
   private tableAnswers(

@@ -35,6 +35,7 @@ from mirage.utils.errors import MISS_ERRORS, ReadOnlyError, eisdir
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES, make_resolve_glob
 from mirage.utils.hidden import move_reveals
 from mirage.utils.path import norm, parent
+from mirage.utils.remnants import remove_remnants, visible_below
 
 OperationFn = Callable[..., Any]
 
@@ -404,9 +405,50 @@ async def _guarded_pair(fn: OperationFn, stat: StatOp, assume_dir: bool, *args:
     return await fn(*args, **kwargs)
 
 
+@dataclass(frozen=True, slots=True)
+class _SlotChannel:
+    """The command plane's remnant channel: the refused rmdir's sibling
+    slots, still mode- and rule-guarded but below the visibility
+    filter, so the cascade can see what it must destroy while every
+    deletion still answers for its own path's mode.
+
+    Args:
+        lead (tuple): the call's leading positionals (the accessor).
+        index (IndexCacheStore): the invocation's cache index.
+        readdir_fn (OperationFn): the sibling readdir slot.
+        stat_fn (OperationFn): the sibling stat slot.
+        unlink_fn (OperationFn): the sibling unlink slot.
+        rmdir_fn (OperationFn): the raw rmdir the guard wraps.
+    """
+
+    lead: tuple[Any, ...]
+    index: IndexCacheStore
+    readdir_fn: OperationFn
+    stat_fn: OperationFn
+    unlink_fn: OperationFn
+    rmdir_fn: OperationFn
+
+    async def readdir(self, spec: PathSpec) -> list[str]:
+        entries: list[str] = await self.readdir_fn(*self.lead,
+                                                   spec,
+                                                   index=self.index)
+        return entries
+
+    async def stat(self, spec: PathSpec) -> FileStat:
+        row: FileStat = await self.stat_fn(*self.lead, spec, index=self.index)
+        return row
+
+    async def unlink(self, spec: PathSpec) -> None:
+        await self.unlink_fn(*self.lead, spec)
+
+    async def rmdir(self, spec: PathSpec) -> None:
+        await self.rmdir_fn(*self.lead, spec, index=self.index)
+
+
 async def _guarded_rmdir(fn: OperationFn,
                          readdir: OperationFn,
-                         rm_r: OperationFn | None,
+                         stat: StatOp,
+                         unlink: OperationFn | None,
                          *args: Any,
                          index: IndexCacheStore = NULL_INDEX,
                          **kwargs: Any) -> Any:
@@ -417,13 +459,18 @@ async def _guarded_rmdir(fn: OperationFn,
     something invisible exists, so the remnants go with the directory:
     a session's mutation may destroy what it cannot see, never learn of
     it. Any visible child keeps the refusal, and a backend with no
-    recursive remove keeps it too, having no way to take the remnants.
+    unlink keeps it too, having no way to take the remnants. The
+    removal is the shared ``remove_remnants`` walk over the sibling
+    slots, which revalidates visibility before every deletion and
+    keeps the mode guard on each one; any cascade failure answers with
+    the backend's original refusal, exactly as the ops plane does.
 
     Args:
         fn (OperationFn): the raw backend rmdir.
         readdir (OperationFn): the raw backend readdir, for the real
             listing the visible/hidden split is judged on.
-        rm_r (OperationFn | None): the backend's recursive remove.
+        stat (StatOp): the raw backend stat, classifying walked entries.
+        unlink (OperationFn | None): the raw backend unlink.
         *args: the call's positionals; the first PathSpec is the
             directory.
         index (IndexCacheStore): the invocation's cache index, threaded
@@ -440,7 +487,7 @@ async def _guarded_rmdir(fn: OperationFn,
     try:
         return await fn(*args, index=index, **kwargs)
     except OSError as exc:
-        if (target is None or rm_r is None
+        if (target is None or unlink is None
                 or exc.errno not in (errno.ENOTEMPTY, errno.EEXIST)
                 or not hidden_paths_intersect(target.virtual)):
             raise
@@ -450,12 +497,13 @@ async def _guarded_rmdir(fn: OperationFn,
                 break
             lead.append(arg)
         entries = await readdir(*lead, target, index=index)
-        base = target.virtual.rstrip("/")
-        if not entries or any(
-                path_allowed(f"{base}/{e.rstrip('/').rsplit('/', 1)[-1]}")
-                for e in entries):
+        if not entries or visible_below(target.virtual, entries, path_allowed):
             raise
-        await rm_r(*lead, target)
+        channel = _SlotChannel(tuple(lead), index, readdir, stat, unlink, fn)
+        try:
+            await remove_remnants(channel, path_allowed, target)
+        except OSError as cascade:
+            raise exc from cascade
         return None
 
 
@@ -672,7 +720,7 @@ def with_hidden_guard(ops: CommandIO) -> CommandIO:
                                               assume_dir)
     if ops.rmdir is not None:
         changes["rmdir"] = functools.partial(_guarded_rmdir, ops.rmdir,
-                                             ops.readdir, ops.rm_r)
+                                             ops.readdir, ops.stat, ops.unlink)
     if ops.exists is not None:
         changes["exists"] = functools.partial(_guarded_exists, ops.exists)
     return replace(ops, **changes)
