@@ -1424,20 +1424,43 @@ LANCEDB_ROWS = [
     },
 ]
 
+# One group holding far more rows than the window facet's row cap, so a
+# glob for a row past the cap can only be answered by narrowing the query.
+LANCEDB_WIDE_CAP = 5
+LANCEDB_WIDE_ROWS = [{
+    "id": f"doc-{i:03d}",
+    "label": "all",
+    "name": f"row {i}"
+} for i in range(40)]
+
 
 class LanceDBService:
 
-    def __init__(self, uri: str) -> None:
+    def __init__(self, uri: str, window: bool) -> None:
         self.uri = uri
+        self.window = window
 
     @classmethod
-    async def create(cls) -> "LanceDBService":
+    async def create(cls, target: dict) -> "LanceDBService":
+        window = target.get("facet") == "window"
         uri = tempfile.mkdtemp(prefix="mirage-integ-lancedb-")
         db = lancedb.connect(uri)
-        db.create_table("animals", data=LANCEDB_ROWS)
-        return cls(uri)
+        if window:
+            db.create_table("wide", data=LANCEDB_WIDE_ROWS)
+        else:
+            db.create_table("animals", data=LANCEDB_ROWS)
+        return cls(uri, window)
 
     def resource(self, mount: dict) -> LanceDBResource:
+        if self.window:
+            return LanceDBResource(
+                LanceDBConfig(uri=self.uri,
+                              table="wide",
+                              group_by=["label"],
+                              id_column="id",
+                              title_column="name",
+                              text_column="name",
+                              max_rows=LANCEDB_WIDE_CAP))
         return LanceDBResource(
             LanceDBConfig(uri=self.uri,
                           group_by=["label", "kind"],
@@ -1458,16 +1481,24 @@ QDRANT_ROWS = [
     (4, "dog", "small", "a small white dog"),
 ]
 
+# Far more points than the window facet's row cap, all in one group, and
+# ids whose text straddles a scroll page so a narrowed listing has to page.
+QDRANT_WIDE_CAP = 5
+QDRANT_WIDE_POINTS = 600
+
 
 class QdrantService:
 
-    def __init__(self, host: str, port: int, collection: str) -> None:
+    def __init__(self, host: str, port: int, collection: str,
+                 window: bool) -> None:
         self.host = host
         self.port = port
         self.collection = collection
+        self.window = window
 
     @classmethod
-    async def create(cls) -> "QdrantService":
+    async def create(cls, target: dict) -> "QdrantService":
+        window = target.get("facet") == "window"
         host = os.environ.get("QDRANT_HOST", "localhost")
         port = int(os.environ.get("QDRANT_PORT", "6333"))
         collection = f"mirage-integ-{uuid.uuid4().hex[:8]}"
@@ -1477,24 +1508,37 @@ class QdrantService:
                 collection,
                 vectors_config=models.VectorParams(
                     size=QDRANT_EMBED_DIM, distance=models.Distance.COSINE))
-            await client.upsert(
-                collection,
-                points=[
-                    models.PointStruct(
-                        id=i,
-                        vector=[0.1] * QDRANT_EMBED_DIM,
-                        payload={
-                            "label":
-                            label,
-                            "kind":
-                            kind,
-                            "name":
-                            name,
-                            "image_bytes":
-                            base64.b64encode(f"PNG-{i}".encode()).decode(),
-                        }) for i, label, kind, name in QDRANT_ROWS
-                ])
-            for field in ("label", "kind"):
+            if window:
+                await client.upsert(
+                    collection,
+                    points=[
+                        models.PointStruct(id=i,
+                                           vector=[0.1] * QDRANT_EMBED_DIM,
+                                           payload={
+                                               "label": "all",
+                                               "name": f"row {i}"
+                                           })
+                        for i in range(1, QDRANT_WIDE_POINTS + 1)
+                    ])
+            else:
+                await client.upsert(
+                    collection,
+                    points=[
+                        models.PointStruct(
+                            id=i,
+                            vector=[0.1] * QDRANT_EMBED_DIM,
+                            payload={
+                                "label":
+                                label,
+                                "kind":
+                                kind,
+                                "name":
+                                name,
+                                "image_bytes":
+                                base64.b64encode(f"PNG-{i}".encode()).decode(),
+                            }) for i, label, kind, name in QDRANT_ROWS
+                    ])
+            for field in (("label", ) if window else ("label", "kind")):
                 await client.create_payload_index(
                     collection,
                     field_name=field,
@@ -1502,9 +1546,18 @@ class QdrantService:
             await asyncio.sleep(2)
         finally:
             await client.close()
-        return cls(host, port, collection)
+        return cls(host, port, collection, window)
 
     def resource(self, mount: dict) -> QdrantResource:
+        if self.window:
+            return QdrantResource(
+                QdrantConfig(host=self.host,
+                             port=self.port,
+                             collection=self.collection,
+                             group_by=["label"],
+                             id_field="id",
+                             text_field="name",
+                             max_rows=QDRANT_WIDE_CAP))
         return QdrantResource(
             QdrantConfig(host=self.host,
                          port=self.port,
@@ -2157,9 +2210,9 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
     if target.get("service") == "chroma":
         return await ChromaService.create()
     if target.get("service") == "qdrant":
-        return await QdrantService.create()
+        return await QdrantService.create(target)
     if target.get("service") == "lancedb":
-        return await LanceDBService.create()
+        return await LanceDBService.create(target)
     if target.get("service") == "notion":
         return await NotionService.create()
     if target.get("service") == "ssh":

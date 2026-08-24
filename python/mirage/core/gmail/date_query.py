@@ -15,6 +15,17 @@
 from datetime import date, timedelta
 
 
+def span_to_gmail_query(start: date, end: date) -> str:
+    """A Gmail date filter for a half-open range of days.
+
+    Args:
+        start (date): first day, inclusive.
+        end (date): last day, exclusive.
+    """
+    return (f"after:{start.year}/{start.month:02d}/{start.day:02d} "
+            f"before:{end.year}/{end.month:02d}/{end.day:02d}")
+
+
 def date_dir_to_gmail_query(name: str) -> str | None:
     parts = name.split("-")
     if len(parts) != 3:
@@ -25,6 +36,4 @@ def date_dir_to_gmail_query(name: str) -> str | None:
         d = date(int(parts[0]), int(parts[1]), int(parts[2]))
     except ValueError:
         return None
-    nxt = d + timedelta(days=1)
-    return (f"after:{d.year}/{d.month:02d}/{d.day:02d} "
-            f"before:{nxt.year}/{nxt.month:02d}/{nxt.day:02d}")
+    return span_to_gmail_query(d, d + timedelta(days=1))

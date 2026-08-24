@@ -1,0 +1,82 @@
+{
+  "cases": [
+    {
+      "id": "lancedb_window_listing_is_capped",
+      "seq": 650400,
+      "targets": [
+        "lancedb-window"
+      ],
+      "command": "ls /db/all/",
+      "expect": {
+        "exit": 0,
+        "stdout": "doc-000.md\ndoc-001.md\ndoc-002.md\ndoc-003.md\ndoc-004.md\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lancedb_window_row_resolves_past_the_cap",
+      "seq": 650401,
+      "targets": [
+        "lancedb-window"
+      ],
+      "command": "cat /db/all/doc-039.md",
+      "expect": {
+        "exit": 0,
+        "stdout": "# row 39\n\nid: doc-039\nlabel: all\nname: row 39\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lancedb_window_glob_reaches_past_the_cap",
+      "seq": 650402,
+      "targets": [
+        "lancedb-window"
+      ],
+      "command": "ls -d /db/all/doc-03*",
+      "expect": {
+        "exit": 0,
+        "stdout": "/db/all/doc-030.md\n/db/all/doc-031.md\n/db/all/doc-032.md\n/db/all/doc-033.md\n/db/all/doc-034.md\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lancedb_window_glob_does_not_become_the_listing",
+      "seq": 650403,
+      "targets": [
+        "lancedb-window"
+      ],
+      "command": "ls -d /db/all/doc-03* > /dev/null && ls /db/all/ | head -1",
+      "expect": {
+        "exit": 0,
+        "stdout": "doc-000.md\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "lancedb_window_glob_with_no_literal_head_stays_capped",
+      "seq": 650404,
+      "targets": [
+        "lancedb-window"
+      ],
+      "command": "ls -d /db/all/*39.md",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '/db/all/*39.md': No such file or directory\n"
+      }
+    },
+    {
+      "id": "lancedb_window_a_broad_prefix_is_still_capped",
+      "seq": 650405,
+      "targets": [
+        "lancedb-window"
+      ],
+      "command": "ls -d /db/all/doc-0[12]*",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '/db/all/doc-0[12]*': No such file or directory\n"
+      }
+    }
+  ]
+}

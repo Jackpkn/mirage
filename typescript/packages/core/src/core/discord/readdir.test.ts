@@ -85,6 +85,23 @@ describe('dateRangeDescending', () => {
   it('returns [] for malformed input', () => {
     expect(dateRangeDescending('', 30)).toEqual([])
   })
+
+  it('reaches days outside the window for a glob span', () => {
+    const out = dateRangeDescending('2024-01-15', 30, ['2023-11-01', '2023-12-01'])
+    expect(out).toHaveLength(30)
+    expect(out[0]).toBe('2023-11-30')
+    expect(out[29]).toBe('2023-11-01')
+  })
+
+  it('clips a glob span at the newest message', () => {
+    const out = dateRangeDescending('2024-01-15', 30, ['2024-01-01', '2024-02-01'])
+    expect(out).toHaveLength(15)
+    expect(out[0]).toBe('2024-01-15')
+  })
+
+  it('lists nothing for a glob span after the newest message', () => {
+    expect(dateRangeDescending('2024-01-15', 30, ['2025-01-01', '2025-02-01'])).toEqual([])
+  })
 })
 
 describe('readdir root', () => {

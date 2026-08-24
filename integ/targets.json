@@ -1300,6 +1300,40 @@
       ]
     },
     {
+      "id": "qdrant-window",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "service": "qdrant",
+      "facet": "window",
+      "mounts": [
+        {
+          "path": "/db",
+          "resource": "qdrant",
+          "backend": "qdrant",
+          "mode": "read"
+        }
+      ]
+    },
+    {
+      "id": "lancedb-window",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "service": "lancedb",
+      "facet": "window",
+      "mounts": [
+        {
+          "path": "/db",
+          "resource": "lancedb",
+          "backend": "lancedb",
+          "mode": "read"
+        }
+      ]
+    },
+    {
       "id": "notion",
       "hosts": [
         "python",

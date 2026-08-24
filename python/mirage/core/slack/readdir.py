@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from mirage.accessor.slack import SlackAccessor
 from mirage.cache.index import IndexEntry
@@ -27,6 +27,7 @@ from mirage.core.slack.formatters import (channel_dirname, dm_dirname,
 from mirage.core.slack.history import fetch_messages_for_day, messages_to_jsonl
 from mirage.core.slack.scope import detect_scope
 from mirage.core.slack.users import list_users, user_json_bytes
+from mirage.utils.glob_walk import glob_span, has_glob_span
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,27 @@ _SOFT_HISTORY_ERRORS = (
 
 def _date_range(latest_ts: float,
                 created: int,
-                max_days: int = 90) -> list[str]:
+                max_days: int = 90,
+                span: tuple[date, date] | None = None) -> list[str]:
+    """The channel's day directories, newest first.
+
+    A day dir is real for any date the channel has existed for, so the
+    bare listing is a window: the last ``max_days`` up to the newest
+    message. A glob names its own window instead, and then the cap does
+    not apply, because the span is already bounded by what was typed.
+
+    Args:
+        latest_ts (float): timestamp of the newest message.
+        created (int): channel creation timestamp.
+        max_days (int): how many days the bare window covers.
+        span (tuple[date, date] | None): the glob's half-open range.
+    """
     end = datetime.fromtimestamp(latest_ts, tz=timezone.utc).date()
     start = datetime.fromtimestamp(created, tz=timezone.utc).date()
-    if (end - start).days > max_days:
+    if span is not None:
+        start = max(start, span[0])
+        end = min(end, span[1] - timedelta(days=1))
+    elif (end - start).days > max_days:
         start = end - timedelta(days=max_days - 1)
     dates = []
     d = end
@@ -133,21 +151,23 @@ async def _list_users_root(accessor: SlackAccessor,
 async def _list_channel_days(accessor: SlackAccessor, match: ScopeMatch,
                              own: IndexEntry) -> Listed:
     created = int(own.remote_time or 0)
+    span = glob_span(match.pattern)
     latest_ts = await _latest_message_ts(accessor.config, own.id)
     if latest_ts and created:
-        dates = _date_range(latest_ts, created)
+        dates = _date_range(latest_ts, created, span=span)
     elif latest_ts:
-        dates = _date_range(latest_ts, int(latest_ts))
+        dates = _date_range(latest_ts, int(latest_ts), span=span)
     else:
         dates = []
-    return [(d,
-             IndexEntry(
-                 id=f"{own.id}:{d}",
-                 name=d,
-                 resource_type="slack/date_dir",
-                 vfs_name=d,
-                 extra={"channel_id": own.id},
-             )) for d in dates]
+    entries = [(d,
+                IndexEntry(
+                    id=f"{own.id}:{d}",
+                    name=d,
+                    resource_type="slack/date_dir",
+                    vfs_name=d,
+                    extra={"channel_id": own.id},
+                )) for d in dates]
+    return DirListing(entries=entries, partial=span is not None)
 
 
 async def _day_listing(accessor: SlackAccessor, channel_id: str,
@@ -260,6 +280,7 @@ readdir = make_readdir(
     },
     parent_entry_listers={"day": _list_day},
     static_root=VIRTUAL_ROOTS,
+    pattern_kinds={"channel": has_glob_span},
 )
 
 __all__ = ["readdir", "VIRTUAL_ROOTS"]

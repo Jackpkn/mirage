@@ -14,6 +14,7 @@
 
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from qdrant_client import models
@@ -61,20 +62,61 @@ def _candidate_ids(row_id: str) -> list[Any]:
     return [row_id]
 
 
-async def _scroll_raw(client: Any, collection: str, flt: models.Filter | None,
-                      limit: int) -> list[Any]:
+PointTest = Callable[[Any], bool]
+
+
+def id_prefix_test(prefix: str) -> PointTest:
+    """Keep points whose id starts with a literal name prefix.
+
+    Args:
+        prefix (str): the literal prefix a leaf glob asked for.
+    """
+
+    def keep(point: Any) -> bool:
+        return str(point.id).startswith(prefix)
+
+    return keep
+
+
+def value_prefix_test(column: str, prefix: str) -> PointTest:
+    """Keep points whose payload value starts with a literal prefix.
+
+    Args:
+        column (str): the payload field the group level is named from.
+        prefix (str): the literal prefix a group glob asked for.
+    """
+
+    def keep(point: Any) -> bool:
+        value = (point.payload or {}).get(column)
+        return value is not None and str(value).startswith(prefix)
+
+    return keep
+
+
+async def _scroll_raw(client: Any,
+                      collection: str,
+                      flt: models.Filter | None,
+                      limit: int,
+                      keep: PointTest | None = None) -> list[Any]:
+    # Without a test the limit bounds the scroll, which is the ordinary
+    # capped listing. With one it bounds the MATCHES, because qdrant has
+    # no prefix condition for a point id or a keyword field: the only
+    # way to answer a glob for a row past the cap is to keep scrolling
+    # and test each page here. A glob is a targeted request, so it pays
+    # a scan of the collection where the plain listing pays one page.
     points: list[Any] = []
     offset: Any = None
     while len(points) < limit:
         batch, offset = await client.scroll(
             collection_name=collection,
             scroll_filter=flt,
-            limit=min(SCROLL_BATCH, limit - len(points)),
+            limit=SCROLL_BATCH if keep is not None else min(
+                SCROLL_BATCH, limit - len(points)),
             offset=offset,
             with_payload=True,
             with_vectors=False,
         )
-        points.extend(batch)
+        points.extend(batch if keep is None else [p for p in batch if keep(p)])
         if offset is None:
             break
     return points[:limit]
@@ -99,19 +141,22 @@ async def _ensure_indexes(client: Any, accessor: QdrantAccessor,
     accessor._indexes_ensured.add(collection)
 
 
-async def _scroll_all(accessor: QdrantAccessor, collection: str,
-                      filters: dict[str, str], limit: int) -> list[Any]:
+async def _scroll_all(accessor: QdrantAccessor,
+                      collection: str,
+                      filters: dict[str, str],
+                      limit: int,
+                      keep: PointTest | None = None) -> list[Any]:
     client = await accessor.client()
     if not filters:
-        return await _scroll_raw(client, collection, None, limit)
+        return await _scroll_raw(client, collection, None, limit, keep)
     flt = _filter(filters)
     try:
-        return await _scroll_raw(client, collection, flt, limit)
+        return await _scroll_raw(client, collection, flt, limit, keep)
     except UnexpectedResponse as exc:
         if not _is_index_required(exc):
             raise
     await _ensure_indexes(client, accessor, collection)
-    return await _scroll_raw(client, collection, flt, limit)
+    return await _scroll_raw(client, collection, flt, limit, keep)
 
 
 async def list_tables(accessor: QdrantAccessor) -> list[str]:
@@ -125,9 +170,14 @@ async def table_exists(accessor: QdrantAccessor, name: str) -> bool:
     return await client.collection_exists(name)
 
 
-async def distinct_values(accessor: QdrantAccessor, table: str, column: str,
-                          filters: dict[str, str], limit: int) -> list[str]:
-    points = await _scroll_all(accessor, table, filters, limit)
+async def distinct_values(accessor: QdrantAccessor,
+                          table: str,
+                          column: str,
+                          filters: dict[str, str],
+                          limit: int,
+                          prefix: str = "") -> list[str]:
+    keep = value_prefix_test(column, prefix) if prefix else None
+    points = await _scroll_all(accessor, table, filters, limit, keep)
     values = {
         str(payload[column])
         for point in points
@@ -136,10 +186,13 @@ async def distinct_values(accessor: QdrantAccessor, table: str, column: str,
     return sorted(values)
 
 
-async def rows_matching(accessor: QdrantAccessor, table: str,
+async def rows_matching(accessor: QdrantAccessor,
+                        table: str,
                         filters: dict[str, str],
-                        limit: int) -> list[dict[str, Any]]:
-    points = await _scroll_all(accessor, table, filters, limit)
+                        limit: int,
+                        prefix: str = "") -> list[dict[str, Any]]:
+    keep = id_prefix_test(prefix) if prefix else None
+    points = await _scroll_all(accessor, table, filters, limit, keep)
     return [_point_to_row(point, accessor.config.id_field) for point in points]
 
 

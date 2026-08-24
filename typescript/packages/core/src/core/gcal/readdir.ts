@@ -25,7 +25,7 @@ import {
 import type { JsonValue, PathSpec } from '../../types.ts'
 import { enoent } from '../../utils/errors.ts'
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
-import { globToDateRange } from '../google/date_glob.ts'
+import { globSpan } from '../../utils/glob_walk.ts'
 import {
   WINDOW_AHEAD_DAYS,
   WINDOW_BACK_DAYS,
@@ -130,7 +130,7 @@ function daySpan(
   today: string,
   tz: string,
 ): [string, string, string, string] {
-  const span = globToDateRange(pattern)
+  const span = globSpan(pattern)
   if (span !== null) {
     const last = shiftDay(span[1], -1)
     return [dayBounds(span[0], tz)[0], dayBounds(last, tz)[1], span[0], last]

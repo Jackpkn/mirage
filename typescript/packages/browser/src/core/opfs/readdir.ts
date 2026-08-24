@@ -21,7 +21,12 @@ import { isNotFound, isTypeMismatch, iterEntries, norm, resolveDirHandle } from 
 
 export async function readdir(accessor: OPFSAccessor, path: PathSpec): Promise<string[]> {
   const root = accessor.rootHandle
-  const virtual = path.pattern !== null ? path.directory : path.mountPath
+  // A pattern spec addresses the directory whose entries the glob filters,
+  // and the rest of this function works in mount-relative space, so the
+  // directory has to be read off `dir` rather than off the virtual
+  // `directory` string (python strips the prefix by hand for the same
+  // reason).
+  const virtual = (path.pattern !== null ? path.dir : path).mountPath
   let dir: FileSystemDirectoryHandle
   try {
     dir = await resolveDirHandle(root, virtual, { create: false })

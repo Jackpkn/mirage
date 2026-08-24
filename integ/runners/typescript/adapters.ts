@@ -857,19 +857,43 @@ const LANCEDB_ROWS: ReadonlyArray<Record<string, unknown>> = [
   { id: 4, label: 'dog', kind: 'small', name: 'a small white dog' },
 ]
 
+// One group holding far more rows than the window facet's row cap, so a glob
+// for a row past the cap can only be answered by narrowing the query.
+const LANCEDB_WIDE_CAP = 5
+
+function lancedbWideRows(): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = []
+  for (let i = 0; i < 40; i += 1) {
+    rows.push({ id: `doc-${String(i).padStart(3, '0')}`, label: 'all', name: `row ${String(i)}` })
+  }
+  return rows
+}
+
 async function openLancedb(target: Target): Promise<Open> {
+  const window = target.facet === 'window'
   const uri = mkdtempSync(join(tmpdir(), 'mirage-integ-lancedb-'))
   const db = await lancedb.connect(uri)
-  await db.createTable('animals', LANCEDB_ROWS as Record<string, unknown>[])
+  if (window) await db.createTable('wide', lancedbWideRows())
+  else await db.createTable('animals', LANCEDB_ROWS as Record<string, unknown>[])
   const mounts: Record<string, LanceDBResource | [LanceDBResource, MountMode]> = {}
   for (const mount of target.mounts) {
-    const resource = new LanceDBResource({
-      uri,
-      groupBy: ['label', 'kind'],
-      idColumn: 'id',
-      titleColumn: 'name',
-      textColumn: 'name',
-    })
+    const resource = window
+      ? new LanceDBResource({
+          uri,
+          table: 'wide',
+          groupBy: ['label'],
+          idColumn: 'id',
+          titleColumn: 'name',
+          textColumn: 'name',
+          maxRows: LANCEDB_WIDE_CAP,
+        })
+      : new LanceDBResource({
+          uri,
+          groupBy: ['label', 'kind'],
+          idColumn: 'id',
+          titleColumn: 'name',
+          textColumn: 'name',
+        })
     mounts[mount.path] = mount.mode === 'read' ? [resource, MountMode.READ] : resource
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
@@ -889,7 +913,13 @@ const QDRANT_ROWS: ReadonlyArray<readonly [number, string, string, string]> = [
   [4, 'dog', 'small', 'a small white dog'],
 ]
 
+// Far more points than the window facet's row cap, all in one group, and ids
+// whose text straddles a scroll page so a narrowed listing has to page.
+const QDRANT_WIDE_CAP = 5
+const QDRANT_WIDE_POINTS = 600
+
 async function openQdrant(target: Target): Promise<Open> {
+  const window = target.facet === 'window'
   const host = process.env.QDRANT_HOST ?? 'localhost'
   const port = Number.parseInt(process.env.QDRANT_PORT ?? '6333', 10)
   const collection = `mirage-integ-${runId()}`
@@ -897,29 +927,51 @@ async function openQdrant(target: Target): Promise<Open> {
   await client.createCollection(collection, {
     vectors: { size: QDRANT_EMBED_DIM, distance: 'Cosine' },
   })
-  await client.upsert(collection, {
-    points: QDRANT_ROWS.map(([id, label, kind, name]) => ({
-      id,
-      vector: Array<number>(QDRANT_EMBED_DIM).fill(0.1),
-      payload: { label, kind, name, image_bytes: btoa(`PNG-${String(id)}`) },
-    })),
-  })
-  for (const field of ['label', 'kind']) {
+  if (window) {
+    const points = []
+    for (let i = 1; i <= QDRANT_WIDE_POINTS; i += 1) {
+      points.push({
+        id: i,
+        vector: Array<number>(QDRANT_EMBED_DIM).fill(0.1),
+        payload: { label: 'all', name: `row ${String(i)}` },
+      })
+    }
+    await client.upsert(collection, { points })
+  } else {
+    await client.upsert(collection, {
+      points: QDRANT_ROWS.map(([id, label, kind, name]) => ({
+        id,
+        vector: Array<number>(QDRANT_EMBED_DIM).fill(0.1),
+        payload: { label, kind, name, image_bytes: btoa(`PNG-${String(id)}`) },
+      })),
+    })
+  }
+  for (const field of window ? ['label'] : ['label', 'kind']) {
     await client.createPayloadIndex(collection, { field_name: field, field_schema: 'keyword' })
   }
   await new Promise((r) => setTimeout(r, 2000))
   const mounts: Record<string, QdrantResource | [QdrantResource, MountMode]> = {}
   for (const mount of target.mounts) {
-    const resource = new QdrantResource({
-      host,
-      port,
-      collection,
-      groupBy: ['label', 'kind'],
-      idField: 'id',
-      textField: 'name',
-      blobField: 'image_bytes',
-      blobExt: 'png',
-    })
+    const resource = window
+      ? new QdrantResource({
+          host,
+          port,
+          collection,
+          groupBy: ['label'],
+          idField: 'id',
+          textField: 'name',
+          maxRows: QDRANT_WIDE_CAP,
+        })
+      : new QdrantResource({
+          host,
+          port,
+          collection,
+          groupBy: ['label', 'kind'],
+          idField: 'id',
+          textField: 'name',
+          blobField: 'image_bytes',
+          blobExt: 'png',
+        })
     mounts[mount.path] = mount.mode === 'read' ? [resource, MountMode.READ] : resource
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })

@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import dataclasses
+from datetime import date
 
 import pytest
 
@@ -20,11 +21,12 @@ from mirage.accessor.base import NOOPAccessor
 from mirage.context import reset_current_session, set_current_session
 from mirage.shell.escapes import unescape_unquoted
 from mirage.types import HiddenPaths, PathSpec
+from mirage.utils import glob_walk
 from mirage.utils.glob_walk import (DEFAULT_MAX_GLOB_MATCHES, expand_pattern,
-                                    glob_pattern, has_glob, is_word_shaped,
-                                    literal_word, make_resolve_glob,
-                                    mark_escaped_globs, mark_globs,
-                                    resolve_glob_with, spell_match,
+                                    glob_pattern, glob_prefix, glob_span,
+                                    has_glob, is_word_shaped, literal_word,
+                                    make_resolve_glob, mark_escaped_globs,
+                                    mark_globs, resolve_glob_with, spell_match,
                                     unmark_globs)
 from mirage.workspace.session.session import Session
 
@@ -408,3 +410,52 @@ async def test_resolve_glob_with_all_hidden_falls_back_to_literal():
     assert result[0].resolved
     assert result[0].pattern is None
     assert result[0].virtual == "/notion/pages/Roadmap__uuid2/page.*"
+
+
+@pytest.mark.parametrize(
+    "pattern,expected",
+    [
+        ("2026-*", (date(2026, 1, 1), date(2027, 1, 1))),
+        ("2026-01-*", (date(2026, 1, 1), date(2026, 2, 1))),
+        ("2026-12-*", (date(2026, 12, 1), date(2027, 1, 1))),
+        ("2026-01-05*", (date(2026, 1, 5), date(2026, 1, 6))),
+        ("2026-01-05_*", (date(2026, 1, 5), date(2026, 1, 6))),
+        ("2026-01-?", (date(2026, 1, 1), date(2026, 2, 1))),
+        # No metacharacter at all is a literal name, not a span.
+        ("2026-01-05", None),
+        # A prefix that is not a date, an impossible date, and no glob.
+        ("chat*", None),
+        ("2026-13-*", None),
+        ("2026-02-30*", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_glob_span_reads_the_literal_date_prefix(pattern, expected):
+    assert glob_span(pattern) == expected
+
+
+@pytest.mark.parametrize(
+    "pattern,expected",
+    [
+        ("doc-1*", "doc-1"),
+        ("doc-1?.md", "doc-1"),
+        ("doc-1[0-9]", "doc-1"),
+        # A metacharacter first leaves nothing to narrow on, and a word with
+        # none at all is a literal name rather than a glob.
+        ("*.md", ""),
+        ("?abc*", ""),
+        ("doc-10.md", ""),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_glob_prefix_reads_the_literal_head(pattern, expected):
+    assert glob_prefix(pattern) == expected
+    assert glob_walk.has_glob_prefix(pattern or "") is bool(expected)
+
+
+def test_glob_prefix_restores_a_quoted_metacharacter():
+    # A quoted star travels under a private mark and stands for a literal
+    # star, so it belongs in the prefix as the character it names.
+    assert glob_prefix(mark_globs("*") + "ab*") == "*ab"

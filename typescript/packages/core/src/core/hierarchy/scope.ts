@@ -87,11 +87,21 @@ export class Scope {
  * the decoded dynamic segments by name. `resourcePath` is the raw path that
  * was classified. `scope` is the matched scope; null for root and invalid.
  */
+/**
+ * Where in the hierarchy a path landed.
+ *
+ * `pattern` is the glob the line typed for the directory's children, set only
+ * for a kind named in `patternKinds` and null everywhere else. A lister whose
+ * listing is a window moves that window to the span the glob asks for instead
+ * of filtering its own; every other consumer ignores the field, the way a
+ * command ignores the `CommandOpts` facts it does not read.
+ */
 export interface ScopeMatch {
   readonly kind: string
   readonly resourcePath: string
   readonly slots: Record<string, string>
   readonly scope: Scope | null
+  readonly pattern: string | null
 }
 
 export type DetectFn = (path: PathSpec | string) => ScopeMatch
@@ -204,14 +214,15 @@ export function makeDetectScope(scopes: readonly Scope[]): DetectFn {
   return function detectScope(path: PathSpec | string): ScopeMatch {
     const raw = path instanceof PathSpec ? path.mountPath : path
     const key = stripSlash(raw)
-    if (key === '') return { kind: ROOT, resourcePath: raw, slots: {}, scope: null }
+    if (key === '') return { kind: ROOT, resourcePath: raw, slots: {}, scope: null, pattern: null }
     const parts = key.split('/')
     if (parts.some((p) => p.startsWith('.'))) {
-      return { kind: INVALID, resourcePath: raw, slots: {}, scope: null }
+      return { kind: INVALID, resourcePath: raw, slots: {}, scope: null, pattern: null }
     }
     const matched = matchScope(scopes, parts)
-    if (matched === null) return { kind: INVALID, resourcePath: raw, slots: {}, scope: null }
+    if (matched === null)
+      return { kind: INVALID, resourcePath: raw, slots: {}, scope: null, pattern: null }
     const [scope, slots] = matched
-    return { kind: scope.kind, resourcePath: raw, slots, scope }
+    return { kind: scope.kind, resourcePath: raw, slots, scope, pattern: null }
   }
 }

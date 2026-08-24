@@ -453,3 +453,91 @@ async def test_readdir_message_entry_rendered_size_estimate_in_extra(
     # source message size and lands in extra, never in size.
     assert result.entry.size == len(message_json_bytes(raw))
     assert result.entry.extra["size_estimate"] == 54321
+
+
+@pytest.mark.asyncio
+async def test_label_glob_pushes_its_span_into_the_query(accessor, index):
+    # The bare listing is the most recent MAX_MESSAGES, so a glob for an
+    # older month can only be answered by querying that month.
+    await index.set_dir("/gmail", [
+        ("INBOX",
+         IndexEntry(
+             id="INBOX",
+             name="INBOX",
+             resource_type="gmail/label",
+             vfs_name="INBOX",
+         )),
+    ])
+    captured: list[str | None] = []
+
+    async def fake_list_messages(token_manager,
+                                 label_id=None,
+                                 query=None,
+                                 max_results=50):
+        captured.append(query)
+        return []
+
+    with patch("mirage.core.gmail.readdir.list_messages",
+               new=fake_list_messages):
+        result = await readdir(
+            accessor,
+            PathSpec(resource_path=mount_key("/gmail/INBOX/2026-01-*",
+                                             "/gmail"),
+                     virtual="/gmail/INBOX/2026-01-*",
+                     directory="/gmail/INBOX/",
+                     pattern="2026-01-*"), index)
+
+    assert result == []
+    assert captured == ["after:2026/01/01 before:2026/02/01"]
+
+
+@pytest.mark.asyncio
+async def test_a_globbed_label_listing_is_not_cached_as_the_label(
+        accessor, index):
+    await index.set_dir("/gmail", [
+        ("INBOX",
+         IndexEntry(
+             id="INBOX",
+             name="INBOX",
+             resource_type="gmail/label",
+             vfs_name="INBOX",
+         )),
+    ])
+    raw = {
+        "id": "m1",
+        "internalDate": "1767225600000",
+        "payload": {
+            "headers": [{
+                "name": "Subject",
+                "value": "Hi"
+            }]
+        },
+    }
+
+    async def fake_list_messages(token_manager,
+                                 label_id=None,
+                                 query=None,
+                                 max_results=50):
+        return [{"id": "m1"}] if query else []
+
+    with (patch("mirage.core.gmail.readdir.list_messages",
+                new=fake_list_messages),
+          patch("mirage.core.gmail.readdir.get_message_raw",
+                new=AsyncMock(return_value=raw))):
+        globbed = await readdir(
+            accessor,
+            PathSpec(resource_path=mount_key("/gmail/INBOX/2026-01-*",
+                                             "/gmail"),
+                     virtual="/gmail/INBOX/2026-01-*",
+                     directory="/gmail/INBOX/",
+                     pattern="2026-01-*"), index)
+        assert globbed == ["/gmail/INBOX/2026-01-01"]
+        # The label directory is untouched, so the unglobbed listing goes
+        # back to the recent window rather than answering with January.
+        assert (await index.list_dir("/gmail/INBOX")).entries is None
+        plain = await readdir(
+            accessor,
+            PathSpec(resource_path=mount_key("/gmail/INBOX", "/gmail"),
+                     virtual="/gmail/INBOX",
+                     directory="/gmail/INBOX"), index)
+    assert plain == []

@@ -1,0 +1,43 @@
+{
+  "cases": [
+    {
+      "id": "dc_window_glob_reaches_a_day_before_the_window",
+      "seq": 690240,
+      "targets": [
+        "discord"
+      ],
+      "command": "ls -d '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/'2026-03-15*",
+      "expect": {
+        "exit": 0,
+        "stdout": "/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/2026-03-15\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_window_glob_lists_a_whole_month_before_the_window",
+      "seq": 690241,
+      "targets": [
+        "discord"
+      ],
+      "command": "ls -d '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/'2026-03-* | wc -l",
+      "expect": {
+        "exit": 0,
+        "stdout": "31\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dc_window_glob_does_not_become_the_channel_listing",
+      "seq": 690242,
+      "targets": [
+        "discord"
+      ],
+      "command": "ls -d '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001/'2026-03-* > /dev/null && ls '/discord/Mirage HQ__100000000000000001/channels/general__200000000000000001' | head -1",
+      "expect": {
+        "exit": 0,
+        "stdout": "2026-05-04\n",
+        "stderr": ""
+      }
+    }
+  ]
+}
