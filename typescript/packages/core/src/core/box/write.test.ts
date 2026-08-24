@@ -26,6 +26,7 @@ vi.mock('./api.ts', async () => {
     deleteFile: vi.fn(),
     deleteFolder: vi.fn(),
     updateFile: vi.fn(),
+    updateFolder: vi.fn(),
     copyFile: vi.fn(),
   }
 })
@@ -60,8 +61,10 @@ const TREE: Record<string, ApiModule.BoxItem[]> = {
   '100': [
     { type: 'file', id: '200', name: 'a.txt', size: 5 },
     { type: 'folder', id: '300', name: 'sub' },
+    { type: 'folder', id: '400', name: 'dst' },
   ],
   '300': [],
+  '400': [],
 }
 
 function spec(virtual: string): PathSpec {
@@ -146,11 +149,11 @@ describe('box write ops', () => {
   })
 
   it('rename replaces an empty folder destination', async () => {
-    vi.mocked(api.updateFile).mockClear()
-    await rename(makeAccessor(), spec('/data/a.txt'), spec('/data/sub'))
-    expect(vi.mocked(api.deleteFolder)).toHaveBeenCalledWith(STUB_TM, '300', false)
-    expect(vi.mocked(api.updateFile)).toHaveBeenCalledWith(STUB_TM, '200', {
-      name: 'sub',
+    vi.mocked(api.updateFolder).mockClear()
+    await rename(makeAccessor(), spec('/data/sub'), spec('/data/dst'))
+    expect(vi.mocked(api.deleteFolder)).toHaveBeenCalledWith(STUB_TM, '400', false)
+    expect(vi.mocked(api.updateFolder)).toHaveBeenCalledWith(STUB_TM, '300', {
+      name: 'dst',
       parentId: '100',
     })
   })
@@ -158,21 +161,44 @@ describe('box write ops', () => {
   it('rename refuses a non-empty folder destination with ENOTEMPTY', async () => {
     // Box decides the emptiness, not us: recursive=false 409s on a folder
     // with children, and that is mv's "Directory not empty".
-    vi.mocked(api.updateFile).mockClear()
+    vi.mocked(api.updateFolder).mockClear()
     vi.mocked(api.deleteFolder).mockRejectedValueOnce(new BoxApiError('conflict', 409))
     await expect(
-      rename(makeAccessor(), spec('/data/a.txt'), spec('/data/sub')),
+      rename(makeAccessor(), spec('/data/sub'), spec('/data/dst')),
     ).rejects.toMatchObject({ code: 'ENOTEMPTY' })
-    expect(vi.mocked(api.updateFile)).not.toHaveBeenCalled()
+    expect(vi.mocked(api.updateFolder)).not.toHaveBeenCalled()
   })
 
   it('rename propagates a destination error Box did not call a conflict', async () => {
-    vi.mocked(api.updateFile).mockClear()
+    vi.mocked(api.updateFolder).mockClear()
     vi.mocked(api.deleteFolder).mockRejectedValueOnce(new BoxApiError('boom', 500))
     await expect(
-      rename(makeAccessor(), spec('/data/a.txt'), spec('/data/sub')),
+      rename(makeAccessor(), spec('/data/sub'), spec('/data/dst')),
     ).rejects.toBeInstanceOf(BoxApiError)
+    expect(vi.mocked(api.updateFolder)).not.toHaveBeenCalled()
+  })
+
+  it('rename refuses a file onto a folder with EISDIR', async () => {
+    // rename(2) answers EISDIR for a file onto a directory whether or not
+    // that directory has children, so the type check outranks emptiness and
+    // the folder is never deleted to find out.
+    vi.mocked(api.deleteFolder).mockClear()
+    vi.mocked(api.updateFile).mockClear()
+    await expect(
+      rename(makeAccessor(), spec('/data/a.txt'), spec('/data/sub')),
+    ).rejects.toMatchObject({ code: 'EISDIR' })
+    expect(vi.mocked(api.deleteFolder)).not.toHaveBeenCalled()
     expect(vi.mocked(api.updateFile)).not.toHaveBeenCalled()
+  })
+
+  it('rename refuses a folder onto a file with ENOTDIR', async () => {
+    vi.mocked(api.deleteFile).mockClear()
+    vi.mocked(api.updateFolder).mockClear()
+    await expect(
+      rename(makeAccessor(), spec('/data/sub'), spec('/data/a.txt')),
+    ).rejects.toMatchObject({ code: 'ENOTDIR' })
+    expect(vi.mocked(api.deleteFile)).not.toHaveBeenCalled()
+    expect(vi.mocked(api.updateFolder)).not.toHaveBeenCalled()
   })
 
   it('copy refuses a file onto an existing folder with EISDIR', async () => {

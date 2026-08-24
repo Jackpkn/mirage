@@ -148,18 +148,23 @@ async function clearDest(
   accessor: BoxAccessor,
   dst: PathSpec,
   dstParts: string[],
-  srcId: string,
+  src: BoxItem,
 ): Promise<void> {
   // GNU mv/cp overwrite; Box 409s on a name clash, so clear an existing dst.
-  // A file or an empty folder goes; a non-empty folder is mv's "Directory not
+  // A type mismatch is refused with rename(2)'s own errnos and outranks
+  // emptiness, since real rename answers EISDIR for a file onto a directory
+  // whether or not that directory has children. Only a folder gives way to a
+  // folder, and then only an empty one: a non-empty one is mv's "Directory not
   // empty", which recursive=false gets from Box for free, as rmdir does.
   const existing = await resolveItem(accessor, dstParts)
-  if (existing === null || existing.id === srcId) return
+  if (existing === null || existing.id === src.id) return
   const tm = accessor.tokenManager
   if (existing.type !== 'folder') {
+    if (src.type === 'folder') throw enotdir(dst.virtual)
     await deleteFile(tm, existing.id)
     return
   }
+  if (src.type !== 'folder') throw eisdir(dst.virtual)
   try {
     await deleteFolder(tm, existing.id, false)
   } catch (error) {
@@ -175,7 +180,7 @@ export async function rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec
   const dstParts = pathParts(dst)
   const dstParent = await resolveParentId(accessor, dstParts)
   if (dstParent === null) throw enoent(dst.virtual)
-  await clearDest(accessor, dst, dstParts, item.id)
+  await clearDest(accessor, dst, dstParts, item)
   const newName = dstParts[dstParts.length - 1] ?? ''
   if (item.type === 'folder')
     await updateFolder(tm, item.id, { name: newName, parentId: dstParent })
