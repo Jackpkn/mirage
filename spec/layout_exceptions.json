@@ -6,7 +6,6 @@
    "runtime/wasm": "The wasmtime WASI host. npm ships quickjs-emscripten and pyodide with their own hosts and python has no equivalent, so there is nothing to mirror. CLAUDE.md says do not port it.",
    "runtime/python/sandlock": "Confines the host python3 with Landlock and seccomp, both Linux kernel features with no browser analogue and no node binding to mirror (sandlock ships python and go SDKs over its C ABI, and no npm package). The TypeScript python tier reaches the host through runtime/python/local.ts, which could wrap the same CLI; mirror this directory there if that lands.",
    "bridge": "sync.py and thread.py exist to run an event loop on a worker thread for the FUSE callbacks, which python needs because its FUSE loop is threaded and node's is not.",
-   "nfs": "The NFS mount backend lands python-first (issue #888); the TypeScript adapter mirrors these modules in a follow-up PR, which removes this entry.",
    "agents/agno": "Ecosystem split: agno is a python-only framework.",
    "agents/camel": "Ecosystem split: camel is a python-only framework, and pyproject declares it conflicting with the openai extra.",
    "agents/openai_agents": "Ecosystem split: the openai-agents SDK is python-only.",
@@ -52,11 +51,6 @@
   "core/dropbox": {
    "typescript_only": {
     "_test_util": "The FakeDropboxRpc transport fake shared by rmdir.test.ts and rename.test.ts. TypeScript colocates tests with sources, so a shared test helper lands in the source directory; python keeps the same fake in tests/core/dropbox/conftest.py, which this gate does not scan. core/gdrive carries an identical _test_util.ts, still counted in the baseline rather than excused here."
-   }
-  },
-  "workspace": {
-   "python_only": {
-    "nfs": "NFSManager lands python-first (issue #888); workspace/nfs.ts mirrors it in the TypeScript PR, which removes this entry."
    }
   }
  }
