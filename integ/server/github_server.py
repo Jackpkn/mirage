@@ -1441,19 +1441,45 @@ class GitHubServer:
         return web.Response(body=data, content_type=content_type.split(";")[0])
 
     async def reset(self, request: web.Request) -> web.Response:
-        """Rebuild the seeded state, dropping every write since startup.
+        """Drop every write since startup, and optionally re-seed.
 
-        The write battery runs once per host against one shared process, so
-        without this the second host reads the first host's writes and the
-        two disagree over state rather than over behaviour.
+        An empty body restores the seed this fake is currently holding --
+        the command line's, until a reset replaces it. That is what the
+        write battery needs: it runs once per host against one shared
+        process, so without a reset the second host reads the first host's
+        writes and the two disagree over state rather than over behaviour.
+
+        A body replaces the seed, which is what a harness moving between
+        scenarios needs. This fake is the one whose launch state is not
+        empty -- its fixtures are git trees named on the command line -- so
+        "put back what the process started with" hands back the *previous*
+        scenario's repositories. Passing the next scenario's spec here is
+        the difference between resetting the fake and restarting it.
+
+        The new spec is kept, so a later empty reset replays *it* rather
+        than the command line: seed once when the scenario changes, then
+        reset freely within it.
 
         Args:
-            request (web.Request): the incoming request.
+            request (web.Request): the incoming request; an optional JSON
+                body of `{"repo": [...], "metadata": [...],
+                "commits": [...]}`, spelled as the command line spells
+                them.
 
         Returns:
             web.Response: 200 once the seed is back.
         """
-        del request
+        body = await request.json() if request.can_read_body else {}
+        if not isinstance(body, dict):
+            return web.json_response(
+                {"error": "reset body must be an "
+                 "object"}, status=400)
+        if body:
+            self.state.seed = (
+                list(body.get("repo") or []),
+                list(body.get("metadata") or []),
+                list(body.get("commits") or []),
+            )
         self.state.repos.clear()
         self.state.login = DEFAULT_LOGIN
         seed_state(self.state, *self.state.seed)
