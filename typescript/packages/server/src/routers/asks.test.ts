@@ -205,6 +205,11 @@ describe('asks router', () => {
       url: '/v1/workspaces/asks-filter/asks?sessionId=agent_b',
     })
     expect(one.json<AskRow[]>().map((a) => a.sessionId)).toEqual(['agent_b'])
+    const unknown = await app.inject({
+      method: 'GET',
+      url: '/v1/workspaces/asks-filter/asks?sessionId=nope',
+    })
+    expect(unknown.statusCode).toBe(404)
     await app.close()
   })
 
@@ -220,6 +225,12 @@ describe('asks router', () => {
       payload: { answer: 'ask' },
     })
     expect(asAsk.statusCode).toBe(422)
+
+    const noBody = await app.inject({
+      method: 'POST',
+      url: `/v1/workspaces/asks-err/asks/${askId}`,
+    })
+    expect(noBody.statusCode).toBe(422)
 
     const sessionDeny = await app.inject({
       method: 'POST',

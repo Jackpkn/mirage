@@ -202,6 +202,8 @@ async def test_list_asks_filters_by_session():
         assert {a["session_id"] for a in r.json()} == {"agent_a", "agent_b"}
         r = await client.get(f"/v1/workspaces/{wid}/asks?session_id=agent_b")
         assert [a["session_id"] for a in r.json()] == ["agent_b"]
+        r = await client.get(f"/v1/workspaces/{wid}/asks?session_id=nope")
+        assert r.status_code == 404, r.text
 
 
 @pytest.mark.asyncio

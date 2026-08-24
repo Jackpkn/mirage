@@ -79,6 +79,12 @@ async def list_asks(
     so the door only picks which query to run."""
     entry = _require_entry(request, workspace_id)
     await entry.runner.call(entry.runner.ws.ensure_sessions_loaded())
+    # The ledger reads a named session through SessionManager.get, which
+    # raises for an unknown id; a mistyped filter is the caller's error,
+    # answered in the sessions router's voice rather than as a 500.
+    if session_id and not any(s.session_id == session_id
+                              for s in entry.runner.ws.list_sessions()):
+        raise HTTPException(status_code=404, detail="session not found")
     decisions = entry.runner.ws.decisions
     records = (decisions.list(session_id)
                if include_settled else decisions.pending(session_id))

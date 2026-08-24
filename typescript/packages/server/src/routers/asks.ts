@@ -84,13 +84,20 @@ export function registerAsksRoutes(app: FastifyInstance, deps: AsksRoutesDeps): 
       const ws = deps.registry.get(wsId).runner.ws
       await ws.ensureSessionsLoaded()
       const sessionId = req.query.sessionId ?? ''
+      // The ledger reads a named session through SessionManager.get,
+      // which throws for an unknown id; a mistyped filter is the
+      // caller's error, answered in the sessions router's voice rather
+      // than as a 500.
+      if (sessionId !== '' && !ws.listSessions().some((s) => s.sessionId === sessionId)) {
+        return reply.status(404).send({ detail: 'session not found' })
+      }
       const records =
         req.query.all === 'true' ? ws.decisions.list(sessionId) : ws.decisions.pending(sessionId)
       return records.map(toResponse)
     },
   )
 
-  app.post<{ Params: WsAskParams; Body: AnswerAskBody }>(
+  app.post<{ Params: WsAskParams; Body: AnswerAskBody | undefined }>(
     '/v1/workspaces/:wsId/asks/:askId',
     async (req, reply) => {
       // Answer one waiting ask, allow or deny, and return the settled
@@ -101,11 +108,15 @@ export function registerAsksRoutes(app: FastifyInstance, deps: AsksRoutesDeps): 
       if (!deps.registry.has(wsId)) {
         return reply.status(404).send({ detail: 'workspace not found' })
       }
-      const answer = req.body.answer
+      // Fastify's generic type does not validate at runtime: a POST
+      // with no JSON body reaches here with req.body undefined, and
+      // that is the caller's 422, not a 500.
+      const body: AnswerAskBody = req.body ?? {}
+      const answer = body.answer
       if (answer !== 'allow' && answer !== 'deny') {
         return reply.status(422).send({ detail: "answer must be 'allow' or 'deny'" })
       }
-      const scope = req.body.scope ?? 'once'
+      const scope = body.scope ?? 'once'
       if (scope !== 'once' && scope !== 'session') {
         return reply.status(422).send({ detail: "scope must be 'once' or 'session'" })
       }
@@ -117,7 +128,7 @@ export function registerAsksRoutes(app: FastifyInstance, deps: AsksRoutesDeps): 
           .status(422)
           .send({ detail: 'a deny answers once; asking again raises a new record' })
       }
-      const note = req.body.note ?? ''
+      const note = body.note ?? ''
       const ws = deps.registry.get(wsId).runner.ws
       await ws.ensureSessionsLoaded()
       const held = ws.decisions.list()
