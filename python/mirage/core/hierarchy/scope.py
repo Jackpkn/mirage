@@ -89,11 +89,19 @@ class ScopeMatch:
         resource_path (str): the raw path that was classified.
         scope (Scope | None): the matched scope; None for root and
             invalid.
+        pattern (str | None): the glob the line typed for the directory's
+            children, set only for a kind named in ``pattern_kinds`` and
+            None everywhere else. A lister whose listing is a window
+            moves that window to the span the glob asks for instead of
+            filtering its own; every other consumer ignores the field,
+            the way a command ignores the ``CommandOpts`` facts it does
+            not read.
     """
     kind: str
     resource_path: str
     slots: dict[str, str] = field(default_factory=dict)
     scope: Scope | None = None
+    pattern: str | None = None
 
 
 def decode_slot(slot: Slot, part: str) -> dict[str, str] | None:

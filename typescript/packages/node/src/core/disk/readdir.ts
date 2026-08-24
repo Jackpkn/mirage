@@ -28,8 +28,14 @@ export async function readdir(
   path: PathSpec,
   index?: IndexCacheStore,
 ): Promise<string[]> {
-  const virtual = path.pattern !== null ? path.directory : path.mountPath
-  const mountPrefix = mountPrefixOf(path.virtual, path.resourcePath)
+  // A pattern spec addresses the directory whose entries the glob filters,
+  // and the rest of this function works in mount-relative space, so the
+  // directory has to be read off `dir` rather than off the virtual
+  // `directory` string (python strips the prefix by hand for the same
+  // reason).
+  const target = path.pattern !== null ? path.dir : path
+  const virtual = target.mountPath
+  const mountPrefix = mountPrefixOf(target.virtual, target.resourcePath)
   // Canonical key: no trailing slash (except root), or the same dir
   // indexes under two keys and cache hits return doubled-slash entries.
   const virtualKey = rstripSlash(mountPrefix + virtual) || '/'

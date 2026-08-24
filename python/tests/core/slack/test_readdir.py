@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -146,6 +146,38 @@ def test_date_range_capped_at_90():
     now = datetime.now(timezone.utc)
     dates = _date_range(now.timestamp(), 1000000000)
     assert len(dates) == 90
+
+
+def test_date_range_glob_span_escapes_the_cap():
+    # A day dir is real for any date the channel has existed for, so a
+    # glob older than the 90-day window must still list its days.
+    now = datetime.now(timezone.utc)
+    dates = _date_range(now.timestamp(),
+                        1000000000,
+                        span=(date(2010, 3, 1), date(2010, 4, 1)))
+    assert dates[0] == "2010-03-31"
+    assert dates[-1] == "2010-03-01"
+    assert len(dates) == 31
+
+
+def test_date_range_glob_span_is_clipped_at_both_ends():
+    # Nothing exists before the channel or after its newest message, so
+    # the span is intersected rather than taken as typed.
+    created = datetime(2010, 3, 10, tzinfo=timezone.utc).timestamp()
+    latest = datetime(2010, 3, 20, tzinfo=timezone.utc).timestamp()
+    dates = _date_range(latest,
+                        int(created),
+                        span=(date(2010, 3, 1), date(2010, 4, 1)))
+    assert dates[0] == "2010-03-20"
+    assert dates[-1] == "2010-03-10"
+
+
+def test_date_range_glob_span_outside_the_channel_is_empty():
+    created = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
+    latest = datetime(2020, 1, 5, tzinfo=timezone.utc).timestamp()
+    assert _date_range(latest,
+                       int(created),
+                       span=(date(2010, 3, 1), date(2010, 4, 1))) == []
 
 
 @pytest.mark.asyncio

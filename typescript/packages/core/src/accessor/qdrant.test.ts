@@ -109,3 +109,58 @@ describe('QdrantAccessor index auto-create', () => {
     await expect(acc.rowsMatching('c', { code: '100' }, [], 100)).rejects.toThrow('boom')
   })
 })
+
+const WIDE = 600
+const CAP = 5
+
+function widePoints(): { id: number; payload: { code: string; name: string } }[] {
+  const points = []
+  for (let i = 1; i <= WIDE; i += 1)
+    points.push({ id: i, payload: { code: 'all', name: `n${String(i)}` } })
+  return points
+}
+
+function pagingClient(state: { pages: number }) {
+  const points = widePoints()
+  return {
+    scroll(_collection: string, opts: { limit: number; offset: number | null }) {
+      state.pages += 1
+      const start = opts.offset ?? 0
+      const window = points.slice(start, start + opts.limit)
+      const next = start + opts.limit < points.length ? start + opts.limit : null
+      return Promise.resolve({ points: window, next_page_offset: next })
+    },
+    createPayloadIndex(_collection: string, _opts: object) {
+      return Promise.resolve()
+    },
+  }
+}
+
+function wideAccessor(client: unknown): QdrantAccessor {
+  const acc = new QdrantAccessor(
+    resolveQdrantConfig({ url: 'http://x', collection: 'c', idField: 'id', maxRows: CAP }),
+  )
+  ;(acc as unknown as { client: unknown }).client = client
+  return acc
+}
+
+describe('QdrantAccessor prefix scroll', () => {
+  it('bounds the scroll by matches, paging past the cap', async () => {
+    // Qdrant has no prefix condition for a point id, so the only way to reach
+    // a row past the cap is to keep paging and test each page here. Matches
+    // 45 and 450..453 straddle the first page boundary.
+    const state = { pages: 0 }
+    const rows = await wideAccessor(pagingClient(state)).rowsMatching('c', {}, [], CAP, '45')
+
+    expect(rows.map((r) => r.id)).toEqual([45, 450, 451, 452, 453])
+    expect(state.pages).toBeGreaterThan(1)
+  })
+
+  it('bounds the scroll by points when no prefix is given', async () => {
+    const state = { pages: 0 }
+    const rows = await wideAccessor(pagingClient(state)).rowsMatching('c', {}, [], CAP)
+
+    expect(rows.map((r) => r.id)).toEqual([1, 2, 3, 4, 5])
+    expect(state.pages).toBe(1)
+  })
+})

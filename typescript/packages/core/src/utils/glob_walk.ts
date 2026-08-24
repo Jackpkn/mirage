@@ -22,6 +22,129 @@ import { compareCodePoints } from './sort.ts'
 
 export const GLOB_CHARS = ['*', '?', '[']
 
+function isoDay(year: number, month: number, date: number): string {
+  const mm = String(month).padStart(2, '0')
+  const dd = String(date).padStart(2, '0')
+  return `${String(year)}-${mm}-${dd}`
+}
+
+function isValidDate(year: number, month: number, date: number): boolean {
+  if (month < 1 || month > 12 || date < 1) return false
+  const d = new Date(Date.UTC(year, month - 1, date))
+  return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === date
+}
+
+function parseFixedInt(s: string | undefined, expectedLength: number): number | null {
+  if (s?.length !== expectedLength || !/^\d+$/.test(s)) return null
+  return Number.parseInt(s, 10)
+}
+
+/**
+ * Whether a glob names a date range a windowed lister can move to.
+ *
+ * The kit's `patternKinds` table holds one of these per kind: a glob it
+ * answers true for reaches the lister and bypasses the index, and any other
+ * glob is filtered out of the ordinary cached listing.
+ */
+export function hasGlobSpan(pattern: string): boolean {
+  return globSpan(pattern) !== null
+}
+
+/**
+ * Whether a glob starts with literal text a query can narrow on.
+ *
+ * The `patternKinds` twin of `hasGlobSpan` for a backend whose window is a
+ * row cap rather than a date range: the literal prefix becomes a prefix match
+ * in the query, so the cap covers the region the line named instead of the
+ * head of the table.
+ */
+export function hasGlobPrefix(pattern: string): boolean {
+  return globPrefix(pattern) !== ''
+}
+
+/**
+ * The literal text a glob starts with, before its first metacharacter.
+ *
+ * A quoted glob character travels under a private mark and stands for that
+ * character literally, so the marks are restored here: `'*'ab*` asks for
+ * names starting with a real star.
+ */
+export function globPrefix(pattern: string | null | undefined): string {
+  if (!pattern) return ''
+  let metaIndex = -1
+  for (const ch of GLOB_CHARS) {
+    const idx = pattern.indexOf(ch)
+    if (idx !== -1 && (metaIndex === -1 || idx < metaIndex)) metaIndex = idx
+  }
+  if (metaIndex === -1) return ''
+  return unmarkGlobs(pattern.slice(0, metaIndex))
+}
+
+/**
+ * The literal prefix a glob puts on the stem of a leaf name.
+ *
+ * A leaf is a stem plus one of the renderer's suffixes, so a literal that has
+ * run into a suffix says nothing about the stem and the part that ran in is
+ * dropped: `12*.md` narrows to `12`, and `doc-1.m*` narrows to `doc-1` rather
+ * than asking for stems that start `doc-1.m`. Only a tail that spells the head
+ * of a suffix is dropped, which is what keeps a stem that contains a dot:
+ * `acct.2026*` narrows to `acct.2026`, where cutting at the first dot would
+ * narrow to `acct` and let the rows nobody asked for eat the window.
+ */
+export function globStemPrefix(pattern: string | null | undefined, suffixes: string[]): string {
+  const literal = globPrefix(pattern)
+  let reached = 0
+  for (const suffix of suffixes) {
+    for (let size = 1; size <= suffix.length; size += 1) {
+      if (literal.endsWith(suffix.slice(0, size))) reached = Math.max(reached, size)
+    }
+  }
+  return literal.slice(0, literal.length - reached)
+}
+
+/**
+ * The half-open range of dates a date-prefixed glob asks for.
+ *
+ * The literal prefix before the first metacharacter is read as a year, a
+ * month or a day, so `2026-*` spans a year and `2026-01-05*` one day. This is
+ * what lets a windowed listing honour a glob instead of filtering its own
+ * window: the backend moves the window to the span the line named. Dates are
+ * floating `YYYY-MM-DD`, since a caller bucketing in a named time zone has to
+ * build its own instants from them; UTC instants would shift the window by
+ * the offset.
+ */
+export function globSpan(pattern: string | null | undefined): [string, string] | null {
+  const literal = globPrefix(pattern)
+  if (literal === '') return null
+  const parts = literal.replace(/[_-]+$/, '').split('-')
+  if (parts.length === 1) {
+    const year = parseFixedInt(parts[0], 4)
+    if (year === null) return null
+    return [isoDay(year, 1, 1), isoDay(year + 1, 1, 1)]
+  }
+  if (parts.length === 2) {
+    const year = parseFixedInt(parts[0], 4)
+    const month = parseFixedInt(parts[1], 2)
+    if (year === null || month === null) return null
+    if (!isValidDate(year, month, 1)) return null
+    if (month === 12) return [isoDay(year, month, 1), isoDay(year + 1, 1, 1)]
+    return [isoDay(year, month, 1), isoDay(year, month + 1, 1)]
+  }
+  if (parts.length === 3) {
+    const year = parseFixedInt(parts[0], 4)
+    const month = parseFixedInt(parts[1], 2)
+    const date = parseFixedInt(parts[2], 2)
+    if (year === null || month === null || date === null) return null
+    if (!isValidDate(year, month, date)) return null
+    const next = new Date(Date.UTC(year, month - 1, date) + 86400000)
+    return [
+      isoDay(year, month, date),
+      isoDay(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate()),
+    ]
+  }
+  return null
+}
+
 // A quoted glob character keeps travelling as a character, under a
 // private mark, because bash tracks quoting per character and not per
 // word: `'*'?.txt` still globs, on the `?` alone, and matches only a
@@ -295,7 +418,18 @@ export async function expandPattern<A, I>(
     const nextLevel: string[] = []
     const matcher = globPattern(seg)
     for (const parent of level) {
-      const spec = PathSpec.fromStrPath(parent, rekey(path.virtual, path.resourcePath, parent))
+      // Directory-shaped, carrying the segment as the pattern: a backend
+      // whose listing for this level is a bounded window moves the window to
+      // what the glob asks for instead of filtering its own (gcal, gdocs and
+      // the dated-message channels). Every other readdir reads the directory
+      // off the same spec and ignores the field. A literal segment carries
+      // none, so it keeps its warm listing.
+      const spec = new PathSpec({
+        virtual: parent,
+        directory: parent,
+        resourcePath: rekey(path.virtual, path.resourcePath, parent),
+        pattern: hasGlob(seg) ? seg : null,
+      })
       let entries: string[]
       try {
         entries = await readdir(accessor, spec, index)

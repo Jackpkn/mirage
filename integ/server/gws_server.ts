@@ -1742,14 +1742,20 @@ function labelByName(name: string): GmailLabel | undefined {
   )
 }
 
+// A written date is midnight UTC here, where Gmail reads it as midnight PST;
+// the epoch-second form the API documents for naming an instant is exact, and
+// is the form mirage emits, so both are accepted.
 function gmailDateMs(token: string): number {
   const m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(token)
-  if (m === null) return NaN
-  return Date.UTC(parseInt(m[1] as string, 10), parseInt(m[2] as string, 10) - 1, parseInt(m[3] as string, 10))
+  if (m !== null) {
+    return Date.UTC(parseInt(m[1] as string, 10), parseInt(m[2] as string, 10) - 1, parseInt(m[3] as string, 10))
+  }
+  if (/^\d+$/.test(token)) return parseInt(token, 10) * 1000
+  return NaN
 }
 
 // AND-only Gmail query subset: label:, from:, to:, subject:, is:unread,
-// is:read, after:YYYY/MM/DD, before:YYYY/MM/DD, and bare terms matching
+// is:read, after:<date|epoch>, before:<date|epoch>, and bare terms matching
 // subject or body as case-insensitive substrings.
 function matchGmailQuery(msg: GmailMessage, q: string): boolean {
   for (const token of q.split(/\s+/)) {

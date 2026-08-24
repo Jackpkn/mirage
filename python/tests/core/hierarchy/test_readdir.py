@@ -20,6 +20,7 @@ from mirage.cache.index import IndexEntry
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hierarchy.readdir import DirListing, make_readdir
 from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.types import PathSpec
 from tests.core.hierarchy.conftest import (FakeAccessor, detect_scope,
                                            list_notes, list_rooms, room_guard,
                                            spec)
@@ -249,3 +250,84 @@ def test_a_kind_in_several_lister_tables_fails_at_build():
                      entry_listers={"room_day": _atts_fallback},
                      parent_entry_listers={"room_day": _days_by_room},
                      static_root=("rooms", ))
+
+
+def _any_pattern(pattern: str) -> bool:
+    return True
+
+
+async def _list_windowed(accessor: FakeAccessor,
+                         match: ScopeMatch) -> DirListing:
+    # Stands in for a bounded listing: without a glob it reports the tail
+    # of the tree, with one it reports exactly what the glob asked for.
+    accessor.calls.append(f"window:{match.pattern}")
+    names = ["c.json"] if match.pattern is None else [match.pattern]
+    entries = [(n,
+                IndexEntry(id=n, name=n, resource_type="fake/note",
+                           vfs_name=n)) for n in names]
+    return DirListing(entries=entries, partial=match.pattern is not None)
+
+
+WINDOW_READDIR = make_readdir(
+    detect_scope,
+    listers={
+        "rooms": list_rooms,
+        "room": _list_windowed,
+    },
+    static_root=("rooms", ),
+    pattern_kinds={"room": _any_pattern},
+)
+
+
+def _globbed(mount_path: str, pattern: str) -> PathSpec:
+    base = spec(mount_path)
+    return PathSpec(virtual=base.virtual + "/" + pattern,
+                    directory=base.virtual + "/",
+                    resource_path=base.resource_path + "/" + pattern,
+                    pattern=pattern)
+
+
+def test_a_pattern_kind_hands_the_glob_to_its_lister(accessor):
+    out = asyncio.run(
+        WINDOW_READDIR(accessor, _globbed("/rooms/red", "z.json")))
+    assert out == ["/h/rooms/red/z.json"]
+    assert accessor.calls == ["window:z.json"]
+
+
+def test_an_undeclared_kind_never_sees_a_pattern(accessor):
+    plain = make_readdir(detect_scope,
+                         listers={
+                             "rooms": list_rooms,
+                             "room": _list_windowed
+                         },
+                         static_root=("rooms", ))
+    out = asyncio.run(plain(accessor, _globbed("/rooms/red", "z.json")))
+    assert out == ["/h/rooms/red/c.json"]
+    assert accessor.calls == ["window:None"]
+
+
+def test_a_partial_listing_is_not_cached_as_the_directory(accessor):
+    index = RAMIndexCacheStore()
+    asyncio.run(
+        WINDOW_READDIR(accessor, _globbed("/rooms/red", "z.json"),
+                       index=index))
+    # The entries are real, so they are cached one by one; the directory
+    # is not, so a bare listing still asks the backend.
+    assert asyncio.run(index.get("/h/rooms/red/z.json")).entry is not None
+    assert asyncio.run(index.list_dir("/h/rooms/red")).entries is None
+    out = asyncio.run(WINDOW_READDIR(accessor, spec("/rooms/red"),
+                                     index=index))
+    assert out == ["/h/rooms/red/c.json"]
+    assert accessor.calls == ["window:z.json", "window:None"]
+
+
+def test_a_globbed_listing_does_not_read_a_warm_window(accessor):
+    # The cached listing is the window itself, so answering the glob from
+    # it would hide everything the window leaves out.
+    index = RAMIndexCacheStore()
+    asyncio.run(WINDOW_READDIR(accessor, spec("/rooms/red"), index=index))
+    out = asyncio.run(
+        WINDOW_READDIR(accessor, _globbed("/rooms/red", "z.json"),
+                       index=index))
+    assert out == ["/h/rooms/red/z.json"]
+    assert accessor.calls == ["window:None", "window:z.json"]

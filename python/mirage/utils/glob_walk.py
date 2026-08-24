@@ -15,6 +15,7 @@
 import dataclasses
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import date, timedelta
 from typing import Any, Protocol
 
 from mirage.accessor.base import Accessor
@@ -28,6 +29,132 @@ from mirage.utils.key_prefix import rekey
 logger = logging.getLogger(__name__)
 
 GLOB_CHARS = ("*", "?", "[")
+
+
+def _meta_index(pattern: str) -> int:
+    first = -1
+    for ch in GLOB_CHARS:
+        idx = pattern.find(ch)
+        if idx != -1 and (first == -1 or idx < first):
+            first = idx
+    return first
+
+
+def has_glob_span(pattern: str) -> bool:
+    """Whether a glob names a date range a windowed lister can move to.
+
+    The kit's ``pattern_kinds`` table holds one of these per kind: a glob
+    it answers True for reaches the lister and bypasses the index, and
+    any other glob is filtered out of the ordinary cached listing.
+
+    Args:
+        pattern (str): the glob as typed.
+    """
+    return glob_span(pattern) is not None
+
+
+def has_glob_prefix(pattern: str) -> bool:
+    """Whether a glob starts with literal text a query can narrow on.
+
+    The ``pattern_kinds`` twin of ``has_glob_span`` for a backend whose
+    window is a row cap rather than a date range: the literal prefix
+    becomes a prefix match in the query, so the cap covers the region
+    the line named instead of the head of the table.
+
+    Args:
+        pattern (str): the glob as typed.
+    """
+    return bool(glob_prefix(pattern))
+
+
+def glob_prefix(pattern: str | None) -> str:
+    """The literal text a glob starts with, before its first metacharacter.
+
+    A quoted glob character travels under a private mark and stands for
+    that character literally, so the marks are restored here: `'*'ab*`
+    asks for names starting with a real star.
+
+    Args:
+        pattern (str | None): the glob as typed, or None.
+
+    Returns:
+        str: the literal prefix, empty when the glob opens with a
+        metacharacter or carries none at all.
+    """
+    if not pattern:
+        return ""
+    meta_index = _meta_index(pattern)
+    if meta_index == -1:
+        return ""
+    return unmark_globs(pattern[:meta_index])
+
+
+def glob_stem_prefix(pattern: str | None, suffixes: Sequence[str]) -> str:
+    """The literal prefix a glob puts on the stem of a leaf name.
+
+    A leaf is a stem plus one of the renderer's suffixes, so a literal
+    that has run into a suffix says nothing about the stem and the part
+    that ran in is dropped: `12*.md` narrows to `12`, and `doc-1.m*`
+    narrows to `doc-1` rather than asking for stems that start
+    `doc-1.m`. Only a tail that spells the head of a suffix is dropped,
+    which is what keeps a stem that contains a dot: `acct.2026*` narrows
+    to `acct.2026`, where cutting at the first dot would narrow to
+    `acct` and let the rows nobody asked for eat the window.
+
+    Args:
+        pattern (str | None): the glob as typed, or None.
+        suffixes (Sequence[str]): the suffixes a leaf name can carry.
+
+    Returns:
+        str: the literal stem prefix, empty when there is none.
+    """
+    literal = glob_prefix(pattern)
+    reached = 0
+    for suffix in suffixes:
+        for size in range(1, len(suffix) + 1):
+            if literal.endswith(suffix[:size]):
+                reached = max(reached, size)
+    return literal[:len(literal) - reached]
+
+
+def glob_span(pattern: str | None) -> tuple[date, date] | None:
+    """The half-open range of dates a date-prefixed glob asks for.
+
+    The literal prefix before the first metacharacter is read as a year,
+    a month or a day, so ``2026-*`` spans a year and ``2026-01-05*`` one
+    day. This is what lets a windowed listing honour a glob instead of
+    filtering its own window: the backend moves the window to the span
+    the line named.
+
+    Args:
+        pattern (str | None): the glob as typed, or None.
+
+    Returns:
+        tuple[date, date] | None: (start, end) with end exclusive, or
+        None when the glob does not start with a date prefix.
+    """
+    literal = glob_prefix(pattern)
+    if not literal:
+        return None
+    parts = literal.rstrip("_-").split("-")
+    try:
+        if len(parts) == 1 and len(parts[0]) == 4:
+            year = int(parts[0])
+            return date(year, 1, 1), date(year + 1, 1, 1)
+        if len(parts) == 2 and len(parts[0]) == 4 and len(parts[1]) == 2:
+            year, month = int(parts[0]), int(parts[1])
+            start = date(year, month, 1)
+            if month == 12:
+                return start, date(year + 1, 1, 1)
+            return start, date(year, month + 1, 1)
+        if (len(parts) == 3 and len(parts[0]) == 4 and len(parts[1]) == 2
+                and len(parts[2]) == 2):
+            start = date(int(parts[0]), int(parts[1]), int(parts[2]))
+            return start, start + timedelta(days=1)
+    except ValueError:
+        return None
+    return None
+
 
 # A quoted glob character keeps travelling as a character, under a
 # private mark, because bash tracks quoting per character and not per
@@ -286,8 +413,18 @@ async def expand_pattern(
     for seg in segments[first:]:
         next_level: list[str] = []
         for parent in level:
-            spec = PathSpec.from_str_path(
-                parent, rekey(path.virtual, path.resource_path, parent))
+            # Directory-shaped, carrying the segment as the pattern: a
+            # backend whose listing for this level is a bounded window
+            # moves the window to what the glob asks for instead of
+            # filtering its own (gcal, gdocs and the dated-message
+            # channels). Every other readdir reads the directory off the
+            # same spec and ignores the field. A literal segment carries
+            # none, so it keeps its warm listing.
+            spec = PathSpec(virtual=parent,
+                            directory=parent,
+                            resource_path=rekey(path.virtual,
+                                                path.resource_path, parent),
+                            pattern=seg if has_glob(seg) else None)
             try:
                 entries = await readdir(accessor, spec, index)
             except (FileNotFoundError, NotADirectoryError):

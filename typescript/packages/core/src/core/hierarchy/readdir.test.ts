@@ -334,3 +334,73 @@ describe('hierarchy makeReaddir parent-entry listers', () => {
     ).toThrow('kinds in several lister tables')
   })
 })
+
+// Stands in for a bounded listing: without a glob it reports the tail of the
+// tree, with one it reports exactly what the glob asked for.
+const listWindowed: Lister<FakeAccessor> = (accessor, match) => {
+  accessor.calls.push(`window:${match.pattern ?? 'null'}`)
+  const names = match.pattern === null ? ['c.json'] : [match.pattern]
+  const entries = names.map((n): [string, IndexEntry] => [
+    n,
+    new IndexEntry({ id: n, name: n, resourceType: 'fake/note', vfsName: n }),
+  ])
+  return Promise.resolve({ entries, seeds: {}, partial: match.pattern !== null })
+}
+
+const anyPattern = (_pattern: string): boolean => true
+
+const WINDOW_READDIR = makeReaddir<FakeAccessor>(detectScope, {
+  listers: { rooms: listRooms, room: listWindowed },
+  staticRoot: ['rooms'],
+  patternKinds: { room: anyPattern },
+})
+
+function globbed(mountPath: string, pattern: string): PathSpec {
+  const base = spec(mountPath)
+  return new PathSpec({
+    virtual: `${base.virtual}/${pattern}`,
+    directory: `${base.virtual}/`,
+    resourcePath: `${base.resourcePath}/${pattern}`,
+    pattern,
+  })
+}
+
+describe('a windowed listing honours a glob', () => {
+  it('hands the glob to a declared kind, and nothing to an undeclared one', async () => {
+    const accessor = new FakeAccessor()
+    expect(await WINDOW_READDIR(accessor, globbed('/rooms/red', 'z.json'))).toEqual([
+      '/h/rooms/red/z.json',
+    ])
+    const plain = makeReaddir<FakeAccessor>(detectScope, {
+      listers: { rooms: listRooms, room: listWindowed },
+      staticRoot: ['rooms'],
+    })
+    expect(await plain(accessor, globbed('/rooms/red', 'z.json'))).toEqual(['/h/rooms/red/c.json'])
+    expect(accessor.calls).toEqual(['window:z.json', 'window:null'])
+  })
+
+  it('does not cache a partial listing as the directory', async () => {
+    const accessor = new FakeAccessor()
+    const index = new RAMIndexCacheStore()
+    await WINDOW_READDIR(accessor, globbed('/rooms/red', 'z.json'), index)
+    // The entries are real, so they are cached one by one; the directory is
+    // not, so a bare listing still asks the backend.
+    expect((await index.get('/h/rooms/red/z.json')).entry).not.toBeNull()
+    const listed = await index.listDir('/h/rooms/red')
+    expect(listed.entries === undefined || listed.entries === null).toBe(true)
+    expect(await WINDOW_READDIR(accessor, spec('/rooms/red'), index)).toEqual([
+      '/h/rooms/red/c.json',
+    ])
+    expect(accessor.calls).toEqual(['window:z.json', 'window:null'])
+  })
+
+  it('does not answer a glob from a warm window', async () => {
+    const accessor = new FakeAccessor()
+    const index = new RAMIndexCacheStore()
+    await WINDOW_READDIR(accessor, spec('/rooms/red'), index)
+    expect(await WINDOW_READDIR(accessor, globbed('/rooms/red', 'z.json'), index)).toEqual([
+      '/h/rooms/red/z.json',
+    ])
+    expect(accessor.calls).toEqual(['window:null', 'window:z.json'])
+  })
+})

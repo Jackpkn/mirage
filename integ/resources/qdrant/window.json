@@ -1,0 +1,69 @@
+{
+  "cases": [
+    {
+      "id": "qdrant_window_listing_is_capped",
+      "seq": 640400,
+      "targets": [
+        "qdrant-window"
+      ],
+      "command": "ls /db/all/ | wc -l",
+      "expect": {
+        "exit": 0,
+        "stdout": "10\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "qdrant_window_row_resolves_past_the_cap",
+      "seq": 640401,
+      "targets": [
+        "qdrant-window"
+      ],
+      "command": "cat /db/all/599.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "row 599\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "qdrant_window_glob_pages_past_the_cap",
+      "seq": 640402,
+      "targets": [
+        "qdrant-window"
+      ],
+      "command": "ls -d /db/all/45*.json",
+      "expect": {
+        "exit": 0,
+        "stdout": "/db/all/45.json\n/db/all/450.json\n/db/all/451.json\n/db/all/452.json\n/db/all/453.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "qdrant_window_glob_does_not_become_the_listing",
+      "seq": 640403,
+      "targets": [
+        "qdrant-window"
+      ],
+      "command": "ls -d /db/all/45*.json > /dev/null && ls /db/all/ | head -2",
+      "expect": {
+        "exit": 0,
+        "stdout": "1.json\n1.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "qdrant_window_glob_with_no_literal_head_stays_capped",
+      "seq": 640404,
+      "targets": [
+        "qdrant-window"
+      ],
+      "command": "ls -d /db/all/*99.json",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '/db/all/*99.json': No such file or directory\n"
+      }
+    }
+  ]
+}

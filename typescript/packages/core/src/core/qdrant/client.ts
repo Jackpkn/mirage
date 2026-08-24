@@ -38,6 +38,22 @@ export function buildFilter(filters: Record<string, string>): Record<string, unk
   }
 }
 
+export type PointTest = (point: QdrantPoint) => boolean
+
+/** Keep points whose id starts with a literal name prefix. */
+export function idPrefixTest(prefix: string): PointTest {
+  return (point) => String(point.id).startsWith(prefix)
+}
+
+/** Keep points whose payload value starts with a literal prefix. */
+export function valuePrefixTest(column: string, prefix: string): PointTest {
+  return (point) => {
+    const value = point.payload?.[column]
+    if (value === null || value === undefined) return false
+    return String(value as string | number | boolean).startsWith(prefix)
+  }
+}
+
 export function pointToRow(point: QdrantPoint, idField: string): QdrantRow {
   const payload = point.payload ?? {}
   const row: QdrantRow = { ...payload }

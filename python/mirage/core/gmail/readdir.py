@@ -18,7 +18,8 @@ from typing import Any
 
 from mirage.accessor.gmail import GmailAccessor
 from mirage.cache.index import IndexEntry
-from mirage.core.gmail.date_query import date_dir_to_gmail_query
+from mirage.core.gmail.date_query import (date_dir_to_gmail_query,
+                                          span_to_gmail_query)
 from mirage.core.gmail.labels import list_labels
 from mirage.core.gmail.messages import (_extract_attachments, _extract_header,
                                         get_message_raw, list_messages,
@@ -26,6 +27,7 @@ from mirage.core.gmail.messages import (_extract_attachments, _extract_header,
 from mirage.core.gmail.scope import detect_scope
 from mirage.core.hierarchy.readdir import DirListing, Listed, make_readdir
 from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.utils.glob_walk import glob_span, has_glob_span
 from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len, sanitize_label
 
 TITLE_MAX = 80
@@ -164,9 +166,15 @@ async def _list_root(accessor: GmailAccessor, match: ScopeMatch) -> Listed:
 
 async def _list_label(accessor: GmailAccessor, match: ScopeMatch,
                       own: IndexEntry) -> Listed:
+    # The bare listing is a window, the most recent MAX_MESSAGES, so the
+    # day dirs it mints are whichever days those fell on. A glob pushes
+    # its own span into the query instead of filtering that window,
+    # which is the only way to reach a day older than it.
+    span = glob_span(match.pattern)
     msg_ids = await list_messages(
         accessor.token_manager,
         label_id=own.id,
+        query=span_to_gmail_query(*span) if span else None,
         max_results=MAX_MESSAGES,
     )
     groups = await _group_by_date(accessor, msg_ids)
@@ -185,7 +193,7 @@ async def _list_label(accessor: GmailAccessor, match: ScopeMatch,
         seeds[date_str] = children
         for att_dir, att_entries in att_seeds.items():
             seeds[f"{date_str}/{att_dir}"] = att_entries
-    return DirListing(entries=entries, seeds=seeds)
+    return DirListing(entries=entries, seeds=seeds, partial=span is not None)
 
 
 async def _list_day(accessor: GmailAccessor, match: ScopeMatch,
@@ -221,4 +229,5 @@ readdir = make_readdir(
         "attachment_dir": _list_attachment_dir,
     },
     parent_entry_listers={"day": _list_day},
+    pattern_kinds={"label": has_glob_span},
 )
