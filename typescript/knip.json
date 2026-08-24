@@ -3,7 +3,7 @@
   "ignoreBinaries": ["diskutil", "fusermount", "smolvm"],
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.ts"]
+      "entry": ["scripts/*.ts", "packages/mirage-nfs/smoke.mjs"]
     },
     "packages/node": {
       "ignoreDependencies": [
