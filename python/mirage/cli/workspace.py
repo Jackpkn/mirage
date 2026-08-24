@@ -22,7 +22,7 @@ import yaml
 from mirage.cli.client import make_client
 from mirage.cli.output import (emit, fail, format_age, format_table,
                                handle_response)
-from mirage.config import _interpolate_env, load_config
+from mirage.config import _absolutize_scripts, _interpolate_env, load_config
 
 app = typer.Typer(no_args_is_help=True, help="Manage workspaces.")
 
@@ -38,12 +38,20 @@ def _resolve_config(path: Path) -> dict[str, Any]:
     they sourced ``.env.development`` etc.) is the source of truth.
     Missing vars fail fast here rather than producing a confusing
     error after a network round-trip.
+
+    Validated here, but sent in the document's own spelling, the way
+    the TypeScript CLI sends it: the daemon runs the same check, and
+    the compiled dump does not re-validate (a CommandRule dumps its
+    compiler-set ``mount`` field, which the document grammar refuses
+    as never typed).
     """
     try:
-        cfg = load_config(path)
+        load_config(path)
     except ValueError as e:
         fail(str(e), exit_code=2)
-    return cfg.model_dump()
+    resolved = _resolve_config_arg(path)
+    _absolutize_scripts(resolved, path.resolve().parent)
+    return resolved
 
 
 def _resolve_config_arg(path: Path) -> dict[str, Any]:
@@ -101,6 +109,19 @@ def _format_workspace_detail(detail: dict[str, Any]) -> str:
             shown = "n/a (not tracked)" if value is None else value
             lines.append(f"  {key:<16} {shown}")
     return "\n".join(lines)
+
+
+def _format_asks(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "No asks."
+    rows = [[
+        item["id"],
+        item["session_id"],
+        " ".join([item["command"], *item["argv"]]),
+        item["outcome"] or "pending",
+        item["reason"],
+    ] for item in items]
+    return format_table(["ID", "SESSION", "COMMAND", "STATUS", "REASON"], rows)
 
 
 def _format_version_log(versions: list[dict[str, Any]]) -> str:
@@ -329,6 +350,75 @@ def diff_cmd(
                            f"/v1/workspaces/{workspace_id}/diff",
                            params=params)
     emit(handle_response(r), human=_format_diff)
+
+
+@app.command("list-asks")
+def list_asks_cmd(
+    workspace_id: str = typer.Argument(..., help="Workspace id."),
+    session: str = typer.Option("",
+                                "--session",
+                                help="Only this session's asks."),
+    all_records: bool = typer.Option(
+        False,
+        "--all",
+        help="Include settled decisions, not just pending asks."),
+) -> None:
+    """List pending asks (every decision with --all)."""
+    params: dict[str, str] = {}
+    if session:
+        params["session_id"] = session
+    if all_records:
+        params["all"] = "true"
+    with make_client() as client:
+        client.ensure_running(allow_spawn=False)
+        r = client.request("GET",
+                           f"/v1/workspaces/{workspace_id}/asks",
+                           params=params)
+    emit(handle_response(r), human=_format_asks)
+
+
+@app.command("allow")
+def allow_cmd(
+    workspace_id: str = typer.Argument(..., help="Workspace id."),
+    ask_id: str = typer.Argument(...,
+                                 help="Ask id, as quoted in the refusal."),
+    scope: str = typer.Option(
+        "once",
+        "--scope",
+        help="once answers the exact line; session answers every line "
+        "the rule covers."),
+    note: str = typer.Option("",
+                             "--note",
+                             help="What to record alongside the answer."),
+) -> None:
+    """Allow a pending ask; the retry of the asked line passes."""
+    body = {"answer": "allow", "scope": scope, "note": note}
+    with make_client() as client:
+        client.ensure_running(allow_spawn=False)
+        r = client.request("POST",
+                           f"/v1/workspaces/{workspace_id}/asks/{ask_id}",
+                           json=body)
+    emit(handle_response(r),
+         human=lambda d: f"Allowed {d['id']} ({d['scope']}).")
+
+
+@app.command("deny")
+def deny_cmd(
+    workspace_id: str = typer.Argument(..., help="Workspace id."),
+    ask_id: str = typer.Argument(...,
+                                 help="Ask id, as quoted in the refusal."),
+    note: str = typer.Option("",
+                             "--note",
+                             help="What to record alongside the answer."),
+) -> None:
+    """Deny a pending ask; the retry is refused in the deny voice, once."""
+    body = {"answer": "deny", "note": note}
+    with make_client() as client:
+        client.ensure_running(allow_spawn=False)
+        r = client.request("POST",
+                           f"/v1/workspaces/{workspace_id}/asks/{ask_id}",
+                           json=body)
+    emit(handle_response(r), human=lambda d: f"Denied {d['id']}.")
 
 
 @app.command("checkout")

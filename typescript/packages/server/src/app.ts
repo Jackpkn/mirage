@@ -20,6 +20,7 @@ import { JobTable } from './jobs.ts'
 import type { AuthConfig } from './auth/index.ts'
 import { registerAuth, resolveAuthConfig } from './auth/index.ts'
 import { isHostAllowed, resolveAllowedHosts } from './host_validation.ts'
+import { registerAsksRoutes } from './routers/asks.ts'
 import { registerExecuteRoutes } from './routers/execute.ts'
 import { registerHealthRoutes } from './routers/health.ts'
 import { registerJobsRoutes } from './routers/jobs.ts'
@@ -96,6 +97,7 @@ export function buildApp(options: BuildAppOptions = {}) {
   registerWorkspacesRoutes(app, { registry, snapshotRoot, stateRoot })
   registerVersionsRoutes(app, { registry, versionBackend })
   registerSessionsRoutes(app, { registry })
+  registerAsksRoutes(app, { registry })
   registerExecuteRoutes(app, { registry, jobs })
   registerJobsRoutes(app, { jobs })
   app.addHook('onClose', async () => {
