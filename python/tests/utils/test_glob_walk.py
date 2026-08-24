@@ -459,3 +459,24 @@ def test_glob_prefix_restores_a_quoted_metacharacter():
     # A quoted star travels under a private mark and stands for a literal
     # star, so it belongs in the prefix as the character it names.
     assert glob_prefix(mark_globs("*") + "ab*") == "*ab"
+
+
+@pytest.mark.parametrize(
+    "pattern,expected",
+    [
+        # The literal has run into the suffix, so the part that ran in
+        # says nothing about the stem and comes off.
+        ("12*.md", "12"),
+        ("doc-1.m*", "doc-1"),
+        ("doc-1.*", "doc-1"),
+        ("doc-1.p*", "doc-1"),
+        # A dot inside the stem is not the suffix, so it stays.
+        ("acct.2026*", "acct.2026"),
+        ("acct.mark*", "acct.mark"),
+        ("doc-1*", "doc-1"),
+        ("*.md", ""),
+        (None, ""),
+    ],
+)
+def test_glob_stem_prefix_drops_only_a_reached_suffix(pattern, expected):
+    assert glob_walk.glob_stem_prefix(pattern, [".md", ".png"]) == expected

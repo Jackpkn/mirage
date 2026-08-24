@@ -21,11 +21,26 @@ def _quote(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _column(name: str) -> str:
+    """A configured column name, spelled so the parser reads a column.
+
+    Backticks, not double quotes: lance reads a double-quoted word as a
+    string literal, so ``"id" = 'x'`` compares the text ``id`` and
+    matches nothing rather than failing. Quoting is what lets a name
+    with a space or a reserved word through, and a bare name means the
+    same thing quoted.
+
+    Args:
+        name (str): the column name as configured.
+    """
+    return "`" + name.replace("`", "``") + "`"
+
+
 def _eq(column: str, value: str) -> str:
     text = str(value)
     if text.lstrip("-").isdigit():
-        return f"{column} = {text}"
-    return f"{column} = '{_quote(text)}'"
+        return f"{_column(column)} = {text}"
+    return f"{_column(column)} = '{_quote(text)}'"
 
 
 def _where(filters: dict[str, str]) -> str:
@@ -36,7 +51,7 @@ def _like(column: str, prefix: str) -> str:
     escaped = prefix
     for ch in ("\\", "%", "_"):
         escaped = escaped.replace(ch, "\\" + ch)
-    return (f"CAST({column} AS STRING) LIKE '{_quote(escaped)}%' "
+    return (f"CAST({_column(column)} AS STRING) LIKE '{_quote(escaped)}%' "
             "ESCAPE '\\'")
 
 

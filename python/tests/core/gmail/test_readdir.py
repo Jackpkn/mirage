@@ -177,11 +177,11 @@ async def test_readdir_date_dir_uses_after_before_query(accessor, index):
     assert result == []
     date_calls = [
         c for c in captured_calls
-        if c["query"] and "after:2026/05/03" in c["query"]
+        if c["query"] and "after:1777766399" in c["query"]
     ]
     assert len(date_calls) == 1
     assert date_calls[0]["label_id"] == "INBOX"
-    assert "before:2026/05/04" in date_calls[0]["query"]
+    assert "before:1777852800" in date_calls[0]["query"]
 
 
 def _msg_stub(mid, subject, internal_date_ms):
@@ -488,7 +488,7 @@ async def test_label_glob_pushes_its_span_into_the_query(accessor, index):
                      pattern="2026-01-*"), index)
 
     assert result == []
-    assert captured == ["after:2026/01/01 before:2026/02/01"]
+    assert captured == ["after:1767225599 before:1769904000"]
 
 
 @pytest.mark.asyncio

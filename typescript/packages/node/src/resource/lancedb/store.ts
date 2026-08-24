@@ -24,9 +24,21 @@ function toStr(value: unknown): string {
   return String(value as string | number | boolean | bigint)
 }
 
+/**
+ * A configured column name, spelled so the parser reads a column.
+ *
+ * Backticks, not double quotes: lance reads a double-quoted word as a string
+ * literal, so `"id" = 'x'` compares the text `id` and matches nothing rather
+ * than failing. Quoting is what lets a name with a space or a reserved word
+ * through, and a bare name means the same thing quoted.
+ */
+function columnRef(name: string): string {
+  return `\`${name.split('`').join('``')}\``
+}
+
 function eqClause(column: string, value: string): string {
-  if (/^-?\d+$/.test(value)) return `${column} = ${value}`
-  return `${column} = '${value.replace(/'/g, "''")}'`
+  if (/^-?\d+$/.test(value)) return `${columnRef(column)} = ${value}`
+  return `${columnRef(column)} = '${value.replace(/'/g, "''")}'`
 }
 
 function whereClause(filters: Record<string, string>): string {
@@ -38,7 +50,7 @@ function whereClause(filters: Record<string, string>): string {
 function likeClause(column: string, prefix: string): string {
   let escaped = prefix
   for (const ch of ['\\', '%', '_']) escaped = escaped.split(ch).join(`\\${ch}`)
-  return `CAST(${column} AS STRING) LIKE '${escaped.replace(/'/g, "''")}%' ESCAPE '\\'`
+  return `CAST(${columnRef(column)} AS STRING) LIKE '${escaped.replace(/'/g, "''")}%' ESCAPE '\\'`
 }
 
 /**

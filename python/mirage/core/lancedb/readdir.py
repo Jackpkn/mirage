@@ -28,7 +28,8 @@ from mirage.core.lancedb.render import render_card
 from mirage.core.lancedb.scope import detect_for, filters_of, table_of
 from mirage.resource.lancedb.config import LanceDBConfig
 from mirage.types import PathSpec
-from mirage.utils.glob_walk import glob_prefix, has_glob_prefix
+from mirage.utils.glob_walk import (glob_prefix, glob_stem_prefix,
+                                    has_glob_prefix)
 
 GROUP_TYPE = "lancedb/group"
 
@@ -68,19 +69,20 @@ def _row_entries(rows: list[dict[str, Any]],
     return entries
 
 
-def _row_prefix(pattern: str | None) -> str:
-    """The id prefix a leaf glob narrows the row query to.
+def _row_prefix(pattern: str | None, config: LanceDBConfig) -> str:
+    """The row-id prefix a leaf glob narrows the row query to.
 
-    A leaf is named ``<row_id>`` plus a codec suffix, so a literal
-    prefix that reached into the suffix is not an id prefix. Cutting at
-    the first dot keeps a superset the glob then filters, which is what
-    stops ``12*.md`` from asking for ids starting ``12.`` and listing
-    nothing.
+    A leaf is named ``<row_id>`` plus whichever suffix the renderer gave
+    it, and only the id half is a prefix the query can test.
 
     Args:
         pattern (str | None): the glob the line typed, or None.
+        config (LanceDBConfig): the mount's config, for the suffixes.
     """
-    return glob_prefix(pattern).split(".", 1)[0]
+    suffixes = [".md"]
+    if config.blob_column:
+        suffixes.append(f".{config.blob_ext}")
+    return glob_stem_prefix(pattern, suffixes)
 
 
 async def _children(accessor: LanceDBAccessor,
@@ -106,7 +108,7 @@ async def _children(accessor: LanceDBAccessor,
         c for c in await table_columns(accessor, table)
         if c != config.vector_column and c != config.blob_column
     ]
-    prefix = _row_prefix(pattern)
+    prefix = _row_prefix(pattern, config)
     rows = await rows_matching(accessor, table, filters, columns,
                                config.max_rows, config.id_column, prefix)
     return DirListing(entries=_row_entries(rows, config), partial=bool(prefix))

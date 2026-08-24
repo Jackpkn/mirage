@@ -12,11 +12,31 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-/** A Gmail date filter for a half-open range of days, as `after:`/`before:`. */
+function epochSeconds(day: string): number {
+  const [y, m, d] = day.split('-')
+  const stamp = Date.UTC(
+    Number.parseInt(y ?? '', 10),
+    Number.parseInt(m ?? '', 10) - 1,
+    Number.parseInt(d ?? '', 10),
+  )
+  return Math.trunc(stamp / 1000)
+}
+
+/**
+ * A Gmail date filter for a half-open range of UTC days.
+ *
+ * The bounds are epoch seconds rather than `YYYY/MM/DD` because Gmail reads a
+ * written date as "midnight on that date in the PST timezone" and names
+ * seconds as the way to mean any other zone, while a message lands in a day
+ * directory by its UTC `internalDate`. The two disagree by the account's
+ * offset, so a written date would leave the first hours of the requested day
+ * outside the query and every message in them out of the listing. The lower
+ * bound is a second early because the operator's inclusivity at the exact
+ * second is not documented: an extra message from the day before is dropped by
+ * the bucketing, a missing one is not recoverable.
+ */
 export function spanToGmailQuery(start: string, end: string): string {
-  const [ys, ms, ds] = start.split('-')
-  const [ye, me, de] = end.split('-')
-  return `after:${ys ?? ''}/${ms ?? ''}/${ds ?? ''} before:${ye ?? ''}/${me ?? ''}/${de ?? ''}`
+  return `after:${String(epochSeconds(start) - 1)} before:${String(epochSeconds(end))}`
 }
 
 /**

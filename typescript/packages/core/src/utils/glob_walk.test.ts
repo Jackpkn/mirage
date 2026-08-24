@@ -23,6 +23,7 @@ import {
   globPattern,
   globPrefix,
   globSpan,
+  globStemPrefix,
   hasGlob,
   hasGlobPrefix,
   isWordShaped,
@@ -340,5 +341,27 @@ describe('globPrefix', () => {
     // A quoted star travels under a private mark and stands for a literal
     // star, so it belongs in the prefix as the character it names.
     expect(globPrefix(markGlobs('*') + 'ab*')).toBe('*ab')
+  })
+})
+
+describe('globStemPrefix', () => {
+  it.each([
+    // The literal has run into the suffix, so the part that ran in says
+    // nothing about the stem and comes off.
+    ['12*.md', '12'],
+    ['doc-1.m*', 'doc-1'],
+    ['doc-1.*', 'doc-1'],
+    ['doc-1.p*', 'doc-1'],
+    // A dot inside the stem is not the suffix, so it stays.
+    ['acct.2026*', 'acct.2026'],
+    ['acct.mark*', 'acct.mark'],
+    ['doc-1*', 'doc-1'],
+    ['*.md', ''],
+  ])('drops only a reached suffix from %s', (pattern, expected) => {
+    expect(globStemPrefix(pattern, ['.md', '.png'])).toBe(expected)
+  })
+
+  it('has no prefix for a missing pattern', () => {
+    expect(globStemPrefix(null, ['.md'])).toBe('')
   })
 })

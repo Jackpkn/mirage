@@ -24,7 +24,7 @@ import { makeReaddir, type DirListing, type Listed, type Lister } from '../hiera
 import { ROOT, type ScopeMatch } from '../hierarchy/scope.ts'
 import { blobBytes, renderJson, renderText } from './render.ts'
 import { detectFor, filtersOf, tableOf } from './scope.ts'
-import { globPrefix, hasGlobPrefix } from '../../utils/glob_walk.ts'
+import { globPrefix, globStemPrefix, hasGlobPrefix } from '../../utils/glob_walk.ts'
 
 const GROUP_TYPE = 'qdrant/group'
 
@@ -98,15 +98,16 @@ function rowEntries(rows: QdrantRow[], config: QdrantConfigResolved): [string, I
 }
 
 /**
- * The id prefix a leaf glob narrows the scroll to.
+ * The point-id prefix a leaf glob narrows the scroll to.
  *
- * A leaf is named `<pointId>` plus a suffix, so a literal prefix that reached
- * into the suffix is not an id prefix. Cutting at the first dot keeps a
- * superset the glob then filters, which is what stops `12*.json` from asking
- * for ids starting `12.` and listing nothing.
+ * A leaf is named `<pointId>` plus whichever suffix the renderer gave it, and
+ * only the id half is a prefix the scroll can test.
  */
-function rowPrefix(pattern: string | null): string {
-  return globPrefix(pattern).split('.')[0] ?? ''
+function rowPrefix(pattern: string | null, config: QdrantConfigResolved): string {
+  const suffixes = ['.json']
+  if (config.textField !== null && config.textField !== '') suffixes.push('.txt')
+  if (config.blobField !== null && config.blobField !== '') suffixes.push(`.${config.blobExt}`)
+  return globStemPrefix(pattern, suffixes)
 }
 
 async function children(accessor: QdrantAccessor, match: ScopeMatch): Promise<Listed | null> {
@@ -132,7 +133,7 @@ async function children(accessor: QdrantAccessor, match: ScopeMatch): Promise<Li
     }
     return listing
   }
-  const prefix = rowPrefix(pattern)
+  const prefix = rowPrefix(pattern, config)
   const rows = await accessor.rowsMatching(table, filters, [config.idField], config.maxRows, prefix)
   const listing: DirListing = {
     entries: rowEntries(rows, config),

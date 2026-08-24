@@ -16,10 +16,11 @@ import { describe, expect, it } from 'vitest'
 import { dateDirToGmailQuery, spanToGmailQuery } from './date_query.ts'
 
 describe('dateDirToGmailQuery', () => {
+  // Epoch seconds for midnight UTC, one second early on the lower bound.
   it.each([
-    ['2026-05-03', 'after:2026/05/03 before:2026/05/04'],
-    ['2026-12-31', 'after:2026/12/31 before:2027/01/01'],
-    ['2026-01-01', 'after:2026/01/01 before:2026/01/02'],
+    ['2026-05-03', 'after:1777766399 before:1777852800'],
+    ['2026-12-31', 'after:1798675199 before:1798761600'],
+    ['2026-01-01', 'after:1767225599 before:1767312000'],
   ])('translates %s', (name, expected) => {
     expect(dateDirToGmailQuery(name)).toBe(expected)
   })
@@ -39,7 +40,12 @@ describe('dateDirToGmailQuery', () => {
 })
 
 describe('spanToGmailQuery', () => {
-  it('spells a half-open range the way Gmail reads it', () => {
-    expect(spanToGmailQuery('2026-01-01', '2026-02-01')).toBe('after:2026/01/01 before:2026/02/01')
+  it('bounds a half-open range in UTC seconds', () => {
+    const query = spanToGmailQuery('2026-01-01', '2026-02-01')
+    const [after, before] = query
+      .split(' ')
+      .map((term) => Number.parseInt(term.split(':')[1] ?? '', 10))
+    expect((before ?? 0) * 1000).toBe(Date.UTC(2026, 1, 1))
+    expect((before ?? 0) - (after ?? 0)).toBe(31 * 86_400 + 1)
   })
 })

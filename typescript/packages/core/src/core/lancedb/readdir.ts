@@ -24,7 +24,7 @@ import { makeReaddir, type DirListing, type Listed, type Lister } from '../hiera
 import { ROOT, type ScopeMatch } from '../hierarchy/scope.ts'
 import { renderCard } from './render.ts'
 import { detectFor, filtersOf, tableOf } from './scope.ts'
-import { globPrefix, hasGlobPrefix } from '../../utils/glob_walk.ts'
+import { globPrefix, globStemPrefix, hasGlobPrefix } from '../../utils/glob_walk.ts'
 
 const GROUP_TYPE = 'lancedb/group'
 
@@ -66,15 +66,15 @@ function rowEntries(rows: LanceRow[], config: LanceDBConfigResolved): [string, I
 }
 
 /**
- * The id prefix a leaf glob narrows the row query to.
+ * The row-id prefix a leaf glob narrows the row query to.
  *
- * A leaf is named `<rowId>` plus a codec suffix, so a literal prefix that
- * reached into the suffix is not an id prefix. Cutting at the first dot keeps
- * a superset the glob then filters, which is what stops `12*.md` from asking
- * for ids starting `12.` and listing nothing.
+ * A leaf is named `<rowId>` plus whichever suffix the renderer gave it, and
+ * only the id half is a prefix the query can test.
  */
-function rowPrefix(pattern: string | null): string {
-  return globPrefix(pattern).split('.')[0] ?? ''
+function rowPrefix(pattern: string | null, config: LanceDBConfigResolved): string {
+  const suffixes = ['.md']
+  if (config.blobColumn !== null && config.blobColumn !== '') suffixes.push(`.${config.blobExt}`)
+  return globStemPrefix(pattern, suffixes)
 }
 
 async function children(accessor: LanceDBAccessor, match: ScopeMatch): Promise<Listed | null> {
@@ -108,7 +108,7 @@ async function children(accessor: LanceDBAccessor, match: ScopeMatch): Promise<L
   const columns = (await accessor.driver.tableColumns(table)).filter(
     (c) => c !== config.vectorColumn && c !== config.blobColumn,
   )
-  const prefix = rowPrefix(pattern)
+  const prefix = rowPrefix(pattern, config)
   const rows = await accessor.driver.rowsMatching(
     table,
     filters,

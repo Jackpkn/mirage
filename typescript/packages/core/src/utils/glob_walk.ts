@@ -81,6 +81,28 @@ export function globPrefix(pattern: string | null | undefined): string {
 }
 
 /**
+ * The literal prefix a glob puts on the stem of a leaf name.
+ *
+ * A leaf is a stem plus one of the renderer's suffixes, so a literal that has
+ * run into a suffix says nothing about the stem and the part that ran in is
+ * dropped: `12*.md` narrows to `12`, and `doc-1.m*` narrows to `doc-1` rather
+ * than asking for stems that start `doc-1.m`. Only a tail that spells the head
+ * of a suffix is dropped, which is what keeps a stem that contains a dot:
+ * `acct.2026*` narrows to `acct.2026`, where cutting at the first dot would
+ * narrow to `acct` and let the rows nobody asked for eat the window.
+ */
+export function globStemPrefix(pattern: string | null | undefined, suffixes: string[]): string {
+  const literal = globPrefix(pattern)
+  let reached = 0
+  for (const suffix of suffixes) {
+    for (let size = 1; size <= suffix.length; size += 1) {
+      if (literal.endsWith(suffix.slice(0, size))) reached = Math.max(reached, size)
+    }
+  }
+  return literal.slice(0, literal.length - reached)
+}
+
+/**
  * The half-open range of dates a date-prefixed glob asks for.
  *
  * The literal prefix before the first metacharacter is read as a year, a

@@ -28,7 +28,8 @@ from mirage.core.qdrant.render import blob_bytes, render_json, render_text
 from mirage.core.qdrant.scope import detect_for, filters_of, table_of
 from mirage.resource.qdrant.config import QdrantConfig
 from mirage.types import JsonValue, PathSpec
-from mirage.utils.glob_walk import glob_prefix, has_glob_prefix
+from mirage.utils.glob_walk import (glob_prefix, glob_stem_prefix,
+                                    has_glob_prefix)
 
 logger = logging.getLogger(__name__)
 
@@ -92,19 +93,22 @@ def _row_entries(rows: list[dict[str, Any]],
     return entries
 
 
-def _row_prefix(pattern: str | None) -> str:
-    """The id prefix a leaf glob narrows the scroll to.
+def _row_prefix(pattern: str | None, config: QdrantConfig) -> str:
+    """The point-id prefix a leaf glob narrows the scroll to.
 
-    A leaf is named ``<point_id>`` plus a suffix, so a literal prefix
-    that reached into the suffix is not an id prefix. Cutting at the
-    first dot keeps a superset the glob then filters, which is what
-    stops ``12*.json`` from asking for ids starting ``12.`` and listing
-    nothing.
+    A leaf is named ``<point_id>`` plus whichever suffix the renderer
+    gave it, and only the id half is a prefix the scroll can test.
 
     Args:
         pattern (str | None): the glob the line typed, or None.
+        config (QdrantConfig): the mount's config, for the suffixes.
     """
-    return glob_prefix(pattern).split(".", 1)[0]
+    suffixes = [".json"]
+    if config.text_field:
+        suffixes.append(".txt")
+    if config.blob_field:
+        suffixes.append(f".{config.blob_ext}")
+    return glob_stem_prefix(pattern, suffixes)
 
 
 async def _children(accessor: QdrantAccessor,
@@ -122,7 +126,7 @@ async def _children(accessor: QdrantAccessor,
                                       filters, config.max_rows, prefix)
         return DirListing(entries=[(name, _dir_entry(name)) for name in names],
                           partial=bool(prefix))
-    prefix = _row_prefix(pattern)
+    prefix = _row_prefix(pattern, config)
     rows = await rows_matching(accessor, table, filters, config.max_rows,
                                prefix)
     return DirListing(entries=_row_entries(rows, config), partial=bool(prefix))
