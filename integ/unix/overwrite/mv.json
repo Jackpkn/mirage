@@ -65,6 +65,38 @@
       }
     },
     {
+      "id": "ow_mv_T_onto_existing_empty_dir",
+      "seq": 203008,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "mkdir /data/ow/e && mv -T /data/ow/s/t /data/ow/e && ls /data/ow/e",
+      "expect": {
+        "exit": 0,
+        "stdout": "f.txt\n",
+        "stderr": ""
+      }
+    },
+    {
       "id": "ow_mv_n_skips_existing_nonempty_dir",
       "seq": 203007,
       "targets": [

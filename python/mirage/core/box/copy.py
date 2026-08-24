@@ -17,10 +17,10 @@ from typing import Any
 from mirage.accessor.box import BoxAccessor
 from mirage.cache.context import invalidate_after_write
 from mirage.core.box.api import (copy_file, copy_folder, delete_file,
-                                 delete_folder, list_folder_items)
+                                 list_folder_items)
 from mirage.core.box.resolve import path_parts, resolve_item, resolve_parent_id
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import eisdir, enoent, enotdir
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
 
@@ -47,10 +47,15 @@ async def _copy_into(accessor: BoxAccessor, item: dict[str, Any],
         raise enoent(dst.virtual)
     new_name = dst_parts[-1]
     if existing is not None and existing["id"] != item["id"]:
+        # Folder onto folder already merged above, so what is left is a type
+        # mismatch or a file replacing a file. cp refuses either mismatch
+        # (rename(2)'s own errnos), mirroring gdrive and the msgraph
+        # copy_tree; only a file gives way to a file.
         if existing.get("type") == "folder":
-            await delete_folder(tm, existing["id"], recursive=True)
-        else:
-            await delete_file(tm, existing["id"])
+            raise eisdir(dst.virtual)
+        if item.get("type") == "folder":
+            raise enotdir(dst.virtual)
+        await delete_file(tm, existing["id"])
     if item.get("type") == "folder":
         await copy_folder(tm, item["id"], dst_parent, name=new_name)
     else:
