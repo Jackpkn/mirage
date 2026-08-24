@@ -87,6 +87,18 @@ class FakeBox:
     """In-memory Box content tree keyed by item id, root folder id "0"."""
 
     def __init__(self) -> None:
+        # `base` is where the server ended up listening, set by
+        # `start_fake_box` once the port is known. It describes the
+        # listener rather than the contents, so `reset` leaves it alone.
+        self.base = ""
+        self.reset()
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         self.items: dict[str, dict] = {
             ROOT_ID: {
                 "type": "folder",
@@ -96,7 +108,6 @@ class FakeBox:
                 "modified_at": MODIFIED,
             }
         }
-        self.base = ""
         self._seq = 1000000000
 
     def _new_id(self) -> str:
@@ -255,6 +266,20 @@ class BoxServer:
 
     def __init__(self, state: FakeBox) -> None:
         self.state = state
+
+    async def reset(self, request: web.Request) -> web.Response:
+        """Drop every write since startup. Mirrors `POST /reset` on the
+        other fakes: same path, same empty body, same `{"ok": true}`.
+
+        Args:
+            request (web.Request): the incoming request.
+
+        Returns:
+            web.Response: 200 once the launch state is back.
+        """
+        del request
+        self.state.reset()
+        return web.json_response({"ok": True})
 
     def _authed(self, request: web.Request) -> bool:
         auth = request.headers.get("Authorization", "")
@@ -551,6 +576,7 @@ class BoxServer:
 
 def build_app(server: BoxServer) -> web.Application:
     app = web.Application(client_max_size=8 * 1024 * 1024)
+    app.router.add_post("/reset", server.reset)
     app.router.add_post("/oauth2/token", server.token)
     app.router.add_get("/2.0/folders/{folder_id}/items", server.list_items)
     app.router.add_get("/2.0/folders/{folder_id}", server.folder_info)

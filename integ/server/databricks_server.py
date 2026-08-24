@@ -58,6 +58,14 @@ def _parent(path: str) -> str:
 class VolumeStore:
 
     def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         self.files: dict[str, tuple[bytes, float]] = {}
         self.dirs: set[str] = {"/"}
 
@@ -212,9 +220,24 @@ async def directories_handler(request: web.Request) -> web.StreamResponse:
     return web.Response(status=405)
 
 
+async def reset_handler(request: web.Request) -> web.Response:
+    """Drop every write since startup. Mirrors `POST /reset` on the other
+    fakes: same path, same empty body, same `{"ok": true}`.
+
+    Args:
+        request (web.Request): the incoming request.
+
+    Returns:
+        web.Response: 200 once the launch state is back.
+    """
+    request.app["store"].reset()
+    return web.json_response({"ok": True})
+
+
 def build_app(store: VolumeStore) -> web.Application:
     app = web.Application(client_max_size=1024**3)
     app["store"] = store
+    app.router.add_post("/reset", reset_handler)
     app.router.add_route("*", FILES_ROUTE, files_handler)
     app.router.add_route("*", DIRS_ROUTE, directories_handler)
     return app

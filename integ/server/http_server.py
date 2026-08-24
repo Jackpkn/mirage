@@ -85,8 +85,26 @@ async def form(request: web.Request) -> web.Response:
                         content_type="text/plain")
 
 
+async def reset(request: web.Request) -> web.Response:
+    """Drop every write since startup, of which there are none.
+
+    This fake accumulates nothing -- its routes are fixed responses. The
+    route exists so every fake answers the same control call, and a
+    harness resetting them in a loop needs no list of exceptions.
+
+    Args:
+        request (web.Request): the incoming request.
+
+    Returns:
+        web.Response: 200, always.
+    """
+    del request
+    return web.json_response({"ok": True})
+
+
 def build_app() -> web.Application:
     app = web.Application()
+    app.router.add_post("/reset", reset)
     app.router.add_get("/hello", hello)
     app.router.add_get("/data.json", json_body)
     app.router.add_get("/bytes.bin", binary)

@@ -78,11 +78,36 @@ class FakeDropbox:
     """
 
     def __init__(self) -> None:
+        # `endpoint` is where the server ended up listening, set by
+        # `start_fake_dropbox` once the port is known. It describes the
+        # listener rather than the contents, so `reset` leaves it alone.
+        self.endpoint = ""
+        self.reset()
+
+    async def handle_reset(self, request: web.Request) -> web.Response:
+        """Drop every write since startup. Mirrors `POST /reset` on the
+        other fakes: same path, same empty body, same `{"ok": true}`.
+
+        Args:
+            request (web.Request): the incoming request.
+
+        Returns:
+            web.Response: 200 once the launch state is back.
+        """
+        del request
+        self.reset()
+        return web.json_response({"ok": True})
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         self.folders: set[str] = set()
         self.files: dict[str, tuple[bytes, str]] = {}
         self.search_cursors: dict[str, tuple[list, int, int]] = {}
         self.list_cursors: dict[str, list[dict]] = {}
-        self.endpoint = ""
 
     def _add_ancestors(self, path: str) -> None:
         parts = path.split("/")[1:-1]
@@ -410,6 +435,7 @@ async def start_fake_dropbox() -> tuple[FakeDropbox, web.AppRunner]:
     # The columnar fixture's example.h5 is ~1.02 MiB; aiohttp's default
     # client_max_size (1 MiB) would 413 its upload.
     app = web.Application(client_max_size=8 * 1024 * 1024)
+    app.router.add_post("/reset", fake.handle_reset)
     app.router.add_post("/oauth2/token", fake.handle_token)
     app.router.add_post("/2/files/list_folder", fake.handle_list_folder)
     app.router.add_post("/2/files/list_folder/continue",

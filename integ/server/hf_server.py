@@ -150,6 +150,14 @@ def _serve_hash(data: bytes) -> str:
 class FakeHub:
 
     def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         # bucket ("ns/name") -> path -> {"data", "modified", "etag"}
         self.buckets: dict[str, dict[str, dict]] = {}
         # xorb hash hex -> ordered decoded chunks
@@ -234,6 +242,20 @@ class HubServer:
 
     def __init__(self, hub: FakeHub) -> None:
         self.hub = hub
+
+    async def reset(self, request: web.Request) -> web.Response:
+        """Drop every write since startup. Mirrors `POST /reset` on the
+        other fakes: same path, same empty body, same `{"ok": true}`.
+
+        Args:
+            request (web.Request): the incoming request.
+
+        Returns:
+            web.Response: 200 once the launch state is back.
+        """
+        del request
+        self.hub.reset()
+        return web.json_response({"ok": True})
         self.port = 0
 
     @property
@@ -435,6 +457,7 @@ def serialized_offset_of(chunk_index: int) -> int:
 
 def _build_app(server: HubServer) -> web.Application:
     app = web.Application(client_max_size=256 * 1024 * 1024)
+    app.router.add_post("/reset", server.reset)
     app.router.add_get("/api/buckets/{ns}/{name}/tree/{path:.*}", server.tree)
     app.router.add_get("/buckets/{ns}/{name}/resolve/{path:.*}",
                        server.resolve)

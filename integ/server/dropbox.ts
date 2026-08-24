@@ -112,6 +112,16 @@ class Account {
   readonly searchCursors = new Map<string, { matches: SearchMatchJson[]; start: number; limit: number }>()
   readonly listCursors = new Map<string, DropboxEntryJson[]>()
 
+  // Drop every write since startup. The fields are readonly collections,
+  // so this clears them in place rather than rebuilding the account the
+  // way integ/server/dropbox_server.py rebuilds through __init__.
+  reset(): void {
+    this.folders.clear()
+    this.files.clear()
+    this.searchCursors.clear()
+    this.listCursors.clear()
+  }
+
   addAncestors(path: string): void {
     const parts = path.split('/').slice(1, -1)
     let cur = ''
@@ -260,6 +270,13 @@ function handle(
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
+  // Mirrors POST /reset on the other fakes: same path, same empty body,
+  // same {ok: true}.
+  if (url === '/reset') {
+    account.reset()
+    json(res, { ok: true })
+    return
+  }
   if (url === '/oauth2/token') {
     json(res, { access_token: 'integ-token', expires_in: 14400 })
     return

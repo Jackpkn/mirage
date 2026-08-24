@@ -76,10 +76,20 @@ def _parse_range(header: str | None, size: int) -> tuple[int, int]:
 class FakeGraph:
 
     def __init__(self, key: str = "default") -> None:
+        # `key` and `base` describe which workspace this is and where it
+        # is listening, not what it holds, so `reset` leaves them alone.
         self.key = key
+        self.base = ""
+        self.reset()
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         self.files: dict[str, dict] = {}
         self.dirs: set[str] = {""}
-        self.base = ""
         self._seq = 0
 
     def _tag(self) -> str:
@@ -274,13 +284,42 @@ class GraphServer:
 
     def __init__(self, state: FakeGraph) -> None:
         self.state = state
-        self.drives: dict[str, FakeGraph] = {state.key: state}
-        self.site_drives: list[str] = [state.key]
+        self._fresh()
+
+    def _fresh(self) -> None:
+        """Put the server's own state back to what construction gives it.
+
+        Deliberately does not touch `self.state`: a caller that seeded the
+        drive before handing it over would not expect the constructor to
+        empty it. `reset` resets both, because that is what a caller asking
+        for a reset means.
+        """
+        self.drives: dict[str, FakeGraph] = {self.state.key: self.state}
+        self.site_drives: list[str] = [self.state.key]
         self.uploads: dict[str, dict] = {}
         self.monitors: dict[str, dict] = {}
         self.calls: Counter = Counter()
         self._upload_seq = 0
         self._monitor_seq = 0
+
+    async def reset(self, request: web.Request) -> web.Response:
+        """Drop every write since startup. Mirrors `POST /reset` on the
+        other fakes: same path, same empty body, same `{"ok": true}`.
+
+        Args:
+            request (web.Request): the incoming request.
+
+        Returns:
+            web.Response: 200 once the launch state is back.
+        """
+        del request
+        # Both halves: the server holds more than the default drive does --
+        # the drives added since launch, the open upload sessions, the
+        # monitors -- so resetting the drive alone would leave a SharePoint
+        # drive created by the previous run still discoverable.
+        self.state.reset()
+        self._fresh()
+        return web.json_response({"ok": True})
 
     def add_drive(self, key: str) -> FakeGraph:
         g = FakeGraph(key)
@@ -616,6 +655,7 @@ async def start_fake_graph() -> tuple[FakeGraph, "GraphServer", web.AppRunner]:
     # Real Graph accepts simple PUTs up to 4 MiB; aiohttp's default
     # client_max_size (1 MiB) would 413 them before the handler runs.
     app = web.Application(client_max_size=8 * 1024 * 1024)
+    app.router.add_post("/reset", server.reset)
     app.router.add_route("*", "/{tail:.*}", server.handle)
     runner = web.AppRunner(app)
     await runner.setup()

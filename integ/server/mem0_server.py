@@ -125,8 +125,27 @@ async def handle(request: web.Request) -> web.Response:
     return web.json_response({"detail": "Not found"}, status=404)
 
 
+async def reset(request: web.Request) -> web.Response:
+    """Drop every write since startup, of which there are none.
+
+    This fake accumulates nothing -- MEMORIES and SCORES are module
+    constants and every handler only reads them. The route exists so every
+    fake answers the same control call, and a harness resetting them in a
+    loop needs no list of exceptions.
+
+    Args:
+        request (web.Request): the incoming request.
+
+    Returns:
+        web.Response: 200, always.
+    """
+    del request
+    return web.json_response({"ok": True})
+
+
 async def start_fake_mem0() -> tuple[str, web.AppRunner]:
     app = web.Application()
+    app.router.add_post("/reset", reset)
     app.router.add_route("*", "/{tail:.*}", handle)
     runner = web.AppRunner(app)
     await runner.setup()
