@@ -777,7 +777,7 @@
       ],
       "command": "sed s/1/X/ /data/pr/one.txt /data/pr/missing.txt",
       "expect": {
-        "exit": 1,
+        "exit": 2,
         "stdout": "X\n2\n",
         "stderr": "sed: /data/pr/missing.txt: No such file or directory\n"
       }
@@ -811,7 +811,7 @@
       ],
       "command": "sort /data/pr/one.txt /data/pr/missing.txt",
       "expect": {
-        "exit": 1,
+        "exit": 2,
         "stdout": "",
         "stderr": "sort: /data/pr/missing.txt: No such file or directory\n"
       }

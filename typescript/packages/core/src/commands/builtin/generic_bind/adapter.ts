@@ -789,6 +789,126 @@ export function requireOp<T>(op: T | undefined, name: string): T {
   return op
 }
 
+/**
+ * Whether a read that already failed was really a read of a directory.
+ *
+ * Asked only after the read threw, which is what keeps a successful read
+ * at exactly one backend call. Nothing is lost by waiting: every backend
+ * throws on a directory read. One that knows says so (gdrive, box,
+ * dropbox and disk throw EISDIR), a keyed store answers ENOENT because a
+ * directory there is a set of keys rather than an object, and sftp
+ * answers with an error carrying no errno at all.
+ *
+ * Four ways the answer can be yes, in probe-cost order. The code itself
+ * costs nothing. The stat is one call, and a stat that ANSWERS ends the
+ * cascade either way: a file is a file, and the later probes only make
+ * sense for a path stat could not see. Reaching past a successful stat
+ * read a rule-refused file as a directory, because its parent's listing
+ * names it. The parent listing is one call and is the only thing that can
+ * tell a missing key from a prefix that exists only through deeper keys.
+ * The namespace's child names cost nothing and are the only authority for
+ * a directory that exists because a mount or a link sits under it, which
+ * no backend can see because those keys live in another resource.
+ *
+ * A no leaves the original error untouched, so nothing is swallowed: the
+ * caller rethrows what the backend said. Both probes are broad for that
+ * same reason, which is the one `isImplicitDir` states for its own
+ * catches: a probe that fails is a negative probe, never an error to
+ * surface. Surfacing one would replace the read's error with one from a
+ * call the user never made, and it is the read that failed.
+ */
+async function readHitADir<A extends Accessor>(
+  ops: CommandIO<A>,
+  accessor: A,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+  err: unknown,
+): Promise<boolean> {
+  if ((err as { code?: string }).code === 'EISDIR') return true
+  let st: FileStat | null = null
+  try {
+    st = await ops.stat(accessor, path, index)
+  } catch {
+    st = null
+  }
+  if (st !== null) return st.type === FileType.DIRECTORY
+  try {
+    if (await isImplicitDir(ops, accessor, path, index)) return true
+  } catch {
+    // negative probe, see above
+  }
+  // The same fact isNamespaceDir reads, reached from the adapter rather
+  // than from the bag: this guard wraps a slot and never sees a
+  // CommandOpts, and the factory stamps the very callable
+  // opts.ns.childMounts would hand over.
+  return ops.globChildren !== undefined && ops.globChildren(path.virtual).length > 0
+}
+
+async function* drainRefusingDirs<A extends Accessor>(
+  ops: CommandIO<A>,
+  accessor: A,
+  path: PathSpec,
+  index: IndexCacheStore | undefined,
+  source: AsyncIterable<Uint8Array>,
+): AsyncIterable<Uint8Array> {
+  try {
+    yield* source
+  } catch (err) {
+    if (await readHitADir(ops, accessor, path, index, err)) throw eisdir(path)
+    throw err
+  }
+}
+
+/**
+ * Return `ops` whose reads refuse a directory with GNU's EISDIR.
+ *
+ * The read family's counterpart of `withHiddenGuard` and
+ * `withSlashGuard`: reading a directory is never a legitimate call, so
+ * the refusal belongs to the slot rather than to each builder's wiring.
+ * It used to belong to the wiring, and 23 of the read builders passed the
+ * raw `ops.readStream` instead, so a directory on a keyed backend
+ * reported ENOENT.
+ *
+ * Refined after the failure, never before it, so a read that succeeds
+ * costs exactly what it did. The refusal is built from the operand's own
+ * PathSpec, so it carries the virtual path: a raw disk error names the
+ * host path, which is the mount's own business and must not reach a
+ * user-facing line.
+ *
+ * Mirrors the Python `with_dir_guard`.
+ */
+export function withDirGuard<A extends Accessor = Accessor>(ops: CommandIO<A>): CommandIO<A> {
+  const guarded: CommandIO<A> = {
+    ...ops,
+    readBytes: async (accessor, path, index) => {
+      try {
+        return await ops.readBytes(accessor, path, index)
+      } catch (err) {
+        if (await readHitADir(ops, accessor, path, index, err)) throw eisdir(path)
+        throw err
+      }
+    },
+    // The wrapped op is called HERE, not inside the generator: the
+    // read-through cache reads the active CacheManager when the slot is
+    // called, and deferring that to drain time loses the mount's
+    // cache-manager scope, so every warm read missed.
+    readStream: (accessor, path, index) =>
+      drainRefusingDirs(ops, accessor, path, index, ops.readStream(accessor, path, index)),
+  }
+  const readRange = ops.readRange
+  if (readRange !== undefined) {
+    guarded.readRange = async (accessor, path, index, offset, size) => {
+      try {
+        return await readRange(accessor, path, index, offset, size)
+      } catch (err) {
+        if (await readHitADir(ops, accessor, path, index, err)) throw eisdir(path)
+        throw err
+      }
+    }
+  }
+  return guarded
+}
+
 async function* streamRefusingDirs<A extends Accessor>(
   ops: CommandIO<A>,
   accessor: A,

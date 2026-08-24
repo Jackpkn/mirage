@@ -17,11 +17,12 @@ import { describe, expect, it } from 'vitest'
 import type { Accessor } from '../../../accessor/base.ts'
 import type { CommandOpts } from '../../config.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
-import { enoent } from '../../../utils/errors.ts'
+import { eacces, eisdir, enoent } from '../../../utils/errors.ts'
 import {
   dirAwareStat,
   dirAwareStream,
   makeResolveGlob,
+  withDirGuard,
   withRuleGuard,
   type CommandIO,
 } from './adapter.ts'
@@ -293,5 +294,172 @@ describe('withRuleGuard', () => {
     ])
     expect(calls).not.toContainEqual(['rename', '/data/a', '/data/locked/y'])
     expect(calls).toContainEqual(['rename', '/data/a', '/data/b'])
+  })
+})
+
+// A keyed backend: no directory objects, so a read of one misses. Reads
+// throw `readError` for anything that is not a stored file, which is
+// what RAM/S3/Redis do for a directory (there is no key there) and what
+// an sftp read of a directory does with a non-FsError (SFTPFailure).
+// eslint-disable-next-line @typescript-eslint/require-await
+async function* oneChunkStream(data: Uint8Array): AsyncIterable<Uint8Array> {
+  yield data
+}
+
+// A stream that fails on the first pull, which is where a keyed backend
+// reports a directory: there is no key, so the read raises rather than
+// the call.
+// eslint-disable-next-line @typescript-eslint/require-await, require-yield
+async function* throwingStream(err: Error): AsyncIterable<Uint8Array> {
+  throw err
+}
+
+function keyedReadOps(opts: {
+  implicitDirs?: readonly string[]
+  explicitDirs?: readonly string[]
+  files?: Record<string, string>
+  readError?: (p: PathSpec) => Error
+  children?: Record<string, string[]>
+}): CommandIO {
+  const implicitDirs = opts.implicitDirs ?? []
+  const explicitDirs = opts.explicitDirs ?? []
+  const files = opts.files ?? {}
+  const readError = opts.readError ?? ((p: PathSpec) => enoent(p))
+  const children = opts.children
+  const encode = (t: string) => new TextEncoder().encode(t)
+  return {
+    readdir: (_a, p) => {
+      const target = `/${stripSlash(p.virtual)}`
+      const entries = implicitDirs.filter((d) => (d.slice(0, d.lastIndexOf('/')) || '/') === target)
+      if (implicitDirs.includes(p.virtual))
+        entries.push(`${target === '/' ? '' : target}/child.txt`)
+      return Promise.resolve(entries)
+    },
+    readBytes: (_a, p) => {
+      const hit = files[p.virtual]
+      if (hit !== undefined) return Promise.resolve(encode(hit))
+      return Promise.reject(readError(p))
+    },
+    readRange: (_a, p) => {
+      const hit = files[p.virtual]
+      if (hit !== undefined) return Promise.resolve(encode(hit))
+      return Promise.reject(readError(p))
+    },
+    readStream: (_a, p) => {
+      const hit = files[p.virtual]
+      return hit === undefined ? throwingStream(readError(p)) : oneChunkStream(encode(hit))
+    },
+    stat: (_a, p) => {
+      if (explicitDirs.includes(p.virtual))
+        return Promise.resolve(new FileStat({ name: p.virtual, type: FileType.DIRECTORY }))
+      const hit = files[p.virtual]
+      if (hit !== undefined)
+        return Promise.resolve(new FileStat({ name: p.virtual, size: hit.length }))
+      return Promise.reject(enoent(p))
+    },
+    isMounted: () => true,
+    ...(children === undefined ? {} : { globChildren: (dir: string) => children[dir] ?? [] }),
+  }
+}
+
+async function drain(stream: AsyncIterable<Uint8Array>): Promise<Uint8Array[]> {
+  const out: Uint8Array[] = []
+  for await (const chunk of stream) out.push(chunk)
+  return out
+}
+
+describe('withDirGuard', () => {
+  it('refuses an explicit directory on every read slot', async () => {
+    const ops = withDirGuard(keyedReadOps({ explicitDirs: ['/sub'] }))
+    const p = PathSpec.fromStrPath('/sub')
+    await expect(ops.readBytes(accessor, p, undefined)).rejects.toMatchObject({ code: 'EISDIR' })
+    await expect(ops.readRange?.(accessor, p, undefined, 0, null)).rejects.toMatchObject({
+      code: 'EISDIR',
+    })
+    await expect(drain(ops.readStream(accessor, p, undefined))).rejects.toMatchObject({
+      code: 'EISDIR',
+    })
+  })
+
+  it('refuses an implicit keyed-backend directory', async () => {
+    const ops = withDirGuard(keyedReadOps({ implicitDirs: ['/sub'] }))
+    const p = PathSpec.fromStrPath('/sub')
+    await expect(ops.readBytes(accessor, p, undefined)).rejects.toMatchObject({ code: 'EISDIR' })
+    await expect(drain(ops.readStream(accessor, p, undefined))).rejects.toMatchObject({
+      code: 'EISDIR',
+    })
+  })
+
+  it('refuses a namespace-only directory', async () => {
+    // /a/b holds no key in this backend; it exists because a mount or a
+    // link sits under it, which only the namespace can see.
+    const ops = withDirGuard(keyedReadOps({ children: { '/a/b': ['inner'] } }))
+    await expect(
+      ops.readBytes(accessor, PathSpec.fromStrPath('/a/b'), undefined),
+    ).rejects.toMatchObject({ code: 'EISDIR' })
+  })
+
+  it('refines a read failure that is not an FsError at all', async () => {
+    // An sftp read of a directory throws asyncssh's SFTPFailure, which
+    // carries no errno, so the code-only path cannot see it. The stat
+    // says directory, and that is what decides.
+    const ops = withDirGuard(
+      keyedReadOps({
+        explicitDirs: ['/sub'],
+        readError: () => new Error('SFTP protocol failure'),
+      }),
+    )
+    await expect(
+      ops.readBytes(accessor, PathSpec.fromStrPath('/sub'), undefined),
+    ).rejects.toMatchObject({ code: 'EISDIR' })
+  })
+
+  it('leaves a real miss alone', async () => {
+    const ops = withDirGuard(keyedReadOps({}))
+    const p = PathSpec.fromStrPath('/nope.txt')
+    await expect(ops.readBytes(accessor, p, undefined)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(drain(ops.readStream(accessor, p, undefined))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('leaves a successful read alone', async () => {
+    const ops = withDirGuard(keyedReadOps({ files: { '/f.txt': 'data' } }))
+    const p = PathSpec.fromStrPath('/f.txt')
+    expect(new TextDecoder().decode(await ops.readBytes(accessor, p, undefined))).toBe('data')
+    expect(new TextDecoder().decode((await drain(ops.readStream(accessor, p, undefined)))[0])).toBe(
+      'data',
+    )
+  })
+
+  it('names the virtual path, not the backend one', async () => {
+    // A raw disk error names the host path; the refusal is built from the
+    // operand's own PathSpec so the mount's host root never leaks.
+    const ops = withDirGuard(
+      keyedReadOps({
+        explicitDirs: ['/mnt/sub'],
+        readError: () => eisdir('/private/var/host/sub'),
+      }),
+    )
+    await expect(
+      ops.readBytes(accessor, PathSpec.fromStrPath('/mnt/sub'), undefined),
+    ).rejects.toMatchObject({ code: 'EISDIR', message: '/mnt/sub' })
+  })
+
+  it('keeps the read own error when a probe blows up', async () => {
+    // A probe that fails is a negative probe. Surfacing it would swap the
+    // read's error for one from a call the user never made.
+    const ops = withDirGuard({
+      readdir: () => Promise.reject(new Error('transport reset')),
+      readBytes: (_a, p) => Promise.reject(eacces(p.virtual)),
+      readStream: () => {
+        throw new Error('not used')
+      },
+      stat: () => Promise.reject(new Error('transport reset')),
+      isMounted: () => true,
+    })
+    await expect(
+      ops.readBytes(accessor, PathSpec.fromStrPath('/locked.txt'), undefined),
+    ).rejects.toMatchObject({ code: 'EACCES' })
   })
 })

@@ -57,6 +57,44 @@ USAGE_EXIT = {
     "python3": 2,
 }
 
+# The exit code a command answers when it cannot read an operand. GNU's
+# code belongs to the COMMAND, not to the errno: `sort nope` and
+# `sort dir` are both 2, `cat` is 1 for both. Absent means 1, which is
+# what the executor's catch-all already did on its own. Pinned on
+# debian:stable-slim (coreutils 9.7, GNU sed 4.9, gzip 1.13, jq 1.7,
+# binutils 2.44, util-linux 2.41.5, bsdmainutils 12.1.8, xxd from
+# vim-common). Plain strings for the same no-cycle reason as USAGE_EXIT.
+READ_FAIL_EXIT = {
+    "sort": 2,
+    "awk": 2,
+    "jq": 2,
+    "xxd": 2,
+    "grep": 2,
+    "egrep": 2,
+    "fgrep": 2,
+    "rg": 2,
+    "cmp": 2,
+    "diff": 2,
+    "sed": 2,
+    "zgrep": 2,
+    "unzip": 9,
+}
+
+# The four commands whose code DOES depend on the errno, so the table
+# above cannot express them on its own. sed opens the directory
+# successfully and fails on the read, which is its own class (4), while a
+# missing file fails at open (2). The gzip family reports a directory as
+# a warning (2) and a missing file as an error (1). zgrep inverts that,
+# because its exit code is grep's: a directory it cannot decompress
+# yields no match (1) where a missing file is grep's own error (2).
+READ_FAIL_EXIT_ISDIR = {
+    "sed": 4,
+    "gzip": 2,
+    "gunzip": 2,
+    "zcat": 2,
+    "zgrep": 1,
+}
+
 # The exit code of a command refused on one operand before it ran (an
 # admission policy's operand-scoped Deny): 1 for the GNU tools, which
 # report an operand they cannot act on and exit 1, and tar's own fatal

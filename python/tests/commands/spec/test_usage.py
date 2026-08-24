@@ -1,8 +1,8 @@
 from mirage.commands.spec.usage import (  # yapf: disable
     ambiguous_option_error, extra_operand_error, invalid_argument_error,
     invalid_float_error, invalid_int_error, missing_required_error,
-    missing_value_error, old_option_error, unknown_option_error,
-    usage_exit_code)
+    missing_value_error, old_option_error, read_fail_exit, read_fail_exit_line,
+    unknown_option_error, usage_exit_code)
 
 
 def test_exit_codes_match_gnu():
@@ -110,3 +110,64 @@ def test_old_option_error_matches_gnu_tar_wording():
                    b"Try 'tar --help' for more information.\n")
     # tar's own fatal error, not argp's 64.
     assert code == 2
+
+
+def test_read_fail_exit_reads_the_code_off_the_command():
+    # GNU's code for a failed read belongs to the command, not the errno.
+    assert read_fail_exit("cat", FileNotFoundError("/x")) == 1
+    assert read_fail_exit("sort", FileNotFoundError("/x")) == 2
+    assert read_fail_exit("sort", IsADirectoryError("/x")) == 2
+    assert read_fail_exit("unzip", FileNotFoundError("/x")) == 9
+
+
+def test_read_fail_exit_splits_by_errno_for_the_four_that_do():
+    # sed opens the directory and fails on the read (4) where a missing
+    # file fails at open (2); the gzip family calls a directory a warning
+    # (2) and a missing file an error (1); zgrep inverts that.
+    assert read_fail_exit("sed", IsADirectoryError("/d")) == 4
+    assert read_fail_exit("sed", FileNotFoundError("/x")) == 2
+    assert read_fail_exit("zcat", IsADirectoryError("/d")) == 2
+    assert read_fail_exit("zcat", FileNotFoundError("/x")) == 1
+    assert read_fail_exit("zgrep", IsADirectoryError("/d")) == 1
+    assert read_fail_exit("zgrep", FileNotFoundError("/x")) == 2
+
+
+def test_read_fail_exit_ignores_anything_that_is_not_a_failed_read():
+    # The executor's chokepoints catch every error a command can raise, so
+    # a table keyed by command has to be gated on the narrow errno set.
+    # A bad script is not a filesystem error at all, and EACCES is as
+    # often a write refusal as a read one: `sed -i` on a backend with no
+    # write op raises PermissionError and must stay 1, which is what
+    # integ's lancedb_sed_i_readonly and notion_sed_i_readonly pin.
+    assert read_fail_exit("sed", PermissionError("-i not supported")) == 1
+    assert read_fail_exit("sed", ValueError("bad script")) == 1
+    assert read_fail_exit("sort", PermissionError("/locked")) == 1
+    assert read_fail_exit("sort", RuntimeError("transport")) == 1
+
+
+def test_read_fail_exit_line_reads_the_terminal_errno():
+    # The cross-mount stream path only has the rendered line, and the
+    # errno is its LAST field. A path is free to spell a strerror itself,
+    # and scanning the whole line read this directory as ENOENT.
+    line = b"sed: /ram/No such file or directory: Is a directory\n"
+    assert read_fail_exit_line("sed", line) == 4
+    assert read_fail_exit_line("cat", line) == 1
+    assert read_fail_exit_line(
+        "sed", b"sed: /ram/Is a directory: No such file or directory\n") == 2
+
+
+def test_read_fail_exit_line_takes_the_most_severe_of_a_blob():
+    # One fetch renders several lines when the operand was a glob the
+    # owning mount expanded, and sed's rule is the most severe.
+    blob = (b"sed: /ram/nope: No such file or directory\n"
+            b"sed: /ram/dir: Is a directory\n")
+    assert read_fail_exit_line("sed", blob) == 4
+    assert read_fail_exit_line("sort", blob) == 2
+
+
+def test_read_fail_exit_line_keeps_the_catch_all_for_anything_else():
+    # A line that carries no strerror is not a failed read, and neither
+    # is one whose only strerror sits inside the path.
+    assert read_fail_exit_line("sed", b"sed: -e expression #1: unknown\n") == 1
+    assert read_fail_exit_line("sed", b"") == 1
+    assert read_fail_exit_line("sed", b"sed: /ram/Is a directory\n") == 1

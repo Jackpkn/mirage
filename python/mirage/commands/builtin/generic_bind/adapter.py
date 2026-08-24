@@ -21,7 +21,7 @@ from enum import StrEnum
 from typing import Any, Protocol, overload
 
 from mirage.accessor.base import Accessor
-from mirage.cache.index import IndexCacheStore
+from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.generic.du import (DEFAULT_MAX_DU_ENTRIES,
                                                 DuEntries)
 from mirage.commands.config import CommandFnResult, CommandOpts, ProvisionFn
@@ -764,6 +764,154 @@ def _is_namespace_dir(opts: CommandOpts, path: PathSpec) -> bool:
     if opts.ns is None or opts.ns.child_mounts is None:
         return False
     return bool(opts.ns.child_mounts(path.virtual))
+
+
+_READ_SLOTS = ("read_bytes", "read_stream", "read_range")
+
+
+async def _read_hit_a_dir(ops: CommandIO, accessor: Accessor,
+                          index: IndexCacheStore, path: PathSpec,
+                          exc: BaseException) -> bool:
+    """Whether a read that already failed was really a read of a directory.
+
+    Asked only after the read raised, which is what keeps a successful
+    read at exactly one backend call. Nothing is lost by waiting: every
+    backend raises on a directory read. One that knows says so (gdrive,
+    box, dropbox and disk raise IsADirectoryError), a keyed store answers
+    ENOENT because a directory there is a set of keys rather than an
+    object, and sftp answers with an opaque non-OSError.
+
+    Four ways the answer can be yes, in probe-cost order. The errno
+    itself costs nothing. The stat is one call, and a stat that ANSWERS
+    ends the cascade either way: a file is a file, and the later probes
+    only make sense for a path stat could not see. Reaching past a
+    successful stat read a rule-refused file as a directory, because its
+    parent's listing names it. The parent listing is one call and is the
+    only thing that can tell a missing key from a prefix that exists only
+    through deeper keys. The namespace's child names cost nothing and are
+    the only authority for a directory that exists because a mount or a
+    link sits under it, which no backend can see because those keys live
+    in another resource.
+
+    A no leaves the original error untouched, so nothing is swallowed:
+    the caller re-raises what the backend said. Both probes are broad for
+    that same reason, which is the one ``_is_implicit_dir`` states for
+    its own catches: a probe that fails is a negative probe, never an
+    error to surface. Surfacing one would replace the read's error with
+    one from a call the user never made, and it is the read that failed.
+    ``_is_implicit_dir`` narrows to MISS_ERRORS because for its other
+    caller the stat IS the operation; here it is a probe, so the wider
+    catch belongs on this side of the call.
+
+    Args:
+        ops (CommandIO): the backend's IO bundle, for stat and readdir.
+        accessor (Accessor): backend handle.
+        index (IndexCacheStore): the call's cache index.
+        path (PathSpec): the operand whose read failed.
+        exc (BaseException): what the backend raised.
+    """
+    if isinstance(exc, IsADirectoryError):
+        return True
+    try:
+        st: FileStat | None = await ops.stat(accessor, path, index)
+    except Exception:
+        # A probe that fails is a negative probe, never an error to
+        # surface: `exc` is what the user gets, and it is still live.
+        st = None
+    if st is not None:
+        return getattr(st, "type", None) == FileType.DIRECTORY
+    try:
+        if await _is_implicit_dir(ops, accessor, path, index):
+            return True
+    except Exception:
+        # Negative probe, as above. `_is_implicit_dir` narrows to
+        # MISS_ERRORS for its other caller, where the stat is the
+        # operation rather than a probe.
+        pass
+    # The same fact `_is_namespace_dir` reads, reached from the adapter
+    # rather than from the bag: this guard wraps a slot and never sees a
+    # CommandOpts, and the factory stamps the very callable
+    # `opts.ns.child_mounts` would hand over.
+    return bool(ops.glob_children is not None
+                and ops.glob_children(path.virtual))
+
+
+async def _drain_refusing_dirs(
+        ops: CommandIO, accessor: Accessor, index: IndexCacheStore,
+        path: PathSpec, source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    try:
+        async for chunk in source:
+            yield chunk
+    except Exception as exc:
+        if await _read_hit_a_dir(ops, accessor, index, path, exc):
+            raise eisdir(path) from None
+        raise
+
+
+def _guarded_read_stream(ops: CommandIO,
+                         fn: OperationFn,
+                         accessor: Accessor,
+                         path: PathSpec,
+                         index: IndexCacheStore = NULL_INDEX,
+                         **kwargs: Any) -> AsyncIterator[bytes]:
+    # A plain def, for the reason `cache_aware_read_stream`'s reader is
+    # one: the wrapped op may capture per-call scope, and the
+    # read-through cache reads the active CacheManager here. An async
+    # generator would defer that call to drain time, when the mount's
+    # cache-manager scope is already gone, so every warm read missed.
+    return _drain_refusing_dirs(ops, accessor, index, path,
+                                fn(accessor, path, index, **kwargs))
+
+
+async def _guarded_read(ops: CommandIO,
+                        fn: OperationFn,
+                        accessor: Accessor,
+                        path: PathSpec,
+                        index: IndexCacheStore = NULL_INDEX,
+                        **kwargs: Any) -> bytes:
+    try:
+        data: bytes = await fn(accessor, path, index, **kwargs)
+    except Exception as exc:
+        if await _read_hit_a_dir(ops, accessor, index, path, exc):
+            raise eisdir(path) from None
+        raise
+    return data
+
+
+def with_dir_guard(ops: CommandIO) -> CommandIO:
+    """Return ``ops`` whose reads refuse a directory with GNU's EISDIR.
+
+    The read family's counterpart of ``with_hidden_guard`` and
+    ``with_slash_guard``: reading a directory is never a legitimate call,
+    so the refusal belongs to the slot rather than to each builder's
+    wiring. It used to belong to the wiring, and 23 of the read builders
+    passed a bare ``bound_op(ops.read_stream, ...)`` instead, so a
+    directory on a keyed backend reported ENOENT.
+
+    Refined after the failure, never before it, so a read that succeeds
+    costs exactly what it did. The refusal is built from the operand's
+    own PathSpec, so it carries the virtual path: a raw disk error names
+    the host path, which is the mount's own business and must not reach a
+    user-facing line.
+
+    The catch is broad and the re-raise is unconditional, which is the
+    only way to cover a backend whose directory read is not an OSError at
+    all (asyncssh raises SFTPFailure). Nothing is swallowed: the original
+    error is re-raised untouched unless a probe positively confirms a
+    directory.
+
+    Args:
+        ops (CommandIO): the backend's IO adapter.
+    """
+    changes: dict[str, Any] = {}
+    for slot in _READ_SLOTS:
+        fn = getattr(ops, slot)
+        if fn is None:
+            continue
+        wrapper = (_guarded_read_stream
+                   if slot == "read_stream" else _guarded_read)
+        changes[slot] = functools.partial(wrapper, ops, fn)
+    return replace(ops, **changes)
 
 
 async def _stat_refusing_dirs(ops: CommandIO, accessor: Accessor,

@@ -16,7 +16,8 @@ import { IOResult, materialize } from '../../../io/types.ts'
 import type { MountView, StatPath } from '../../../ops/types.ts'
 import { FileStat, FileType, PathSpec } from '../../../types.ts'
 import { mountKey } from '../../../utils/key_prefix.ts'
-import { eisdir, fsErrorLine, isFsError, isMissError } from '../../../utils/errors.ts'
+import { eisdir, fsErrorLine, isEisdir, isFsError, isMissError } from '../../../utils/errors.ts'
+import { readFailExitCode } from '../../spec/usage.ts'
 import { resolvePath } from '../../../utils/path.ts'
 import { stripSlash } from '../../../utils/slash.ts'
 
@@ -215,30 +216,62 @@ export interface ReadOperand {
 // remaining operands still process (the read-family rule). Lives inside the
 // generics so every wrapper — factory builders and bespoke backend commands
 // alike — inherits the behavior. Non-filesystem errors keep propagating.
-export async function readOperands(
+// readOperands, plus the exit code the failures add up to. The code is the
+// gzip family's, which is the only reason this variant exists: gzip reports a
+// directory as a warning (2) and a missing file as an error (1), where every
+// other command in the family answers the same number whichever failure is
+// asked, so readOperands just drops this one.
+//
+// Its rule is not "the last failure wins". An error is recorded outright
+// while a warning is recorded only when nothing has failed yet, so the error
+// outranks the warning in either order: `zcat nope dir` and `zcat dir nope`
+// are both 1, and only an invocation with no error at all (`zcat dir ok.gz`)
+// is 2. That is gzip's own code: `progerror` assigns `exit_code = ERROR`
+// unconditionally while the `WARN` macro assigns only `if (exit_code == OK)`
+// (gzip 1.13, pinned on debian:stable-slim). A command whose rule is
+// different again has to own its own loop: GNU sed takes the most severe
+// code, and sedGeneric does that itself. The python twin is
+// `split_readable_coded`, which sits on the stat-based split because python's
+// zcat partitions there rather than on the read.
+export async function readOperandsCoded(
   paths: readonly PathSpec[],
   stream: (p: PathSpec) => AsyncIterable<Uint8Array>,
   cmdName: string,
-): Promise<[ReadOperand[], string]> {
+): Promise<[ReadOperand[], string, number]> {
   const ok: ReadOperand[] = []
   let err = ''
+  let code = 0
   for (const p of paths) {
     try {
       ok.push({ path: p, data: await materialize(stream(p)) })
     } catch (e) {
       if (!isFsError(e)) throw e
       err += fsErrorLine(cmdName, p, e)
+      // A directory is gzip's warning and everything else its error, so the
+      // directory yields to a code already recorded.
+      if (code === 0 || !isEisdir(e)) code = readFailExitCode(cmdName, e)
     }
   }
+  return [ok, err, code]
+}
+
+export async function readOperands(
+  paths: readonly PathSpec[],
+  stream: (p: PathSpec) => AsyncIterable<Uint8Array>,
+  cmdName: string,
+): Promise<[ReadOperand[], string]> {
+  const [ok, err] = await readOperandsCoded(paths, stream, cmdName)
   return [ok, err]
 }
 
-// IOResult carrying the readOperands stderr lines: exit 1 when any operand
-// failed, exit 0 otherwise.
-export function operandsIo(err: string, init?: { cache?: string[] }): IOResult {
+// IOResult carrying the readOperands stderr lines: exit `exitCode` when any
+// operand failed, exit 0 otherwise. The default is 1, which is every GNU
+// command in this family except the gzip one, whose code depends on the errno
+// and which passes the number readOperandsCoded reports.
+export function operandsIo(err: string, init?: { cache?: string[]; exitCode?: number }): IOResult {
   return new IOResult({
     ...(init?.cache !== undefined ? { cache: init.cache } : {}),
-    exitCode: err === '' ? 0 : 1,
+    exitCode: err === '' ? 0 : (init?.exitCode ?? 1),
     stderr: err === '' ? null : ENC.encode(err),
   })
 }

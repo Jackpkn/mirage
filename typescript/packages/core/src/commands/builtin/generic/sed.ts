@@ -16,6 +16,7 @@ import { specOf } from '../../spec/builtins.ts'
 import { FlagView } from '../../spec/types.ts'
 import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import { fsErrorLine, isFsError } from '../../../utils/errors.ts'
+import { readFailExitCode } from '../../spec/usage.ts'
 import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
@@ -93,6 +94,18 @@ export async function sedGeneric(
     // still process, per GNU sed (which keeps going on a missing file; the
     // repo exits 1 where GNU exits 2).
     let err = ''
+    // sed owns its exit code rather than letting the executor's
+    // chokepoint pick it, because GNU sed splits a failed operand two
+    // ways (GNU sed 4.9). An OPEN error (a missing file) is exit 2,
+    // reported, and the remaining operands still process: `sed -n p nope
+    // ok.txt ok2.txt` prints both files. A READ error (a directory,
+    // which opens fine and then fails) is exit 4 and FATAL: `sed -n p
+    // dir ok.txt` prints nothing, `sed -n p ok.txt dir ok2.txt` stops
+    // after ok.txt, and `sed -n p dir dir` reports one line, not two.
+    // Hence the running max for the code and the break for the read
+    // error; every other command in this family continues past a
+    // directory, and only sed does not.
+    let code = 0
     if (isSimpleSub) {
       // Run the substitution through the per-line engine rather than a single
       // whole-buffer `text.replace`: `^`/`$` must anchor per line and a
@@ -109,6 +122,8 @@ export async function sedGeneric(
           } catch (e) {
             if (!isFsError(e)) throw e
             err += fsErrorLine('sed', p, e)
+            code = Math.max(code, readFailExitCode('sed', e))
+            if ((e as { code?: string }).code === 'EISDIR') break
             continue
           }
           const text = DEC.decode(data)
@@ -123,7 +138,7 @@ export async function sedGeneric(
           new IOResult({
             writes,
             cache: edited,
-            exitCode: err === '' ? 0 : 1,
+            exitCode: code,
             stderr: err === '' ? null : ENC.encode(err),
           }),
         ]
@@ -137,6 +152,8 @@ export async function sedGeneric(
         } catch (e) {
           if (!isFsError(e)) throw e
           err += fsErrorLine('sed', p, e)
+          code = Math.max(code, readFailExitCode('sed', e))
+          if ((e as { code?: string }).code === 'EISDIR') break
           continue
         }
         const text = DEC.decode(data)
@@ -148,7 +165,7 @@ export async function sedGeneric(
         out,
         new IOResult({
           cache: readOk,
-          exitCode: err === '' ? 0 : 1,
+          exitCode: code,
           stderr: err === '' ? null : ENC.encode(err),
         }),
       ]
@@ -169,6 +186,8 @@ export async function sedGeneric(
       } catch (e) {
         if (!isFsError(e)) throw e
         err += fsErrorLine('sed', p, e)
+        code = Math.max(code, readFailExitCode('sed', e))
+        if ((e as { code?: string }).code === 'EISDIR') break
         continue
       }
       const text = DEC.decode(data)
@@ -183,7 +202,7 @@ export async function sedGeneric(
       }
     }
     const io = new IOResult({
-      exitCode: err === '' ? 0 : 1,
+      exitCode: code,
       stderr: err === '' ? null : ENC.encode(err),
     })
     if (modifying) {

@@ -41,6 +41,7 @@ import { applyFindActions } from '../find_action_dispatch.ts'
 import { pathAllowed } from '../../../context/session_context.ts'
 import { CommandTimeoutError } from '../../../commands/builtin/utils/limit.ts'
 import { UsageError } from '../../../commands/errors.ts'
+import { readFailExitCode } from '../../../commands/spec/usage.ts'
 import { formatFsError } from '../../../utils/errors.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 
@@ -337,7 +338,13 @@ export async function runOnMount(
     // A limit timeout is not a filesystem failure: let it reach the
     // workspace-level handler that answers with exit 124.
     if (err instanceof CommandTimeoutError) throw err
-    return [null, new IOResult({ exitCode: 1, stderr: formatFsError(cmdName, err, paths) })]
+    return [
+      null,
+      new IOResult({
+        exitCode: readFailExitCode(cmdName, err),
+        stderr: formatFsError(cmdName, err, paths),
+      }),
+    ]
   }
 }
 

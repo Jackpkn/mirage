@@ -15,6 +15,7 @@
 from mirage.commands.builtin.generic.crossmount.types import (Cmd, CrossResult,
                                                               RunSingle)
 from mirage.commands.spec.types import FlagValue
+from mirage.commands.spec.usage import read_fail_exit_line
 from mirage.io import IOResult
 from mirage.io.stream import async_chain, materialize
 from mirage.io.types import ByteSource
@@ -60,13 +61,27 @@ async def run_stream(cmd_name: str, scopes: list[PathSpec],
     merged_io = IOResult()
     sources: list[ByteSource] = []
     failed = False
+    # The real command's code for the worst failed fetch. The fetch runs
+    # as Cmd.CAT, so its own code is cat's 1 whatever went wrong; the
+    # stderr is already respelled into the real command's voice and the
+    # code has to follow it, or `sort a /other/missing` answers 1 while
+    # `sort missing` answers 2.
+    fail_code = 0
     for scope in scopes:
         out, io = await run_single(Cmd.CAT, [scope], [], {})
         if io.exit_code != 0:
             failed = True
-            if cmd_name != Cmd.CAT and io.stderr is not None:
-                io.stderr = _respell_fetch_stderr(await materialize(io.stderr),
-                                                  cmd_name)
+            if io.stderr is not None:
+                rendered = await materialize(io.stderr)
+                if cmd_name != Cmd.CAT:
+                    rendered = _respell_fetch_stderr(rendered, cmd_name)
+                    io.stderr = rendered
+                fail_code = max(fail_code,
+                                read_fail_exit_line(cmd_name, rendered))
+            # The fetch ran as cat, so its exit code is cat's whatever
+            # went wrong. fail_code already carries the real command's,
+            # and merging cat's over it would win the `or` below.
+            io.exit_code = 0
             merged_io = await merged_io.merge(io)
             continue
         merged_io = await merged_io.merge(io)
@@ -75,14 +90,14 @@ async def run_stream(cmd_name: str, scopes: list[PathSpec],
     # sort aborts on any failed operand like GNU (it needs every input
     # before emitting anything), matching the single-mount builder.
     if failed and cmd_name == Cmd.SORT:
-        merged_io.exit_code = merged_io.exit_code or 1
+        merged_io.exit_code = merged_io.exit_code or fail_code or 1
         return None, merged_io
 
     body: ByteSource = async_chain(*sources)
 
     if cmd_name == Cmd.CAT and not _has_active_flags(flag_kwargs):
         if failed:
-            merged_io.exit_code = merged_io.exit_code or 1
+            merged_io.exit_code = merged_io.exit_code or fail_code or 1
         return body, merged_io
 
     out, io = await run_single(cmd_name, [],
@@ -92,5 +107,5 @@ async def run_stream(cmd_name: str, scopes: list[PathSpec],
                                resolve_hint=scopes[0])
     merged_io = await merged_io.merge(io)
     if failed:
-        merged_io.exit_code = merged_io.exit_code or 1
+        merged_io.exit_code = merged_io.exit_code or fail_code or 1
     return out, merged_io

@@ -122,3 +122,37 @@ def test_filetype_fns_empty_when_no_variants():
     fns = received.get("filetype_fns", {})
     assert fns is not None
     assert len(fns) == 0
+
+
+def test_a_directory_does_not_route_to_a_filetype_handler():
+    """A filetype handler is chosen from the operand's NAME, and a
+    directory can carry any extension, so the cascade would hand a
+    renderer a directory to read. Registering a `.tally` renderer for
+    `cat` made `cat /data/dir.tally` answer ENOENT while `wc` on the same
+    path answered `Is a directory`: the renderer made the command worse
+    than the built-in it replaced."""
+    fired: list[str] = []
+
+    async def renderer(accessor, paths, texts, opts):
+        fired.append(paths[0].virtual)
+        return b"rendered\n", IOResult()
+
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    _run(ws, "mkdir -p /data/dir.tally")
+    asyncio.run(ws.ops.write("/data/dir.tally/inside.txt", b"nested\n"))
+    asyncio.run(ws.ops.write("/data/file.tally", b"raw\n"))
+    ws._registry.mount_for("/data/").register(
+        RegisteredCommand("cat",
+                          spec=SPECS["cat"],
+                          resource="ram",
+                          filetype=".tally",
+                          fn=renderer))
+
+    io = _run(ws, "cat /data/dir.tally")
+    assert fired == []
+    assert b"Is a directory" in (io.stderr or b"")
+    assert io.exit_code == 1
+
+    io = _run(ws, "cat /data/file.tally")
+    assert fired == ["/data/file.tally"]
+    assert asyncio.run(io.stdout_str()) == "rendered\n"

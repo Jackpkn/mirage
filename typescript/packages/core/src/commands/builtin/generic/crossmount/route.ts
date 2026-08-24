@@ -22,6 +22,7 @@ import { Strategy, type Cmd, type CrossResult, type DispatchFn, type RunSingle }
 import { runRelay } from './relay/index.ts'
 import { runStream } from './stream/index.ts'
 import type { FlagValue } from '../../../spec/types.ts'
+import { readFailExitCode } from '../../../spec/usage.ts'
 
 // Run a command whose path operands span mounts. Every command combines
 // per-mount work under one of three strategies (see Strategy): STREAM merges
@@ -61,6 +62,12 @@ export async function handleCrossMount(
     // Python chokepoint (FS_ERRORS). Internal errors keep propagating
     // instead of being mangled into a plausible-looking stderr line.
     if (!isFsError(err)) throw err
-    return [null, new IOResult({ exitCode: 1, stderr: formatFsError(cmdName, err, scopes) })]
+    return [
+      null,
+      new IOResult({
+        exitCode: readFailExitCode(cmdName, err),
+        stderr: formatFsError(cmdName, err, scopes),
+      }),
+    ]
   }
 }

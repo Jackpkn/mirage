@@ -37,7 +37,7 @@ import { mergeSignals } from '../abort.ts'
 import { runWithMountPrefix, runWithRevisions, withMountPrefix } from '../../observe/context.ts'
 import type { RegisteredOp } from '../../ops/registry.ts'
 import type { Resource } from '../../resource/base.ts'
-import { type Limit, ConsistencyPolicy, MountMode, PathSpec } from '../../types.ts'
+import { type Limit, ConsistencyPolicy, FileType, MountMode, PathSpec } from '../../types.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import { enotsup, erofsReadOnly } from '../../utils/errors.ts'
@@ -412,8 +412,29 @@ export class MountEntry {
       limitOverride?: Limit | null
     } = {},
   ): Promise<[ByteSource | null, IOResult]> {
-    const extension =
+    let extension =
       paths.length > 0 && paths[0] !== undefined ? getExtension(paths[0].virtual) : null
+    // A filetype handler is selected from the operand's NAME, and a
+    // directory can carry any extension, so the cascade would hand a
+    // renderer a directory to read. One stat settles it, and only when a
+    // handler for this exact extension exists, so a mount with no
+    // filetype registrations never reaches the probe. The built-in is
+    // what a directory should get: it owns GNU's `Is a directory`
+    // wording, and the renderer owns nothing but its own format.
+    // The DISPATCHER's stat, not the backend's, so a mount root and a
+    // namespace-only directory answer too; null means neither plane saw
+    // anything, in which case the renderer reports its own miss.
+    const first = paths[0]
+    if (
+      extension !== null &&
+      extension !== '' &&
+      first !== undefined &&
+      opts.statPath !== undefined &&
+      this.cmds.has(cmdKey(cmdName, extension))
+    ) {
+      const entry = await opts.statPath(first.virtual)
+      if (entry !== null && entry.type === FileType.DIRECTORY) extension = null
+    }
 
     const handlers = this.resolveCascade(cmdName, extension, this.cmds, this.generalCmds)
     if (handlers.length === 0) {

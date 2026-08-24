@@ -13,11 +13,14 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { UsageError } from '../errors.ts'
+import { gnuStrerror } from '../../utils/errors.ts'
 import {
   OLD_OPTION_EXIT,
   OPERAND_EXIT,
   PYTHON_NAMES,
   pythonUsage,
+  READ_FAIL_EXIT,
+  READ_FAIL_EXIT_ISDIR,
   USAGE_EXIT,
   USAGE_HINT_PREFIX,
 } from './constants.ts'
@@ -31,6 +34,89 @@ export function usageExitCode(cmdName: string): number {
 /** Exit code of a command refused on one operand before it ran. */
 export function operandExitCode(cmdName: string): number {
   return OPERAND_EXIT[cmdName] ?? 1
+}
+
+/**
+ * The exit code for a command that could not read an operand.
+ *
+ * Read off the command, not off the errno, because that is how GNU's own
+ * codes fall; the errno is consulted only for the four commands that do
+ * answer a directory and a missing file differently. Mirrors the python
+ * `read_fail_exit`.
+ *
+ * Gated on READ_FAIL_CODES, and nothing wider: the tables are keyed by
+ * command and the executor's chokepoints catch everything a command can
+ * throw, so a loose gate makes them answer in the wrong voice. Two cases
+ * set the width. A bad script is not a filesystem error at all (`sed
+ * 's/o/O/0'` is exit 1, not sed's 2). And EACCES is as often a WRITE
+ * refusal as a read one (`sed -i` on a read-only backend is exit 1, not
+ * 4), which the chokepoint cannot tell apart. EACCES on a genuine read is
+ * the one case this leaves at 1 where GNU would answer the command's
+ * code; that is the safe side, and it is what the executor already did
+ * before the tables existed.
+ */
+const READ_FAIL_CODES: ReadonlySet<string> = new Set(['ENOENT', 'EISDIR', 'ENOTDIR'])
+
+function readFailCode(cmdName: string, isDir: boolean): number {
+  if (isDir) {
+    const isdir = READ_FAIL_EXIT_ISDIR[cmdName]
+    if (isdir !== undefined) return isdir
+  }
+  return READ_FAIL_EXIT[cmdName] ?? 1
+}
+
+export function readFailExitCode(cmdName: string, err: unknown): number {
+  const code = (err as { code?: string }).code
+  if (code === undefined || !READ_FAIL_CODES.has(code)) return 1
+  return readFailCode(cmdName, code === 'EISDIR')
+}
+
+/**
+ * The code one rendered stderr line's terminal errno asks for.
+ *
+ * Read off the LAST field, not searched for anywhere in the line: the
+ * renderer writes `<cmd>: <path>: <strerror>` and a path is free to spell
+ * a strerror itself, so a directory named `No such file or directory` read
+ * as ENOENT under a global scan and sed answered 2 where GNU answers 4.
+ * Null when the terminal field is not a strerror this family knows, which
+ * is what a line that is not a failed read looks like.
+ */
+function lineReadFailCode(cmdName: string, line: string): number | null {
+  const cut = line.lastIndexOf(': ')
+  const terminal = cut === -1 ? line : line.slice(cut + 2)
+  for (const code of READ_FAIL_CODES) {
+    if (gnuStrerror(code) === terminal) return readFailCode(cmdName, code === 'EISDIR')
+  }
+  return null
+}
+
+/**
+ * The same code, for a read failure known only as a rendered line.
+ *
+ * The cross-mount stream path fetches each operand with a native `cat`
+ * sub-run, so a failed operand arrives as cat's rendered stderr rather
+ * than as an error. That line is already respelled into the real
+ * command's voice, and the exit code has to follow it or `sort a
+ * /other/missing` answers 1 while `sort missing` answers 2, a split GNU
+ * does not have. Classified against the very strerrors the renderer
+ * wrote, so the forward and backward directions cannot drift; a blob that
+ * carries no failed-read line keeps the catch-all 1.
+ *
+ * One fetch can render several lines, because one operand can be a glob
+ * the owning mount expanded, and the most severe code is the answer: sed
+ * is the only stream command whose code depends on the errno, and its rule
+ * is the most severe (4 beats 2), which is also how the caller folds one
+ * operand's code into the next.
+ *
+ * Mirrors the python `read_fail_exit_line`.
+ */
+export function readFailExitCodeFromLine(cmdName: string, rendered: string): number {
+  let code = 0
+  for (const line of rendered.split('\n')) {
+    const one = lineReadFailCode(cmdName, line)
+    if (one !== null) code = Math.max(code, one)
+  }
+  return code || 1
 }
 
 /**

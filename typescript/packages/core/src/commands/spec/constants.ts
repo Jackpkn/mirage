@@ -84,6 +84,45 @@ export const USAGE_EXIT: Readonly<Record<string, number>> = Object.freeze({
   python3: 2,
 })
 
+// The exit code a command answers when it cannot read an operand. GNU's
+// code belongs to the COMMAND, not to the errno: `sort nope` and `sort
+// dir` are both 2, `cat` is 1 for both. Absent means 1, which is what
+// the executor's catch-all already did on its own. Pinned on
+// debian:stable-slim (coreutils 9.7, GNU sed 4.9, gzip 1.13, jq 1.7,
+// binutils 2.44, util-linux 2.41.5, bsdmainutils 12.1.8, xxd from
+// vim-common). The python twin is READ_FAIL_EXIT in
+// commands/spec/constants.py.
+export const READ_FAIL_EXIT: Readonly<Record<string, number>> = Object.freeze({
+  sort: 2,
+  awk: 2,
+  jq: 2,
+  xxd: 2,
+  grep: 2,
+  egrep: 2,
+  fgrep: 2,
+  rg: 2,
+  cmp: 2,
+  diff: 2,
+  sed: 2,
+  zgrep: 2,
+  unzip: 9,
+})
+
+// The four commands whose code DOES depend on the errno, so the table
+// above cannot express them on its own. sed opens the directory
+// successfully and fails on the read, which is its own class (4), while a
+// missing file fails at open (2). The gzip family reports a directory as
+// a warning (2) and a missing file as an error (1). zgrep inverts that,
+// because its exit code is grep's: a directory it cannot decompress
+// yields no match (1) where a missing file is grep's own error (2).
+export const READ_FAIL_EXIT_ISDIR: Readonly<Record<string, number>> = Object.freeze({
+  sed: 4,
+  gzip: 2,
+  gunzip: 2,
+  zcat: 2,
+  zgrep: 1,
+})
+
 // The interpreter commands answer option errors in CPython's words, not
 // GNU's: python3 is not a GNU tool, and its refusal names the
 // source-selecting options a reader needs.

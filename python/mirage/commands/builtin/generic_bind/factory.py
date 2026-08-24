@@ -23,6 +23,7 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.cache.read_through import (cache_aware_read_bytes,
                                        cache_aware_read_stream)
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO,
+                                                          with_dir_guard,
                                                           with_path_guards)
 from mirage.commands.builtin.generic_bind.builders import _BUILDERS
 from mirage.commands.builtin.generic_bind.provision import default_provision
@@ -165,7 +166,8 @@ async def _run_with_namespace_globs(ops: CommandIO, fn: Callable[..., Any],
                                     accessor: Accessor, paths: list[PathSpec],
                                     texts: list[str],
                                     opts: CommandOpts) -> Any:
-    """Run a builder with an adapter whose globs see the namespace.
+    """Run a builder with an adapter whose globs see the namespace and
+    whose reads refuse a directory.
 
     A nested mount's keys live in another resource and no resource stores
     a symlink, so a glob resolved by one backend's readdir misses both,
@@ -173,6 +175,14 @@ async def _run_with_namespace_globs(ops: CommandIO, fn: Callable[..., Any],
     is built once per backend and the names are session-scoped, so the
     fact is stamped on here, per invocation, from ``opts.ns``:
     every builder then keeps calling ``ops.resolve_glob`` unchanged.
+
+    ``with_dir_guard`` is applied here rather than beside the other
+    wrappers in ``make_generic_commands`` because it reads the same
+    namespace fact: a directory that exists only because a mount or a
+    link sits under it is invisible to the backend, so the guard has to
+    close over an adapter that already carries ``glob_children``. The
+    stamp happens whether or not the namespace owes this directory
+    anything, so there is one code path rather than two.
 
     ``ops`` stays the first bound argument, because that partial slot is
     how the adapter is reached for a registered command.
@@ -186,10 +196,8 @@ async def _run_with_namespace_globs(ops: CommandIO, fn: Callable[..., Any],
         opts (CommandOpts): the per-invocation option bag.
     """
     children = opts.ns.child_mounts if opts.ns is not None else None
-    if children is None:
-        return await fn(ops, accessor, paths, texts, opts)
-    return await fn(replace(ops, glob_children=children), accessor, paths,
-                    texts, opts)
+    bound = with_dir_guard(replace(ops, glob_children=children))
+    return await fn(bound, accessor, paths, texts, opts)
 
 
 def make_generic_commands(

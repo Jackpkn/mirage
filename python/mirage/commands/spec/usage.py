@@ -15,8 +15,11 @@
 from mirage.commands.errors import UsageError
 from mirage.commands.spec.constants import (OLD_OPTION_EXIT, OPERAND_EXIT,
                                             PYTHON_NAMES, PYTHON_USAGE,
-                                            USAGE_EXIT, USAGE_HINT_PREFIX)
+                                            READ_FAIL_EXIT,
+                                            READ_FAIL_EXIT_ISDIR, USAGE_EXIT,
+                                            USAGE_HINT_PREFIX)
 from mirage.commands.spec.types import CommandName
+from mirage.utils.errors import fs_strerror
 
 
 def usage_exit_code(cmd_name: str) -> int:
@@ -35,6 +38,101 @@ def operand_exit_code(cmd_name: str) -> int:
         cmd_name (str): command name.
     """
     return OPERAND_EXIT.get(cmd_name, 1)
+
+
+# What "could not read this operand" looks like as an errno, and nothing
+# wider. The tables below are keyed by command, and the executor's
+# chokepoints catch every error a command can raise, so the gate has to be
+# the narrow thing or the tables answer in the wrong voice. Two cases
+# proved it: a bad script is not a filesystem error at all (`sed
+# 's/o/O/0'` is exit 1, not sed's 2), and EACCES is as often a WRITE
+# refusal as a read one (`sed -i` on a read-only backend raises
+# PermissionError and is exit 1, not 4). EACCES on a genuine read is the
+# one case this leaves at 1 where GNU would answer the command's code;
+# that is the safe side to err on, and it is what the executor already
+# did before the tables existed.
+_READ_FAIL_ERRORS = (FileNotFoundError, IsADirectoryError, NotADirectoryError)
+
+
+def _read_fail_code(cmd_name: str, is_dir: bool) -> int:
+    if is_dir:
+        code = READ_FAIL_EXIT_ISDIR.get(cmd_name)
+        if code is not None:
+            return code
+    return READ_FAIL_EXIT.get(cmd_name, 1)
+
+
+def read_fail_exit(cmd_name: str, exc: BaseException) -> int:
+    """The exit code for a command that could not read an operand.
+
+    Read off the command, not off the errno, because that is how GNU's
+    own codes fall; the errno is consulted only for the four commands
+    that answer a directory and a missing file differently. Mirrors
+    ``readFailExitCode`` in usage.ts.
+
+    Gated on ``_READ_FAIL_ERRORS`` rather than on the whole of
+    ``FS_ERRORS``; see the comment on that tuple for the two cases that
+    set its width.
+
+    Args:
+        cmd_name (str): the command reporting the failure.
+        exc (BaseException): the error it hit.
+    """
+    if not isinstance(exc, _READ_FAIL_ERRORS):
+        return 1
+    return _read_fail_code(cmd_name, isinstance(exc, IsADirectoryError))
+
+
+def _line_read_fail_code(cmd_name: str, line: str) -> int | None:
+    """The code one rendered stderr line's terminal errno asks for.
+
+    Read off the LAST field, not searched for anywhere in the line: the
+    renderer writes ``<cmd>: <path>: <strerror>`` and a path is free to
+    spell a strerror itself, so a directory named ``No such file or
+    directory`` read as ENOENT under a global scan and sed answered 2
+    where GNU answers 4. None when the terminal field is not a strerror
+    this family knows, which is what a line that is not a failed read
+    looks like.
+
+    Args:
+        cmd_name (str): the command the line was respelled into.
+        line (str): one rendered stderr line, newline already stripped.
+    """
+    terminal = line.rsplit(": ", 1)[-1]
+    for exc_type in _READ_FAIL_ERRORS:
+        if fs_strerror(exc_type()) == terminal:
+            return _read_fail_code(cmd_name, exc_type is IsADirectoryError)
+    return None
+
+
+def read_fail_exit_line(cmd_name: str, rendered: bytes) -> int:
+    """The same code, for a read failure known only as a rendered line.
+
+    The cross-mount stream path fetches each operand with a native ``cat``
+    sub-run, so a failed operand arrives as cat's rendered stderr rather
+    than as an exception. That line is already respelled into the real
+    command's voice, and the exit code has to follow it or `sort a
+    /other/missing` answers 1 while `sort missing` answers 2, a split GNU
+    does not have. Classified against the very strerrors the renderer
+    wrote, so the forward and backward directions cannot drift; a blob
+    that carries no failed-read line keeps the catch-all 1.
+
+    One fetch can render several lines, because one operand can be a glob
+    the owning mount expanded, and the most severe code is the answer:
+    sed is the only stream command whose code depends on the errno, and
+    its rule is the most severe (4 beats 2), which is also how the caller
+    folds one operand's code into the next.
+
+    Args:
+        cmd_name (str): the command the line was respelled into.
+        rendered (bytes): the fetch's stderr, GNU-formatted.
+    """
+    code = 0
+    for line in rendered.decode("utf-8", "replace").splitlines():
+        one = _line_read_fail_code(cmd_name, line)
+        if one is not None:
+            code = max(code, one)
+    return code or 1
 
 
 def python_option_error(cmd_name: str, line: str) -> tuple[bytes, int]:

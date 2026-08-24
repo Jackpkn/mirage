@@ -264,16 +264,19 @@ async function checkPartialRead(
     `${label}: tac keeps partial output`,
     out === "aaa\n" && code === 1 && err === `tac: ${miss}: No such file or directory\n`,
   );
+  // sed and sort exit 2 on a failed operand where the commands above exit 1:
+  // the code belongs to the command, not to the errno (GNU sed 4.9,
+  // coreutils 9.7).
   [out, err, code] = await run(ws, `sed s/a/X/ ${src} ${miss}`);
   check(
     `${label}: sed keeps partial output`,
-    out === "Xaa\n" && code === 1 && err === `sed: ${miss}: No such file or directory\n`,
+    out === "Xaa\n" && code === 2 && err === `sed: ${miss}: No such file or directory\n`,
   );
   // sort aborts on any failed operand, single- and cross-mount alike.
   [out, err, code] = await run(ws, `sort ${src} ${miss}`);
   check(
     `${label}: sort aborts`,
-    out === "" && code === 1 && err === `sort: ${miss}: No such file or directory\n`,
+    out === "" && code === 2 && err === `sort: ${miss}: No such file or directory\n`,
   );
 }
 
