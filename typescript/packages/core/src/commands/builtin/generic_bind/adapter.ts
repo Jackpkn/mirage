@@ -39,7 +39,7 @@ import {
   type ReaddirFn,
   type StatFn,
 } from '../../../types.ts'
-import { eacces, eisdir, enoent, erofsReadOnly } from '../../../utils/errors.ts'
+import { eacces, eisdir, enoent, erofsReadOnly, isMissError } from '../../../utils/errors.ts'
 import type { ChildMounts } from '../../../ops/types.ts'
 import { DEFAULT_MAX_GLOB_MATCHES, resolveGlobWith } from '../../../utils/glob_walk.ts'
 import { norm, parent } from '../../../utils/path.ts'
@@ -72,6 +72,16 @@ type WriteOp<A extends Accessor = Accessor> = (
 type ExistsOp<A extends Accessor = Accessor> = (accessor: A, path: PathSpec) => Promise<boolean>
 
 type PathOp<A extends Accessor = Accessor> = (accessor: A, path: PathSpec) => Promise<void>
+
+// `PathOp` plus the rmdir slot's optional `index`: the hidden-remnant
+// guard turns a refused rmdir into a raw listing of the same directory,
+// and an indexed backend cannot list a nested path without it. Backend
+// rmdirs keep their two-parameter shape and simply never receive it.
+type RmdirOp<A extends Accessor = Accessor> = (
+  accessor: A,
+  path: PathSpec,
+  index?: IndexCacheStore,
+) => Promise<void>
 
 type MkdirOp<A extends Accessor = Accessor> = (
   accessor: A,
@@ -146,7 +156,7 @@ export interface CommandIO<A extends Accessor = Accessor> {
   exists?: ExistsOp<A>
   mkdir?: MkdirOp<A>
   unlink?: PathOp<A>
-  rmdir?: PathOp<A>
+  rmdir?: RmdirOp<A>
   rmR?: PathOp<A>
   rename?: RenameOp<A>
   copy?: CopyOp<A>
@@ -191,18 +201,42 @@ function visibleChildren(entries: string[], parent: PathSpec): string[] {
   })
 }
 
+/** Whether the session's hides make this relocation a reveal. */
+function moveWouldReveal(src: PathSpec, dst: PathSpec): boolean {
+  const sess = getCurrentSession()
+  if (sess === null) return false
+  return moveReveals(sess.hiddenPaths, sess.shownPaths, src.virtual, dst.virtual)
+}
+
 /** Refuse a relocation that would surface a hidden path.
  *
  * A rename or a native directory copy re-anchors everything below its
  * source, and a hide's coverage does not move with the content, so
  * hidden bytes would land at paths the session can see. EACCES on the
- * source, which mv and cp render in GNU's permission-denied voice. */
+ * source, which mv and cp render in GNU's permission-denied voice.
+ * Only a directory has anything below it to re-anchor, so callers
+ * check this for a source they know is a directory and skip it for a
+ * file. */
 export function refuseReveal(src: PathSpec, dst: PathSpec): void {
-  const sess = getCurrentSession()
-  if (sess === null) return
-  if (moveReveals(sess.hiddenPaths, sess.shownPaths, src.virtual, dst.virtual)) {
-    throw eacces(src.virtual)
+  if (moveWouldReveal(src, dst)) throw eacces(src.virtual)
+}
+
+/** Whether a pair op's source stats as a directory, probed only when
+ * the reveal check trips: an absent source moves nothing (the op
+ * itself reports it), and an unanswerable one fails toward refusal. */
+async function pairSrcIsDir<A extends Accessor>(
+  stat: StatOp<A>,
+  accessor: A,
+  src: PathSpec,
+): Promise<boolean> {
+  let row: FileStat
+  try {
+    row = await stat(accessor, src, undefined)
+  } catch (err) {
+    if (isMissError(err)) return false
+    return true
   }
+  return row.type === FileType.DIRECTORY
 }
 
 /**
@@ -296,10 +330,10 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
     // take the remnants.
     const rawReaddir = ops.readdir
     const rawRmR = ops.rmR
-    guarded.rmdir = async (accessor, path) => {
+    guarded.rmdir = async (accessor, path, index) => {
       refuseHidden(path, false)
       try {
-        await rd(accessor, path)
+        await rd(accessor, path, index)
         return
       } catch (exc) {
         const code = (exc as { code?: string }).code
@@ -310,7 +344,7 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
         ) {
           throw exc
         }
-        const entries = await rawReaddir(accessor, path)
+        const entries = await rawReaddir(accessor, path, index)
         const base = path.virtual.replace(/\/+$/, '')
         const visible = entries.some((e) => {
           const trimmed = e.replace(/\/+$/, '')
@@ -337,10 +371,14 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
   }
   const rn = ops.rename
   if (rn !== undefined) {
-    guarded.rename = (accessor, src, dst) => {
+    // Only a directory source can carry hidden content into view, so a
+    // rename whose source stats as a file passes the reveal check.
+    guarded.rename = async (accessor, src, dst) => {
       refuseHidden(src, false)
       refuseHidden(dst, true)
-      refuseReveal(src, dst)
+      if (moveWouldReveal(src, dst) && (await pairSrcIsDir(ops.stat, accessor, src))) {
+        throw eacces(src.virtual)
+      }
       return rn(accessor, src, dst)
     }
   }

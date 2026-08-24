@@ -387,6 +387,39 @@ def test_mv_rides_a_component_pattern_hide_along():
     assert survived.exit_code == 0 and (survived.stdout or b"") == b"t\n"
 
 
+def test_mv_of_a_file_under_an_anchored_pattern_hide_passes():
+    # /repo/*/sec could match below any directory under /repo, so a
+    # directory move refuses conservatively, but a regular file carries
+    # nothing below it: renaming one reveals nothing.
+    ws = _boxed({"paths": {"hide": ["/repo/*/sec"]}})
+    moved = _run(ws, "mv /repo/box/a.txt /repo/box/b.txt")
+    assert moved.exit_code == 0, moved.stderr
+    listing = _run(ws, "ls /repo/box")
+    assert b"b.txt" in (listing.stdout or b"")
+
+
+def test_mv_of_a_directory_under_an_anchored_pattern_hide_refuses():
+    ws = _boxed({"paths": {"hide": ["/repo/*/sec"]}})
+    refused = _run(ws, "mv /repo/box /repo/moved")
+    assert refused.exit_code == 1
+    assert b"Permission denied" in (refused.stderr or b"")
+
+
+def test_mv_b_refusal_leaves_the_destination_backup_free():
+    # The reveal guard answers before -b renames the destination aside,
+    # so a refused move mutates nothing: no backup, destination intact.
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    prep = _run(ws, "mkdir /repo/moved")
+    assert prep.exit_code == 0, prep.stderr
+    refused = _run(ws, "mv -b -T /repo/box /repo/moved")
+    assert refused.exit_code == 1
+    assert b"Permission denied" in (refused.stderr or b"")
+    intact = _host(ws, "test -d /repo/moved")
+    assert intact.exit_code == 0
+    backup = _host(ws, "test -e /repo/moved~")
+    assert backup.exit_code == 1
+
+
 def test_cp_r_copies_the_visible_view_silently():
     ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
     copied = _run(ws, "cp -r /repo/box /repo/copy")

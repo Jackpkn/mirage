@@ -381,6 +381,11 @@ def move_reveals(hidden: HiddenPaths | None, shown: ShownPaths | None,
     space could reach below ``src`` refuses, failing toward refusal the
     way ``readonly_below`` blames a pattern.
 
+    Spec-only: nothing here stats. A ``src`` that is a regular file has
+    nothing below it to re-anchor, so the callers gate this check on the
+    source being a directory (statting where they can, failing toward
+    refusal where they cannot).
+
     Args:
         hidden (HiddenPaths | None): the spec, None means unrestricted.
         shown (ShownPaths | None): the session's show entries.

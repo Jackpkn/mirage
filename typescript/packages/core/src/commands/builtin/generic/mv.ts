@@ -292,11 +292,12 @@ export async function mvGeneric(
   index?: IndexCacheStore,
   backendKey?: BackendKeyFn,
   readdir?: ReaddirFn,
-  // Judges one (source, target) pair before a primitive move touches
-  // anything, throwing to refuse it; the adapter wires the
-  // hidden-reveal check here so a cross-mount move refuses exactly
-  // where a native rename's own slot would, instead of half-copying
-  // first.
+  // Judges one (source, target) pair before the move touches anything,
+  // the backup included, throwing to refuse it; the adapter wires the
+  // hidden-reveal check here so a refused move mutates nothing (no
+  // half-copy, no destination renamed aside by -b). Consulted only for
+  // a directory source, since a file carries nothing below it to
+  // reveal.
   guard?: (src: PathSpec, dst: PathSpec) => void,
 ): Promise<[ByteSource | null, IOResult]> {
   const keyOf = backendKey ?? backendKeyDefault
@@ -404,6 +405,20 @@ export async function mvGeneric(
         continue
       }
     }
+    // The reveal guard answers before the backup so a refused move
+    // cannot leave the destination renamed aside; only a directory
+    // source has anything below it to re-anchor, so a file passes.
+    if (guard !== undefined && srcIsDir) {
+      try {
+        guard(src, target)
+      } catch (err) {
+        if (!isFsError(err)) throw err
+        errors.push(
+          `mv: cannot move '${src.virtual}' to '${target.virtual}': ${String(fsStrerror(err))}`,
+        )
+        continue
+      }
+    }
     const made = await makeBackup(
       policy,
       strategy,
@@ -416,17 +431,6 @@ export async function mvGeneric(
     )
     if (!made.ok) continue
     if (isPrimitiveMove(strategy)) {
-      if (guard !== undefined) {
-        try {
-          guard(src, target)
-        } catch (err) {
-          if (!isFsError(err)) throw err
-          errors.push(
-            `mv: cannot move '${src.virtual}' to '${target.virtual}': ${String(fsStrerror(err))}`,
-          )
-          continue
-        }
-      }
       const entries = await cpWalk(strategy.readdir, stat, src, index)
       const { copiedAll, wroteAny } = await copyEntries(
         'mv',

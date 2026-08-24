@@ -16,12 +16,15 @@ import asyncssh
 
 from mirage.accessor.ssh import SSHAccessor
 from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.ssh.client import _abs
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir, enotempty
 
 
-async def rmdir(accessor: SSHAccessor, path: PathSpec) -> None:
+async def rmdir(accessor: SSHAccessor,
+                path: PathSpec,
+                index: IndexCacheStore = NULL_INDEX) -> None:
     """Remove an empty directory over SFTP.
 
     The server enforces emptiness, so the work here is naming its
@@ -34,6 +37,8 @@ async def rmdir(accessor: SSHAccessor, path: PathSpec) -> None:
     Args:
         accessor (SSHAccessor): SSH accessor.
         path (PathSpec): directory to remove.
+        index (IndexCacheStore): accepted for the rmdir slot's shape;
+            unused.
     """
     config = accessor.config
     sftp = await accessor.sftp()

@@ -132,6 +132,21 @@ class PathOp(Protocol):
         ...
 
 
+class RmdirOp(Protocol):
+    """Remove an empty directory. ``index`` joins the read-family slots'
+    contract because the hidden-remnant guard turns a refused rmdir into
+    a raw listing of the same directory, and an indexed backend cannot
+    list a nested path through ``NULL_INDEX``; the backend itself does
+    not consult it."""
+
+    def __call__(self,
+                 accessor: Any,
+                 path: PathSpec,
+                 /,
+                 index: IndexCacheStore = ...) -> Awaitable[None]:
+        ...
+
+
 class RmTreeOp(Protocol):
     """Remove a subtree. The builders ignore any returned value
     (databricks reports the removed keys for its own rename path), so
@@ -306,13 +321,8 @@ async def _guarded_readdir(fn: OperationFn, *args: Any,
     ]
 
 
-def refuse_reveal(src: PathSpec, dst: PathSpec) -> None:
-    """Refuse a relocation that would surface a hidden path.
-
-    A rename or a native directory copy re-anchors everything below its
-    source, and a hide's coverage does not move with the content, so
-    hidden bytes would land at paths the session can see. EACCES on the
-    source, which mv and cp render in GNU's permission-denied voice.
+def _move_would_reveal(src: PathSpec, dst: PathSpec) -> bool:
+    """Whether the session's hides make this relocation a reveal.
 
     Args:
         src (PathSpec): the subtree being moved or copied.
@@ -320,19 +330,65 @@ def refuse_reveal(src: PathSpec, dst: PathSpec) -> None:
     """
     sess = get_current_session()
     if sess is None:
-        return
-    if move_reveals(sess.hidden_paths, sess.shown_paths, src.virtual,
-                    dst.virtual):
+        return False
+    return move_reveals(sess.hidden_paths, sess.shown_paths, src.virtual,
+                        dst.virtual)
+
+
+def refuse_reveal(src: PathSpec, dst: PathSpec) -> None:
+    """Refuse a relocation that would surface a hidden path.
+
+    A rename or a native directory copy re-anchors everything below its
+    source, and a hide's coverage does not move with the content, so
+    hidden bytes would land at paths the session can see. EACCES on the
+    source, which mv and cp render in GNU's permission-denied voice.
+    Only a directory has anything below it to re-anchor, so callers
+    check this for a source they know is a directory and skip it for a
+    file.
+
+    Args:
+        src (PathSpec): the subtree being moved or copied.
+        dst (PathSpec): where it would land.
+    """
+    if _move_would_reveal(src, dst):
         raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
                               src.virtual)
 
 
-def _guarded_pair(fn: OperationFn, *args: Any, **kwargs: Any) -> Any:
+async def _pair_src_is_dir(stat: StatOp, accessor: Any, src: PathSpec) -> bool:
+    """Whether a pair op's source stats as a directory.
+
+    Args:
+        stat (StatOp): the backend stat, for classifying the source.
+        accessor (Any): the pair call's leading accessor.
+        src (PathSpec): the source being classified.
+    """
+    try:
+        row = await stat(accessor, src)
+    except FileNotFoundError:
+        # Nothing moves; the op itself reports the absence.
+        return False
+    except OSError:
+        # Unanswerable classification fails toward refusal.
+        return True
+    return row.type is FileType.DIRECTORY
+
+
+async def _guarded_pair(fn: OperationFn, stat: StatOp, assume_dir: bool, *args:
+                        Any, **kwargs: Any) -> Any:
     """Rename/dir-copy guard: ``_guarded_call``'s per-path checks, then
     the subtree reveal check on the (src, dst) pair.
 
+    Only a directory source can carry hidden content into view, so a
+    rename whose source stats as a file passes; a dir-copy source is a
+    directory by contract and skips the probe.
+
     Args:
         fn (OperationFn): the raw backend op.
+        stat (StatOp): the raw backend stat, probed only when the
+            reveal check trips.
+        assume_dir (bool): the slot's contract already makes the source
+            a directory (dir_copy), so no probe is needed.
         *args: the call's positionals, source then destination among
             them.
         **kwargs: forwarded untouched.
@@ -340,13 +396,19 @@ def _guarded_pair(fn: OperationFn, *args: Any, **kwargs: Any) -> Any:
     specs = [arg for arg in args if isinstance(arg, PathSpec)]
     for position, spec in enumerate(specs):
         _refuse_hidden(spec, create=position > 0)
-    if len(specs) >= 2:
-        refuse_reveal(specs[0], specs[1])
-    return fn(*args, **kwargs)
+    reveal = len(specs) >= 2 and _move_would_reveal(specs[0], specs[1])
+    if reveal and (assume_dir
+                   or await _pair_src_is_dir(stat, args[0], specs[0])):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
+                              specs[0].virtual)
+    return await fn(*args, **kwargs)
 
 
-async def _guarded_rmdir(fn: OperationFn, readdir: OperationFn,
-                         rm_r: OperationFn | None, *args: Any,
+async def _guarded_rmdir(fn: OperationFn,
+                         readdir: OperationFn,
+                         rm_r: OperationFn | None,
+                         *args: Any,
+                         index: IndexCacheStore = NULL_INDEX,
                          **kwargs: Any) -> Any:
     """rmdir that removes a directory the session sees as empty.
 
@@ -364,6 +426,9 @@ async def _guarded_rmdir(fn: OperationFn, readdir: OperationFn,
         rm_r (OperationFn | None): the backend's recursive remove.
         *args: the call's positionals; the first PathSpec is the
             directory.
+        index (IndexCacheStore): the invocation's cache index, threaded
+            by the callers so the fallback listing resolves on an
+            indexed backend the way the command's own listings did.
         **kwargs: forwarded untouched.
     """
     target: PathSpec | None = None
@@ -373,7 +438,7 @@ async def _guarded_rmdir(fn: OperationFn, readdir: OperationFn,
             if target is None:
                 target = arg
     try:
-        return await fn(*args, **kwargs)
+        return await fn(*args, index=index, **kwargs)
     except OSError as exc:
         if (target is None or rm_r is None
                 or exc.errno not in (errno.ENOTEMPTY, errno.EEXIST)
@@ -384,7 +449,7 @@ async def _guarded_rmdir(fn: OperationFn, readdir: OperationFn,
             if isinstance(arg, PathSpec):
                 break
             lead.append(arg)
-        entries = await readdir(*lead, target)
+        entries = await readdir(*lead, target, index=index)
         base = target.virtual.rstrip("/")
         if not entries or any(
                 path_allowed(f"{base}/{e.rstrip('/').rsplit('/', 1)[-1]}")
@@ -505,7 +570,7 @@ class CommandIO:
     exists: ExistsOp | None = None
     mkdir: MkdirOp | None = None
     unlink: PathOp | None = None
-    rmdir: PathOp | None = None
+    rmdir: RmdirOp | None = None
     rm_r: RmTreeOp | None = None
     rename: PairOp | None = None
     copy: PairOp | None = None
@@ -600,10 +665,11 @@ def with_hidden_guard(ops: CommandIO) -> CommandIO:
         fn = getattr(ops, slot)
         if fn is not None:
             changes[slot] = functools.partial(_guarded_call, fn, True)
-    for slot in ("rename", "dir_copy"):
+    for slot, assume_dir in (("rename", False), ("dir_copy", True)):
         fn = getattr(ops, slot)
         if fn is not None:
-            changes[slot] = functools.partial(_guarded_pair, fn)
+            changes[slot] = functools.partial(_guarded_pair, fn, ops.stat,
+                                              assume_dir)
     if ops.rmdir is not None:
         changes["rmdir"] = functools.partial(_guarded_rmdir, ops.rmdir,
                                              ops.readdir, ops.rm_r)

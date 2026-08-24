@@ -16,6 +16,7 @@ import time
 
 from mirage.accessor.dropbox import DropboxAccessor
 from mirage.cache.context import invalidate_after_unlink, invalidate_ancestors
+from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.dropbox.api import delete_path, get_metadata, list_folder
 from mirage.core.dropbox.client import DropboxApiError
 from mirage.core.dropbox.paths import dropbox_path_of
@@ -24,7 +25,9 @@ from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir, enotempty
 
 
-async def rmdir(accessor: DropboxAccessor, path: PathSpec) -> None:
+async def rmdir(accessor: DropboxAccessor,
+                path: PathSpec,
+                index: IndexCacheStore = NULL_INDEX) -> None:
     """Remove an empty folder.
 
     delete_v2 removes a folder RECURSIVELY; kernel/GNU rmdir must fail
@@ -34,6 +37,8 @@ async def rmdir(accessor: DropboxAccessor, path: PathSpec) -> None:
     Args:
         accessor (DropboxAccessor): Dropbox accessor.
         path (PathSpec): folder to remove.
+        index (IndexCacheStore): accepted for the rmdir slot's shape;
+            unused.
     """
     api_path = dropbox_path_of(accessor, path)
     try:

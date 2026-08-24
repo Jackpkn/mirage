@@ -362,6 +362,40 @@ describe('subtree mutations against hides', () => {
     expect(stdoutStr(survived)).toBe('t\n')
   })
 
+  it('mv of a file under an anchored-pattern hide passes', async () => {
+    // /repo/*/sec could match below any directory under /repo, so a
+    // directory move refuses conservatively, but a regular file
+    // carries nothing below it: renaming one reveals nothing.
+    const ws = await boxed({ paths: { hide: ['/repo/*/sec'] } })
+    const moved = await ws.execute('mv /repo/box/a.txt /repo/box/b.txt', { sessionId: 'rev' })
+    expect(moved.exitCode).toBe(0)
+    const listing = await ws.execute('ls /repo/box', { sessionId: 'rev' })
+    expect(stdoutStr(listing)).toContain('b.txt')
+  })
+
+  it('mv of a directory under an anchored-pattern hide refuses', async () => {
+    const ws = await boxed({ paths: { hide: ['/repo/*/sec'] } })
+    const refused = await ws.execute('mv /repo/box /repo/moved', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toContain('Permission denied')
+  })
+
+  it('mv -b refusal leaves the destination backup-free', async () => {
+    // The reveal guard answers before -b renames the destination
+    // aside, so a refused move mutates nothing: no backup, destination
+    // intact.
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const prep = await ws.execute('mkdir /repo/moved', { sessionId: 'rev' })
+    expect(prep.exitCode).toBe(0)
+    const refused = await ws.execute('mv -b -T /repo/box /repo/moved', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toContain('Permission denied')
+    const intact = await ws.execute('test -d /repo/moved')
+    expect(intact.exitCode).toBe(0)
+    const backup = await ws.execute('test -e /repo/moved~')
+    expect(backup.exitCode).toBe(1)
+  })
+
   it('cp -r copies the visible view silently', async () => {
     const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
     const copied = await ws.execute('cp -r /repo/box /repo/copy', { sessionId: 'rev' })

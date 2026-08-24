@@ -365,6 +365,100 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "subtree_screened_prep",
+      "seq": 923338,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir -p /scratch/pen/box/sec && echo v > /scratch/pen/box/a.txt && echo s > /scratch/pen/box/sec/k",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_file_mv_under_an_anchored_pattern_passes",
+      "seq": 923339,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mv /scratch/pen/box/a.txt /scratch/pen/box/b.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "session": "screened"
+    },
+    {
+      "id": "subtree_dir_mv_under_an_anchored_pattern_refuses",
+      "seq": 923340,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mv /scratch/pen/box /scratch/pen/moved",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: cannot move '/scratch/pen/box' to '/scratch/pen/moved': Permission denied\n"
+      },
+      "session": "screened"
+    },
+    {
+      "id": "subtree_mv_b_prep",
+      "seq": 923341,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mkdir /scratch/dst",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_mv_b_refusal_makes_no_backup",
+      "seq": 923342,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "mv -b -T /scratch/box /scratch/dst",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: cannot move '/scratch/box' to '/scratch/dst': Permission denied\n"
+      },
+      "session": "boxed"
+    },
+    {
+      "id": "subtree_mv_b_destination_intact",
+      "seq": 923343,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -d /scratch/dst",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_mv_b_no_backup_appeared",
+      "seq": 923344,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "test -e /scratch/dst~",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": ""
+      }
     }
   ]
 }

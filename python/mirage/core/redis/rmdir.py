@@ -14,12 +14,15 @@
 
 from mirage.accessor.redis import RedisAccessor
 from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.types import PathSpec
 from mirage.utils.errors import enotempty
 from mirage.utils.path import norm
 
 
-async def rmdir(accessor: RedisAccessor, path_spec: PathSpec) -> None:
+async def rmdir(accessor: RedisAccessor,
+                path_spec: PathSpec,
+                index: IndexCacheStore = NULL_INDEX) -> None:
     path = path_spec.mount_path
     store = accessor.store
     p = norm(path)

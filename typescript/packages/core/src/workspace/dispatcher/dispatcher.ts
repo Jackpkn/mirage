@@ -201,11 +201,13 @@ export class Dispatcher {
       // stay where they are written, so hidden content would land at
       // paths the session can see. Destroying hidden content is silent
       // (rmR, the remnant rmdir below); relocating it into view is
-      // refused.
+      // refused. Only a directory has anything below it to re-anchor,
+      // so a file source passes.
       const sess = getCurrentSession()
       if (
         sess !== null &&
-        moveReveals(sess.hiddenPaths, sess.shownPaths, path.virtual, dstArg.virtual)
+        moveReveals(sess.hiddenPaths, sess.shownPaths, path.virtual, dstArg.virtual) &&
+        (await this.movedSourceIsDir(path))
       ) {
         throw eacces(path.virtual)
       }
@@ -460,6 +462,53 @@ export class Dispatcher {
    * Dispatcher._table_answers.
    */
   /**
+   * The index kwargs normal dispatch stamps on every registered op, for
+   * the door's own raw registry calls: an indexed backend cannot
+   * resolve a nested path without it.
+   */
+  private indexKwargs(resource: Resource): OpKwargs {
+    return resource.index !== undefined ? { index: resource.index } : {}
+  }
+
+  /**
+   * Whether a rename's source stats as a directory.
+   *
+   * Only a directory can carry hidden content into view, so the reveal
+   * refusal probes the source before it fires and lets a file rename
+   * pass. An absent source moves nothing (the rename itself reports
+   * it); a source the mount cannot classify fails toward refusal, the
+   * same stance the pattern arm takes. Mirrors Python's
+   * Dispatcher._moved_source_is_dir.
+   */
+  private async movedSourceIsDir(path: PathSpec): Promise<boolean> {
+    let resolved: [Resource, PathSpec, MountMode]
+    try {
+      resolved = await this.namespace.resolve(path.virtual, false)
+    } catch {
+      // No mount to ask; classification fails toward refusal.
+      return true
+    }
+    const [resource, scope] = resolved
+    let row: unknown
+    try {
+      row = await this.opsRegistry.call(
+        'stat',
+        resource.kind,
+        resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
+        scope,
+        [],
+        this.indexKwargs(resource),
+      )
+    } catch (err) {
+      // An absent source moves nothing; the rename itself reports it.
+      if (isMissingPath(err)) return false
+      // Unanswerable classification fails toward refusal.
+      return true
+    }
+    return !(row instanceof FileStat) || row.type === FileType.DIRECTORY
+  }
+
+  /**
    * Take a visibly-empty directory's hidden remnants with it.
    *
    * The backend refused the rmdir because entries remain, but when the
@@ -474,7 +523,14 @@ export class Dispatcher {
     const accessor = resource.accessor ?? NOOP_ACCESSOR_INSTANCE
     let entries: unknown
     try {
-      entries = await this.opsRegistry.call('readdir', resource.kind, accessor, path)
+      entries = await this.opsRegistry.call(
+        'readdir',
+        resource.kind,
+        accessor,
+        path,
+        [],
+        this.indexKwargs(resource),
+      )
     } catch {
       // A backend that cannot list (or later, remove) the remnants
       // keeps the original refusal: the door has no way to take them.
@@ -500,11 +556,24 @@ export class Dispatcher {
    * No backend registers a recursive-remove op at this door, so the
    * remnant removal walks the raw listings itself, children first. An
    * entry that vanishes mid-walk is a completed removal (a prefix-store
-   * directory disappears with its last child), not an error.
+   * directory disappears with its last child), not an error. Each
+   * removal invalidates through the dispatcher's own door: the raw
+   * registry calls run outside the cache context normal dispatch
+   * establishes, so the cores' own invalidation cannot land, and the
+   * listing the walk itself put in the index would otherwise keep the
+   * removed directory answering "exists" to a readdir-backed probe.
    */
   private async removeSubtree(resource: Resource, spec: PathSpec): Promise<void> {
     const accessor = resource.accessor ?? NOOP_ACCESSOR_INSTANCE
-    const entries = await this.opsRegistry.call('readdir', resource.kind, accessor, spec)
+    const kwargs = this.indexKwargs(resource)
+    const entries = await this.opsRegistry.call(
+      'readdir',
+      resource.kind,
+      accessor,
+      spec,
+      [],
+      kwargs,
+    )
     if (!Array.isArray(entries)) return
     const base = spec.virtual.replace(/\/+$/, '')
     const baseKey = spec.resourcePath.replace(/\/+$/, '')
@@ -518,7 +587,7 @@ export class Dispatcher {
       })
       let row: unknown
       try {
-        row = await this.opsRegistry.call('stat', resource.kind, accessor, child)
+        row = await this.opsRegistry.call('stat', resource.kind, accessor, child, [], kwargs)
       } catch (err) {
         if (isMissingPath(err)) continue
         throw err
@@ -527,17 +596,19 @@ export class Dispatcher {
         await this.removeSubtree(resource, child)
       } else {
         try {
-          await this.opsRegistry.call('unlink', resource.kind, accessor, child)
+          await this.opsRegistry.call('unlink', resource.kind, accessor, child, [], kwargs)
         } catch (err) {
           if (!isMissingPath(err)) throw err
         }
+        await this.invalidateAfterWriteByPath(child.virtual)
       }
     }
     try {
-      await this.opsRegistry.call('rmdir', resource.kind, accessor, spec)
+      await this.opsRegistry.call('rmdir', resource.kind, accessor, spec, [], kwargs)
     } catch (err) {
       if (!isMissingPath(err)) throw err
     }
+    await this.invalidateAfterWriteByPath(spec.virtual)
   }
 
   private tableAnswers(

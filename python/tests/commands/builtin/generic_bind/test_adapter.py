@@ -12,9 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 import pytest
 
+import mirage.commands.builtin.generic_bind.adapter as adapter
 from mirage.accessor.base import NOOPAccessor
+from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           dir_aware_stat,
                                                           dir_aware_stream,
@@ -527,3 +531,37 @@ async def test_dir_guard_keeps_a_refusal_on_a_file_the_parent_lists():
                   is_mounted=lambda _a: True))
     with pytest.raises(PermissionError):
         await ops.read_bytes(None, PathSpec.from_str_path("/asked/a"))
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_threads_the_index_to_the_fallback_listing(
+        monkeypatch):
+    # The remnant fallback lists the refused directory raw; on an
+    # indexed backend that listing only resolves through the
+    # invocation's index, so the wrapper must hand it on rather than
+    # falling back to NULL_INDEX.
+    marker = IndexCacheStore()
+    seen: list[IndexCacheStore | None] = []
+    removed: list[str] = []
+
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        seen.append(index)
+        return ["h"]
+
+    async def rm_r(_accessor, path):
+        removed.append(path.virtual)
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    await adapter._guarded_rmdir(rmdir,
+                                 readdir,
+                                 rm_r,
+                                 NOOPAccessor(),
+                                 spec,
+                                 index=marker)
+    assert seen == [marker]
+    assert removed == ["/m/d"]

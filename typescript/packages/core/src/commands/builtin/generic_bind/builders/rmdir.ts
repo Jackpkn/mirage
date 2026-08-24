@@ -66,7 +66,7 @@ export const RMDIR_BUILDER: Builder = {
         errors.push(`rmdir: failed to remove '${p.rawPath}': Directory not empty`)
         continue
       }
-      await rmdir(accessor, p)
+      await rmdir(accessor, p, idx)
       if (verbose) lines.push(`rmdir: removing directory, '${p.rawPath}'`)
     }
     const out = lines.length > 0 ? formatRecords(lines) : null

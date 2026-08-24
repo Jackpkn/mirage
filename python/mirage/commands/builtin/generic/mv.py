@@ -320,10 +320,11 @@ async def mv(
             scans and the ``-T`` empty-directory probe; the primitive
             strategy's own lister is used when None.
         guard (Callable | None): Judges one (source, target) pair before
-            a primitive move touches anything, raising to refuse it; the
-            adapter wires the hidden-reveal check here so a cross-mount
-            move refuses exactly where a native rename's own slot would,
-            instead of half-copying first.
+            the move touches anything, the backup included, raising to
+            refuse it; the adapter wires the hidden-reveal check here so
+            a refused move mutates nothing (no half-copy, no destination
+            renamed aside by ``-b``). Consulted only for a directory
+            source, since a file carries nothing below it to reveal.
 
     Returns:
         tuple[ByteSource | None, IOResult]: Verbose output and recorded
@@ -405,18 +406,21 @@ async def mv(
                 errors.append(f"mv: cannot overwrite '{target.virtual}': "
                               "Directory not empty")
                 continue
+        # The reveal guard answers before the backup so a refused move
+        # cannot leave the destination renamed aside; only a directory
+        # source has anything below it to re-anchor, so a file passes.
+        if guard is not None and src_is_dir:
+            try:
+                guard(src, target)
+            except FS_ERRORS as exc:
+                errors.append(f"mv: cannot move '{src.virtual}' to "
+                              f"'{target.virtual}': {fs_strerror(exc)}")
+                continue
         backup, ok = await make_backup(policy, strategy, stat, readdir, target,
                                        writes, errors)
         if not ok:
             continue
         if isinstance(strategy, PrimitiveMove):
-            if guard is not None:
-                try:
-                    guard(src, target)
-                except FS_ERRORS as exc:
-                    errors.append(f"mv: cannot move '{src.virtual}' to "
-                                  f"'{target.virtual}': {fs_strerror(exc)}")
-                    continue
             entries = await walk(strategy.readdir, stat, src)
             copied_all, wrote_any = await copy_entries("mv", strategy, stat,
                                                        src, target, entries,

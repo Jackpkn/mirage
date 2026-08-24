@@ -230,11 +230,13 @@ class Dispatcher:
             # hides stay where they are written, so hidden content would
             # land at paths the session can see. Destroying hidden
             # content is silent (rm_r, the remnant rmdir below);
-            # relocating it into view is refused.
+            # relocating it into view is refused. Only a directory has
+            # anything below it to re-anchor, so a file source passes.
             sess = get_current_session()
-            if sess is not None and move_reveals(
-                    sess.hidden_paths, sess.shown_paths, path.virtual,
-                    dst.virtual):
+            if (sess is not None
+                    and move_reveals(sess.hidden_paths, sess.shown_paths,
+                                     path.virtual, dst.virtual)
+                    and await self._moved_source_is_dir(path)):
                 raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
                                       path.virtual)
         if self._table_answers(op, path.virtual, kwargs):
@@ -385,6 +387,29 @@ class Dispatcher:
             # report above already carries the moved count.
             result = await apply_op_limit(result, bound)
         return result, IOResult()
+
+    async def _moved_source_is_dir(self, path: PathSpec) -> bool:
+        """Whether a rename's source stats as a directory.
+
+        Only a directory can carry hidden content into view, so the
+        reveal refusal probes the source before it fires and lets a
+        file rename pass. An absent source moves nothing (the rename
+        itself reports it); a source the mount cannot classify fails
+        toward refusal, the same stance the pattern arm takes.
+
+        Args:
+            path (PathSpec): the rename's source.
+        """
+        mount = self._namespace.try_mount_for(path.virtual)
+        if mount is None:
+            return True
+        try:
+            row = await mount.execute_op("stat", path.virtual)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        return not isinstance(row, FileStat) or row.type is FileType.DIRECTORY
 
     async def _rmdir_remnants(self, mount: MountEntry, path: PathSpec,
                               refusal: OSError) -> None:

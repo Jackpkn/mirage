@@ -2391,6 +2391,13 @@
             ]
           }
         },
+        "screened": {
+          "paths": {
+            "hide": [
+              "/scratch/pen/*/sec"
+            ]
+          }
+        },
         "sealed": {
           "paths": {
             "hide": [

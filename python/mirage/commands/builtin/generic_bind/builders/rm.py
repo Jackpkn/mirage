@@ -96,7 +96,7 @@ async def rm(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
                         errors.append(f"rm: cannot remove '{p.raw_path}': "
                                       "Directory not empty")
                         continue
-                    await ops.rmdir(accessor, p)
+                    await ops.rmdir(accessor, p, index=opts.index)
                     entry_lines = [f"removed directory '{p.virtual}'"]
                 else:
                     errors.append(
