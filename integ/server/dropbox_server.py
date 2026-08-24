@@ -14,10 +14,22 @@
 
 import hashlib
 import json
+import os
 import re
 import time
 
 from aiohttp import web
+
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
 
 
 def _now_stamp() -> str:
@@ -414,7 +426,7 @@ async def start_fake_dropbox() -> tuple[FakeDropbox, web.AppRunner]:
                         fake.handle_search_continue)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, BIND_HOST, 0)
     await site.start()
     assert runner.addresses
     fake.endpoint = f"http://127.0.0.1:{runner.addresses[0][1]}"

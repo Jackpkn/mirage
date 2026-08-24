@@ -15,6 +15,7 @@
 import argparse
 import asyncio
 import json
+import os
 import posixpath
 import time
 import urllib.error
@@ -26,6 +27,17 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from aiohttp import web
+
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
 
 FILES_ROUTE = "/api/2.0/fs/files/{tail:.*}"
 DIRS_ROUTE = "/api/2.0/fs/directories/{tail:.*}"
@@ -361,7 +373,7 @@ async def start_fake_databricks() -> tuple[VolumeStore, web.AppRunner, str]:
     store = VolumeStore()
     runner = web.AppRunner(build_app(store))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, BIND_HOST, 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     base = f"http://127.0.0.1:{port}"
@@ -372,7 +384,7 @@ async def _serve(port: int) -> None:
     store = VolumeStore()
     runner = web.AppRunner(build_app(store))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, BIND_HOST, port)
     await site.start()
     print(f"DATABRICKS_ENDPOINT=http://127.0.0.1:{port}", flush=True)
     await asyncio.Event().wait()
