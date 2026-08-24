@@ -33,8 +33,8 @@ from mirage.server.paths import (mirage_home, pid_file_path,
                                  snapshot_root_path, state_root_path,
                                  version_root_path)
 from mirage.server.registry import WorkspaceRegistry
-from mirage.server.routers import (execute, health, jobs, sessions, versions,
-                                   workspaces)
+from mirage.server.routers import (asks, execute, health, jobs, sessions,
+                                   versions, workspaces)
 from mirage.server.version.backend import LocalBackend
 
 logger = logging.getLogger(__name__)
@@ -148,6 +148,7 @@ def build_app(idle_grace_seconds: float = 30.0,
     app.include_router(workspaces.router)
     app.include_router(versions.router)
     app.include_router(sessions.router)
+    app.include_router(asks.router)
     app.include_router(execute.router)
     app.include_router(jobs.router)
     app.include_router(health.router)

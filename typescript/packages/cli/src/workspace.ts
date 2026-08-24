@@ -120,6 +120,34 @@ function formatWorkspaceDetail(d: WorkspaceDetail): string {
   return lines.join('\n')
 }
 
+interface AskRecord {
+  id: string
+  sessionId: string
+  agentId: string
+  command: string
+  argv: string[]
+  cwd: string
+  paths: string[]
+  reason: string
+  outcome: string | null
+  scope: string
+  note: string
+}
+
+function formatAsks(items: AskRecord[]): string {
+  if (items.length === 0) return 'No asks.'
+  return formatTable(
+    ['ID', 'SESSION', 'COMMAND', 'STATUS', 'REASON'],
+    items.map((a) => [
+      a.id,
+      a.sessionId,
+      [a.command, ...a.argv].join(' '),
+      a.outcome ?? 'pending',
+      a.reason,
+    ]),
+  )
+}
+
 interface VersionLogItem {
   id: string
   message: string
@@ -289,6 +317,55 @@ export function registerWorkspaceCommands(program: Command): void {
         emit((await handleResponse(r)) as DiffResult, formatDiff)
       },
     )
+
+  ws.command('list-asks')
+    .description('List pending asks (every decision with --all).')
+    .argument('<id>')
+    .option('--session <sessionId>', "Only this session's asks")
+    .option('--all', 'Include settled decisions, not just pending asks')
+    .action(async (id: string, opts: { session?: string; all?: boolean }) => {
+      const params = new URLSearchParams()
+      if (opts.session !== undefined) params.set('sessionId', opts.session)
+      if (opts.all === true) params.set('all', 'true')
+      const c = buildClient()
+      await c.ensureRunning({ allowSpawn: false })
+      const qs = params.toString()
+      const r = await c.request('GET', `/v1/workspaces/${id}/asks${qs === '' ? '' : `?${qs}`}`)
+      emit((await handleResponse(r)) as AskRecord[], formatAsks)
+    })
+
+  ws.command('allow')
+    .description('Allow a pending ask; the retry of the asked line passes.')
+    .argument('<id>')
+    .argument('<askId>', 'Ask id, as quoted in the refusal')
+    .option(
+      '--scope <scope>',
+      'once answers the exact line; session answers every line the rule covers',
+      'once',
+    )
+    .option('--note <note>', 'What to record alongside the answer', '')
+    .action(async (id: string, askId: string, opts: { scope: string; note: string }) => {
+      const c = buildClient()
+      await c.ensureRunning({ allowSpawn: false })
+      const r = await c.request('POST', `/v1/workspaces/${id}/asks/${askId}`, {
+        body: JSON.stringify({ answer: 'allow', scope: opts.scope, note: opts.note }),
+      })
+      emit((await handleResponse(r)) as AskRecord, (d) => `Allowed ${d.id} (${d.scope}).`)
+    })
+
+  ws.command('deny')
+    .description('Deny a pending ask; the retry is refused in the deny voice, once.')
+    .argument('<id>')
+    .argument('<askId>', 'Ask id, as quoted in the refusal')
+    .option('--note <note>', 'What to record alongside the answer', '')
+    .action(async (id: string, askId: string, opts: { note: string }) => {
+      const c = buildClient()
+      await c.ensureRunning({ allowSpawn: false })
+      const r = await c.request('POST', `/v1/workspaces/${id}/asks/${askId}`, {
+        body: JSON.stringify({ answer: 'deny', note: opts.note }),
+      })
+      emit((await handleResponse(r)) as AskRecord, (d) => `Denied ${d.id}.`)
+    })
 
   ws.command('checkout')
     .description('Restore a workspace in place to one of its versions.')
