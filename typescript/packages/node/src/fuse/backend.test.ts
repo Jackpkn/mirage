@@ -49,7 +49,7 @@ describe('resolveBackend', () => {
   it('offers no auto backend', () => {
     // Deliberate: auto-selecting fskit would silently break every API-backed
     // mount, so the only safe value is also the default.
-    expect(Object.values(MountBackend)).toEqual(['vfs', 'fuse', 'fskit'])
+    expect(Object.values(MountBackend)).toEqual(['vfs', 'fuse', 'fskit', 'nfs'])
   })
 
   it('treats a missing value as vfs, never as a kernel mount', () => {
