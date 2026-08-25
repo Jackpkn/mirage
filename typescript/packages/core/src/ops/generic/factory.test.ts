@@ -143,6 +143,19 @@ describe('makeGenericOps', () => {
     expect(mkdir).toHaveBeenCalledWith(ACCESSOR, PATH, true)
   })
 
+  it('a per-call parents kwarg forwards too, like the python registry', async () => {
+    // pathlib's mkdir(parents=True) arrives from a runtime bridge as a
+    // dispatch kwarg; python's registry hands kwargs to the op, so the
+    // adapter must read it rather than drop it.
+    const mkdir = vi.fn()
+    const ops = makeGenericOps('x', makeTable({ mkdir }))
+    const fn = ops.find((o) => o.name === 'mkdir')?.fn
+    await fn?.(ACCESSOR, PATH, [], { parents: true })
+    expect(mkdir).toHaveBeenCalledWith(ACCESSOR, PATH, true)
+    await fn?.(ACCESSOR, PATH, [], {})
+    expect(mkdir).toHaveBeenLastCalledWith(ACCESSOR, PATH)
+  })
+
   it('emulated truncate pads and cuts through readBytes + write', async () => {
     const write = vi.fn()
     const ops = makeGenericOps('x', makeTable({ write }), {

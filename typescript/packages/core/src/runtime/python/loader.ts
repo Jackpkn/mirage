@@ -17,7 +17,7 @@ import { PyodideUnavailableError } from './types.ts'
 
 const noopIo = (): void => undefined
 
-const PYODIDE_CDN_VERSION = '0.29.3'
+const PYODIDE_CDN_VERSION = '314.0.5'
 const PYODIDE_CDN_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_CDN_VERSION}/full/`
 
 const PYODIDE_HOME_ENV = 'MIRAGE_PYODIDE_HOME'

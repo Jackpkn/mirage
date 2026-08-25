@@ -277,8 +277,19 @@ export class RuntimeVFS {
     await this.dispatch('unlink', path)
   }
 
-  async mkdir(path: string): Promise<void> {
-    await this.dispatch('mkdir', path)
+  /**
+   * Create a directory; `parents` asks the mount to create missing
+   * ancestors too (pathlib's mkdir(parents=True), which the backend op
+   * takes as a flag on both hosts).
+   */
+  async mkdir(path: string, parents = false): Promise<void> {
+    await this.dispatch(
+      'mkdir',
+      path,
+      undefined,
+      undefined,
+      parents ? { parents: true } : undefined,
+    )
   }
 
   async rmdir(path: string): Promise<void> {

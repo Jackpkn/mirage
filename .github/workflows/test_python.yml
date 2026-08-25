@@ -220,8 +220,8 @@ jobs:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.hit == 'true') }}
     runs-on: ubuntu-latest
     env:
-      WASI_BUILD: python-3.14.6-wasi_sdk-24
-      QUICKJS_BUILD: v0.15.1
+      WASI_BUILD: python-3.14.7-wasi_sdk-24
+      QUICKJS_BUILD: v0.16.2
     steps:
       - uses: actions/checkout@v7
 
@@ -248,7 +248,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p /tmp/cpython-wasi
-          gh release download v3.14.6 -R brettcannon/cpython-wasi-build \
+          gh release download v3.14.7 -R brettcannon/cpython-wasi-build \
             -p "$WASI_BUILD.zip" -O /tmp/wasi-build.zip
           unzip -q /tmp/wasi-build.zip -d /tmp/cpython-wasi
 

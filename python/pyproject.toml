@@ -79,8 +79,9 @@ mirage = ["**/*.lua", "py.typed"]
 [project.optional-dependencies]
 # --- python runtime (sandboxed python3 default) ---
 # Pinned exactly: monty's API is still moving fast (0.0.19 replaced the whole
-# execution model), and upstream pins its own worker binary the same way.
-monty    = ["pydantic-monty==0.0.19"]
+# execution model, 0.0.20 split the distribution into client + runtime
+# packages), and upstream pins its own worker binary the same way.
+monty    = ["pydantic-monty==0.0.21"]
 wasi     = ["wasmtime>=46"]
 quickjs  = ["wasmtime>=46"]
 

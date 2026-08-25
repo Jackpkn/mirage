@@ -433,7 +433,9 @@ export class Workspace {
           await this.dispatch('unlink', path)
           return undefined
         case 'mkdir':
-          await this.dispatch('mkdir', path)
+          // `parents` is pathlib's mkdir(parents=True), riding to the
+          // backend op as a kwarg the way python's dispatch carries it.
+          await this.dispatch('mkdir', path, [], attrs?.parents === true ? { parents: true } : {})
           return undefined
         case 'rmdir':
           await this.dispatch('rmdir', path)

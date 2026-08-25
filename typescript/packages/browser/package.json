@@ -60,6 +60,6 @@
     "tsup": "^8.5.0",
     "typescript": "^6.0.0",
     "vitest": "^3.2.6",
-    "web-tree-sitter": "^0.26.8"
+    "web-tree-sitter": "^0.26.13"
   }
 }
