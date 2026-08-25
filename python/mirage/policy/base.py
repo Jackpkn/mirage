@@ -77,9 +77,10 @@ class Policy:
         """Observe one completed VFS op; a Deny suppresses its result,
         a Limit caps a byte-producing one.
 
-        The op doors only, never the backend I/O inside a mount
-        command's handler (which admits through pre_ops but reports no
-        per-op result). The command tier's result plane is
+        Narrower than pre_ops: the dispatcher and facade doors only.
+        The backend I/O inside a mount command's handler and each
+        ``find -delete`` deletion admit through pre_ops and report no
+        per-op result here; the command tier's result plane is
         post_execute, which bounds the finished line's output.
 
         Args:

@@ -52,9 +52,10 @@ export interface Policy {
    */
   preOps?(ctx: OpsContext): Action | null | Promise<Action | null>
   /** Observe one completed VFS op; a Deny suppresses its result, a
-   * Limit caps a byte-producing one. The op doors only, never the
-   * backend I/O inside a mount command's handler (which admits
-   * through preOps but reports no per-op result). The command tier's
+   * Limit caps a byte-producing one. Narrower than preOps: the
+   * dispatcher and facade doors only. The backend I/O inside a mount
+   * command's handler and each `find -delete` deletion admit through
+   * preOps and report no per-op result here; the command tier's
    * result plane is postExecute, which bounds the finished line's
    * output. */
   postOps?(ctx: OpsResultContext): Action | null | Promise<Action | null>
