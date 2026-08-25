@@ -24,6 +24,7 @@ from mirage.utils.hidden import (anchor_depth, hides_intersect, is_glob,
                                  path_visible, show_head, shown_mode)
 
 if TYPE_CHECKING:
+    from mirage.policy.policies import Policies
     from mirage.workspace.session.manager import SessionManager
     from mirage.workspace.session.session import Session
 
@@ -248,6 +249,39 @@ def get_admission() -> "EntryGate | None":
     when no admitted command is bound (a command constructed outside
     the dispatcher, or a line no gate judged)."""
     return _current_admission.get()
+
+
+_op_policies: ContextVar["Policies | None"] = ContextVar(
+    "mirage_op_policies",
+    default=None,
+)
+
+
+def set_op_policies(policies: "Policies") -> Token[Any]:
+    """Bind the workspace's admission policies to the current async
+    context, for the run of one command.
+
+    Set by command dispatch around routing, the same window the
+    admission gate binds in, so the command tier's policy guard can
+    fire ``pre_ops`` for the backend I/O a handler performs. Read at
+    call time by ``with_policy_guard``; unset outside a dispatched
+    command (a generic invoked directly in a test), where the guard
+    is inert.
+
+    Args:
+        policies (Policies): the workspace's admission policies.
+    """
+    return _op_policies.set(policies)
+
+
+def reset_op_policies(token: Token[Any]) -> None:
+    """Restore the previous policies binding."""
+    _op_policies.reset(token)
+
+
+def get_op_policies() -> "Policies | None":
+    """The policies bound to the running command, None outside one."""
+    return _op_policies.get()
 
 
 _current_mount_gate: ContextVar[tuple[str, MountMode] | None] = ContextVar(

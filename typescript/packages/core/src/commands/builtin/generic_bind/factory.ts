@@ -27,6 +27,7 @@ import {
   supports,
   withDirGuard,
   withPathGuards,
+  withPolicyGuard,
 } from './adapter.ts'
 import { BUILDERS } from './builders/index.ts'
 import { defaultProvision } from './provision.ts'
@@ -180,14 +181,19 @@ export function makeGenericCommands<A extends Accessor = Accessor>(
     // refuses an explicit `undefined` for an optional field, so an absent
     // namespace has to mean an absent key rather than an undefined value.
     // Python's `glob_children` is `| None` and takes the uniform path.
+    // The policy guard sits outside the cache wraps (`finish`) so a
+    // coded preOps deny fires before a warm serve, the dispatcher's
+    // own order at the op door.
     const fn: CommandFn = (accessor, paths, texts, opts) =>
       b.fn(
         withDirGuard(
-          finish(
-            withPathGuards(
-              opts.ns?.childMounts === undefined
-                ? raw
-                : { ...raw, globChildren: opts.ns.childMounts },
+          withPolicyGuard(
+            finish(
+              withPathGuards(
+                opts.ns?.childMounts === undefined
+                  ? raw
+                  : { ...raw, globChildren: opts.ns.childMounts },
+              ),
             ),
           ),
         ),

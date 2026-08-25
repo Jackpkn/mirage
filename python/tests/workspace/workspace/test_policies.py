@@ -418,18 +418,21 @@ class SealedPaths(Policy):
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
         if not ctx.write and ctx.path.virtual == "/data/secret.txt":
             return Deny("secret is sealed")
-        if ctx.write and ctx.path.virtual.startswith("/data/prod/"):
+        # The subtree spelling covers the root too: a native tree op
+        # (rm_r) admits as one op on the root, per the pre_ops
+        # docstring.
+        if ctx.write and (ctx.path.virtual == "/data/prod"
+                          or ctx.path.virtual.startswith("/data/prod/")):
             return Deny("prod is read-only")
         return None
 
 
 @pytest.mark.asyncio
-async def test_pre_ops_binds_op_doors_not_command_tier_io():
+async def test_pre_ops_binds_op_doors_and_command_tier_io():
     # The documented boundary (Policy.pre_ops): coded op hooks fire at
-    # the op doors, not for the backend I/O inside a mount command's
-    # handler. Both sides are pinned so a move of the boundary is loud;
-    # the command-tier half is the known gap the follow-up closes, at
-    # which point these assertions flip to refusals.
+    # the op doors AND for the backend I/O inside a mount command's
+    # handler (with_policy_guard). Both tiers are pinned so a move of
+    # the boundary is loud.
     ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
     try:
         await ws.execute("mkdir -p /data/prod")
@@ -444,16 +447,109 @@ async def test_pre_ops_binds_op_doors_not_command_tier_io():
         redirect = await ws.execute("echo hi > /data/prod/new.txt")
         assert redirect.exit_code != 0
 
-        # The command tier does not consult pre_ops: the handler calls
-        # the backend cores directly, so the read serves and the
-        # deletion lands.
+        # The command tier consults the same hooks: the read refuses
+        # in the command's own voice and the deletion never lands.
         leak = await ws.execute("cat /data/secret.txt")
-        assert leak.exit_code == 0
-        assert leak.stdout == b"sealed\n"
+        assert leak.exit_code != 0
+        assert leak.stdout in (None, b"")
+        assert b"cat: /data/secret.txt: Permission denied" in leak.stderr
         removed = await ws.execute("rm /data/prod/keep.txt")
+        assert removed.exit_code != 0
+        assert b"cannot remove" in removed.stderr
+        kept = await ws.execute("cat /data/prod/keep.txt")
+        assert kept.exit_code == 0
+        assert kept.stdout == b"keep\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_ops_holds_walks_and_lazy_readers():
+    # A walk is held per entry (GNU's unreadable-file shape: the other
+    # entries still serve, stderr names the refused one), and a reader
+    # the output pipeline drains after dispatch (head binds a lazy
+    # stream) still answers through the wrap-time capture.
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        await ws.ops.write("/data/secret.txt", b"sealed\n")
+        await ws.ops.write("/data/ok.txt", b"has sealed word\n")
+        ws.policies.add(SealedPaths())
+
+        walked = await ws.execute("grep -r sealed /data")
+        assert walked.exit_code == 2
+        assert b"/data/ok.txt:has sealed word" in walked.stdout
+        assert b"sealed\n" not in walked.stdout.replace(
+            b"has sealed word\n", b"")
+        assert b"grep: /data/secret.txt: Permission denied" in walked.stderr
+
+        lazy = await ws.execute("head -c 3 /data/secret.txt")
+        assert lazy.exit_code != 0
+        assert b"head: /data/secret.txt: Permission denied" in lazy.stderr
+        fine = await ws.execute("head -c 3 /data/ok.txt")
+        assert fine.exit_code == 0
+        assert fine.stdout == b"has"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_ops_denied_entries_still_list_and_stat():
+    # Presence facts stay unguarded on the command tier (mode-000
+    # shape): a read-denied entry lists and stats, the read of it is
+    # what fails.
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        await ws.ops.write("/data/secret.txt", b"sealed\n")
+        ws.policies.add(SealedPaths())
+        listing = await ws.execute("ls -l /data")
+        assert listing.exit_code == 0
+        assert b"secret.txt" in listing.stdout
+        found = await ws.execute("find /data -type f")
+        assert found.exit_code == 0
+        assert b"/data/secret.txt" in found.stdout
+    finally:
+        await ws.close()
+
+
+class OpRecorder(Policy):
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[str, str, bool]] = []
+
+    async def pre_ops(self, ctx: OpsContext) -> Action | None:
+        self.asked.append((ctx.op, ctx.path.virtual, ctx.write))
+        return None
+
+
+@pytest.mark.asyncio
+async def test_shell_rm_r_admits_through_pre_ops():
+    # The cascade asymmetry closed: an ops-door rmdir cascade always
+    # admitted per deletion while a shell rm -r admitted nothing. The
+    # shell tree removal now admits the op the backend performs (the
+    # native rm_r here), and a write-deny refuses it outright.
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        await ws.execute("mkdir -p /data/prod/sub")
+        await ws.ops.write("/data/prod/a.txt", b"a\n")
+        await ws.ops.write("/data/prod/sub/b.txt", b"b\n")
+        rec = OpRecorder()
+        ws.policies.add(rec)
+        removed = await ws.execute("rm -r /data/prod")
         assert removed.exit_code == 0
-        gone = await ws.execute("cat /data/prod/keep.txt")
-        assert gone.exit_code != 0
+        writes = [a for a in rec.asked if a[2]]
+        assert ("rm_r", "/data/prod", True) in writes
+    finally:
+        await ws.close()
+
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        await ws.execute("mkdir -p /data/prod")
+        await ws.ops.write("/data/prod/a.txt", b"a\n")
+        ws.policies.add(SealedPaths())
+        refused = await ws.execute("rm -r /data/prod")
+        assert refused.exit_code != 0
+        survives = await ws.execute("cat /data/prod/a.txt")
+        assert survives.exit_code == 0
     finally:
         await ws.close()
 

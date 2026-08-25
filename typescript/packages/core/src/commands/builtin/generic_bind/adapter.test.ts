@@ -16,7 +16,7 @@ import { stripSlash } from '../../../utils/slash.ts'
 import { describe, expect, it } from 'vitest'
 import type { Accessor } from '../../../accessor/base.ts'
 import type { CommandOpts } from '../../config.ts'
-import { FileStat, FileType, PathSpec } from '../../../types.ts'
+import { FileStat, FileType, MountMode, PathSpec } from '../../../types.ts'
 import { eacces, eisdir, enoent } from '../../../utils/errors.ts'
 import {
   dirAwareStat,
@@ -24,10 +24,18 @@ import {
   makeResolveGlob,
   withDirGuard,
   withHiddenGuard,
+  withPolicyGuard,
   withRuleGuard,
   type CommandIO,
 } from './adapter.ts'
-import { runWithAdmission, runWithSession } from '../../../context/session_context.ts'
+import {
+  runWithAdmission,
+  runWithMountGate,
+  runWithOpPolicies,
+  runWithSession,
+} from '../../../context/session_context.ts'
+import { Policies } from '../../../policy/policies.ts'
+import type { Action, OpsContext, Policy } from '../../../policy/types.ts'
 import { Session } from '../../../workspace/session/session.ts'
 
 const accessor = {} as never
@@ -296,6 +304,140 @@ describe('withRuleGuard', () => {
     ])
     expect(calls).not.toContainEqual(['rename', '/data/a', '/data/locked/y'])
     expect(calls).toContainEqual(['rename', '/data/a', '/data/b'])
+  })
+})
+
+/** Refuse reads of one path; record every op asked. */
+class SealedRead implements Policy {
+  readonly asked: [string, string, boolean][] = []
+  private readonly sealed: string
+  constructor(sealed: string) {
+    this.sealed = sealed
+  }
+  preOps(ctx: OpsContext): Action | null {
+    this.asked.push([ctx.op, ctx.path.virtual, ctx.write])
+    if (!ctx.write && ctx.path.virtual === this.sealed) {
+      return { kind: 'deny', reason: 'sealed' }
+    }
+    return null
+  }
+}
+
+describe('withPolicyGuard', () => {
+  const spec = (virtual: string): PathSpec =>
+    new PathSpec({
+      virtual,
+      directory: virtual.slice(0, virtual.lastIndexOf('/')) || '/',
+      resourcePath: virtual,
+      resolved: true,
+    })
+
+  function probeOps(calls: string[][]): CommandIO {
+    async function* stream(_a: Accessor, path: PathSpec): AsyncGenerator<Uint8Array> {
+      calls.push(['stream', path.virtual])
+      yield await Promise.resolve(new Uint8Array([1]))
+    }
+    return {
+      readdir: (_a, path) => {
+        calls.push(['readdir', path.virtual])
+        return Promise.resolve(['a'])
+      },
+      readBytes: (_a, path) => {
+        calls.push(['read', path.virtual])
+        return Promise.resolve(new Uint8Array([1]))
+      },
+      readStream: stream,
+      stat: (_a, path) => {
+        calls.push(['stat', path.virtual])
+        return Promise.resolve(new FileStat({ name: 'k', type: FileType.TEXT, size: 1 }))
+      },
+      isMounted: () => true,
+      copy: (_a, src, dst) => {
+        calls.push(['copy', src.virtual, dst.virtual])
+        return Promise.resolve()
+      },
+      unlink: (_a, path) => {
+        calls.push(['unlink', path.virtual])
+        return Promise.resolve()
+      },
+    }
+  }
+
+  it('admits slots and leaves stat alone', async () => {
+    const calls: string[][] = []
+    const raw = probeOps(calls)
+    // No binding: every slot runs as is, and no hook fires.
+    expect(await withPolicyGuard(raw).readBytes(accessor, spec('/data/secret'))).toEqual(
+      new Uint8Array([1]),
+    )
+    calls.length = 0
+
+    const policy = new SealedRead('/data/secret')
+    await runWithOpPolicies(new Policies([policy]), () =>
+      runWithMountGate('/data', MountMode.WRITE, async () => {
+        const ops = withPolicyGuard(raw)
+        await expect(ops.readBytes(accessor, spec('/data/secret'))).rejects.toThrow('sealed')
+        expect(calls).not.toContainEqual(['read', '/data/secret'])
+        // The stream gates before its first chunk.
+        await expect(drain(ops.readStream(accessor, spec('/data/secret')))).rejects.toThrow(
+          'sealed',
+        )
+        expect(calls).not.toContainEqual(['stream', '/data/secret'])
+        // stat is not a guarded slot: deny is present and refused.
+        expect((await ops.stat(accessor, spec('/data/secret'))).size).toBe(1)
+        // readdir asks about the directory it lists.
+        expect(await ops.readdir(accessor, spec('/data/dir'))).toEqual(['a'])
+        // A copy's source is a read; its destination is a write.
+        const copy = ops.copy
+        if (copy === undefined) throw new Error('copy slot missing')
+        await copy(accessor, spec('/data/src'), spec('/data/dst'))
+        // A write slot asks with write=true.
+        const unlink = ops.unlink
+        if (unlink === undefined) throw new Error('unlink slot missing')
+        await unlink(accessor, spec('/data/gone'))
+      }),
+    )
+    expect(policy.asked).toContainEqual(['read_bytes', '/data/secret', false])
+    expect(policy.asked).toContainEqual(['read_stream', '/data/secret', false])
+    expect(policy.asked).toContainEqual(['readdir', '/data/dir', false])
+    expect(policy.asked).toContainEqual(['copy', '/data/src', false])
+    expect(policy.asked).toContainEqual(['copy', '/data/dst', true])
+    expect(policy.asked).toContainEqual(['unlink', '/data/gone', true])
+    expect(policy.asked.some(([op]) => op === 'stat')).toBe(false)
+  })
+
+  it('wrap-time capture covers late drains', async () => {
+    // head/tail/wc bind lazy readers the pipeline drains after dispatch
+    // has reset the context; the guard captured at wrap time still
+    // answers (livePolicyScope).
+    const calls: string[][] = []
+    const raw = probeOps(calls)
+    const policy = new SealedRead('/data/secret')
+    const ops = await runWithOpPolicies(new Policies([policy]), () =>
+      Promise.resolve(withPolicyGuard(raw)),
+    )
+    // Both the slot call and the drain happen outside the window now.
+    await expect(drain(ops.readStream(accessor, spec('/data/secret')))).rejects.toThrow('sealed')
+    expect(calls).not.toContainEqual(['stream', '/data/secret'])
+    await expect(ops.readBytes(accessor, spec('/data/secret'))).rejects.toThrow('sealed')
+  })
+
+  it('admits before a warm serve', async () => {
+    // The guard wraps outside the cache tier (`finish` in the factory),
+    // so a warm reader below it never answers a refused read.
+    const calls: string[][] = []
+    const warm: CommandIO = {
+      ...probeOps(calls),
+      readBytes: () => Promise.resolve(new TextEncoder().encode('warm')),
+    }
+    const policy = new SealedRead('/data/secret')
+    await runWithOpPolicies(new Policies([policy]), async () => {
+      const ops = withPolicyGuard(warm)
+      await expect(ops.readBytes(accessor, spec('/data/secret'))).rejects.toThrow('sealed')
+      expect(await ops.readBytes(accessor, spec('/data/open'))).toEqual(
+        new TextEncoder().encode('warm'),
+      )
+    })
   })
 })
 

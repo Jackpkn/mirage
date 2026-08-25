@@ -25,6 +25,7 @@ import {
   shownMode,
 } from '../utils/hidden.ts'
 import { erofsReadOnly } from '../utils/errors.ts'
+import type { Policies } from '../policy/policies.ts'
 import type { EntryGate, PathSpec } from '../types.ts'
 import { MOUNT_MODE_RANK, MountMode, weakerMode } from '../types.ts'
 
@@ -205,6 +206,27 @@ export function getAdmission(): EntryGate | null {
  */
 export function pathRulesActive(): boolean {
   return getAdmission()?.scoped ?? false
+}
+
+const opPoliciesStorage = createAsyncContext<Policies>()
+
+/**
+ * Bind the workspace's admission policies for the duration of `fn`:
+ * the run of one command.
+ *
+ * Bound by command dispatch around routing, the same window the
+ * admission gate binds in, so the command tier's policy guard can fire
+ * `preOps` for the backend I/O a handler performs. Read at wrap or
+ * call time by `withPolicyGuard`; unset outside a dispatched command
+ * (a generic invoked directly in a test), where the guard is inert.
+ */
+export function runWithOpPolicies<T>(policies: Policies, fn: () => Promise<T>): Promise<T> {
+  return Promise.resolve(opPoliciesStorage.run(policies, fn))
+}
+
+/** The policies bound to the running command, null outside one. */
+export function getOpPolicies(): Policies | null {
+  return opPoliciesStorage.getStore() ?? null
 }
 
 const mountGateStorage = createAsyncContext<readonly [string, MountMode]>()
