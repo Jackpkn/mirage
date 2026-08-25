@@ -33,13 +33,25 @@ import type {
 export interface Policy {
   preCommand?(ctx: CommandContext): Action | null | Promise<Action | null>
   /**
-   * Admit or refuse one VFS op, whatever door it entered. The hot
-   * path: fires per op, so keep the hook cheap; expensive decisions
-   * belong at preCommand or precomputed into policy state.
+   * Admit or refuse one VFS op at an op door. The doors are the
+   * dispatcher and the ops facade (`ws.fs`), which is also how FUSE,
+   * the runtime guests, `find -delete` and the warm cache arrive:
+   * shell redirects and the namespace-routed commands (touch/chmod/ln)
+   * clear this gate too. Backend I/O inside a mount command's handler
+   * (cat, grep -r, sed -i, rm) does not pass through here: such a
+   * line is admitted whole at preCommand, and per-path control on
+   * that tier belongs to the declarative permissions document, whose
+   * rules hold walks to per-entry checks. The hot path: fires per op
+   * (thousands under one recursive cascade or FUSE walk), so keep the
+   * hook cheap; expensive decisions belong at preCommand or
+   * precomputed into policy state.
    */
   preOps?(ctx: OpsContext): Action | null | Promise<Action | null>
   /** Observe one completed VFS op; a Deny suppresses its result, a
-   * Limit caps a byte-producing one. */
+   * Limit caps a byte-producing one. Same coverage as preOps: the op
+   * doors only, never the backend I/O inside a mount command's
+   * handler. The command tier's result plane is postExecute, which
+   * bounds the finished line's output. */
   postOps?(ctx: OpsResultContext): Action | null | Promise<Action | null>
   /**
    * Bound one finished execute() line's output. A Limit returned here

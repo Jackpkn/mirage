@@ -563,6 +563,55 @@ describe('the remaining session writers clear the same gate', () => {
   })
 })
 
+/** Seal one file's reads and one subtree's writes at the op doors. */
+class SealedPaths implements Policy {
+  preOps(ctx: OpsContext): Action | null {
+    if (!ctx.write && ctx.path.virtual === '/a/secret.txt') {
+      return { kind: 'deny', reason: 'secret is sealed' }
+    }
+    if (ctx.write && ctx.path.virtual.startsWith('/a/prod/')) {
+      return { kind: 'deny', reason: 'prod is read-only' }
+    }
+    return null
+  }
+}
+
+describe('op hooks bind at the op doors, not the command tier', () => {
+  it('preOps refuses the doors while handler I/O passes', async () => {
+    // The documented boundary (Policy.preOps): coded op hooks fire at
+    // the op doors, not for the backend I/O inside a mount command's
+    // handler. Both sides are pinned so a move of the boundary is
+    // loud; the command-tier half is the known gap the follow-up
+    // closes, at which point these assertions flip to refusals.
+    const parser = await getTestParser()
+    const resource = new RAMResource()
+    resource.store.files.set('/secret.txt', ENC.encode('sealed\n'))
+    resource.store.files.set('/prod/keep.txt', ENC.encode('keep\n'))
+    const ws = new Workspace(
+      { '/a': resource },
+      { mode: MountMode.WRITE, shellParser: parser, policies: [new SealedPaths()] },
+    )
+    open.push(ws)
+
+    // The doors hold: the fs facade, and a dispatcher-routed redirect
+    // write.
+    await expect(ws.fs.readFile('/a/secret.txt')).rejects.toThrow('secret is sealed')
+    const redirect = await ws.execute('echo hi > /a/prod/new.txt')
+    expect(redirect.exitCode).not.toBe(0)
+
+    // The command tier does not consult preOps: the handler calls the
+    // backend cores directly, so the read serves and the deletion
+    // lands.
+    const leak = await ws.execute('cat /a/secret.txt')
+    expect(leak.exitCode).toBe(0)
+    expect(stdoutStr(leak)).toBe('sealed\n')
+    const removed = await ws.execute('rm /a/prod/keep.txt')
+    expect(removed.exitCode).toBe(0)
+    const gone = await ws.execute('cat /a/prod/keep.txt')
+    expect(gone.exitCode).not.toBe(0)
+  })
+})
+
 async function makeHiddenVarsWs(): Promise<Workspace> {
   const ws = await makeWs()
   const sess = ws.createSession('agent', { mounts: { '/a': MountMode.WRITE } })

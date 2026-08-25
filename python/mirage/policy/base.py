@@ -35,11 +35,22 @@ class Policy:
         return None
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
-        """Admit or refuse one VFS op, whatever door it entered.
+        """Admit or refuse one VFS op at an op door.
+
+        The doors are the dispatcher and the ops facade, which is also
+        how FUSE, the runtime guests, ``find -delete`` and the warm
+        cache arrive: shell redirects and the namespace-routed commands
+        (touch/chmod/ln) clear this gate too. Backend I/O inside a
+        mount command's handler (cat, grep -r, sed -i, rm) does not
+        pass through here: such a line is admitted whole at
+        pre_command, and per-path control on that tier belongs to the
+        declarative permissions document, whose rules hold walks to
+        per-entry checks.
 
         The hot path: fires per op (thousands under one recursive
-        command), so keep the hook cheap; expensive decisions belong at
-        pre_command or precomputed into policy state.
+        cascade or FUSE walk), so keep the hook cheap; expensive
+        decisions belong at pre_command or precomputed into policy
+        state.
 
         Args:
             ctx (OpsContext): the op about to run.
@@ -62,6 +73,10 @@ class Policy:
     async def post_ops(self, ctx: OpsResultContext) -> Action | None:
         """Observe one completed VFS op; a Deny suppresses its result,
         a Limit caps a byte-producing one.
+
+        Same coverage as pre_ops: the op doors only, never the backend
+        I/O inside a mount command's handler. The command tier's result
+        plane is post_execute, which bounds the finished line's output.
 
         Args:
             ctx (OpsResultContext): the op and its raw result.
