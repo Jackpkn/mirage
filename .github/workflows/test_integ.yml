@@ -1106,13 +1106,17 @@ jobs:
           cache-dependency-path: typescript/pnpm-lock.yaml
 
       - name: Install dependencies
-        # --no-optional because this runner has no macFUSE, deliberately:
-        # the point of the nfs backend is that it needs no filesystem
-        # driver. @zkochan/fuse-native is an optional dependency of the
-        # integ package that compiles against fuse.h, so installing it
-        # here fails the whole install on a header this job must not need.
+        # --ignore-scripts because this runner has no macFUSE,
+        # deliberately: the point of the nfs backend is that it needs no
+        # filesystem driver, and @zkochan/fuse-native compiles against
+        # fuse.h at install time. It is a devDependency of packages/node,
+        # not just an optional one of integ, so --no-optional does not
+        # reach it. Ignoring scripts is exact rather than broad here:
+        # pnpm-workspace.yaml's onlyBuiltDependencies allowlists that one
+        # package, so it is the only build there is to skip, and nothing
+        # the TypeScript battery imports needs it.
         working-directory: typescript
-        run: pnpm install --frozen-lockfile=false --no-optional
+        run: pnpm install --frozen-lockfile=false --ignore-scripts
 
       - name: Download TypeScript build outputs
         uses: actions/download-artifact@v4
