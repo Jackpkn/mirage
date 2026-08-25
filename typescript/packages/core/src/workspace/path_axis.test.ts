@@ -585,6 +585,67 @@ describe('the ops door against hides', () => {
     const kept = await ws.execute('cat /a/d/sec/k')
     expect(stdoutStr(kept)).toBe('k\n')
   })
+
+  it('takes hidden namespace links with the removed directory', async () => {
+    // A hidden link is invisible to every backend, so the cascade walk
+    // cannot take it; left in the node table it synthesizes /a/d right
+    // back once the hide lifts, resurfacing the removed tree.
+    const parser = await getTestParser()
+    const a = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(a)
+    const ws = new Workspace(
+      { '/a': [a, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute(
+      "mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k && ln -s /a/t /a/d/lnk",
+    )
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/a/d/sec', '/a/d/lnk'] } }),
+    })
+    await runWithSession(sess, async () => {
+      await ws.dispatch('rmdir', '/a/d')
+    })
+    // No session, no hides: the tree must be gone, link included.
+    const linkless = await ws.execute('readlink /a/d/lnk')
+    expect(linkless.exitCode).not.toBe(0)
+    const gone = await ws.execute('test -e /a/d')
+    expect(gone.exitCode).toBe(1)
+  })
+
+  it('a visible link below keeps the rmdir refusal', async () => {
+    // A visible link joins the merged emptiness judgment, so the
+    // refusal stands and nothing (backend remnant or node table) is
+    // destroyed.
+    const parser = await getTestParser()
+    const a = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(a)
+    const ws = new Workspace(
+      { '/a': [a, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute(
+      "mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k && ln -s /a/t /a/d/lnk",
+    )
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/a/d/sec'] } }),
+    })
+    await runWithSession(sess, async () => {
+      await expect(ws.dispatch('rmdir', '/a/d')).rejects.toMatchObject({
+        code: 'ENOTEMPTY',
+      })
+    })
+    const kept = await ws.execute('cat /a/d/sec/k')
+    expect(stdoutStr(kept)).toBe('k\n')
+    const link = await ws.execute('readlink /a/d/lnk')
+    expect(link.exitCode).toBe(0)
+  })
 })
 
 async function twoMounts(profile: object): Promise<Workspace> {

@@ -27,6 +27,7 @@ from mirage.types import (ConsistencyPolicy, FileType, HiddenPaths, MountMode,
 from mirage.workspace import Workspace
 from mirage.workspace.dispatcher import Dispatcher
 from mirage.workspace.dispatcher.dispatcher import _MountChannel
+from mirage.workspace.mount.mount import MountEntry
 from mirage.workspace.session import Session
 
 
@@ -426,6 +427,82 @@ async def test_a_policy_denied_remnant_keeps_the_refusal():
     io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")
     assert io.exit_code == 0, io.stderr
     sess = ws.create_session("rev", profile={"paths": {"hide": ["/a/d/sec"]}})
+    token = set_current_session(sess)
+    try:
+        with pytest.raises(OSError) as exc:
+            await ws.ops.rmdir("/a/d")
+    finally:
+        reset_current_session(token)
+    assert exc.value.errno in (errno.ENOTEMPTY, errno.EEXIST)
+    kept = await ws.execute("cat /a/d/sec/k")
+    assert (kept.stdout or b"") == b"k\n"
+
+
+@pytest.mark.asyncio
+async def test_ops_rmdir_takes_hidden_namespace_links_with_it():
+    # A hidden link is invisible to every backend, so the cascade walk
+    # cannot take it; left in the node table it synthesizes /a/d right
+    # back once the hide lifts, resurfacing the removed tree.
+    ws = Workspace({"/a": RAMResource()}, mode=MountMode.WRITE)
+    io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k"
+                          " && ln -s /a/t /a/d/lnk")
+    assert io.exit_code == 0, io.stderr
+    sess = ws.create_session(
+        "rev", profile={"paths": {
+            "hide": ["/a/d/sec", "/a/d/lnk"]
+        }})
+    token = set_current_session(sess)
+    try:
+        await ws.ops.rmdir("/a/d")
+    finally:
+        reset_current_session(token)
+    # No session, no hides: the tree must be gone, link included.
+    linkless = await ws.execute("readlink /a/d/lnk")
+    assert linkless.exit_code != 0
+    gone = await ws.execute("test -e /a/d")
+    assert gone.exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_a_visible_link_below_keeps_the_rmdir_refusal():
+    # A visible link joins the merged emptiness judgment, so the
+    # refusal stands and nothing (backend remnant or node table) is
+    # destroyed.
+    ws = Workspace({"/a": RAMResource()}, mode=MountMode.WRITE)
+    io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k"
+                          " && ln -s /a/t /a/d/lnk")
+    assert io.exit_code == 0, io.stderr
+    sess = ws.create_session("rev", profile={"paths": {"hide": ["/a/d/sec"]}})
+    token = set_current_session(sess)
+    try:
+        with pytest.raises(OSError) as exc:
+            await ws.ops.rmdir("/a/d")
+    finally:
+        reset_current_session(token)
+    assert exc.value.errno in (errno.ENOTEMPTY, errno.EEXIST)
+    kept = await ws.execute("cat /a/d/sec/k")
+    assert (kept.stdout or b"") == b"k\n"
+    link = await ws.execute("readlink /a/d/lnk")
+    assert link.exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_a_non_oserror_cascade_failure_keeps_the_refusal(monkeypatch):
+    # An API backend's failure is not always an errno (box raises its
+    # own error type); a raw backend exception escaping the fold would
+    # reveal exactly what the refusal exists to hide.
+    ws = Workspace({"/a": RAMResource()}, mode=MountMode.WRITE)
+    io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")
+    assert io.exit_code == 0, io.stderr
+    sess = ws.create_session("rev", profile={"paths": {"hide": ["/a/d/sec"]}})
+    real = MountEntry.execute_op
+
+    async def boom(self, op, virtual, **kwargs):
+        if op == "unlink" and virtual == "/a/d/sec/k":
+            raise RuntimeError("api exploded")
+        return await real(self, op, virtual, **kwargs)
+
+    monkeypatch.setattr(MountEntry, "execute_op", boom)
     token = set_current_session(sess)
     try:
         with pytest.raises(OSError) as exc:

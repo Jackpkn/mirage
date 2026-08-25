@@ -609,6 +609,58 @@ async def test_guarded_rmdir_answers_a_cascade_failure_with_the_refusal(
 
 
 @pytest.mark.asyncio
+async def test_guarded_rmdir_folds_a_non_oserror_cascade_failure(monkeypatch):
+    # An API backend's failure is not always an errno (box raises its
+    # own error type); a raw backend exception escaping the fold would
+    # reveal exactly what the refusal exists to hide.
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, _path):
+        raise RuntimeError("api exploded")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
+                                     NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_folds_a_failed_fallback_listing(monkeypatch):
+    # A backend that cannot list the remnants keeps the original
+    # refusal, whatever error type it failed with, exactly as the ops
+    # plane answers.
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        raise RuntimeError("api exploded")
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, _path):
+        raise AssertionError("never reached")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
+                                     NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
 async def test_guarded_rmdir_counts_a_visible_mounted_child_as_content(
         monkeypatch):
     # The backend listing holds only hidden entries, but the namespace

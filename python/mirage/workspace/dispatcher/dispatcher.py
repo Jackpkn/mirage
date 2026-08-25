@@ -483,10 +483,11 @@ class Dispatcher:
         walk; a visible child (in the backend listing or owed by the
         namespace), or any cascade failure (a mode-protected entry, a
         policy-refused deletion, a visible entry appearing mid-walk),
-        re-raises the backend's refusal. ``PolicyDenied`` is a
-        ``PermissionError``, so the ``OSError`` fold below covers it and
-        a policy's protection of a hidden path never surfaces as its
-        own denial.
+        re-raises the backend's refusal. The folds catch ``Exception``,
+        not just ``OSError``, because an API backend's failure is not
+        always an errno (box raises its own error type), and a raw
+        backend exception here would reveal exactly what the refusal
+        exists to hide; cancellation and system exits still propagate.
 
         Args:
             mount (MountEntry): the mount owning the directory.
@@ -497,7 +498,7 @@ class Dispatcher:
             raise refusal
         try:
             entries = await mount.execute_op("readdir", path.virtual)
-        except OSError as exc:
+        except Exception as exc:
             # A backend that cannot list (or later, remove) the
             # remnants keeps the original refusal: the door has no way
             # to take them.
@@ -517,8 +518,26 @@ class Dispatcher:
             functools.partial(self.invalidate_after_write, mount))
         try:
             await remove_remnants(channel, path_allowed, path)
-        except OSError as exc:
+        except Exception as exc:
             raise refusal from exc
+        # The namespace's own nodes under the subtree go with it: a
+        # hidden link is invisible to every backend, so the walk above
+        # cannot take it, and left in the table it would resurface the
+        # removed tree the moment the hide lifts (a link synthesizes
+        # its ancestors). Classification proved every link below is
+        # hidden -- a visible one contributes its child segment to the
+        # merged listing above -- so this is the walk's own
+        # revalidate-then-destroy applied to the name plane: a link
+        # that became visible mid-cascade keeps the refusal like any
+        # visible remnant, and the purge also drops the attr overlays
+        # of paths the cascade just destroyed, as ``rm`` does.
+        base = path.virtual.rstrip("/") + "/"
+        links_below = [
+            p for p in self._namespace.symlink_targets() if p.startswith(base)
+        ]
+        if any(path_allowed(p) for p in links_below):
+            raise refusal
+        await self._namespace.purge_under(path.virtual)
 
     async def _admit_cascade(self, mount: MountEntry, op: str,
                              path: PathSpec) -> None:

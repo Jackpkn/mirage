@@ -505,4 +505,37 @@ describe('withHiddenGuard rmdir under namespace children', () => {
     })
     expect(removed).toEqual([])
   })
+
+  it('a failed fallback listing keeps the rmdir refusal', async () => {
+    // A backend that cannot list the remnants keeps the original
+    // refusal, whatever error type it failed with: a raw backend
+    // failure here would reveal exactly what the refusal exists to
+    // hide.
+    const notEmpty = (): Error => {
+      const err = new Error('ENOTEMPTY: directory not empty') as Error & { code: string }
+      err.code = 'ENOTEMPTY'
+      return err
+    }
+    const base: CommandIO = {
+      readdir: () => Promise.reject(new Error('api exploded')),
+      readBytes: () => Promise.reject(new Error('not used')),
+      readStream: () => {
+        throw new Error('not used')
+      },
+      stat: (_a, path) =>
+        Promise.resolve(new FileStat({ name: path.virtual, type: FileType.TEXT })),
+      isMounted: () => true,
+      unlink: () => Promise.reject(new Error('never reached')),
+      rmdir: () => Promise.reject(notEmpty()),
+    }
+    const ops = withHiddenGuard(base)
+    const rmdir = ops.rmdir
+    if (rmdir === undefined) throw new Error('rmdir slot missing')
+    const sess = new Session({ sessionId: 'narrowed' })
+    sess.hiddenPaths = { paths: ['/m/d/h'] }
+    const spec = new PathSpec({ virtual: '/m/d', directory: '/m', resourcePath: 'd' })
+    await runWithSession(sess, async () => {
+      await expect(rmdir(accessor, spec)).rejects.toMatchObject({ code: 'ENOTEMPTY' })
+    })
+  })
 })

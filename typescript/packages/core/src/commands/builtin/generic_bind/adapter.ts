@@ -353,7 +353,17 @@ export function withHiddenGuard<A extends Accessor = Accessor>(ops: CommandIO<A>
         ) {
           throw exc
         }
-        const entries = await rawReaddir(accessor, path, index)
+        // The fallback listing folds into the refusal exactly as the
+        // cascade below does: a backend that cannot list the remnants
+        // keeps the original refusal, whatever error type it failed
+        // with, because a raw backend failure here would reveal
+        // exactly what the refusal exists to hide.
+        let entries: string[]
+        try {
+          entries = await rawReaddir(accessor, path, index)
+        } catch {
+          throw exc
+        }
         // The namespace children join the emptiness judgment, never
         // the walk: a visible mounted child keeps the refusal exactly
         // as the ops plane's merged listing does, while the cascade

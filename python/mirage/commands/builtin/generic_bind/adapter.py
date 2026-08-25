@@ -506,7 +506,15 @@ async def _guarded_rmdir(fn: OperationFn,
             if isinstance(arg, PathSpec):
                 break
             lead.append(arg)
-        entries = await readdir(*lead, target, index=index)
+        # Both folds catch ``Exception``, not just ``OSError``: an API
+        # backend's failure is not always an errno (box raises its own
+        # error type), and a raw backend exception here would reveal
+        # exactly what the refusal exists to hide. Cancellation and
+        # system exits still propagate.
+        try:
+            entries = await readdir(*lead, target, index=index)
+        except Exception as listing:
+            raise exc from listing
         merged = list(entries)
         if children is not None:
             merged.extend(children(target.virtual))
@@ -515,7 +523,7 @@ async def _guarded_rmdir(fn: OperationFn,
         channel = _SlotChannel(tuple(lead), index, readdir, stat, unlink, fn)
         try:
             await remove_remnants(channel, path_allowed, target)
-        except OSError as cascade:
+        except Exception as cascade:
             raise exc from cascade
         return None
 

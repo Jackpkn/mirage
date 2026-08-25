@@ -576,7 +576,9 @@ export class Dispatcher {
    * namespace's children (nested mounts, links) and judged by
    * visibility, so a visible child no backend can see keeps the
    * refusal instead of reporting a successful rmdir while the mounted
-   * child remains.
+   * child remains. The namespace's own hidden nodes under the subtree
+   * (links, attr overlays) are purged with it, so the removed tree
+   * cannot resurface from the node table once the hide lifts.
    */
   private async rmdirRemnants(
     resource: Resource,
@@ -616,6 +618,22 @@ export class Dispatcher {
     } catch {
       throw refusal
     }
+    // The namespace's own nodes under the subtree go with it: a hidden
+    // link is invisible to every backend, so the walk above cannot
+    // take it, and left in the table it would resurface the removed
+    // tree the moment the hide lifts (a link synthesizes its
+    // ancestors). Classification proved every link below is hidden --
+    // a visible one contributes its child segment to the merged
+    // listing above -- so this is the walk's own revalidate-then-
+    // destroy applied to the name plane: a link that became visible
+    // mid-cascade keeps the refusal like any visible remnant, and the
+    // purge also drops the attr overlays of paths the cascade just
+    // destroyed, as `rm` does.
+    const base = rstripSlash(path.virtual) + '/'
+    for (const link of this.namespace.symlinkTargets().keys()) {
+      if (link.startsWith(base) && pathAllowed(link)) throw refusal
+    }
+    await this.namespace.purgeUnder(path.virtual)
   }
 
   private tableAnswers(
