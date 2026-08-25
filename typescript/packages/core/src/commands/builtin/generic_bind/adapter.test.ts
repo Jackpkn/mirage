@@ -24,7 +24,6 @@ import {
   makeResolveGlob,
   withDirGuard,
   withHiddenGuard,
-  withNamespaceChildren,
   withRuleGuard,
   type CommandIO,
 } from './adapter.ts'
@@ -467,14 +466,12 @@ describe('withDirGuard', () => {
   })
 })
 
-describe('withNamespaceChildren', () => {
+describe('withHiddenGuard rmdir under namespace children', () => {
   it('a visible mounted child keeps the rmdir refusal', async () => {
-    // The hidden guard's rmdir closure is bound before any invocation
-    // exists, so the per-invocation stamp rebinds the slot with the
-    // namespace children; the builder keeps calling ops.rmdir
-    // unchanged, the visible mounted child joins the emptiness
-    // judgment, and the not-empty refusal stays with the cascade never
-    // started.
+    // The guard is applied over an adapter already stamped with the
+    // invocation's globChildren (the factory's per-invocation order),
+    // so the visible mounted child joins the emptiness judgment and
+    // the not-empty refusal stays with the cascade never started.
     const removed: string[] = []
     const notEmpty = (): Error => {
       const err = new Error('ENOTEMPTY: directory not empty') as Error & { code: string }
@@ -495,11 +492,9 @@ describe('withNamespaceChildren', () => {
         return Promise.resolve()
       },
       rmdir: () => Promise.reject(notEmpty()),
+      globChildren: (parent: string) => (parent === '/m/d' ? ['m'] : []),
     }
-    const ops = withNamespaceChildren(withHiddenGuard(base), (parent) =>
-      parent === '/m/d' ? ['m'] : [],
-    )
-    expect(ops.globChildren).toBeDefined()
+    const ops = withHiddenGuard(base)
     const rmdir = ops.rmdir
     if (rmdir === undefined) throw new Error('rmdir slot missing')
     const sess = new Session({ sessionId: 'narrowed' })

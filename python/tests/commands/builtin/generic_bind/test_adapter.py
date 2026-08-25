@@ -571,6 +571,7 @@ async def test_guarded_rmdir_threads_the_index_to_the_fallback_listing(
                                  readdir,
                                  stat_fn,
                                  unlink,
+                                 None,
                                  NOOPAccessor(),
                                  spec,
                                  index=marker)
@@ -602,7 +603,7 @@ async def test_guarded_rmdir_answers_a_cascade_failure_with_the_refusal(
     monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
     spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
     with pytest.raises(OSError) as exc:
-        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink,
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
                                      NOOPAccessor(), spec)
     assert exc.value.errno == errno.ENOTEMPTY
 
@@ -633,24 +634,18 @@ async def test_guarded_rmdir_counts_a_visible_mounted_child_as_content(
                         ("/m/d", "/m/d/m"))
     spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
     with pytest.raises(OSError) as exc:
-        await adapter._guarded_rmdir(rmdir,
-                                     readdir,
-                                     stat_fn,
-                                     unlink,
-                                     NOOPAccessor(),
-                                     spec,
-                                     children=lambda _v: ["m"])
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink,
+                                     lambda _v: ["m"], NOOPAccessor(), spec)
     assert exc.value.errno == errno.ENOTEMPTY
     assert removed == []
 
 
 @pytest.mark.asyncio
-async def test_with_namespace_children_hands_the_fact_to_the_rmdir_guard(
-        monkeypatch):
-    # The hidden guard's rmdir is bound before any invocation exists,
-    # so the per-invocation stamp rebinds the slot with the namespace
-    # children; the builder keeps calling ops.rmdir unchanged and a
-    # visible mounted child still keeps the refusal.
+async def test_hidden_guard_rmdir_reads_the_stamped_children(monkeypatch):
+    # The guard is applied over an adapter already stamped with the
+    # invocation's glob_children (the factory's per-invocation order),
+    # so a visible mounted child joins its emptiness judgment and the
+    # builder keeps calling ops.rmdir unchanged.
     removed: list[str] = []
 
     async def rmdir(_accessor, _path, index=None):
@@ -677,10 +672,9 @@ async def test_with_namespace_children_hands_the_fact_to_the_rmdir_guard(
                      stat=stat_fn,
                      is_mounted=lambda _a: True,
                      unlink=unlink,
-                     rmdir=rmdir)
-    ops = adapter.with_namespace_children(adapter.with_hidden_guard(base),
-                                          lambda _v: ["m"])
-    assert ops.glob_children is not None
+                     rmdir=rmdir,
+                     glob_children=lambda _v: ["m"])
+    ops = adapter.with_hidden_guard(base)
     assert ops.rmdir is not None
     spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
     with pytest.raises(OSError) as exc:

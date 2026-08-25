@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -42,6 +43,14 @@ class DenyWrites(Policy):
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
         if ctx.write:
             return Deny("no writes\n")
+        return None
+
+
+class DenyRemnantUnlink(Policy):
+
+    async def pre_ops(self, ctx: OpsContext) -> Action | None:
+        if ctx.op == "unlink" and ctx.path.virtual == "/a/d/sec/k":
+            return Deny("protected\n")
         return None
 
 
@@ -339,26 +348,33 @@ async def test_symlink_refuses_an_occupied_name(occupied):
 async def test_the_remnant_channel_invalidates_each_deletion():
     # The cascade's execute_op calls run outside the cache-manager
     # context command execution establishes, so the channel discharges
-    # the dispatcher's write invalidation itself, per deletion; the
-    # dispatch-level invalidation of the rmdir target covers only the
-    # root and its ancestors. Reads stay invalidation-free, and a
-    # failing deletion still invalidates: a missing-path failure means
-    # the tree changed under the walk, and the walk's own earlier
-    # listing must not survive it.
+    # the dispatcher's write invalidation itself, per deletion, and
+    # holds each deletion to the pre-ops admission with its own child
+    # path; the dispatch-level invalidation of the rmdir target covers
+    # only the root and its ancestors. Reads stay gate- and
+    # invalidation-free, and a failing deletion still invalidates: a
+    # missing-path failure means the tree changed under the walk, and
+    # the walk's own earlier listing must not survive it.
     mount = MagicMock()
     mount.execute_op = AsyncMock(return_value=["h"])
     seen: list[str] = []
+    admitted: list[tuple[str, str]] = []
+
+    async def admit(op: str, spec: PathSpec) -> None:
+        admitted.append((op, spec.virtual))
 
     async def invalidate(spec: PathSpec) -> None:
         seen.append(spec.virtual)
 
-    channel = _MountChannel(mount, invalidate)
+    channel = _MountChannel(mount, admit, invalidate)
     await channel.readdir(_path("/data/d"))
     await channel.stat(_path("/data/d/h"))
     assert seen == []
+    assert admitted == []
     await channel.unlink(_path("/data/d/h"))
     await channel.rmdir(_path("/data/d"))
     assert seen == ["/data/d/h", "/data/d"]
+    assert admitted == [("unlink", "/data/d/h"), ("rmdir", "/data/d")]
     mount.execute_op = AsyncMock(side_effect=FileNotFoundError("/data/d/h"))
     with pytest.raises(FileNotFoundError):
         await channel.unlink(_path("/data/d/h"))
@@ -395,3 +411,27 @@ async def test_ops_rmdir_cascade_invalidates_each_remnant(monkeypatch):
     assert "/a/d" in recorded
     gone = await ws.execute("test -e /a/d")
     assert gone.exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_a_policy_denied_remnant_keeps_the_refusal():
+    # The gate that admitted the rmdir judged the directory; each
+    # cascade deletion answers pre_ops with its own child path, so a
+    # policy that protects the hidden file refuses its unlink, the
+    # cascade folds the denial into the original not-empty refusal,
+    # and the protected content survives.
+    ws = Workspace({"/a": RAMResource()},
+                   mode=MountMode.WRITE,
+                   policies=[DenyRemnantUnlink()])
+    io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")
+    assert io.exit_code == 0, io.stderr
+    sess = ws.create_session("rev", profile={"paths": {"hide": ["/a/d/sec"]}})
+    token = set_current_session(sess)
+    try:
+        with pytest.raises(OSError) as exc:
+            await ws.ops.rmdir("/a/d")
+    finally:
+        reset_current_session(token)
+    assert exc.value.errno in (errno.ENOTEMPTY, errno.EEXIST)
+    kept = await ws.execute("cat /a/d/sec/k")
+    assert (kept.stdout or b"") == b"k\n"

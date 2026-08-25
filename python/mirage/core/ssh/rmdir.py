@@ -22,6 +22,25 @@ from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotdir, enotempty
 
 
+async def _holds_entries(sftp: asyncssh.SFTPClient, remote: str) -> bool:
+    """Whether the remote directory still lists children.
+
+    The probe behind the version-3 arm below: it decides between "not
+    empty" and every other refusal the one generic code covers. A probe
+    that fails is a negative probe, never an error to surface; the
+    caller re-raises what the server said.
+
+    Args:
+        sftp (asyncssh.SFTPClient): open SFTP session.
+        remote (str): absolute remote path of the directory.
+    """
+    try:
+        names = await sftp.listdir(remote)
+    except (OSError, asyncssh.Error):
+        return False
+    return any(name not in (".", "..") for name in names)
+
+
 async def rmdir(accessor: SSHAccessor,
                 path: PathSpec,
                 index: IndexCacheStore = NULL_INDEX) -> None:
@@ -29,10 +48,15 @@ async def rmdir(accessor: SSHAccessor,
 
     The server enforces emptiness, so the work here is naming its
     refusal in the same vocabulary every other backend uses. SFTP 3 has
-    one code for it (``SFTPFailure``, carrying only the server's message
-    string), and later protocol versions split ``SFTPDirNotEmpty`` out;
-    only the typed one can be mapped, so a version-3 server still
-    reaches the caller as itself.
+    one generic code for it (``SFTPFailure``, carrying only the server's
+    message string), and later protocol versions split
+    ``SFTPDirNotEmpty`` out; OpenSSH speaks version 3, so the generic
+    code is what a not-empty rmdir actually answers in practice. It also
+    covers other refusals, so one listing probe decides instead of a
+    blind translation: only a directory that still shows entries
+    converts to ENOTEMPTY, anything else keeps the server's own answer.
+    Without the conversion the hidden-remnant guard never fires on ssh
+    (it keys on the errno), and the raw SFTP failure leaks.
 
     Args:
         accessor (SSHAccessor): SSH accessor.
@@ -42,12 +66,17 @@ async def rmdir(accessor: SSHAccessor,
     """
     config = accessor.config
     sftp = await accessor.sftp()
+    remote = _abs(config, path.mount_path)
     try:
-        await sftp.rmdir(_abs(config, path.mount_path))
+        await sftp.rmdir(remote)
     except asyncssh.SFTPNoSuchFile as exc:
         raise enoent(path) from exc
     except asyncssh.SFTPDirNotEmpty as exc:
         raise enotempty(path) from exc
     except asyncssh.SFTPNotADirectory as exc:
         raise enotdir(path) from exc
+    except asyncssh.SFTPFailure as exc:
+        if await _holds_entries(sftp, remote):
+            raise enotempty(path) from exc
+        raise
     await invalidate_after_unlink(path)

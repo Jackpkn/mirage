@@ -17,9 +17,20 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode } from '../types.ts'
 import { parseSessionProfile } from '../policy/profile.ts'
+import type { Action, OpsContext, Policy } from '../policy/index.ts'
 import { runWithSession } from '../context/session_context.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
+
+/** Refuse the unlink of one exact path, whatever door asked. */
+class DenyRemnantUnlink implements Policy {
+  preOps(ctx: OpsContext): Action | null {
+    if (ctx.op === 'unlink' && ctx.path.virtual === '/a/d/sec/k') {
+      return { kind: 'deny', reason: 'protected' }
+    }
+    return null
+  }
+}
 
 const CARVE_PROFILE = parseSessionProfile({
   mounts: { '/repo': 'r' },
@@ -525,6 +536,40 @@ describe('the ops door against hides', () => {
     const ws = new Workspace(
       { '/a': [a, MountMode.WRITE] as const, '/a/d/m': [m, MountMode.WRITE] as const },
       { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/a/d/sec'] } }),
+    })
+    await runWithSession(sess, async () => {
+      await expect(ws.dispatch('rmdir', '/a/d')).rejects.toMatchObject({
+        code: 'ENOTEMPTY',
+      })
+    })
+    const kept = await ws.execute('cat /a/d/sec/k')
+    expect(stdoutStr(kept)).toBe('k\n')
+  })
+
+  it('a policy denied remnant keeps the refusal', async () => {
+    // The gate that admitted the rmdir judged the directory; each
+    // cascade deletion answers preOps with its own child path, so a
+    // policy that protects the hidden file refuses its unlink, the
+    // cascade folds the denial into the original not-empty refusal,
+    // and the protected content survives.
+    const parser = await getTestParser()
+    const a = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(a)
+    const ws = new Workspace(
+      { '/a': [a, MountMode.WRITE] as const },
+      {
+        mode: MountMode.WRITE,
+        ops: registry,
+        shellParser: parser,
+        policies: [new DenyRemnantUnlink()],
+      },
     )
     open.push(ws)
     const io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")

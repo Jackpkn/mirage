@@ -473,8 +473,10 @@ export class Dispatcher {
 
   /**
    * The door's own channel for internal walks: the TS twin of Python's
-   * Mount.execute_op. The same mode fence, index stamping and
-   * mount-prefix context normal dispatch applies, plus the
+   * Mount.execute_op plus the dispatcher-side duties around it. The
+   * same mode fence, index stamping and mount-prefix context normal
+   * dispatch applies, plus the pre-ops admission for writes (Python
+   * spells this on the channel as `_admit_cascade`) and the
    * dispatcher's own write invalidation, because raw registry calls
    * run outside the cache context dispatch establishes, so the cores'
    * invalidation cannot land. Invalidation runs even when the op
@@ -493,8 +495,19 @@ export class Dispatcher {
     spec: PathSpec,
   ): Promise<unknown> {
     const write = this.opsRegistry.find(opName, resource.kind)?.write === true
-    if (write && effectivePathMode(spec.virtual, mountPrefix, mode) === MountMode.READ) {
-      throw erofsReadOnly(`mount at '${spec.virtual}' is read-only`, spec)
+    if (write) {
+      // The same pre-ops admission a dispatched op answers, with the
+      // walk's own child path: the gate that admitted the rmdir judged
+      // the directory, not what the cascade found under it, and a
+      // policy that protects one of those paths must refuse its
+      // deletion exactly as it would refuse a first-class op. The
+      // caller folds the denial into its original refusal, so a
+      // policy's protection of a hidden path never surfaces as its own
+      // denial.
+      await preOpsGate(this.policies, opName, spec, true, mountPrefix, sessionId())
+      if (effectivePathMode(spec.virtual, mountPrefix, mode) === MountMode.READ) {
+        throw erofsReadOnly(`mount at '${spec.virtual}' is read-only`, spec)
+      }
     }
     try {
       return await runWithMountPrefix(rstripSlash(mountPrefix), () =>

@@ -134,24 +134,31 @@ class _MountChannel:
     would. Only the dispatcher's own visibility filter sits above that
     door, which is what lets the cascade see hidden entries.
 
-    Each deletion also discharges the dispatcher's own write
-    invalidation, the way normal dispatch does for its one op and the
-    TS ``fencedCall`` does per call: ``execute_op`` runs outside the
-    cache-manager context command execution establishes, so the cores'
-    invalidation cannot land, and the dispatch-level invalidation of
-    the rmdir target covers the root and its ancestors, never the
-    cascade's descendants. Invalidation runs even when the op fails: a
-    missing-path failure means the tree changed under the walk, and
-    the walk's own earlier listing is exactly the entry that must not
-    survive.
+    Each deletion answers the same pre-ops admission a dispatched op
+    answers, with its own child path: the gate that admitted the rmdir
+    judged the directory, not what the cascade found under it, and a
+    policy that protects one of those paths must refuse its deletion
+    exactly as it would refuse a first-class op. Each deletion also
+    discharges the dispatcher's own write invalidation, the way normal
+    dispatch does for its one op and the TS ``fencedCall`` does per
+    call: ``execute_op`` runs outside the cache-manager context command
+    execution establishes, so the cores' invalidation cannot land, and
+    the dispatch-level invalidation of the rmdir target covers the root
+    and its ancestors, never the cascade's descendants. Invalidation
+    runs even when the op fails: a missing-path failure means the tree
+    changed under the walk, and the walk's own earlier listing is
+    exactly the entry that must not survive.
 
     Args:
         mount (MountEntry): the mount owning the subtree.
+        admit (Callable): the dispatcher's pre-ops gate, bound to that
+            mount; raises to refuse a deletion.
         invalidate (Callable): the dispatcher's write invalidation,
             bound to that mount.
     """
 
     mount: MountEntry
+    admit: Callable[[str, PathSpec], Awaitable[None]]
     invalidate: Callable[[PathSpec], Awaitable[None]]
 
     async def readdir(self, spec: PathSpec) -> list[str]:
@@ -161,12 +168,14 @@ class _MountChannel:
         return await self.mount.execute_op("stat", spec.virtual)
 
     async def unlink(self, spec: PathSpec) -> None:
+        await self.admit("unlink", spec)
         try:
             await self.mount.execute_op("unlink", spec.virtual)
         finally:
             await self.invalidate(spec)
 
     async def rmdir(self, spec: PathSpec) -> None:
+        await self.admit("rmdir", spec)
         try:
             await self.mount.execute_op("rmdir", spec.virtual)
         finally:
@@ -473,8 +482,11 @@ class Dispatcher:
         go with the directory through the shared ``remove_remnants``
         walk; a visible child (in the backend listing or owed by the
         namespace), or any cascade failure (a mode-protected entry, a
-        visible entry appearing mid-walk), re-raises the backend's
-        refusal.
+        policy-refused deletion, a visible entry appearing mid-walk),
+        re-raises the backend's refusal. ``PolicyDenied`` is a
+        ``PermissionError``, so the ``OSError`` fold below covers it and
+        a policy's protection of a hidden path never surfaces as its
+        own denial.
 
         Args:
             mount (MountEntry): the mount owning the directory.
@@ -501,11 +513,30 @@ class Dispatcher:
         if not entries or visible_below(path.virtual, merged, path_allowed):
             raise refusal
         channel = _MountChannel(
-            mount, functools.partial(self.invalidate_after_write, mount))
+            mount, functools.partial(self._admit_cascade, mount),
+            functools.partial(self.invalidate_after_write, mount))
         try:
             await remove_remnants(channel, path_allowed, path)
         except OSError as exc:
             raise refusal from exc
+
+    async def _admit_cascade(self, mount: MountEntry, op: str,
+                             path: PathSpec) -> None:
+        """Hold one cascade deletion to the pre-ops admission a
+        dispatched op answers.
+
+        The gate that admitted the rmdir judged the directory; each
+        deletion below it names its own path here, so a policy that
+        denies ``unlink`` of a protected file refuses it even when the
+        rmdir above was allowed.
+
+        Args:
+            mount (MountEntry): the mount owning the subtree.
+            op (str): the deletion op ("unlink" or "rmdir").
+            path (PathSpec): the child being removed.
+        """
+        await pre_ops_gate(self._namespace.registry.policies, op, path, True,
+                           mount.prefix, _session_id())
 
     def _table_answers(self, op: str, virtual: str, kwargs: dict[str,
                                                                  Any]) -> bool:
