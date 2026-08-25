@@ -26,10 +26,20 @@ import {
   Mount,
   MountBackend,
   MountMode,
+  NFSConfig,
   NFSManager,
   RAMResource,
   Workspace,
 } from "@struktoai/mirage-node";
+
+// The battery asks the OS for a port instead of taking the fixed
+// default. Two batteries run back to back in one CI job, and this one
+// hit EADDRINUSE on 20490 seventy-nine seconds after the Python one had
+// exited with its mounts cleaned -- a race no run reproduces reliably
+// and none of them should have to. The declared-mount scenario below
+// still exercises the default, since a Mount({backend: nfs}) carries no
+// config to override it with.
+const EPHEMERAL = new NFSConfig({ port: 0 });
 
 // The addon is not published yet, so a local build is the default and CI
 // (or a developer with the crate built elsewhere) overrides it. Named
@@ -108,7 +118,7 @@ async function track(
   prefix = "/",
   mountpoint?: string,
 ): Promise<string> {
-  const point = await manager.setup(ws, prefix, mountpoint);
+  const point = await manager.setup(ws, prefix, mountpoint, EPHEMERAL);
   MOUNTPOINTS.add(point);
   return point;
 }

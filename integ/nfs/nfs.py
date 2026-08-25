@@ -25,9 +25,19 @@ import tempfile
 
 from mirage import Mount, MountBackend, MountMode, Workspace
 from mirage.nfs.backend import check_platform_nfs
+from mirage.nfs.config import NFSConfig
 from mirage.resource.ram import RAMResource
 from mirage.types import FileStat
 from mirage.workspace.nfs import NFSManager
+
+# The battery asks the OS for a port instead of taking the fixed
+# default. Two batteries run back to back in one CI job, and the second
+# one hit EADDRINUSE on 20490 seventy-nine seconds after the first had
+# exited with its mounts cleaned -- a race no run reproduces reliably
+# and none of them should have to. The declared-mount scenario below
+# still exercises the default, since a Mount(backend=nfs) carries no
+# config to override it with.
+EPHEMERAL = NFSConfig(port=0)
 
 # Every mountpoint this run has created, so a crash, a Ctrl-C or a hung
 # battery can still force them down. A live mount whose server has gone
@@ -120,7 +130,7 @@ async def track(manager: NFSManager,
     Returns:
         str: the mountpoint now serving the prefix.
     """
-    point = await manager.setup(ops, prefix, mountpoint)
+    point = await manager.setup(ops, prefix, mountpoint, EPHEMERAL)
     MOUNTPOINTS.add(point)
     return point
 
