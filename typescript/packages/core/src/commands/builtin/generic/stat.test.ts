@@ -18,6 +18,7 @@ import { OpsRegistry, type RegisteredOp } from '../../../ops/registry.ts'
 import { RAMResource } from '../../../resource/ram/ram.ts'
 import { type CommandOpts } from '../../config.ts'
 import {
+  DEVICE_NUMBERS_KEY,
   FileStat,
   type FileStatInit,
   FileType,
@@ -215,6 +216,14 @@ describe('stat -c directive formatting', () => {
   it('renders structural constants', async () => {
     expect(await render('%B', fs())).toBe('512')
     expect(await render('%r %R %t %T', fs())).toBe('0 0 0 0')
+  })
+
+  it('renders character-device number directives', async () => {
+    const device = fs({
+      type: FileType.CHAR_DEVICE,
+      extra: { [DEVICE_NUMBERS_KEY]: [1, 3] },
+    })
+    expect(await render('%r %R %t %T %Hr %Lr', device)).toBe('259 103 1 3 1 3')
   })
 
   it('renders "?" for unbacked and unknown directives', async () => {

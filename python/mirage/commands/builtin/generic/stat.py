@@ -14,7 +14,7 @@ from mirage.ops.types import LinkView, MountView, StatPath
 from mirage.types import (DEVICE_NUMBERS_KEY, LINK_TARGET_KEY, FileStat,
                           FileType, PathSpec, StatFn)
 from mirage.utils.errors import FS_ERRORS, fs_error_line
-from mirage.utils.stat_view import posix_mode
+from mirage.utils.stat_view import device_rdev, posix_mode
 
 _STR_DIRECTIVES = frozenset("nNF")
 
@@ -236,7 +236,8 @@ def _directive_value(spec: str, s: FileStat, name: str) -> str:
     if spec == "T":
         return f"{dev[1]:x}" if dev else "0"
     if spec in ("r", "R"):
-        return "0"
+        rdev = device_rdev(s)
+        return str(rdev) if spec == "r" else f"{rdev:x}"
     if len(spec) == 2 and spec[0] in "HL":
         # %Hr/%Lr are rdev major/minor in decimal; %Hd/%Ld are the device
         # the file resides on, which a VFS has no truthful value for.

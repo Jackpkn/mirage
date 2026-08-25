@@ -25,6 +25,7 @@ import {
 } from '../../../types.ts'
 import { isoToEpoch } from '../../../utils/dates.ts'
 import { fsErrorLine, isFsError } from '../../../utils/errors.ts'
+import { deviceRdev } from '../../../utils/stat_view.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { lsModeString } from '../utils/formatting.ts'
 import { formatRecords } from '../utils/output.ts'
@@ -193,7 +194,10 @@ function directiveValue(spec: string, s: FileStat, name: string): string {
   const numbers = Array.isArray(device) && device.length === 2 ? (device as [number, number]) : null
   if (spec === 't') return numbers !== null ? numbers[0].toString(16) : '0'
   if (spec === 'T') return numbers !== null ? numbers[1].toString(16) : '0'
-  if (spec === 'r' || spec === 'R') return '0'
+  if (spec === 'r' || spec === 'R') {
+    const rdev = deviceRdev(s)
+    return spec === 'r' ? String(rdev) : rdev.toString(16)
+  }
   if (spec.length === 2 && (spec.startsWith('H') || spec.startsWith('L'))) {
     if (spec[1] === 'r' || spec[1] === 'R') {
       if (numbers === null) return '0'
