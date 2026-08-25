@@ -66,7 +66,19 @@ export const RMDIR_BUILDER: Builder = {
         errors.push(`rmdir: failed to remove '${p.rawPath}': Directory not empty`)
         continue
       }
-      await rmdir(accessor, p)
+      try {
+        await rmdir(accessor, p, idx)
+      } catch (exc) {
+        // The listing above showed the session an empty directory, but
+        // the slot may still refuse not-empty: the hidden-remnant guard
+        // re-raises the backend's refusal when its cascade cannot
+        // finish (a mode-protected remnant, a visible entry appearing
+        // mid-walk). GNU's voice, not the raw error.
+        const code = (exc as { code?: string }).code
+        if (code !== 'ENOTEMPTY' && code !== 'EEXIST') throw exc
+        errors.push(`rmdir: failed to remove '${p.rawPath}': Directory not empty`)
+        continue
+      }
       if (verbose) lines.push(`rmdir: removing directory, '${p.rawPath}'`)
     }
     const out = lines.length > 0 ? formatRecords(lines) : null

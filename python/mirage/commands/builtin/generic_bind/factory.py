@@ -162,33 +162,51 @@ def with_stat_cache(ops: CommandIO) -> CommandIO:
     return replace(ops, stat=functools.partial(_cached_stat, ops.stat))
 
 
-async def _run_with_namespace_globs(ops: CommandIO, fn: Callable[..., Any],
-                                    accessor: Accessor, paths: list[PathSpec],
-                                    texts: list[str],
+def _read_wraps(ops: CommandIO) -> CommandIO:
+    return with_slash_guard(with_read_cache(ops))
+
+
+def _stat_wraps(ops: CommandIO) -> CommandIO:
+    return with_slash_guard(with_stat_cache(ops))
+
+
+def _write_wraps(ops: CommandIO) -> CommandIO:
+    return with_slash_guard(ops)
+
+
+async def _run_with_namespace_globs(ops: CommandIO,
+                                    finish: Callable[[CommandIO], CommandIO],
+                                    fn: Callable[..., Any], accessor: Accessor,
+                                    paths: list[PathSpec], texts: list[str],
                                     opts: CommandOpts) -> Any:
-    """Run a builder with an adapter whose globs see the namespace and
-    whose reads refuse a directory.
+    """Run a builder with an adapter that carries the invocation's
+    namespace facts below every guard.
 
     A nested mount's keys live in another resource and no resource stores
     a symlink, so a glob resolved by one backend's readdir misses both,
     while the same names are already merged into a listing. The adapter
     is built once per backend and the names are session-scoped, so the
-    fact is stamped on here, per invocation, from ``opts.ns``:
-    every builder then keeps calling ``ops.resolve_glob`` unchanged.
-
-    ``with_dir_guard`` is applied here rather than beside the other
-    wrappers in ``make_generic_commands`` because it reads the same
-    namespace fact: a directory that exists only because a mount or a
-    link sits under it is invisible to the backend, so the guard has to
-    close over an adapter that already carries ``glob_children``. The
-    stamp happens whether or not the namespace owes this directory
-    anything, so there is one code path rather than two.
+    fact is stamped on here, per invocation, from ``opts.ns`` -- and the
+    whole guard chain is applied on top of the stamped copy, so every
+    guard that consumes a namespace fact simply reads it off the
+    adapter it wraps: glob resolution derives from ``glob_children``,
+    the dir guard closes over it, and the hidden guard's rmdir captures
+    it for its emptiness judgment. Binding the guards at registration
+    instead would strand them behind partials built before any
+    invocation exists, which is exactly the wiring that made the rmdir
+    guard blind to a mounted child. The stamp happens whether or not
+    the namespace owes this directory anything, so there is one code
+    path rather than two; the guards read the current session at call
+    time, so per-invocation binding changes cost, not behavior.
 
     ``ops`` stays the first bound argument, because that partial slot is
-    how the adapter is reached for a registered command.
+    how the adapter is reached for a registered command; it arrives raw
+    and is guarded here.
 
     Args:
-        ops (CommandIO): the backend's IO adapter.
+        ops (CommandIO): the backend's raw IO adapter.
+        finish (Callable): the builder tier's cache and slash wraps,
+            chosen at registration from the builder's read/write kind.
         fn (Callable): the builder's command function.
         accessor (Accessor): backend handle.
         paths (list[PathSpec]): the command's path operands.
@@ -196,7 +214,8 @@ async def _run_with_namespace_globs(ops: CommandIO, fn: Callable[..., Any],
         opts (CommandOpts): the per-invocation option bag.
     """
     children = opts.ns.child_mounts if opts.ns is not None else None
-    bound = with_dir_guard(replace(ops, glob_children=children))
+    stamped = replace(ops, glob_children=children)
+    bound = with_dir_guard(finish(with_path_guards(stamped)))
     return await fn(bound, accessor, paths, texts, opts)
 
 
@@ -229,23 +248,25 @@ def make_generic_commands(
     for b in _BUILDERS:
         if b.name in skip:
             continue
-        # Hidden-path, rule and mode enforcement wrap here, once for
-        # every generic command; the raw adapter stays untouched for
+        raw = ops_over.get(b.name, ops)
+        # Path guards are applied per invocation, over the stamped
+        # adapter, inside _run_with_namespace_globs; this registration
+        # copy exists for provision estimates, which bind here and read
+        # the session at call time. The raw adapter stays untouched for
         # the ops tables, whose door does its own enforcement.
-        base_ops = with_path_guards(ops_over.get(b.name, ops))
+        base_ops = with_path_guards(raw)
         # A read-only backend (no write op) can't run the byte-mutation
         # commands (cp/mv/tee/gunzip/...), so don't register a command that
         # would crash when invoked.
         if not base_ops.supports(b.requirements):
             continue
         if b.read:
-            cmd_ops = with_read_cache(base_ops)
+            finish = _read_wraps
         elif not b.write:
-            cmd_ops = with_stat_cache(base_ops)
+            finish = _stat_wraps
         else:
-            cmd_ops = base_ops
-        cmd_ops = with_slash_guard(cmd_ops)
-        bound = functools.partial(_run_with_namespace_globs, cmd_ops, b.fn)
+            finish = _write_wraps
+        bound = functools.partial(_run_with_namespace_globs, raw, finish, b.fn)
         provision: Callable[..., Any] | None
         if b.name in prov_over:
             provision = prov_over[b.name]

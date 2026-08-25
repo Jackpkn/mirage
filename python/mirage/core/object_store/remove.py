@@ -14,7 +14,9 @@
 
 from mirage.cache.context import (invalidate_after_unlink,
                                   invalidate_ancestors, invalidate_subtree)
-from mirage.core.object_store.driver import A, C, ObjectStoreDriver, PathFn
+from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.core.object_store.driver import (A, C, ObjectStoreDriver, PathFn,
+                                             RmdirFn)
 from mirage.types import PathSpec
 from mirage.utils import key_prefix as kp
 from mirage.utils.errors import enoent, enotempty
@@ -68,7 +70,7 @@ def make_remove_prefix(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
     return remove_prefix
 
 
-def make_rmdir(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
+def make_rmdir(driver: ObjectStoreDriver[A, C]) -> RmdirFn[A]:
     """Build POSIX ``rmdir`` over one driver: refuse a non-empty prefix.
 
     Not ``make_remove_prefix``. On a keyed store an empty directory is
@@ -96,7 +98,9 @@ def make_rmdir(driver: ObjectStoreDriver[A, C]) -> PathFn[A]:
         driver (ObjectStoreDriver): the store's native surface.
     """
 
-    async def rmdir(accessor: A, path_spec: PathSpec) -> None:
+    async def rmdir(accessor: A,
+                    path_spec: PathSpec,
+                    index: IndexCacheStore = NULL_INDEX) -> None:
         path = path_spec.mount_path
         pfx = kp.apply_dir(driver.key_prefix_of(accessor), path)
         is_root = not path.strip("/")

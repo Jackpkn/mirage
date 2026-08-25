@@ -23,10 +23,12 @@ import {
   dirAwareStream,
   makeResolveGlob,
   withDirGuard,
+  withHiddenGuard,
   withRuleGuard,
   type CommandIO,
 } from './adapter.ts'
-import { runWithAdmission } from '../../../context/session_context.ts'
+import { runWithAdmission, runWithSession } from '../../../context/session_context.ts'
+import { Session } from '../../../workspace/session/session.ts'
 
 const accessor = {} as never
 // No namespace facts, which is what a command bound outside a workspace
@@ -461,5 +463,79 @@ describe('withDirGuard', () => {
     await expect(
       ops.readBytes(accessor, PathSpec.fromStrPath('/locked.txt'), undefined),
     ).rejects.toMatchObject({ code: 'EACCES' })
+  })
+})
+
+describe('withHiddenGuard rmdir under namespace children', () => {
+  it('a visible mounted child keeps the rmdir refusal', async () => {
+    // The guard is applied over an adapter already stamped with the
+    // invocation's globChildren (the factory's per-invocation order),
+    // so the visible mounted child joins the emptiness judgment and
+    // the not-empty refusal stays with the cascade never started.
+    const removed: string[] = []
+    const notEmpty = (): Error => {
+      const err = new Error('ENOTEMPTY: directory not empty') as Error & { code: string }
+      err.code = 'ENOTEMPTY'
+      return err
+    }
+    const base: CommandIO = {
+      readdir: () => Promise.resolve(['h']),
+      readBytes: () => Promise.reject(new Error('not used')),
+      readStream: () => {
+        throw new Error('not used')
+      },
+      stat: (_a, path) =>
+        Promise.resolve(new FileStat({ name: path.virtual, type: FileType.TEXT })),
+      isMounted: () => true,
+      unlink: (_a, path) => {
+        removed.push(path.virtual)
+        return Promise.resolve()
+      },
+      rmdir: () => Promise.reject(notEmpty()),
+      globChildren: (parent: string) => (parent === '/m/d' ? ['m'] : []),
+    }
+    const ops = withHiddenGuard(base)
+    const rmdir = ops.rmdir
+    if (rmdir === undefined) throw new Error('rmdir slot missing')
+    const sess = new Session({ sessionId: 'narrowed' })
+    sess.hiddenPaths = { paths: ['/m/d/h'] }
+    const spec = new PathSpec({ virtual: '/m/d', directory: '/m', resourcePath: 'd' })
+    await runWithSession(sess, async () => {
+      await expect(rmdir(accessor, spec)).rejects.toMatchObject({ code: 'ENOTEMPTY' })
+    })
+    expect(removed).toEqual([])
+  })
+
+  it('a failed fallback listing keeps the rmdir refusal', async () => {
+    // A backend that cannot list the remnants keeps the original
+    // refusal, whatever error type it failed with: a raw backend
+    // failure here would reveal exactly what the refusal exists to
+    // hide.
+    const notEmpty = (): Error => {
+      const err = new Error('ENOTEMPTY: directory not empty') as Error & { code: string }
+      err.code = 'ENOTEMPTY'
+      return err
+    }
+    const base: CommandIO = {
+      readdir: () => Promise.reject(new Error('api exploded')),
+      readBytes: () => Promise.reject(new Error('not used')),
+      readStream: () => {
+        throw new Error('not used')
+      },
+      stat: (_a, path) =>
+        Promise.resolve(new FileStat({ name: path.virtual, type: FileType.TEXT })),
+      isMounted: () => true,
+      unlink: () => Promise.reject(new Error('never reached')),
+      rmdir: () => Promise.reject(notEmpty()),
+    }
+    const ops = withHiddenGuard(base)
+    const rmdir = ops.rmdir
+    if (rmdir === undefined) throw new Error('rmdir slot missing')
+    const sess = new Session({ sessionId: 'narrowed' })
+    sess.hiddenPaths = { paths: ['/m/d/h'] }
+    const spec = new PathSpec({ virtual: '/m/d', directory: '/m', resourcePath: 'd' })
+    await runWithSession(sess, async () => {
+      await expect(rmdir(accessor, spec)).rejects.toMatchObject({ code: 'ENOTEMPTY' })
+    })
   })
 })

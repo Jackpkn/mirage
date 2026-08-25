@@ -12,9 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import errno
+
 import pytest
 
+import mirage.commands.builtin.generic_bind.adapter as adapter
 from mirage.accessor.base import NOOPAccessor
+from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           dir_aware_stat,
                                                           dir_aware_stream,
@@ -527,3 +531,205 @@ async def test_dir_guard_keeps_a_refusal_on_a_file_the_parent_lists():
                   is_mounted=lambda _a: True))
     with pytest.raises(PermissionError):
         await ops.read_bytes(None, PathSpec.from_str_path("/asked/a"))
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_threads_the_index_to_the_fallback_listing(
+        monkeypatch):
+    # The remnant fallback lists the refused directory raw; on an
+    # indexed backend those listings only resolve through the
+    # invocation's index, so the wrapper must hand it on rather than
+    # falling back to NULL_INDEX — to the classification readdir and to
+    # every listing the shared cascade walk takes after it.
+    marker = IndexCacheStore()
+    seen: list[IndexCacheStore | None] = []
+    removed: list[tuple[str, str]] = []
+    files = {"/m/d/h"}
+
+    async def rmdir(_accessor, path, index=None):
+        if files:
+            raise OSError(errno.ENOTEMPTY, "not empty")
+        removed.append(("rmdir", path.virtual))
+
+    async def readdir(_accessor, _path, index=None):
+        seen.append(index)
+        return ["h"] if files else []
+
+    async def stat_fn(_accessor, path, index=None):
+        if path.virtual in files:
+            return FileStat(type=FileType.FILE, name=path.virtual)
+        raise FileNotFoundError(path.virtual)
+
+    async def unlink(_accessor, path):
+        files.discard(path.virtual)
+        removed.append(("unlink", path.virtual))
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    await adapter._guarded_rmdir(rmdir,
+                                 readdir,
+                                 stat_fn,
+                                 unlink,
+                                 None,
+                                 NOOPAccessor(),
+                                 spec,
+                                 index=marker)
+    assert seen == [marker, marker]
+    assert removed == [("unlink", "/m/d/h"), ("rmdir", "/m/d")]
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_answers_a_cascade_failure_with_the_refusal(
+        monkeypatch):
+    # A deletion the channel refuses (a mode-protected entry) must
+    # surface as the backend's own not-empty refusal, never as the
+    # cascade's error: the session was told the directory is empty, and
+    # the protected content stays.
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, path):
+        raise PermissionError(errno.EROFS, "Read-only file system",
+                              path.virtual)
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
+                                     NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_folds_a_non_oserror_cascade_failure(monkeypatch):
+    # An API backend's failure is not always an errno (box raises its
+    # own error type); a raw backend exception escaping the fold would
+    # reveal exactly what the refusal exists to hide.
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, _path):
+        raise RuntimeError("api exploded")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
+                                     NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_folds_a_failed_fallback_listing(monkeypatch):
+    # A backend that cannot list the remnants keeps the original
+    # refusal, whatever error type it failed with, exactly as the ops
+    # plane answers.
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        raise RuntimeError("api exploded")
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, _path):
+        raise AssertionError("never reached")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
+                                     NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_counts_a_visible_mounted_child_as_content(
+        monkeypatch):
+    # The backend listing holds only hidden entries, but the namespace
+    # owes the directory a visible mounted child no backend can list.
+    # The children fact joins the emptiness judgment, so the refusal
+    # stays and the cascade never starts.
+    removed: list[str] = []
+
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, path):
+        removed.append(path.virtual)
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v in
+                        ("/m/d", "/m/d/m"))
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink,
+                                     lambda _v: ["m"], NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+    assert removed == []
+
+
+@pytest.mark.asyncio
+async def test_hidden_guard_rmdir_reads_the_stamped_children(monkeypatch):
+    # The guard is applied over an adapter already stamped with the
+    # invocation's glob_children (the factory's per-invocation order),
+    # so a visible mounted child joins its emptiness judgment and the
+    # builder keeps calling ops.rmdir unchanged.
+    removed: list[str] = []
+
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, path):
+        removed.append(path.virtual)
+
+    async def unused(*_args):
+        raise AssertionError("not used")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v in
+                        ("/m/d", "/m/d/m"))
+    base = CommandIO(readdir=readdir,
+                     read_bytes=unused,
+                     read_stream=unused,
+                     stat=stat_fn,
+                     is_mounted=lambda _a: True,
+                     unlink=unlink,
+                     rmdir=rmdir,
+                     glob_children=lambda _v: ["m"])
+    ops = adapter.with_hidden_guard(base)
+    assert ops.rmdir is not None
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await ops.rmdir(NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+    assert removed == []

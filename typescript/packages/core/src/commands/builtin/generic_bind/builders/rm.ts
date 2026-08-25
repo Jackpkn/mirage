@@ -103,7 +103,7 @@ export const RM_BUILDER: Builder = {
               errors.push(`rm: cannot remove '${p.rawPath}': Directory not empty`)
               continue
             }
-            await rmdir(accessor, p)
+            await rmdir(accessor, p, idx)
             entryLines = [`removed directory '${p.virtual}'`]
           } else {
             errors.push(`rm: cannot remove '${p.rawPath}': Is a directory`)

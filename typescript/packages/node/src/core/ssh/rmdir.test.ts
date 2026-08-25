@@ -35,7 +35,10 @@ describe('core/ssh/rmdir', () => {
     expect(await exists(accessor, spec('/d'))).toBe(false)
   })
 
-  it('errors on a non-empty directory', async () => {
+  it('converts the version-3 not-empty refusal to ENOTEMPTY', async () => {
+    // SFTP 3 answers a not-empty rmdir with its one generic FAILURE
+    // code; the listing probe converts it so the boundary speaks
+    // errno, which is what the hidden-remnant guard keys on.
     const accessor = makeFakeAccessor({
       files: new Map([['/d/x', { data: new Uint8Array() }]]),
       dirs: new Map([
@@ -43,7 +46,7 @@ describe('core/ssh/rmdir', () => {
         ['/d', {}],
       ]),
     })
-    await expect(rmdir(accessor, spec('/d'))).rejects.toThrow()
+    await expect(rmdir(accessor, spec('/d'))).rejects.toMatchObject({ code: 'ENOTEMPTY' })
   })
 
   it('throws ENOENT when missing', async () => {

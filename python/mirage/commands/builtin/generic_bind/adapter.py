@@ -25,13 +25,17 @@ from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.commands.builtin.generic.du import (DEFAULT_MAX_DU_ENTRIES,
                                                 DuEntries)
 from mirage.commands.config import CommandFnResult, CommandOpts, ProvisionFn
-from mirage.context import (effective_path_mode, get_admission, get_mount_gate,
-                            path_allowed, readonly_below)
+from mirage.context import (effective_path_mode, get_admission,
+                            get_current_session, get_mount_gate,
+                            hidden_paths_intersect, path_allowed,
+                            readonly_below)
 from mirage.ops.types import ChildMounts, StatOverlay
 from mirage.types import FileStat, FileType, MountMode, PathSpec
 from mirage.utils.errors import MISS_ERRORS, ReadOnlyError, eisdir
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES, make_resolve_glob
+from mirage.utils.hidden import move_reveals
 from mirage.utils.path import norm, parent
+from mirage.utils.remnants import remove_remnants, visible_below
 
 OperationFn = Callable[..., Any]
 
@@ -126,6 +130,21 @@ class ExistsOp(Protocol):
 class PathOp(Protocol):
 
     def __call__(self, accessor: Any, path: PathSpec, /) -> Awaitable[None]:
+        ...
+
+
+class RmdirOp(Protocol):
+    """Remove an empty directory. ``index`` joins the read-family slots'
+    contract because the hidden-remnant guard turns a refused rmdir into
+    a raw listing of the same directory, and an indexed backend cannot
+    list a nested path through ``NULL_INDEX``; the backend itself does
+    not consult it."""
+
+    def __call__(self,
+                 accessor: Any,
+                 path: PathSpec,
+                 /,
+                 index: IndexCacheStore = ...) -> Awaitable[None]:
         ...
 
 
@@ -303,6 +322,212 @@ async def _guarded_readdir(fn: OperationFn, *args: Any,
     ]
 
 
+def _move_would_reveal(src: PathSpec, dst: PathSpec) -> bool:
+    """Whether the session's hides make this relocation a reveal.
+
+    Args:
+        src (PathSpec): the subtree being moved or copied.
+        dst (PathSpec): where it would land.
+    """
+    sess = get_current_session()
+    if sess is None:
+        return False
+    return move_reveals(sess.hidden_paths, sess.shown_paths, src.virtual,
+                        dst.virtual)
+
+
+def refuse_reveal(src: PathSpec, dst: PathSpec) -> None:
+    """Refuse a relocation that would surface a hidden path.
+
+    A rename or a native directory copy re-anchors everything below its
+    source, and a hide's coverage does not move with the content, so
+    hidden bytes would land at paths the session can see. EACCES on the
+    source, which mv and cp render in GNU's permission-denied voice.
+    Only a directory has anything below it to re-anchor, so callers
+    check this for a source they know is a directory and skip it for a
+    file.
+
+    Args:
+        src (PathSpec): the subtree being moved or copied.
+        dst (PathSpec): where it would land.
+    """
+    if _move_would_reveal(src, dst):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
+                              src.virtual)
+
+
+async def _pair_src_is_dir(stat: StatOp, accessor: Any, src: PathSpec) -> bool:
+    """Whether a pair op's source stats as a directory.
+
+    Args:
+        stat (StatOp): the backend stat, for classifying the source.
+        accessor (Any): the pair call's leading accessor.
+        src (PathSpec): the source being classified.
+    """
+    try:
+        row = await stat(accessor, src)
+    except FileNotFoundError:
+        # Nothing moves; the op itself reports the absence.
+        return False
+    except OSError:
+        # Unanswerable classification fails toward refusal.
+        return True
+    return row.type is FileType.DIRECTORY
+
+
+async def _guarded_pair(fn: OperationFn, stat: StatOp, assume_dir: bool, *args:
+                        Any, **kwargs: Any) -> Any:
+    """Rename/dir-copy guard: ``_guarded_call``'s per-path checks, then
+    the subtree reveal check on the (src, dst) pair.
+
+    Only a directory source can carry hidden content into view, so a
+    rename whose source stats as a file passes; a dir-copy source is a
+    directory by contract and skips the probe.
+
+    Args:
+        fn (OperationFn): the raw backend op.
+        stat (StatOp): the raw backend stat, probed only when the
+            reveal check trips.
+        assume_dir (bool): the slot's contract already makes the source
+            a directory (dir_copy), so no probe is needed.
+        *args: the call's positionals, source then destination among
+            them.
+        **kwargs: forwarded untouched.
+    """
+    specs = [arg for arg in args if isinstance(arg, PathSpec)]
+    for position, spec in enumerate(specs):
+        _refuse_hidden(spec, create=position > 0)
+    reveal = len(specs) >= 2 and _move_would_reveal(specs[0], specs[1])
+    if reveal and (assume_dir
+                   or await _pair_src_is_dir(stat, args[0], specs[0])):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES),
+                              specs[0].virtual)
+    return await fn(*args, **kwargs)
+
+
+@dataclass(frozen=True, slots=True)
+class _SlotChannel:
+    """The command plane's remnant channel: the refused rmdir's sibling
+    slots, still mode- and rule-guarded but below the visibility
+    filter, so the cascade can see what it must destroy while every
+    deletion still answers for its own path's mode.
+
+    Args:
+        lead (tuple): the call's leading positionals (the accessor).
+        index (IndexCacheStore): the invocation's cache index.
+        readdir_fn (OperationFn): the sibling readdir slot.
+        stat_fn (OperationFn): the sibling stat slot.
+        unlink_fn (OperationFn): the sibling unlink slot.
+        rmdir_fn (OperationFn): the raw rmdir the guard wraps.
+    """
+
+    lead: tuple[Any, ...]
+    index: IndexCacheStore
+    readdir_fn: OperationFn
+    stat_fn: OperationFn
+    unlink_fn: OperationFn
+    rmdir_fn: OperationFn
+
+    async def readdir(self, spec: PathSpec) -> list[str]:
+        entries: list[str] = await self.readdir_fn(*self.lead,
+                                                   spec,
+                                                   index=self.index)
+        return entries
+
+    async def stat(self, spec: PathSpec) -> FileStat:
+        row: FileStat = await self.stat_fn(*self.lead, spec, index=self.index)
+        return row
+
+    async def unlink(self, spec: PathSpec) -> None:
+        await self.unlink_fn(*self.lead, spec)
+
+    async def rmdir(self, spec: PathSpec) -> None:
+        await self.rmdir_fn(*self.lead, spec, index=self.index)
+
+
+async def _guarded_rmdir(fn: OperationFn,
+                         readdir: OperationFn,
+                         stat: StatOp,
+                         unlink: OperationFn | None,
+                         children: ChildMounts | None,
+                         *args: Any,
+                         index: IndexCacheStore = NULL_INDEX,
+                         **kwargs: Any) -> Any:
+    """rmdir that removes a directory the session sees as empty.
+
+    The backend refuses a directory still holding entries, but when
+    every remaining entry is hidden the refusal would leak that
+    something invisible exists, so the remnants go with the directory:
+    a session's mutation may destroy what it cannot see, never learn of
+    it. Any visible child keeps the refusal, and a backend with no
+    unlink keeps it too, having no way to take the remnants. The
+    removal is the shared ``remove_remnants`` walk over the sibling
+    slots, which revalidates visibility before every deletion and
+    keeps the mode guard on each one; any cascade failure answers with
+    the backend's original refusal, exactly as the ops plane does.
+
+    Args:
+        fn (OperationFn): the raw backend rmdir.
+        readdir (OperationFn): the raw backend readdir, for the real
+            listing the visible/hidden split is judged on.
+        stat (StatOp): the raw backend stat, classifying walked entries.
+        unlink (OperationFn | None): the raw backend unlink.
+        children (ChildMounts | None): child names the namespace owes
+            the directory (nested mount roots and symlinks), captured
+            from ``glob_children`` at wrap time, which holds the
+            invocation's fact because the factory applies this guard
+            per invocation, after stamping it. The children join the
+            emptiness judgment, never the walk: a visible mounted
+            child keeps the refusal exactly as the ops plane's merged
+            listing does, while the cascade itself only ever removes
+            what the backend holds.
+        *args: the call's positionals; the first PathSpec is the
+            directory.
+        index (IndexCacheStore): the invocation's cache index, threaded
+            by the callers so the fallback listing resolves on an
+            indexed backend the way the command's own listings did.
+        **kwargs: forwarded untouched.
+    """
+    target: PathSpec | None = None
+    for arg in args:
+        if isinstance(arg, PathSpec):
+            _refuse_hidden(arg, create=False)
+            if target is None:
+                target = arg
+    try:
+        return await fn(*args, index=index, **kwargs)
+    except OSError as exc:
+        if (target is None or unlink is None
+                or exc.errno not in (errno.ENOTEMPTY, errno.EEXIST)
+                or not hidden_paths_intersect(target.virtual)):
+            raise
+        lead: list[Any] = []
+        for arg in args:
+            if isinstance(arg, PathSpec):
+                break
+            lead.append(arg)
+        # Both folds catch ``Exception``, not just ``OSError``: an API
+        # backend's failure is not always an errno (box raises its own
+        # error type), and a raw backend exception here would reveal
+        # exactly what the refusal exists to hide. Cancellation and
+        # system exits still propagate.
+        try:
+            entries = await readdir(*lead, target, index=index)
+        except Exception as listing:
+            raise exc from listing
+        merged = list(entries)
+        if children is not None:
+            merged.extend(children(target.virtual))
+        if not entries or visible_below(target.virtual, merged, path_allowed):
+            raise
+        channel = _SlotChannel(tuple(lead), index, readdir, stat, unlink, fn)
+        try:
+            await remove_remnants(channel, path_allowed, target)
+        except Exception as cascade:
+            raise exc from cascade
+        return None
+
+
 async def _guarded_exists(fn: OperationFn, *args: Any, **kwargs: Any) -> bool:
     """Exists that answers False for a hidden path, never a refusal.
 
@@ -414,7 +639,7 @@ class CommandIO:
     exists: ExistsOp | None = None
     mkdir: MkdirOp | None = None
     unlink: PathOp | None = None
-    rmdir: PathOp | None = None
+    rmdir: RmdirOp | None = None
     rm_r: RmTreeOp | None = None
     rename: PairOp | None = None
     copy: PairOp | None = None
@@ -477,8 +702,8 @@ class CommandIO:
 
 
 _GUARD_ENOENT_SLOTS = ("read_bytes", "read_stream", "stat", "read_range",
-                       "set_attrs", "unlink", "rmdir", "rm_r", "truncate",
-                       "rename", "copy", "dir_copy", "find")
+                       "set_attrs", "unlink", "rm_r", "truncate", "copy",
+                       "find")
 
 _GUARD_EACCES_SLOTS = ("write", "mkdir", "append", "create")
 
@@ -486,14 +711,15 @@ _GUARD_EACCES_SLOTS = ("write", "mkdir", "append", "create")
 def with_hidden_guard(ops: CommandIO) -> CommandIO:
     """Return ``ops`` whose slots refuse hidden paths like missing ones.
 
-    The commands factory hands this copy to every generic command, the
-    same shape as ``with_read_cache``, so hidden-path enforcement lands
-    once for the whole command tier (resolve_glob derives from the
-    wrapped readdir). The module-level IO constants stay raw: the ops
-    tables built from them serve the dispatcher, which enforces hiding
-    itself at the door, and their tests introspect slot identity. The
-    guards read the current session at call time, so one wrapped copy
-    is shared across sessions.
+    The commands factory applies this to every generic command, per
+    invocation and after stamping ``glob_children``, so a guard that
+    consumes a namespace fact captures the invocation's value at wrap
+    time (the rmdir guard's emptiness judgment does); enforcement
+    still lands once for the whole command tier (resolve_glob derives
+    from the wrapped readdir). The module-level IO constants stay raw:
+    the ops tables built from them serve the dispatcher, which
+    enforces hiding itself at the door, and their tests introspect
+    slot identity. The guards read the current session at call time.
 
     Args:
         ops (CommandIO): the backend's IO adapter.
@@ -509,6 +735,15 @@ def with_hidden_guard(ops: CommandIO) -> CommandIO:
         fn = getattr(ops, slot)
         if fn is not None:
             changes[slot] = functools.partial(_guarded_call, fn, True)
+    for slot, assume_dir in (("rename", False), ("dir_copy", True)):
+        fn = getattr(ops, slot)
+        if fn is not None:
+            changes[slot] = functools.partial(_guarded_pair, fn, ops.stat,
+                                              assume_dir)
+    if ops.rmdir is not None:
+        changes["rmdir"] = functools.partial(_guarded_rmdir, ops.rmdir,
+                                             ops.readdir, ops.stat, ops.unlink,
+                                             ops.glob_children)
     if ops.exists is not None:
         changes["exists"] = functools.partial(_guarded_exists, ops.exists)
     return replace(ops, **changes)

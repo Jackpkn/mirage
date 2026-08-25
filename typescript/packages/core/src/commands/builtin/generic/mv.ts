@@ -292,6 +292,13 @@ export async function mvGeneric(
   index?: IndexCacheStore,
   backendKey?: BackendKeyFn,
   readdir?: ReaddirFn,
+  // Judges one (source, target) pair before the move touches anything,
+  // the backup included, throwing to refuse it; the adapter wires the
+  // hidden-reveal check here so a refused move mutates nothing (no
+  // half-copy, no destination renamed aside by -b). Consulted only for
+  // a directory source, since a file carries nothing below it to
+  // reveal.
+  guard?: (src: PathSpec, dst: PathSpec) => void,
 ): Promise<[ByteSource | null, IOResult]> {
   const keyOf = backendKey ?? backendKeyDefault
   const [sources, dstOperand] = splitOperands('mv', paths, flags.targetDir, flags.noTargetDir)
@@ -395,6 +402,20 @@ export async function mvGeneric(
       }
       if (children.length > 0) {
         errors.push(`mv: cannot overwrite '${target.virtual}': Directory not empty`)
+        continue
+      }
+    }
+    // The reveal guard answers before the backup so a refused move
+    // cannot leave the destination renamed aside; only a directory
+    // source has anything below it to re-anchor, so a file passes.
+    if (guard !== undefined && srcIsDir) {
+      try {
+        guard(src, target)
+      } catch (err) {
+        if (!isFsError(err)) throw err
+        errors.push(
+          `mv: cannot move '${src.virtual}' to '${target.virtual}': ${String(fsStrerror(err))}`,
+        )
         continue
       }
     }

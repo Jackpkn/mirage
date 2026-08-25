@@ -17,8 +17,20 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { MountMode } from '../types.ts'
 import { parseSessionProfile } from '../policy/profile.ts'
+import type { Action, OpsContext, Policy } from '../policy/index.ts'
+import { runWithSession } from '../context/session_context.ts'
 import { getTestParser, stderrStr, stdoutStr } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
+
+/** Refuse the unlink of one exact path, whatever door asked. */
+class DenyRemnantUnlink implements Policy {
+  preOps(ctx: OpsContext): Action | null {
+    if (ctx.op === 'unlink' && ctx.path.virtual === '/a/d/sec/k') {
+      return { kind: 'deny', reason: 'protected' }
+    }
+    return null
+  }
+}
 
 const CARVE_PROFILE = parseSessionProfile({
   mounts: { '/repo': 'r' },
@@ -309,5 +321,376 @@ describe('the path axis end to end', () => {
     expect(stderrStr(forked)).toContain('No such file or directory')
     const ok = await ws.execute('(cat /repo/public/index.html)', { sessionId: 'rev' })
     expect(ok.exitCode).toBe(0)
+  })
+})
+
+async function boxed(profile: object): Promise<Workspace> {
+  const parser = await getTestParser()
+  const repo = new RAMResource()
+  const registry = new OpsRegistry()
+  registry.registerResource(repo)
+  const ws = new Workspace(
+    { '/repo': [repo, MountMode.WRITE] as const },
+    { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+  )
+  open.push(ws)
+  const io = await ws.execute(
+    'mkdir -p /repo/box/sec /repo/only && ' +
+      "printf 'v\\n' > /repo/box/a.txt && " +
+      "printf 's\\n' > /repo/box/sec/k && " +
+      "printf 't\\n' > /repo/box/x.tkn && " +
+      "printf 'h\\n' > /repo/only/h",
+  )
+  expect(io.exitCode).toBe(0)
+  ws.createSession('rev', { profile: parseSessionProfile(profile) })
+  return ws
+}
+
+describe('subtree mutations against hides', () => {
+  it('mv that would reveal hidden content refuses', async () => {
+    // The hide anchors at /repo/box/sec; the move would re-anchor its
+    // content to /repo/moved/sec, which nothing hides, so it refuses
+    // in GNU's permission-denied voice and the source stays whole.
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const refused = await ws.execute('mv /repo/box /repo/moved', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toBe(
+      "mv: cannot move '/repo/box' to '/repo/moved': Permission denied\n",
+    )
+    const intact = await ws.execute('test -e /repo/box/sec/k')
+    expect(intact.exitCode).toBe(0)
+  })
+
+  it('mv rides a component-pattern hide along', async () => {
+    // *.tkn follows the name wherever the content goes, so nothing is
+    // revealed and the move proceeds, the hidden file riding along.
+    const ws = await boxed({ paths: { hide: ['*.tkn'] } })
+    const ok = await ws.execute('mv /repo/box /repo/moved', { sessionId: 'rev' })
+    expect(ok.exitCode).toBe(0)
+    const listing = await ws.execute('ls /repo/moved', { sessionId: 'rev' })
+    expect(stdoutStr(listing)).toBe('a.txt\nsec\n')
+    const survived = await ws.execute('cat /repo/moved/x.tkn')
+    expect(survived.exitCode).toBe(0)
+    expect(stdoutStr(survived)).toBe('t\n')
+  })
+
+  it('mv of a file under an anchored-pattern hide passes', async () => {
+    // /repo/*/sec could match below any directory under /repo, so a
+    // directory move refuses conservatively, but a regular file
+    // carries nothing below it: renaming one reveals nothing.
+    const ws = await boxed({ paths: { hide: ['/repo/*/sec'] } })
+    const moved = await ws.execute('mv /repo/box/a.txt /repo/box/b.txt', { sessionId: 'rev' })
+    expect(moved.exitCode).toBe(0)
+    const listing = await ws.execute('ls /repo/box', { sessionId: 'rev' })
+    expect(stdoutStr(listing)).toContain('b.txt')
+  })
+
+  it('mv of a directory under an anchored-pattern hide refuses', async () => {
+    const ws = await boxed({ paths: { hide: ['/repo/*/sec'] } })
+    const refused = await ws.execute('mv /repo/box /repo/moved', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toContain('Permission denied')
+  })
+
+  it('mv -b refusal leaves the destination backup-free', async () => {
+    // The reveal guard answers before -b renames the destination
+    // aside, so a refused move mutates nothing: no backup, destination
+    // intact.
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const prep = await ws.execute('mkdir /repo/moved', { sessionId: 'rev' })
+    expect(prep.exitCode).toBe(0)
+    const refused = await ws.execute('mv -b -T /repo/box /repo/moved', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toContain('Permission denied')
+    const intact = await ws.execute('test -d /repo/moved')
+    expect(intact.exitCode).toBe(0)
+    const backup = await ws.execute('test -e /repo/moved~')
+    expect(backup.exitCode).toBe(1)
+  })
+
+  it('cp -r copies the visible view silently', async () => {
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const copied = await ws.execute('cp -r /repo/box /repo/copy', { sessionId: 'rev' })
+    expect(copied.exitCode).toBe(0)
+    expect(stderrStr(copied)).toBe('')
+    const listing = await ws.execute('find /repo/copy')
+    expect(stdoutStr(listing)).toBe('/repo/copy\n/repo/copy/a.txt\n/repo/copy/x.tkn\n')
+  })
+
+  it('rmdir takes hidden remnants with the directory', async () => {
+    // The session sees an empty directory; a not-empty refusal would
+    // leak that something invisible exists, so the remnants go with it.
+    const ws = await boxed({ paths: { hide: ['/repo/only/h'] } })
+    const empty = await ws.execute('ls -a /repo/only', { sessionId: 'rev' })
+    expect(stdoutStr(empty)).toBe('')
+    const removed = await ws.execute('rmdir /repo/only', { sessionId: 'rev' })
+    expect(removed.exitCode).toBe(0)
+    const gone = await ws.execute('test -e /repo/only')
+    expect(gone.exitCode).toBe(1)
+  })
+
+  it('rmdir with a visible child keeps the refusal', async () => {
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const refused = await ws.execute('rmdir /repo/box', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toContain('Directory not empty')
+  })
+
+  it('rm -r still destroys hidden content below', async () => {
+    const ws = await boxed({ paths: { hide: ['/repo/box/sec'] } })
+    const removed = await ws.execute('rm -r /repo/box', { sessionId: 'rev' })
+    expect(removed.exitCode).toBe(0)
+    const gone = await ws.execute('test -e /repo/box')
+    expect(gone.exitCode).toBe(1)
+  })
+
+  it('a read-only hidden remnant keeps the refusal', async () => {
+    // A show may state a mode at the same anchor a hide covers (the
+    // hide wins visibility on the tie), leaving content the session
+    // cannot see that its mode still protects. Every cascade deletion
+    // answers for its own path's mode, so the protected remnant
+    // survives and the rmdir keeps a not-empty refusal.
+    const ws = await boxed({
+      paths: { hide: ['/repo/only/h'], show: { '/repo/only/h': 'r' } },
+    })
+    const refused = await ws.execute('rmdir /repo/only', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toBe("rmdir: failed to remove '/repo/only': Directory not empty\n")
+    const kept = await ws.execute('cat /repo/only/h')
+    expect(stdoutStr(kept)).toBe('h\n')
+  })
+
+  it('a mounted child keeps the command plane refusal', async () => {
+    // Command-plane twin of the ops door's merged emptiness: the
+    // backend listing holds only hidden entries, but the namespace
+    // owes the directory a visible mounted child no backend can list.
+    // The stamped children join the guard's emptiness judgment, so the
+    // not-empty refusal stays instead of the cascade destroying the
+    // hidden remnant and reporting success while the mount remains.
+    const parser = await getTestParser()
+    const repo = new RAMResource()
+    const m = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(repo)
+    registry.registerResource(m)
+    const ws = new Workspace(
+      { '/repo': [repo, MountMode.WRITE] as const, '/repo/only/m': [m, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute("mkdir -p /repo/only && printf 'h\\n' > /repo/only/h")
+    expect(io.exitCode).toBe(0)
+    ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/repo/only/h'] } }),
+    })
+    const refused = await ws.execute('rmdir /repo/only', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toBe("rmdir: failed to remove '/repo/only': Directory not empty\n")
+    const kept = await ws.execute('cat /repo/only/h')
+    expect(stdoutStr(kept)).toBe('h\n')
+  })
+})
+
+describe('the ops door against hides', () => {
+  it('leaves a read-only hidden remnant intact and keeps the refusal', async () => {
+    // The dispatcher's cascade routes every deletion through the same
+    // mode fence normal dispatch applies, so FUSE and ws.fs callers
+    // cannot destroy a mode-protected remnant either.
+    const parser = await getTestParser()
+    const repo = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(repo)
+    const ws = new Workspace(
+      { '/repo': [repo, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute("mkdir -p /repo/only && printf 'h\\n' > /repo/only/h")
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({
+        paths: { hide: ['/repo/only/h'], show: { '/repo/only/h': 'r' } },
+      }),
+    })
+    await runWithSession(sess, async () => {
+      await expect(ws.dispatch('rmdir', '/repo/only')).rejects.toMatchObject({
+        code: 'ENOTEMPTY',
+      })
+    })
+    const kept = await ws.execute('cat /repo/only/h')
+    expect(stdoutStr(kept)).toBe('h\n')
+  })
+
+  it('keeps the refusal when a visible mounted child remains', async () => {
+    // The backend cannot see a mount nested below the directory, so
+    // the remnant arm judges emptiness on the door's merged listing:
+    // the visible mounted child keeps the not-empty refusal instead of
+    // the arm destroying the hidden backend remnants and reporting a
+    // successful rmdir while the mount remains.
+    const parser = await getTestParser()
+    const a = new RAMResource()
+    const m = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(a)
+    registry.registerResource(m)
+    const ws = new Workspace(
+      { '/a': [a, MountMode.WRITE] as const, '/a/d/m': [m, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/a/d/sec'] } }),
+    })
+    await runWithSession(sess, async () => {
+      await expect(ws.dispatch('rmdir', '/a/d')).rejects.toMatchObject({
+        code: 'ENOTEMPTY',
+      })
+    })
+    const kept = await ws.execute('cat /a/d/sec/k')
+    expect(stdoutStr(kept)).toBe('k\n')
+  })
+
+  it('a policy denied remnant keeps the refusal', async () => {
+    // The gate that admitted the rmdir judged the directory; each
+    // cascade deletion answers preOps with its own child path, so a
+    // policy that protects the hidden file refuses its unlink, the
+    // cascade folds the denial into the original not-empty refusal,
+    // and the protected content survives.
+    const parser = await getTestParser()
+    const a = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(a)
+    const ws = new Workspace(
+      { '/a': [a, MountMode.WRITE] as const },
+      {
+        mode: MountMode.WRITE,
+        ops: registry,
+        shellParser: parser,
+        policies: [new DenyRemnantUnlink()],
+      },
+    )
+    open.push(ws)
+    const io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k")
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/a/d/sec'] } }),
+    })
+    await runWithSession(sess, async () => {
+      await expect(ws.dispatch('rmdir', '/a/d')).rejects.toMatchObject({
+        code: 'ENOTEMPTY',
+      })
+    })
+    const kept = await ws.execute('cat /a/d/sec/k')
+    expect(stdoutStr(kept)).toBe('k\n')
+  })
+
+  it('takes hidden namespace links with the removed directory', async () => {
+    // A hidden link is invisible to every backend, so the cascade walk
+    // cannot take it; left in the node table it synthesizes /a/d right
+    // back once the hide lifts, resurfacing the removed tree.
+    const parser = await getTestParser()
+    const a = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(a)
+    const ws = new Workspace(
+      { '/a': [a, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute(
+      "mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k && ln -s /a/t /a/d/lnk",
+    )
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/a/d/sec', '/a/d/lnk'] } }),
+    })
+    await runWithSession(sess, async () => {
+      await ws.dispatch('rmdir', '/a/d')
+    })
+    // No session, no hides: the tree must be gone, link included.
+    const linkless = await ws.execute('readlink /a/d/lnk')
+    expect(linkless.exitCode).not.toBe(0)
+    const gone = await ws.execute('test -e /a/d')
+    expect(gone.exitCode).toBe(1)
+  })
+
+  it('a visible link below keeps the rmdir refusal', async () => {
+    // A visible link joins the merged emptiness judgment, so the
+    // refusal stands and nothing (backend remnant or node table) is
+    // destroyed.
+    const parser = await getTestParser()
+    const a = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(a)
+    const ws = new Workspace(
+      { '/a': [a, MountMode.WRITE] as const },
+      { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+    )
+    open.push(ws)
+    const io = await ws.execute(
+      "mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k && ln -s /a/t /a/d/lnk",
+    )
+    expect(io.exitCode).toBe(0)
+    const sess = ws.createSession('rev', {
+      profile: parseSessionProfile({ paths: { hide: ['/a/d/sec'] } }),
+    })
+    await runWithSession(sess, async () => {
+      await expect(ws.dispatch('rmdir', '/a/d')).rejects.toMatchObject({
+        code: 'ENOTEMPTY',
+      })
+    })
+    const kept = await ws.execute('cat /a/d/sec/k')
+    expect(stdoutStr(kept)).toBe('k\n')
+    const link = await ws.execute('readlink /a/d/lnk')
+    expect(link.exitCode).toBe(0)
+  })
+})
+
+async function twoMounts(profile: object): Promise<Workspace> {
+  const parser = await getTestParser()
+  const a = new RAMResource()
+  const b = new RAMResource()
+  const registry = new OpsRegistry()
+  registry.registerResource(a)
+  registry.registerResource(b)
+  const ws = new Workspace(
+    { '/a': [a, MountMode.WRITE] as const, '/b': [b, MountMode.WRITE] as const },
+    { mode: MountMode.WRITE, ops: registry, shellParser: parser },
+  )
+  open.push(ws)
+  const io = await ws.execute(
+    'mkdir -p /a/box/sec /a/bag && ' +
+      "printf 'v\\n' > /a/box/a.txt && printf 's\\n' > /a/box/sec/k && " +
+      "printf 't\\n' > /a/bag/x.tkn && printf 'v\\n' > /a/bag/a.txt",
+  )
+  expect(io.exitCode).toBe(0)
+  ws.createSession('rev', { profile: parseSessionProfile(profile) })
+  return ws
+}
+
+describe('cross-mount moves against hides', () => {
+  it('a cross-mount mv refuses the reveal too', async () => {
+    const ws = await twoMounts({ paths: { hide: ['/a/box/sec'] } })
+    const refused = await ws.execute('mv /a/box /b/box', { sessionId: 'rev' })
+    expect(refused.exitCode).toBe(1)
+    expect(stderrStr(refused)).toBe("mv: cannot move '/a/box' to '/b/box': Permission denied\n")
+    const intact = await ws.execute('test -e /a/box/sec/k')
+    expect(intact.exitCode).toBe(0)
+  })
+
+  it('a name-pattern hide moves the visible and drops the remnant', async () => {
+    // The filtered walk cannot copy what the session cannot see, and
+    // refusing here would make EACCES an existence oracle, so the
+    // remove phase takes the remnant with the source: destroy silently,
+    // never reveal.
+    const ws = await twoMounts({ paths: { hide: ['*.tkn'] } })
+    const moved = await ws.execute('mv /a/bag /b/bag', { sessionId: 'rev' })
+    expect(moved.exitCode).toBe(0)
+    const dest = await ws.execute('find /b/bag')
+    expect(stdoutStr(dest)).toBe('/b/bag\n/b/bag/a.txt\n')
+    const gone = await ws.execute('test -e /a/bag')
+    expect(gone.exitCode).toBe(1)
   })
 })

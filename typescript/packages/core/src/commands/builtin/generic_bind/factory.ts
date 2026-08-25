@@ -117,6 +117,21 @@ function withReadCache<A extends Accessor>(ops: CommandIO<A>): CommandIO<A> {
   }
 }
 
+// The builder tier's cache and slash wraps, chosen at registration from
+// the builder's read/write kind and applied per invocation on top of
+// the path guards (mirror Python's _read_wraps/_stat_wraps/_write_wraps).
+function readWraps<A extends Accessor>(ops: CommandIO<A>): CommandIO<A> {
+  return withSlashGuard(withReadCache(ops))
+}
+
+function statWraps<A extends Accessor>(ops: CommandIO<A>): CommandIO<A> {
+  return withSlashGuard(withStatCache(ops))
+}
+
+function writeWraps<A extends Accessor>(ops: CommandIO<A>): CommandIO<A> {
+  return withSlashGuard(ops)
+}
+
 export interface MakeGenericCommandsOptions<A extends Accessor = Accessor> {
   overrides?: ReadonlySet<string>
   provisionOverrides?: Record<string, ProvisionFn<A>>
@@ -136,32 +151,31 @@ export function makeGenericCommands<A extends Accessor = Accessor>(
   const commands: RegisteredCommand[] = []
   for (const b of BUILDERS) {
     if (skip.has(b.name)) continue
-    // Hidden-path, rule and mode enforcement wrap here, once for every
-    // generic command; the raw adapter stays untouched for the ops
-    // tables, whose door does its own enforcement.
-    const baseOps = withPathGuards((opsOver[b.name] ?? ops) as CommandIO)
+    const raw = (opsOver[b.name] ?? ops) as CommandIO
+    // Path guards are applied per invocation, over the stamped adapter,
+    // inside the command closure below; this registration copy exists
+    // for provision estimates, which bind here and read the session at
+    // call time. The raw adapter stays untouched for the ops tables,
+    // whose door does its own enforcement.
+    const baseOps = withPathGuards(raw)
     // A backend missing an op a command cannot run without (cp/mv/tee/
     // gunzip/...) doesn't get the command registered, rather than getting
     // one that crashes when invoked.
     if (!supports(baseOps, b.requirements ?? [])) continue
-    const cmdOps = withSlashGuard(
-      b.read === true
-        ? withReadCache(baseOps)
-        : b.write === true
-          ? baseOps
-          : withStatCache(baseOps),
-    )
-    // A glob resolved by one backend cannot see a nested mount root or a
-    // symlink: the mount keys live in another resource and no resource
-    // stores a link. The adapter is built once per backend and the names
-    // are session-scoped, so the fact is stamped on per invocation and
-    // every builder keeps calling resolveGlobOf(ops) unchanged.
-    //
-    // withDirGuard wraps here rather than beside the other guards above
-    // because it reads the same namespace fact: a directory that exists
-    // only because a mount or a link sits under it is invisible to the
-    // backend, so the guard has to close over an adapter that already
-    // carries globChildren.
+    const finish = b.read === true ? readWraps : b.write === true ? writeWraps : statWraps
+    // A nested mount's keys live in another resource and no resource
+    // stores a symlink, so a glob resolved by one backend's readdir
+    // misses both. The names are session-scoped, so the fact is stamped
+    // per invocation, and the whole guard chain is applied on top of
+    // the stamped copy: every guard that consumes a namespace fact
+    // simply reads it off the adapter it wraps (glob resolution derives
+    // from globChildren, the dir guard closes over it, the hidden
+    // guard's rmdir captures it for its emptiness judgment). Binding
+    // the guards at registration instead would strand them behind
+    // closures built before any invocation exists, which is exactly the
+    // wiring that made the rmdir guard blind to a mounted child. The
+    // guards read the current session at call time, so per-invocation
+    // binding changes cost, not behavior.
     // The conditional spread is not a leftover: exactOptionalPropertyTypes
     // refuses an explicit `undefined` for an optional field, so an absent
     // namespace has to mean an absent key rather than an undefined value.
@@ -169,9 +183,13 @@ export function makeGenericCommands<A extends Accessor = Accessor>(
     const fn: CommandFn = (accessor, paths, texts, opts) =>
       b.fn(
         withDirGuard(
-          opts.ns?.childMounts === undefined
-            ? cmdOps
-            : { ...cmdOps, globChildren: opts.ns.childMounts },
+          finish(
+            withPathGuards(
+              opts.ns?.childMounts === undefined
+                ? raw
+                : { ...raw, globChildren: opts.ns.childMounts },
+            ),
+          ),
         ),
         accessor,
         paths,

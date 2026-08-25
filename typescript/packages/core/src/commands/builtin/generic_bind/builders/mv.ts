@@ -15,6 +15,7 @@
 import type { PathSpec } from '../../../../types.ts'
 import { mvGeneric, parseMvFlags } from '../../generic/mv.ts'
 import type { Builder } from '../adapter.ts'
+import { refuseReveal } from '../adapter.ts'
 import { overlayableStat } from './cp.ts'
 import { FlagView } from '../../../spec/types.ts'
 import { specOf } from '../../../spec/builtins.ts'
@@ -38,6 +39,7 @@ export const MV_BUILDER: Builder = {
       idx,
       undefined,
       (p: PathSpec) => ops.readdir(accessor, p, idx),
+      refuseReveal,
     )
   },
 }

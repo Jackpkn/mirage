@@ -13,7 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import errno
 
+from mirage.context import reset_current_session, set_current_session
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
@@ -336,3 +338,210 @@ def test_a_fork_carries_the_carve_out():
     assert b"No such file or directory" in (forked.stderr or b"")
     ok = _run(ws, "(cat /repo/public/index.html)")
     assert ok.exit_code == 0
+
+
+def _boxed(profile: dict) -> Workspace:
+    ws = Workspace({"/repo": RAMResource()}, mode=MountMode.WRITE)
+
+    async def seed():
+        io = await ws.execute("mkdir -p /repo/box/sec /repo/only && "
+                              "printf 'v\\n' > /repo/box/a.txt && "
+                              "printf 's\\n' > /repo/box/sec/k && "
+                              "printf 't\\n' > /repo/box/x.tkn && "
+                              "printf 'h\\n' > /repo/only/h")
+        assert io.exit_code == 0, io.stderr
+
+    asyncio.run(seed())
+    ws.create_session("rev", profile=profile)
+    return ws
+
+
+def _host(ws: Workspace, line: str):
+
+    async def go():
+        return await ws.execute(line)
+
+    return asyncio.run(go())
+
+
+def test_mv_that_would_reveal_hidden_content_refuses():
+    # The hide anchors at /repo/box/sec; the move would re-anchor its
+    # content to /repo/moved/sec, which nothing hides, so it refuses in
+    # GNU's permission-denied voice and the source stays whole.
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    refused = _run(ws, "mv /repo/box /repo/moved")
+    assert refused.exit_code == 1
+    assert (refused.stderr or b"") == (
+        b"mv: cannot move '/repo/box' to '/repo/moved': Permission denied\n")
+    intact = _host(ws, "test -e /repo/box/sec/k")
+    assert intact.exit_code == 0
+
+
+def test_mv_rides_a_component_pattern_hide_along():
+    # *.tkn follows the name wherever the content goes, so nothing is
+    # revealed and the move proceeds, the hidden file riding along.
+    ws = _boxed({"paths": {"hide": ["*.tkn"]}})
+    ok = _run(ws, "mv /repo/box /repo/moved")
+    assert ok.exit_code == 0, ok.stderr
+    listing = _run(ws, "ls /repo/moved")
+    assert (listing.stdout or b"") == b"a.txt\nsec\n"
+    survived = _host(ws, "cat /repo/moved/x.tkn")
+    assert survived.exit_code == 0 and (survived.stdout or b"") == b"t\n"
+
+
+def test_mv_of_a_file_under_an_anchored_pattern_hide_passes():
+    # /repo/*/sec could match below any directory under /repo, so a
+    # directory move refuses conservatively, but a regular file carries
+    # nothing below it: renaming one reveals nothing.
+    ws = _boxed({"paths": {"hide": ["/repo/*/sec"]}})
+    moved = _run(ws, "mv /repo/box/a.txt /repo/box/b.txt")
+    assert moved.exit_code == 0, moved.stderr
+    listing = _run(ws, "ls /repo/box")
+    assert b"b.txt" in (listing.stdout or b"")
+
+
+def test_mv_of_a_directory_under_an_anchored_pattern_hide_refuses():
+    ws = _boxed({"paths": {"hide": ["/repo/*/sec"]}})
+    refused = _run(ws, "mv /repo/box /repo/moved")
+    assert refused.exit_code == 1
+    assert b"Permission denied" in (refused.stderr or b"")
+
+
+def test_mv_b_refusal_leaves_the_destination_backup_free():
+    # The reveal guard answers before -b renames the destination aside,
+    # so a refused move mutates nothing: no backup, destination intact.
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    prep = _run(ws, "mkdir /repo/moved")
+    assert prep.exit_code == 0, prep.stderr
+    refused = _run(ws, "mv -b -T /repo/box /repo/moved")
+    assert refused.exit_code == 1
+    assert b"Permission denied" in (refused.stderr or b"")
+    intact = _host(ws, "test -d /repo/moved")
+    assert intact.exit_code == 0
+    backup = _host(ws, "test -e /repo/moved~")
+    assert backup.exit_code == 1
+
+
+def test_cp_r_copies_the_visible_view_silently():
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    copied = _run(ws, "cp -r /repo/box /repo/copy")
+    assert copied.exit_code == 0, copied.stderr
+    assert (copied.stderr or b"") == b""
+    listing = _host(ws, "find /repo/copy")
+    assert (listing.stdout
+            or b"") == (b"/repo/copy\n/repo/copy/a.txt\n/repo/copy/x.tkn\n")
+
+
+def test_rmdir_takes_hidden_remnants_with_the_directory():
+    # The session sees an empty directory; a not-empty refusal would
+    # leak that something invisible exists, so the remnants go with it.
+    ws = _boxed({"paths": {"hide": ["/repo/only/h"]}})
+    empty = _run(ws, "ls -a /repo/only")
+    assert (empty.stdout or b"") == b""
+    removed = _run(ws, "rmdir /repo/only")
+    assert removed.exit_code == 0, removed.stderr
+    gone = _host(ws, "test -e /repo/only")
+    assert gone.exit_code == 1
+
+
+def test_rmdir_with_a_visible_child_keeps_the_refusal():
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    refused = _run(ws, "rmdir /repo/box")
+    assert refused.exit_code == 1
+    assert b"Directory not empty" in (refused.stderr or b"")
+
+
+def test_rm_r_still_destroys_hidden_content_below():
+    ws = _boxed({"paths": {"hide": ["/repo/box/sec"]}})
+    removed = _run(ws, "rm -r /repo/box")
+    assert removed.exit_code == 0, removed.stderr
+    gone = _host(ws, "test -e /repo/box")
+    assert gone.exit_code == 1
+
+
+def test_a_read_only_hidden_remnant_keeps_the_refusal():
+    # A show may state a mode at the same anchor a hide covers (the
+    # hide wins visibility on the tie), leaving content the session
+    # cannot see that its mode still protects. Every cascade deletion
+    # answers for its own path's mode, so the protected remnant
+    # survives and the rmdir keeps a not-empty refusal.
+    ws = _boxed(
+        {"paths": {
+            "hide": ["/repo/only/h"],
+            "show": {
+                "/repo/only/h": "r"
+            }
+        }})
+    refused = _run(ws, "rmdir /repo/only")
+    assert refused.exit_code == 1
+    assert (refused.stderr or b"") == (
+        b"rmdir: failed to remove '/repo/only': Directory not empty\n")
+    kept = _host(ws, "cat /repo/only/h")
+    assert (kept.stdout or b"") == b"h\n"
+
+
+def test_a_mounted_child_keeps_the_command_planes_refusal():
+    # Command-plane twin of the ops door's merged emptiness: the
+    # backend listing holds only hidden entries, but the namespace owes
+    # the directory a visible mounted child no backend can list. The
+    # stamped children join the guard's emptiness judgment, so the
+    # not-empty refusal stays instead of the cascade destroying the
+    # hidden remnant and reporting success while the mount remains.
+    ws = Workspace({
+        "/repo": RAMResource(),
+        "/repo/only/m": RAMResource()
+    },
+                   mode=MountMode.WRITE)
+
+    async def seed():
+        io = await ws.execute(
+            "mkdir -p /repo/only && printf 'h\\n' > /repo/only/h")
+        assert io.exit_code == 0, io.stderr
+
+    asyncio.run(seed())
+    ws.create_session("rev", profile={"paths": {"hide": ["/repo/only/h"]}})
+    refused = _run(ws, "rmdir /repo/only")
+    assert refused.exit_code == 1
+    assert (refused.stderr or b"") == (
+        b"rmdir: failed to remove '/repo/only': Directory not empty\n")
+    kept = _host(ws, "cat /repo/only/h")
+    assert (kept.stdout or b"") == b"h\n"
+
+
+def test_ops_rmdir_keeps_the_refusal_when_a_mounted_child_remains():
+    # Ops-plane twin of the visible-child rule: the backend cannot see
+    # a mount nested below the directory, so the remnant arm judges
+    # emptiness on the door's merged listing. The visible mounted child
+    # keeps the not-empty refusal instead of the arm destroying the
+    # hidden backend remnants and reporting a successful rmdir while
+    # the mount remains.
+    ws = Workspace({
+        "/a": RAMResource(),
+        "/a/d/m": RAMResource()
+    },
+                   mode=MountMode.WRITE)
+
+    async def seed():
+        io = await ws.execute("mkdir -p /a/d/sec && printf 'k\\n' > /a/d/sec/k"
+                              )
+        assert io.exit_code == 0, io.stderr
+
+    asyncio.run(seed())
+    sess = ws.create_session("rev", profile={"paths": {"hide": ["/a/d/sec"]}})
+
+    async def probe():
+        try:
+            await ws.ops.rmdir("/a/d")
+        except OSError as exc:
+            return exc
+        return None
+
+    token = set_current_session(sess)
+    try:
+        refused = asyncio.run(probe())
+    finally:
+        reset_current_session(token)
+    assert refused is not None
+    assert refused.errno in (errno.ENOTEMPTY, errno.EEXIST)
+    kept = _host(ws, "cat /a/d/sec/k")
+    assert (kept.stdout or b"") == b"k\n"

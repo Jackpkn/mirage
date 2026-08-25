@@ -364,6 +364,57 @@ def path_covers(hidden: HiddenPaths | None,
                              for head in heads)
 
 
+def move_reveals(hidden: HiddenPaths | None, shown: ShownPaths | None,
+                 src: str, dst: str) -> bool:
+    """Whether relocating ``src`` to ``dst`` could surface a hidden path.
+
+    The reveal half of the subtree law: a session's mutation may destroy
+    what it cannot see (``rm -r``, a remnant ``rmdir``), but may never
+    reveal it, and a rename or a native directory copy is the relocation
+    that would. Three arms, one per entry kind. A component pattern
+    follows the name wherever the content goes, so it never reveals. An
+    exact entry anchored strictly below ``src`` re-anchors to ``dst``
+    plus its suffix, and reveals when the session would see that mapped
+    path (a show anchored below the mapped path counts, through
+    ``path_visible``'s own carve-out rule). An anchored pattern's
+    coverage does not move with the content, so any pattern whose match
+    space could reach below ``src`` refuses, failing toward refusal the
+    way ``readonly_below`` blames a pattern.
+
+    Spec-only: nothing here stats. A ``src`` that is a regular file has
+    nothing below it to re-anchor, so the callers gate this check on the
+    source being a directory (statting where they can, failing toward
+    refusal where they cannot).
+
+    Args:
+        hidden (HiddenPaths | None): the spec, None means unrestricted.
+        shown (ShownPaths | None): the session's show entries.
+        src (str): absolute virtual path being moved or copied.
+        dst (str): absolute virtual path it would land at.
+    """
+    if hidden is None or (not hidden.paths and not hidden.patterns):
+        return False
+    s = _norm_abs(src)
+    d = _norm_abs(dst)
+    if s == "/":
+        return True
+    for entry in hidden.paths:
+        e = _norm_abs(entry)
+        if not e.startswith(s + "/"):
+            continue
+        mapped = ("" if d == "/" else d) + e[len(s):]
+        if path_visible(hidden, shown, mapped):
+            return True
+    for pat in hidden.patterns:
+        if "/" not in pat:
+            continue
+        head = _pattern_head(pat)
+        if (head == s or head.startswith(s + "/") or head == "/"
+                or s.startswith(head + "/")):
+            return True
+    return False
+
+
 def classify_shows(entries: Iterable[ShowEntry]) -> ShownPaths | None:
     """Compile document show entries into the session's shape.
 

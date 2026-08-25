@@ -14,6 +14,7 @@
 
 from mirage.accessor.gdrive import GDriveAccessor
 from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.core.gdrive.resolve import eacces_on_denied, resolve_key
 from mirage.core.google.drive import delete_file, list_files
 from mirage.types import PathSpec
@@ -21,7 +22,9 @@ from mirage.utils.errors import enoent, enotdir, enotempty
 
 
 @eacces_on_denied
-async def rmdir(accessor: GDriveAccessor, path: PathSpec) -> None:
+async def rmdir(accessor: GDriveAccessor,
+                path: PathSpec,
+                index: IndexCacheStore = NULL_INDEX) -> None:
     """Remove an empty folder.
 
     A Drive ``files.delete`` on a folder removes every descendant with
@@ -36,6 +39,8 @@ async def rmdir(accessor: GDriveAccessor, path: PathSpec) -> None:
     Args:
         accessor (GDriveAccessor): Google Drive accessor.
         path (PathSpec): folder to remove.
+        index (IndexCacheStore): accepted for the rmdir slot's shape;
+            unused.
     """
     virtual = path.virtual
     key = path.resource_path

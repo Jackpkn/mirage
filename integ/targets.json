@@ -1106,7 +1106,16 @@
           "backend": "ssh",
           "root": "links"
         }
-      ]
+      ],
+      "sessions": {
+        "veiled": {
+          "paths": {
+            "hide": [
+              "/data/qsubh/sec"
+            ]
+          }
+        }
+      }
     },
     {
       "id": "nextcloud",
@@ -2409,10 +2418,41 @@
             ]
           }
         },
+        "boxed": {
+          "paths": {
+            "hide": [
+              "/scratch/box/sec",
+              "/scratch/only/h",
+              "/scratch/gone/sec"
+            ]
+          }
+        },
+        "tagged": {
+          "paths": {
+            "hide": [
+              "*.tkn"
+            ]
+          }
+        },
+        "screened": {
+          "paths": {
+            "hide": [
+              "/scratch/pen/*/sec"
+            ]
+          }
+        },
+        "guarded": "guarded",
         "sealed": {
           "paths": {
             "hide": [
               "/vault/d/inner"
+            ]
+          }
+        },
+        "shrouded": {
+          "paths": {
+            "hide": [
+              "/vault/d/sec"
             ]
           }
         },
@@ -2559,6 +2599,16 @@
           "paths": {
             "show": {
               "/scratch/pine/keep": "r"
+            }
+          }
+        },
+        "guarded": {
+          "paths": {
+            "hide": [
+              "/scratch/keep/h"
+            ],
+            "show": {
+              "/scratch/keep/h": "r"
             }
           }
         },

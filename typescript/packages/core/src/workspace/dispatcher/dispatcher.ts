@@ -64,7 +64,14 @@ import {
   POLICY_WRITE_OPS,
   SETATTR_KEYS,
 } from './constants.ts'
-import { effectivePathMode, getCurrentSession, pathAllowed } from '../../context/session_context.ts'
+import {
+  effectivePathMode,
+  getCurrentSession,
+  hiddenPathsIntersect,
+  pathAllowed,
+} from '../../context/session_context.ts'
+import { moveReveals } from '../../utils/hidden.ts'
+import { removeRemnants, visibleBelow, type RemnantChannel } from '../../utils/remnants.ts'
 
 const NOOP_ACCESSOR_INSTANCE = new NOOPAccessor()
 
@@ -189,6 +196,22 @@ export class Dispatcher {
     const dstArg = args?.[0]
     if (opName === 'rename' && dstArg instanceof PathSpec && !pathAllowed(dstArg.virtual)) {
       throw eacces(dstArg.virtual)
+    }
+    if (opName === 'rename' && dstArg instanceof PathSpec) {
+      // A rename re-anchors everything below its source while the hides
+      // stay where they are written, so hidden content would land at
+      // paths the session can see. Destroying hidden content is silent
+      // (rmR, the remnant rmdir below); relocating it into view is
+      // refused. Only a directory has anything below it to re-anchor,
+      // so a file source passes.
+      const sess = getCurrentSession()
+      if (
+        sess !== null &&
+        moveReveals(sess.hiddenPaths, sess.shownPaths, path.virtual, dstArg.virtual) &&
+        (await this.movedSourceIsDir(path))
+      ) {
+        throw eacces(path.virtual)
+      }
     }
     if (this.tableAnswers(opName, path.virtual, kwargs)) {
       return [
@@ -375,13 +398,19 @@ export class Dispatcher {
         ),
       )
     } catch (err) {
-      const fallback = isMissingPath(err) ? this.namespaceResult(opName, p.virtual) : null
-      if (fallback === null) {
-        await this.reconciler.onOpMissing(opName, p.virtual, err)
-        throw err
+      const code = (err as { code?: string }).code
+      if (opName === 'rmdir' && (code === 'ENOTEMPTY' || code === 'EEXIST')) {
+        await this.rmdirRemnants(resource, scope, mountPrefix, mode, err)
+        result = null
+      } else {
+        const fallback = isMissingPath(err) ? this.namespaceResult(opName, p.virtual) : null
+        if (fallback === null) {
+          await this.reconciler.onOpMissing(opName, p.virtual, err)
+          throw err
+        }
+        result = fallback
+        memoryAnswered(report)
       }
-      result = fallback
-      memoryAnswered(report)
     }
     // The op ran, whatever invalidation, the post gate, or an output
     // cap do next: stamped here so a failure in any of them cannot
@@ -433,6 +462,180 @@ export class Dispatcher {
    * the follow below rewrote it to the target. Mirrors Python's
    * Dispatcher._table_answers.
    */
+  /**
+   * The index kwargs normal dispatch stamps on every registered op, for
+   * the door's own raw registry calls: an indexed backend cannot
+   * resolve a nested path without it.
+   */
+  private indexKwargs(resource: Resource): OpKwargs {
+    return resource.index !== undefined ? { index: resource.index } : {}
+  }
+
+  /**
+   * The door's own channel for internal walks: the TS twin of Python's
+   * Mount.execute_op plus the dispatcher-side duties around it. The
+   * same mode fence, index stamping and mount-prefix context normal
+   * dispatch applies, plus the pre-ops admission for writes (Python
+   * spells this on the channel as `_admit_cascade`) and the
+   * dispatcher's own write invalidation, because raw registry calls
+   * run outside the cache context dispatch establishes, so the cores'
+   * invalidation cannot land. Invalidation runs even when the op
+   * fails: a missing-path failure means the tree changed under the
+   * walk, and the walk's own earlier listing is exactly the entry that
+   * must not survive. Only the visibility filter stays off, which is
+   * what lets a remnant walk see hidden entries. Every internal
+   * registry call in this class routes through here; a bare
+   * opsRegistry.call outside dispatch is a bug.
+   */
+  private async fencedCall(
+    resource: Resource,
+    mountPrefix: string,
+    mode: MountMode,
+    opName: string,
+    spec: PathSpec,
+  ): Promise<unknown> {
+    const write = this.opsRegistry.find(opName, resource.kind)?.write === true
+    if (write) {
+      // The same pre-ops admission a dispatched op answers, with the
+      // walk's own child path: the gate that admitted the rmdir judged
+      // the directory, not what the cascade found under it, and a
+      // policy that protects one of those paths must refuse its
+      // deletion exactly as it would refuse a first-class op. The
+      // caller folds the denial into its original refusal, so a
+      // policy's protection of a hidden path never surfaces as its own
+      // denial.
+      await preOpsGate(this.policies, opName, spec, true, mountPrefix, sessionId())
+      if (effectivePathMode(spec.virtual, mountPrefix, mode) === MountMode.READ) {
+        throw erofsReadOnly(`mount at '${spec.virtual}' is read-only`, spec)
+      }
+    }
+    try {
+      return await runWithMountPrefix(rstripSlash(mountPrefix), () =>
+        this.opsRegistry.call(
+          opName,
+          resource.kind,
+          resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
+          spec,
+          [],
+          this.indexKwargs(resource),
+        ),
+      )
+    } finally {
+      if (write) await this.invalidateAfterWriteByPath(spec.virtual)
+    }
+  }
+
+  /**
+   * Whether a rename's source stats as a directory.
+   *
+   * Only a directory can carry hidden content into view, so the reveal
+   * refusal probes the source before it fires and lets a file rename
+   * pass. An absent source moves nothing (the rename itself reports
+   * it); a source the mount cannot classify fails toward refusal, the
+   * same stance the pattern arm takes. Mirrors Python's
+   * Dispatcher._moved_source_is_dir.
+   */
+  private async movedSourceIsDir(path: PathSpec): Promise<boolean> {
+    let resolved: [Resource, PathSpec, MountMode]
+    try {
+      resolved = await this.namespace.resolve(path.virtual, false)
+    } catch {
+      // No mount to ask; classification fails toward refusal.
+      return true
+    }
+    const [resource, scope, mode] = resolved
+    let row: unknown
+    try {
+      row = await this.fencedCall(
+        resource,
+        this.namespace.mountFor(path.virtual).prefix,
+        mode,
+        'stat',
+        scope,
+      )
+    } catch (err) {
+      // An absent source moves nothing; the rename itself reports it.
+      if (isMissingPath(err)) return false
+      // Unanswerable classification fails toward refusal.
+      return true
+    }
+    return !(row instanceof FileStat) || row.type === FileType.DIRECTORY
+  }
+
+  /**
+   * Take a visibly-empty directory's hidden remnants with it.
+   *
+   * The backend refused the rmdir because entries remain, but when the
+   * session's view of the directory is empty the refusal would leak
+   * that something invisible exists. A session's mutation may destroy
+   * what it cannot see, never learn of it, so the remnants go with the
+   * directory through the shared removeRemnants walk; a visible child,
+   * or any cascade failure (a mode-protected entry, a visible entry
+   * appearing mid-walk), re-raises the backend's refusal. Emptiness is
+   * the door's own readdir pipeline: backend entries merged with the
+   * namespace's children (nested mounts, links) and judged by
+   * visibility, so a visible child no backend can see keeps the
+   * refusal instead of reporting a successful rmdir while the mounted
+   * child remains. The namespace's own hidden nodes under the subtree
+   * (links, attr overlays) are purged with it, so the removed tree
+   * cannot resurface from the node table once the hide lifts.
+   */
+  private async rmdirRemnants(
+    resource: Resource,
+    path: PathSpec,
+    mountPrefix: string,
+    mode: MountMode,
+    refusal: unknown,
+  ): Promise<void> {
+    if (!hiddenPathsIntersect(path.virtual)) throw refusal
+    let entries: unknown
+    try {
+      entries = await this.fencedCall(resource, mountPrefix, mode, 'readdir', path)
+    } catch {
+      // A backend that cannot list (or later, remove) the remnants
+      // keeps the original refusal: the door has no way to take them.
+      throw refusal
+    }
+    if (!Array.isArray(entries)) throw refusal
+    const names = entries.map(String)
+    const merged = mergeReaddir(names, this.namespace.mountPrefixes(), this.namespace, path.virtual)
+    if (names.length === 0 || visibleBelow(path.virtual, merged, pathAllowed)) throw refusal
+    const channel: RemnantChannel = {
+      readdir: async (at) => {
+        const listed = await this.fencedCall(resource, mountPrefix, mode, 'readdir', at)
+        return Array.isArray(listed) ? listed.map(String) : []
+      },
+      stat: (at) => this.fencedCall(resource, mountPrefix, mode, 'stat', at),
+      unlink: async (at) => {
+        await this.fencedCall(resource, mountPrefix, mode, 'unlink', at)
+      },
+      rmdir: async (at) => {
+        await this.fencedCall(resource, mountPrefix, mode, 'rmdir', at)
+      },
+    }
+    try {
+      await removeRemnants(channel, pathAllowed, path)
+    } catch {
+      throw refusal
+    }
+    // The namespace's own nodes under the subtree go with it: a hidden
+    // link is invisible to every backend, so the walk above cannot
+    // take it, and left in the table it would resurface the removed
+    // tree the moment the hide lifts (a link synthesizes its
+    // ancestors). Classification proved every link below is hidden --
+    // a visible one contributes its child segment to the merged
+    // listing above -- so this is the walk's own revalidate-then-
+    // destroy applied to the name plane: a link that became visible
+    // mid-cascade keeps the refusal like any visible remnant, and the
+    // purge also drops the attr overlays of paths the cascade just
+    // destroyed, as `rm` does.
+    const base = rstripSlash(path.virtual) + '/'
+    for (const link of this.namespace.symlinkTargets().keys()) {
+      if (link.startsWith(base) && pathAllowed(link)) throw refusal
+    }
+    await this.namespace.purgeUnder(path.virtual)
+  }
+
   private tableAnswers(
     opName: string,
     virtual: string,
