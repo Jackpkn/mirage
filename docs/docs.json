@@ -213,6 +213,13 @@
               "home/setup/linux",
               "home/setup/windows"
             ]
+          },
+          {
+            "group": "NFS",
+            "icon": "network-wired",
+            "pages": [
+              "home/setup/nfs"
+            ]
           }
         ]
       },
@@ -225,7 +232,8 @@
             "pages": [
               "python/install",
               "python/quickstart",
-              "python/setup/fuse"
+              "python/setup/fuse",
+              "python/setup/nfs"
             ]
           },
           {
@@ -436,6 +444,7 @@
               "typescript/quickstart",
               "typescript/server-and-cli",
               "typescript/setup/fuse",
+              "typescript/setup/nfs",
               "typescript/python",
               "typescript/python-fs",
               "typescript/limitations"

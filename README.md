@@ -80,7 +80,7 @@ await ws.execute('slack send-message --channel general --text "report is up"')
 
 - **Python** ≥ 3.11 for the `mirage-ai` package and the `mirage` CLI
 - **Node.js** ≥ 20 for the TypeScript SDK
-- **macOS** or **Linux** (FUSE-based mounts require platform support)
+- **macOS** or **Linux** (FUSE-based mounts require platform support; NFS mounts need no driver)
 
 ### Python
 
