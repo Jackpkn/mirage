@@ -16,11 +16,23 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 from collections import Counter
 from datetime import datetime, timezone
 
 import lz4.frame
 from aiohttp import web
+
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
 
 # Anchored at run time, mirroring moto and the fake Graph: the real Hub
 # stamps lastModified at write time, and a fixed past date would make the
@@ -138,6 +150,14 @@ def _serve_hash(data: bytes) -> str:
 class FakeHub:
 
     def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         # bucket ("ns/name") -> path -> {"data", "modified", "etag"}
         self.buckets: dict[str, dict[str, dict]] = {}
         # xorb hash hex -> ordered decoded chunks
@@ -222,7 +242,23 @@ class HubServer:
 
     def __init__(self, hub: FakeHub) -> None:
         self.hub = hub
+        # Overwritten with the real port once the site is listening. Set
+        # here so `endpoint` reads rather than raises in between.
         self.port = 0
+
+    async def reset(self, request: web.Request) -> web.Response:
+        """Drop every write since startup. Mirrors `POST /reset` on the
+        other fakes: same path, same empty body, same `{"ok": true}`.
+
+        Args:
+            request (web.Request): the incoming request.
+
+        Returns:
+            web.Response: 200 once the launch state is back.
+        """
+        del request
+        self.hub.reset()
+        return web.json_response({"ok": True})
 
     @property
     def endpoint(self) -> str:
@@ -423,6 +459,7 @@ def serialized_offset_of(chunk_index: int) -> int:
 
 def _build_app(server: HubServer) -> web.Application:
     app = web.Application(client_max_size=256 * 1024 * 1024)
+    app.router.add_post("/reset", server.reset)
     app.router.add_get("/api/buckets/{ns}/{name}/tree/{path:.*}", server.tree)
     app.router.add_get("/buckets/{ns}/{name}/resolve/{path:.*}",
                        server.resolve)
@@ -451,7 +488,7 @@ async def start_fake_hub(
     server = HubServer(hub)
     runner = web.AppRunner(_build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, BIND_HOST, port)
     await site.start()
     assert runner.addresses
     server.port = runner.addresses[0][1]

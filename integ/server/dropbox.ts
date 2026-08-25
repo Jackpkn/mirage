@@ -20,6 +20,17 @@ import {
   type ServerResponse,
 } from 'node:http'
 
+// The interface the fake listens on. Loopback is right on a developer's
+// machine and wrong inside a container: a server on the container's own
+// 127.0.0.1 is invisible to the published port, so a client on the host has
+// its connection accepted and then closed with no response -- while a
+// healthcheck running inside the container sees a healthy server. Set
+// MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+//
+// The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+// interface to listen on, not an address anything can connect to.
+const BIND_HOST = process.env.MIRAGE_BIND_HOST ?? '127.0.0.1'
+
 // Uploads stamp the real clock (find -mtime expects fresh writes to
 // look fresh, like MinIO/moto in the s3 targets).
 function nowStamp(): string {
@@ -100,6 +111,16 @@ class Account {
   readonly files = new Map<string, StoredFile>()
   readonly searchCursors = new Map<string, { matches: SearchMatchJson[]; start: number; limit: number }>()
   readonly listCursors = new Map<string, DropboxEntryJson[]>()
+
+  // Drop every write since startup. The fields are readonly collections,
+  // so this clears them in place rather than rebuilding the account the
+  // way integ/server/dropbox_server.py rebuilds through __init__.
+  reset(): void {
+    this.folders.clear()
+    this.files.clear()
+    this.searchCursors.clear()
+    this.listCursors.clear()
+  }
 
   addAncestors(path: string): void {
     const parts = path.split('/').slice(1, -1)
@@ -249,6 +270,13 @@ function handle(
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
+  // Mirrors POST /reset on the other fakes: same path, same empty body,
+  // same {ok: true}.
+  if (url === '/reset') {
+    account.reset()
+    json(res, { ok: true })
+    return
+  }
   if (url === '/oauth2/token') {
     json(res, { access_token: 'integ-token', expires_in: 14400 })
     return
@@ -441,7 +469,7 @@ export function startFakeDropbox(): Promise<FakeDropbox> {
       })
   })
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, BIND_HOST, () => {
       const address = server.address()
       if (address === null || typeof address === 'string') {
         throw new Error('fake dropbox server has no port')

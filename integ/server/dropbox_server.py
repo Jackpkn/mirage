@@ -14,10 +14,22 @@
 
 import hashlib
 import json
+import os
 import re
 import time
 
 from aiohttp import web
+
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
 
 
 def _now_stamp() -> str:
@@ -66,11 +78,36 @@ class FakeDropbox:
     """
 
     def __init__(self) -> None:
+        # `endpoint` is where the server ended up listening, set by
+        # `start_fake_dropbox` once the port is known. It describes the
+        # listener rather than the contents, so `reset` leaves it alone.
+        self.endpoint = ""
+        self.reset()
+
+    async def handle_reset(self, request: web.Request) -> web.Response:
+        """Drop every write since startup. Mirrors `POST /reset` on the
+        other fakes: same path, same empty body, same `{"ok": true}`.
+
+        Args:
+            request (web.Request): the incoming request.
+
+        Returns:
+            web.Response: 200 once the launch state is back.
+        """
+        del request
+        self.reset()
+        return web.json_response({"ok": True})
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         self.folders: set[str] = set()
         self.files: dict[str, tuple[bytes, str]] = {}
         self.search_cursors: dict[str, tuple[list, int, int]] = {}
         self.list_cursors: dict[str, list[dict]] = {}
-        self.endpoint = ""
 
     def _add_ancestors(self, path: str) -> None:
         parts = path.split("/")[1:-1]
@@ -398,6 +435,7 @@ async def start_fake_dropbox() -> tuple[FakeDropbox, web.AppRunner]:
     # The columnar fixture's example.h5 is ~1.02 MiB; aiohttp's default
     # client_max_size (1 MiB) would 413 its upload.
     app = web.Application(client_max_size=8 * 1024 * 1024)
+    app.router.add_post("/reset", fake.handle_reset)
     app.router.add_post("/oauth2/token", fake.handle_token)
     app.router.add_post("/2/files/list_folder", fake.handle_list_folder)
     app.router.add_post("/2/files/list_folder/continue",
@@ -414,7 +452,7 @@ async def start_fake_dropbox() -> tuple[FakeDropbox, web.AppRunner]:
                         fake.handle_search_continue)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, BIND_HOST, 0)
     await site.start()
     assert runner.addresses
     fake.endpoint = f"http://127.0.0.1:{runner.addresses[0][1]}"

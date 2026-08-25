@@ -20,6 +20,17 @@ from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
+
 # Anchored at run time, mirroring moto (the s3 fake) and real Graph, which
 # stamp lastModifiedDateTime at write time. A fixed past date would make the
 # shared find_mtime case (-mtime -1) exclude every just-written item.
@@ -65,10 +76,20 @@ def _parse_range(header: str | None, size: int) -> tuple[int, int]:
 class FakeGraph:
 
     def __init__(self, key: str = "default") -> None:
+        # `key` and `base` describe which workspace this is and where it
+        # is listening, not what it holds, so `reset` leaves them alone.
         self.key = key
+        self.base = ""
+        self.reset()
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         self.files: dict[str, dict] = {}
         self.dirs: set[str] = {""}
-        self.base = ""
         self._seq = 0
 
     def _tag(self) -> str:
@@ -263,13 +284,49 @@ class GraphServer:
 
     def __init__(self, state: FakeGraph) -> None:
         self.state = state
+        # Which drives exist is settled before the first request: the only
+        # callers of `add_drive` are `serve_forever`, reading
+        # MIRAGE_GRAPH_DRIVES, and the test adapter reading its mounts. No
+        # route creates one, so the registry is launch state and `_fresh`
+        # leaves it alone.
         self.drives: dict[str, FakeGraph] = {state.key: state}
         self.site_drives: list[str] = [state.key]
+        self._fresh()
+
+    def _fresh(self) -> None:
+        """Put the server's own transient state back to what launch gives it.
+
+        Deliberately touches neither the drives nor their contents: a caller
+        that seeded a drive before handing it over would not expect the
+        constructor to empty it. `reset` empties the drives too, because
+        that is what a caller asking for a reset means.
+        """
         self.uploads: dict[str, dict] = {}
         self.monitors: dict[str, dict] = {}
         self.calls: Counter = Counter()
         self._upload_seq = 0
         self._monitor_seq = 0
+
+    async def reset(self, request: web.Request) -> web.Response:
+        """Drop every write since startup. Mirrors `POST /reset` on the
+        other fakes: same path, same empty body, same `{"ok": true}`.
+
+        Args:
+            request (web.Request): the incoming request.
+
+        Returns:
+            web.Response: 200 once the launch state is back.
+        """
+        del request
+        # Every drive, not just the default: a SharePoint drive named in
+        # MIRAGE_GRAPH_DRIVES holds writes too. Their contents go; the
+        # drives themselves stay, because nothing can recreate one short of
+        # restarting the process, and `FakeGraph.reset` keeps the `key` and
+        # `base` that say which drive this is and where it answers.
+        for drive in self.drives.values():
+            drive.reset()
+        self._fresh()
+        return web.json_response({"ok": True})
 
     def add_drive(self, key: str) -> FakeGraph:
         g = FakeGraph(key)
@@ -605,10 +662,11 @@ async def start_fake_graph() -> tuple[FakeGraph, "GraphServer", web.AppRunner]:
     # Real Graph accepts simple PUTs up to 4 MiB; aiohttp's default
     # client_max_size (1 MiB) would 413 them before the handler runs.
     app = web.Application(client_max_size=8 * 1024 * 1024)
+    app.router.add_post("/reset", server.reset)
     app.router.add_route("*", "/{tail:.*}", server.handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, BIND_HOST, 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     state.base = f"http://127.0.0.1:{port}"

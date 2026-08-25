@@ -16,10 +16,22 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 
 from aiohttp import web
+
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
 
 # Anchored at run time, mirroring integ/server/onedrive_server.py: real Box
 # stamps modified_at at write time, and the shared find_mtime case (-mtime -1)
@@ -75,6 +87,18 @@ class FakeBox:
     """In-memory Box content tree keyed by item id, root folder id "0"."""
 
     def __init__(self) -> None:
+        # `base` is where the server ended up listening, set by
+        # `start_fake_box` once the port is known. It describes the
+        # listener rather than the contents, so `reset` leaves it alone.
+        self.base = ""
+        self.reset()
+
+    def reset(self) -> None:
+        """The state the process starts in, and what `POST /reset` restores.
+
+        Written here rather than inline in `__init__` so the two cannot
+        drift: a field added to the launch state is reset by construction.
+        """
         self.items: dict[str, dict] = {
             ROOT_ID: {
                 "type": "folder",
@@ -84,7 +108,6 @@ class FakeBox:
                 "modified_at": MODIFIED,
             }
         }
-        self.base = ""
         self._seq = 1000000000
 
     def _new_id(self) -> str:
@@ -243,6 +266,20 @@ class BoxServer:
 
     def __init__(self, state: FakeBox) -> None:
         self.state = state
+
+    async def reset(self, request: web.Request) -> web.Response:
+        """Drop every write since startup. Mirrors `POST /reset` on the
+        other fakes: same path, same empty body, same `{"ok": true}`.
+
+        Args:
+            request (web.Request): the incoming request.
+
+        Returns:
+            web.Response: 200 once the launch state is back.
+        """
+        del request
+        self.state.reset()
+        return web.json_response({"ok": True})
 
     def _authed(self, request: web.Request) -> bool:
         auth = request.headers.get("Authorization", "")
@@ -539,6 +576,7 @@ class BoxServer:
 
 def build_app(server: BoxServer) -> web.Application:
     app = web.Application(client_max_size=8 * 1024 * 1024)
+    app.router.add_post("/reset", server.reset)
     app.router.add_post("/oauth2/token", server.token)
     app.router.add_get("/2.0/folders/{folder_id}/items", server.list_items)
     app.router.add_get("/2.0/folders/{folder_id}", server.folder_info)
@@ -565,7 +603,7 @@ async def start_fake_box() -> tuple[FakeBox, BoxServer, web.AppRunner]:
     server = BoxServer(state)
     runner = web.AppRunner(build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, BIND_HOST, 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     state.base = f"http://127.0.0.1:{port}"
@@ -577,7 +615,7 @@ async def _serve(port: int) -> None:
     server = BoxServer(state)
     runner = web.AppRunner(build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, BIND_HOST, port)
     await site.start()
     state.base = f"http://127.0.0.1:{port}"
     print(f"BOX_ENDPOINT={state.base}", flush=True)

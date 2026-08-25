@@ -35,6 +35,17 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PrismaClient } from '@prisma/client'
 
+// The interface the fake listens on. Loopback is right on a developer's
+// machine and wrong inside a container: a server on the container's own
+// 127.0.0.1 is invisible to the published port, so a client on the host has
+// its connection accepted and then closed with no response -- while a
+// healthcheck running inside the container sees a healthy server. Set
+// MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+//
+// The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+// interface to listen on, not an address anything can connect to.
+const BIND_HOST = process.env.MIRAGE_BIND_HOST ?? '127.0.0.1'
+
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SCHEMA = join(HERE, '..', 'prisma', 'schema.prisma')
 const FIXTURE_DIR = join(HERE, '..', 'fixtures', 'slack')
@@ -795,7 +806,7 @@ export async function startServer(port: number): Promise<http.Server> {
     })
   })
   return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve(server))
+    server.listen(port, BIND_HOST, () => resolve(server))
   })
 }
 

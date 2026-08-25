@@ -17,11 +17,23 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 from aiohttp import web
+
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
 
 # Deliberate divergences from api.github.com, mirroring how
 # integ/server/dropbox.ts documents its Gmail-search shortcuts:
@@ -1429,19 +1441,45 @@ class GitHubServer:
         return web.Response(body=data, content_type=content_type.split(";")[0])
 
     async def reset(self, request: web.Request) -> web.Response:
-        """Rebuild the seeded state, dropping every write since startup.
+        """Drop every write since startup, and optionally re-seed.
 
-        The write battery runs once per host against one shared process, so
-        without this the second host reads the first host's writes and the
-        two disagree over state rather than over behaviour.
+        An empty body restores the seed this fake is currently holding --
+        the command line's, until a reset replaces it. That is what the
+        write battery needs: it runs once per host against one shared
+        process, so without a reset the second host reads the first host's
+        writes and the two disagree over state rather than over behaviour.
+
+        A body replaces the seed, which is what a harness moving between
+        scenarios needs. This fake is the one whose launch state is not
+        empty -- its fixtures are git trees named on the command line -- so
+        "put back what the process started with" hands back the *previous*
+        scenario's repositories. Passing the next scenario's spec here is
+        the difference between resetting the fake and restarting it.
+
+        The new spec is kept, so a later empty reset replays *it* rather
+        than the command line: seed once when the scenario changes, then
+        reset freely within it.
 
         Args:
-            request (web.Request): the incoming request.
+            request (web.Request): the incoming request; an optional JSON
+                body of `{"repo": [...], "metadata": [...],
+                "commits": [...]}`, spelled as the command line spells
+                them.
 
         Returns:
             web.Response: 200 once the seed is back.
         """
-        del request
+        body = await request.json() if request.can_read_body else {}
+        if not isinstance(body, dict):
+            return web.json_response(
+                {"error": "reset body must be an "
+                 "object"}, status=400)
+        if body:
+            self.state.seed = (
+                list(body.get("repo") or []),
+                list(body.get("metadata") or []),
+                list(body.get("commits") or []),
+            )
         self.state.repos.clear()
         self.state.login = DEFAULT_LOGIN
         seed_state(self.state, *self.state.seed)
@@ -1747,7 +1785,7 @@ async def start_fake_github(
     server = GitHubServer(state)
     runner = web.AppRunner(build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, BIND_HOST, 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     state.base = f"http://127.0.0.1:{port}"
@@ -1907,7 +1945,7 @@ async def _serve(port: int, repos: list[str], metadata: list[str],
     server = GitHubServer(state)
     runner = web.AppRunner(build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, BIND_HOST, port)
     await site.start()
     state.base = f"http://127.0.0.1:{port}"
     print(f"GITHUB_ENDPOINT={state.base}", flush=True)
