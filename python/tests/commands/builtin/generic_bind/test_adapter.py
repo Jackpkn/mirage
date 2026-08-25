@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import dataclasses
 import errno
 
 import pytest
@@ -25,6 +26,7 @@ from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           with_dir_guard)
 from mirage.commands.config import CommandOpts
 from mirage.ops.types import NamespaceView
+from mirage.policy import Action, Deny, OpsContext, Policy
 from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES
 
@@ -332,6 +334,172 @@ async def test_rule_guard_asks_the_bound_gate_and_leaves_stat_alone():
     assert ("read", "/data/locked/y") in calls
     assert ("rename", "/data/a", "/data/locked/y") not in calls
     assert ("rename", "/data/a", "/data/b") in calls
+
+
+class _SealedRead(Policy):
+    """Refuse reads of one path; record every op asked."""
+
+    def __init__(self, sealed: str) -> None:
+        self.sealed = sealed
+        self.asked: list[tuple[str, str, bool]] = []
+
+    async def pre_ops(self, ctx: OpsContext) -> Action | None:
+        self.asked.append((ctx.op, ctx.path.virtual, ctx.write))
+        if not ctx.write and ctx.path.virtual == self.sealed:
+            return Deny("sealed")
+        return None
+
+
+def _policy_probe_ops(calls: list[tuple[str, ...]]) -> CommandIO:
+    """A CommandIO whose slots record their calls; closures on `calls`."""
+
+    async def read_bytes(accessor, path, index=None):
+        calls.append(("read", path.virtual))
+        return b"x"
+
+    def read_stream(accessor, path, index=None):
+        return _probe_chunks(calls, path)
+
+    async def stat(accessor, path, index=None):
+        calls.append(("stat", path.virtual))
+        return FileStat(name="k",
+                        type=FileType.FILE,
+                        content=ContentType.TEXT,
+                        size=1)
+
+    async def readdir(accessor, path, index=None):
+        calls.append(("readdir", path.virtual))
+        return ["a"]
+
+    async def copy(accessor, src, dst):
+        calls.append(("copy", src.virtual, dst.virtual))
+
+    async def unlink(accessor, path, index=None):
+        calls.append(("unlink", path.virtual))
+
+    return CommandIO(readdir=readdir,
+                     read_bytes=read_bytes,
+                     read_stream=read_stream,
+                     stat=stat,
+                     is_mounted=lambda a: True,
+                     copy=copy,
+                     unlink=unlink)
+
+
+async def _probe_chunks(calls: list[tuple[str, ...]], path: PathSpec):
+    calls.append(("stream", path.virtual))
+    yield b"x"
+
+
+@pytest.mark.asyncio
+async def test_policy_guard_admits_slots_and_leaves_stat_alone():
+    from mirage.commands.builtin.generic_bind.adapter import with_policy_guard
+    from mirage.context import (reset_mount_gate, reset_op_policies,
+                                set_mount_gate, set_op_policies)
+    from mirage.policy.policies import Policies
+    from mirage.types import MountMode
+
+    calls: list[tuple[str, ...]] = []
+    raw = _policy_probe_ops(calls)
+    acc = NOOPAccessor()
+    # No binding: every slot runs as is, and no hook fires.
+    assert await with_policy_guard(raw).read_bytes(
+        acc, _spec("/data/secret")) == b"x"
+    calls.clear()
+
+    policy = _SealedRead("/data/secret")
+    ptoken = set_op_policies(Policies([policy]))
+    gtoken = set_mount_gate("/data", MountMode.WRITE)
+    try:
+        ops = with_policy_guard(raw)
+        with pytest.raises(PermissionError) as excinfo:
+            await ops.read_bytes(acc, _spec("/data/secret"))
+        assert excinfo.value.errno == errno.EACCES
+        assert ("read", "/data/secret") not in calls
+        # The stream gates before its first chunk.
+        with pytest.raises(PermissionError):
+            async for _ in ops.read_stream(acc, _spec("/data/secret")):
+                pass
+        assert ("stream", "/data/secret") not in calls
+        # stat is not a guarded slot: deny is present and refused.
+        assert (await ops.stat(acc, _spec("/data/secret"))).size == 1
+        # readdir asks about the directory it lists.
+        assert await ops.readdir(acc, _spec("/data/dir")) == ["a"]
+        # A copy's source is a read; its destination is a write.
+        await ops.copy(acc, _spec("/data/src"), _spec("/data/dst"))
+        # A write slot asks with write=True.
+        await ops.unlink(acc, _spec("/data/gone"))
+    finally:
+        reset_mount_gate(gtoken)
+        reset_op_policies(ptoken)
+    assert ("read_bytes", "/data/secret", False) in policy.asked
+    assert ("read_stream", "/data/secret", False) in policy.asked
+    assert ("readdir", "/data/dir", False) in policy.asked
+    assert ("copy", "/data/src", False) in policy.asked
+    assert ("copy", "/data/dst", True) in policy.asked
+    assert ("unlink", "/data/gone", True) in policy.asked
+    assert not any(op == "stat" for op, _, _ in policy.asked)
+
+
+@pytest.mark.asyncio
+async def test_policy_guard_wrap_time_capture_covers_late_drains():
+    # head/tail/wc bind lazy readers the pipeline drains after dispatch
+    # has reset the context; the guard captured at wrap time still
+    # answers (_live_policy_scope).
+    from mirage.commands.builtin.generic_bind.adapter import with_policy_guard
+    from mirage.context import (reset_mount_gate, reset_op_policies,
+                                set_mount_gate, set_op_policies)
+    from mirage.policy.policies import Policies
+    from mirage.types import MountMode
+
+    calls: list[tuple[str, ...]] = []
+    raw = _policy_probe_ops(calls)
+    acc = NOOPAccessor()
+    policy = _SealedRead("/data/secret")
+    ptoken = set_op_policies(Policies([policy]))
+    gtoken = set_mount_gate("/data", MountMode.WRITE)
+    try:
+        ops = with_policy_guard(raw)
+    finally:
+        reset_mount_gate(gtoken)
+        reset_op_policies(ptoken)
+    # Both the slot call and the drain happen outside the window now.
+    with pytest.raises(PermissionError):
+        async for _ in ops.read_stream(acc, _spec("/data/secret")):
+            pass
+    assert ("stream", "/data/secret") not in calls
+    with pytest.raises(PermissionError):
+        await ops.read_bytes(acc, _spec("/data/secret"))
+
+
+@pytest.mark.asyncio
+async def test_policy_guard_admits_before_a_warm_serve():
+    # The guard wraps outside the cache tier (`finish` in the factory),
+    # so a warm reader below it never answers a refused read.
+    from mirage.commands.builtin.generic_bind.adapter import with_policy_guard
+    from mirage.context import (reset_mount_gate, reset_op_policies,
+                                set_mount_gate, set_op_policies)
+    from mirage.policy.policies import Policies
+    from mirage.types import MountMode
+
+    calls: list[tuple[str, ...]] = []
+    warm = dataclasses.replace(_policy_probe_ops(calls), read_bytes=_warm_read)
+    acc = NOOPAccessor()
+    policy = _SealedRead("/data/secret")
+    ptoken = set_op_policies(Policies([policy]))
+    gtoken = set_mount_gate("/data", MountMode.WRITE)
+    try:
+        ops = with_policy_guard(warm)
+        with pytest.raises(PermissionError):
+            await ops.read_bytes(acc, _spec("/data/secret"))
+        assert await ops.read_bytes(acc, _spec("/data/open")) == b"warm"
+    finally:
+        reset_mount_gate(gtoken)
+        reset_op_policies(ptoken)
+
+
+async def _warm_read(accessor, path, index=None):
+    return b"warm"
 
 
 def _keyed_read_ops(implicit_dirs: set[str] | None = None,

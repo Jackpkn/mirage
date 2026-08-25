@@ -24,7 +24,8 @@ from mirage.cache.read_through import (cache_aware_read_bytes,
                                        cache_aware_read_stream)
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO,
                                                           with_dir_guard,
-                                                          with_path_guards)
+                                                          with_path_guards,
+                                                          with_policy_guard)
 from mirage.commands.builtin.generic_bind.builders import _BUILDERS
 from mirage.commands.builtin.generic_bind.provision import default_provision
 from mirage.commands.config import CommandOpts, command
@@ -215,7 +216,11 @@ async def _run_with_namespace_globs(ops: CommandIO,
     """
     children = opts.ns.child_mounts if opts.ns is not None else None
     stamped = replace(ops, glob_children=children)
-    bound = with_dir_guard(finish(with_path_guards(stamped)))
+    # The policy guard sits outside the cache wraps (`finish`) so a
+    # coded pre_ops deny fires before a warm serve, the dispatcher's
+    # own order at the op door.
+    bound = with_dir_guard(with_policy_guard(finish(
+        with_path_guards(stamped))))
     return await fn(bound, accessor, paths, texts, opts)
 
 

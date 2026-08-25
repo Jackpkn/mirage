@@ -16,7 +16,11 @@ import type { ShellVar } from '../../shell/variable.ts'
 import { sessionEntry, setSessionEntry } from '../session/session.ts'
 import { seedVar, setAttr } from '../session/state.ts'
 import { VarAttr } from '../../shell/variable.ts'
-import { redirectPathsFor, runWithAdmission } from '../../context/session_context.ts'
+import {
+  redirectPathsFor,
+  runWithAdmission,
+  runWithOpPolicies,
+} from '../../context/session_context.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { PolicyDecision } from '../../runtime/policy/index.ts'
 import { mergeSignals } from '../abort.ts'
@@ -521,7 +525,10 @@ async function runArgv(
 
   // The admitted command's gate is bound for its run and handed back
   // after, so its own I/O can ask about the entries the gate did not see
-  // and a nested line binds its own (see `Admitted`).
+  // and a nested line binds its own (see `Admitted`). The workspace's
+  // policies bind in the same window, whether or not a gate judged the
+  // line, so the command tier's policy guard can fire preOps for the
+  // backend I/O a handler performs.
   const route = () =>
     routeArgv(
       recurse,
@@ -540,8 +547,9 @@ async function runArgv(
       signal,
       row,
     )
-  if (admitted === null) return route()
-  return runWithAdmission(admitted, route)
+  const gated = admitted
+  if (gated === null) return runWithOpPolicies(registry.policies, route)
+  return runWithOpPolicies(registry.policies, () => runWithAdmission(gated, route))
 }
 
 async function routeArgv(

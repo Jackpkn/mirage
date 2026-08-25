@@ -27,9 +27,10 @@ from mirage.commands.builtin.generic.du import (DEFAULT_MAX_DU_ENTRIES,
 from mirage.commands.config import CommandFnResult, CommandOpts, ProvisionFn
 from mirage.context import (effective_path_mode, get_admission,
                             get_current_session, get_mount_gate,
-                            hidden_paths_intersect, path_allowed,
-                            readonly_below)
+                            get_op_policies, hidden_paths_intersect,
+                            path_allowed, readonly_below)
 from mirage.ops.types import ChildMounts, StatOverlay
+from mirage.policy.policies import Policies, pre_ops_gate
 from mirage.types import FileStat, FileType, MountMode, PathSpec
 from mirage.utils.errors import MISS_ERRORS, ReadOnlyError, eisdir
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES, make_resolve_glob
@@ -914,14 +915,237 @@ def with_write_guards(fn: OperationFn) -> OperationFn:
     ``CommandIO`` (the google ``rm`` family binds an index-threaded
     unlink): the same chain in the same order, judging the call's
     PathSpec positionals. A hidden path answers ENOENT, the flavor of
-    the flat mutation slots.
+    the flat mutation slots. The policy arm rides outermost, as it does
+    on the slot chain.
 
     Args:
         fn (OperationFn): the raw backend write.
     """
     guarded: OperationFn = functools.partial(_mode_call, fn, False, False)
     guarded = functools.partial(_rule_call, guarded)
-    return functools.partial(_guarded_call, guarded, False)
+    guarded = functools.partial(_guarded_call, guarded, False)
+    return functools.partial(_policy_call, _UNBOUND_SCOPE, guarded, "unlink",
+                             True, False)
+
+
+# slot -> (write, first_is_source): whether the op mutates its PathSpec
+# positionals, and whether the leading one is a read-only source (the
+# copy slots), mirroring _MODE_SLOTS' skip_first. The surface is the
+# rule guard's (_RULE_SLOTS); stat/exists and the native find/du slots
+# stay unguarded as presence facts, and readdir/read_stream have their
+# own wrappers below.
+_POLICY_SLOTS: dict[str, tuple[bool, bool]] = {
+    "read_bytes": (False, False),
+    "read_range": (False, False),
+    "write": (True, False),
+    "append": (True, False),
+    "create": (True, False),
+    "truncate": (True, False),
+    "set_attrs": (True, False),
+    "mkdir": (True, False),
+    "unlink": (True, False),
+    "rmdir": (True, False),
+    "rm_r": (True, False),
+    "rename": (True, False),
+    "copy": (True, True),
+    "dir_copy": (True, True),
+}
+
+# (policies, mount prefix, session id); the unbound spelling for a
+# registration-time wrap, which reads the live context per call.
+_PolicyScope = tuple[Policies | None, str, str]
+_UNBOUND_SCOPE: _PolicyScope = (None, "", "")
+
+
+def _op_policy_scope() -> _PolicyScope:
+    """The policies to consult for this op call, the mount prefix, and
+    the session the command runs under.
+
+    None is the fast path: no dispatched command bound policies, or
+    none of them override pre_ops, at the cost of two contextvar reads
+    and one O(1) probe per slot call.
+    """
+    policies = get_op_policies()
+    if policies is None or not policies.wants("pre_ops"):
+        return _UNBOUND_SCOPE
+    gate = get_mount_gate()
+    sess = get_current_session()
+    return (policies, gate[0] if gate is not None else "",
+            sess.session_id if sess is not None else "")
+
+
+def _live_policy_scope(scope: _PolicyScope) -> _PolicyScope:
+    """The wrap-time scope when it caught a bound command, else the
+    call-time context.
+
+    The factory applies the guard inside the command's window, so its
+    wrap-time capture also covers a reader the output pipeline drains
+    after dispatch has reset the context (head/tail/wc bind lazy
+    readers), with the prefix and session identity the drained op
+    belongs to; a registration-time wrap (the object-store overrides,
+    the loose-write chain) has no window when applied and reads the
+    live context instead, which its eager handlers are inside.
+
+    Args:
+        scope (_PolicyScope): the wrap-time capture.
+    """
+    if scope[0] is not None:
+        return scope
+    return _op_policy_scope()
+
+
+async def _policy_admit(policies: Policies, prefix: str, session_id: str,
+                        op: str, write: bool, first_source: bool,
+                        args: tuple[Any, ...]) -> None:
+    """Fire pre_ops for each PathSpec positional of one slot call.
+
+    Args:
+        policies (Policies): the bound admission policies.
+        prefix (str): the executing mount's prefix, "" outside one.
+        session_id (str): the session the command runs under.
+        op (str): the slot name, which is the op name policies see.
+        write (bool): whether the op mutates its paths.
+        first_source (bool): whether the leading PathSpec is a
+            read-only source (the copy slots).
+        args: the call's positionals, PathSpecs among them.
+    """
+    first = True
+    for arg in args:
+        if isinstance(arg, PathSpec):
+            mutates = write and not (first and first_source)
+            await pre_ops_gate(policies, op, arg, mutates, prefix, session_id)
+            first = False
+
+
+async def _policy_call(scope: _PolicyScope, fn: OperationFn, op: str,
+                       write: bool, first_source: bool, *args: Any,
+                       **kwargs: Any) -> Any:
+    """Call a backend op after admitting its paths through pre_ops.
+
+    Async, unlike the sync guards it wraps: the hooks are user
+    coroutines. Every slot this wraps returns an awaitable, so the
+    shape is preserved; read_stream and readdir have their own
+    wrappers.
+
+    Args:
+        scope (_PolicyScope): the wrap-time capture.
+        fn (OperationFn): the guarded backend op.
+        op (str): the slot name.
+        write (bool): whether the op mutates its paths.
+        first_source (bool): whether the leading PathSpec is a
+            read-only source.
+        *args: the call's positionals, PathSpecs among them.
+        **kwargs: forwarded untouched.
+    """
+    policies, prefix, session_id = _live_policy_scope(scope)
+    if policies is not None:
+        await _policy_admit(policies, prefix, session_id, op, write,
+                            first_source, args)
+    return await fn(*args, **kwargs)
+
+
+async def _policy_readdir(scope: _PolicyScope, fn: OperationFn, *args: Any,
+                          **kwargs: Any) -> list[str]:
+    """Readdir admitted through pre_ops for the directory it lists.
+
+    Args:
+        scope (_PolicyScope): the wrap-time capture.
+        fn (OperationFn): the guarded backend readdir.
+        *args: the call's positionals; the first PathSpec is the
+            directory being listed.
+        **kwargs: forwarded untouched.
+    """
+    policies, prefix, session_id = _live_policy_scope(scope)
+    if policies is not None:
+        parent_spec = next(a for a in args if isinstance(a, PathSpec))
+        await pre_ops_gate(policies, "readdir", parent_spec, False, prefix,
+                           session_id)
+    entries: list[str] = await fn(*args, **kwargs)
+    return entries
+
+
+def _policy_stream(scope: _PolicyScope, fn: OperationFn, *args: Any,
+                   **kwargs: Any) -> Any:
+    """Read-stream admitted through pre_ops before the first chunk.
+
+    A plain def for the reason ``_guarded_read_stream`` is one: the
+    inner op captures per-call scope eagerly (the read-through cache
+    reads the active manager here), so it is built now, which runs no
+    I/O; the admission itself is async, so it rides the returned
+    generator, before any byte is pulled.
+
+    Args:
+        scope (_PolicyScope): the wrap-time capture.
+        fn (OperationFn): the guarded backend read_stream.
+        *args: the call's positionals; the first PathSpec is the file
+            being read.
+        **kwargs: forwarded untouched.
+    """
+    policies, prefix, session_id = _live_policy_scope(scope)
+    spec = next((a for a in args if isinstance(a, PathSpec)), None)
+    if policies is None or spec is None:
+        return fn(*args, **kwargs)
+    return _policy_stream_drain(policies, prefix, session_id, spec,
+                                fn(*args, **kwargs))
+
+
+async def _policy_stream_drain(
+        policies: Policies, prefix: str, session_id: str, path: PathSpec,
+        source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    """Drain ``source`` once the read is admitted; close it if refused.
+
+    Args:
+        policies (Policies): the bound admission policies.
+        prefix (str): the executing mount's prefix.
+        session_id (str): the session the command runs under.
+        path (PathSpec): the file being read.
+        source (AsyncIterator[bytes]): the not-yet-started inner stream.
+    """
+    try:
+        await pre_ops_gate(policies, "read_stream", path, False, prefix,
+                           session_id)
+    except BaseException:
+        close = getattr(source, "aclose", None)
+        if close is not None:
+            await close()
+        raise
+    async for chunk in source:
+        yield chunk
+
+
+def with_policy_guard(ops: CommandIO) -> CommandIO:
+    """Return ``ops`` whose content and mutation slots admit each
+    PathSpec through the workspace's coded pre_ops hooks.
+
+    The coded-policy arm of the guard chain, applied outside the cache
+    wraps so admission fires before a warm serve, the dispatcher's own
+    order. The surface is the rule guard's plus readdir: content reads
+    (read_bytes, read_stream, read_range), every mutation slot, and
+    the directory a readdir lists. stat/exists and the native find/du
+    slots stay unguarded as presence facts, the mode-000 shape the
+    rule guard already states, so a denied entry still lists and stats
+    while the read of it is what fails. Ops are named by slot; a
+    policy portable across the tiers keys on ``write`` and ``path``.
+    Inert unless a dispatched command bound policies overriding
+    pre_ops (``_op_policy_scope``, with the mount prefix and session
+    identity captured at wrap time so a lazily drained reader still
+    answers as the command that bound it, see ``_live_policy_scope``).
+
+    Args:
+        ops (CommandIO): the backend's IO adapter.
+    """
+    scope = _op_policy_scope()
+    changes: dict[str, Any] = {
+        "readdir": functools.partial(_policy_readdir, scope, ops.readdir),
+        "read_stream": functools.partial(_policy_stream, scope,
+                                         ops.read_stream),
+    }
+    for slot, (write, first_source) in _POLICY_SLOTS.items():
+        fn = getattr(ops, slot)
+        if fn is not None:
+            changes[slot] = functools.partial(_policy_call, scope, fn, slot,
+                                              write, first_source)
+    return replace(ops, **changes)
 
 
 async def _is_implicit_dir(ops: CommandIO, accessor: Accessor, path: PathSpec,

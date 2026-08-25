@@ -17,11 +17,13 @@ import {
   effectivePathMode,
   getAdmission,
   getCurrentSession,
+  getOpPolicies,
   hiddenPathsIntersect,
   mountGateFor,
   pathAllowed,
   readonlyBelow,
 } from '../../../context/session_context.ts'
+import { preOpsGate, type Policies } from '../../../policy/policies.ts'
 import { moveReveals } from '../../../utils/hidden.ts'
 import { removeRemnants, visibleBelow, type RemnantChannel } from '../../../utils/remnants.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
@@ -728,22 +730,246 @@ export function withPathGuards<A extends Accessor = Accessor>(ops: CommandIO<A>)
   return withHiddenGuard(withRuleGuard(withModeGuard(ops)))
 }
 
+/** The policies to consult for one slot call, with the mount prefix
+ * and session identity the call belongs to. */
+interface OpPolicyScope {
+  policies: Policies
+  /** The wrap site's mount prefix; null resolves per path at admit
+   * time (a registration-time wrap has no one mount). */
+  prefix: string | null
+  sessionId: string
+}
+
+/**
+ * The scope to consult for this op call: null is the fast path (no
+ * dispatched command bound policies, or none of them override preOps).
+ */
+function opPolicyScope(prefix: string | null): OpPolicyScope | null {
+  const policies = getOpPolicies()
+  if (!policies?.wants('preOps')) return null
+  return { policies, prefix, sessionId: getCurrentSession()?.sessionId ?? '' }
+}
+
+/**
+ * The wrap-time scope when it caught a bound command, else the
+ * call-time context.
+ *
+ * The factory applies the guard inside the command's window, so its
+ * wrap-time capture also covers a reader the output pipeline drains
+ * after dispatch has reset the context (head/tail/wc bind lazy
+ * readers), with the prefix and session identity the drained op
+ * belongs to; a registration-time wrap (the object-store overrides,
+ * the loose-write chain) has no window when applied and reads the
+ * live context instead, which its eager handlers are inside.
+ */
+function livePolicyScope(scope: OpPolicyScope | null): OpPolicyScope | null {
+  return scope ?? opPolicyScope(null)
+}
+
+/** Fire preOps for one PathSpec of one slot call; the op is the slot
+ * name in its shared snake spelling, so a policy portable across the
+ * languages and tiers sees one vocabulary. */
+async function policyAdmit(
+  scope: OpPolicyScope,
+  op: string,
+  path: PathSpec,
+  write: boolean,
+): Promise<void> {
+  const prefix = scope.prefix ?? mountGateFor(path.virtual)?.[0] ?? ''
+  await preOpsGate(scope.policies, op, path, write, prefix, scope.sessionId)
+}
+
+/** Drain `source` once the read is admitted, before any byte is
+ * pulled; the inner iterable was built eagerly by the caller. */
+async function* policyStream(
+  scope: OpPolicyScope,
+  path: PathSpec,
+  source: AsyncIterable<Uint8Array>,
+): AsyncIterable<Uint8Array> {
+  await policyAdmit(scope, 'read_stream', path, false)
+  yield* source
+}
+
+/**
+ * Return `ops` whose content and mutation slots admit each PathSpec
+ * through the workspace's coded preOps hooks.
+ *
+ * The coded-policy arm of the guard chain, applied outside the cache
+ * wraps so admission fires before a warm serve, the dispatcher's own
+ * order. The surface is the rule guard's plus readdir: content reads
+ * (readBytes, readStream, readRange), every mutation slot, and the
+ * directory a readdir lists. stat/exists and the native find/du slots
+ * stay unguarded as presence facts, the mode-000 shape the rule guard
+ * already states, so a denied entry still lists and stats while the
+ * read of it is what fails. Inert unless a dispatched command bound
+ * policies overriding preOps (`opPolicyScope`, with the mount prefix
+ * and session identity captured at wrap time so a lazily drained
+ * reader still answers as the command that bound it, see
+ * `livePolicyScope`; `prefix` arrives from the wrap site because the
+ * fallback mount-gate storage resolves by path, which a drained
+ * reader no longer has a live gate for).
+ */
+export function withPolicyGuard<A extends Accessor = Accessor>(
+  ops: CommandIO<A>,
+  prefix?: string,
+): CommandIO<A> {
+  const scope = opPolicyScope(prefix ?? null)
+  const guarded: CommandIO<A> = {
+    ...ops,
+    readdir: async (accessor, path, index) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'readdir', path, false)
+      return ops.readdir(accessor, path, index)
+    },
+    readBytes: async (accessor, path, index) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'read_bytes', path, false)
+      return ops.readBytes(accessor, path, index)
+    },
+    readStream: (accessor, path, index) => {
+      const p = livePolicyScope(scope)
+      const inner = ops.readStream(accessor, path, index)
+      if (p === null) return inner
+      return policyStream(p, path, inner)
+    },
+  }
+  const rr = ops.readRange
+  if (rr !== undefined) {
+    guarded.readRange = async (accessor, path, index, offset, size) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'read_range', path, false)
+      return rr(accessor, path, index, offset, size)
+    }
+  }
+  const w = ops.write
+  if (w !== undefined) {
+    guarded.write = async (accessor, path, data) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'write', path, true)
+      return w(accessor, path, data)
+    }
+  }
+  const mk = ops.mkdir
+  if (mk !== undefined) {
+    guarded.mkdir = async (accessor, path, parents) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'mkdir', path, true)
+      return mk(accessor, path, parents)
+    }
+  }
+  const ap = ops.append
+  if (ap !== undefined) {
+    guarded.append = async (accessor, path, data) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'append', path, true)
+      return ap(accessor, path, data)
+    }
+  }
+  const cr = ops.create
+  if (cr !== undefined) {
+    guarded.create = async (accessor, path) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'create', path, true)
+      return cr(accessor, path)
+    }
+  }
+  const ul = ops.unlink
+  if (ul !== undefined) {
+    guarded.unlink = async (accessor, path) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'unlink', path, true)
+      return ul(accessor, path)
+    }
+  }
+  const rd = ops.rmdir
+  if (rd !== undefined) {
+    guarded.rmdir = async (accessor, path) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'rmdir', path, true)
+      return rd(accessor, path)
+    }
+  }
+  const rt = ops.rmR
+  if (rt !== undefined) {
+    guarded.rmR = async (accessor, path) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'rm_r', path, true)
+      return rt(accessor, path)
+    }
+  }
+  const tr = ops.truncate
+  if (tr !== undefined) {
+    guarded.truncate = async (accessor, path, length) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'truncate', path, true)
+      return tr(accessor, path, length)
+    }
+  }
+  const sa = ops.setAttrs
+  if (sa !== undefined) {
+    guarded.setAttrs = async (accessor: A, path: PathSpec, ...rest: unknown[]) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) await policyAdmit(p, 'set_attrs', path, true)
+      return sa(accessor, path, ...rest)
+    }
+  }
+  const rn = ops.rename
+  if (rn !== undefined) {
+    guarded.rename = async (accessor, src, dst) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) {
+        await policyAdmit(p, 'rename', src, true)
+        await policyAdmit(p, 'rename', dst, true)
+      }
+      return rn(accessor, src, dst)
+    }
+  }
+  const cp = ops.copy
+  if (cp !== undefined) {
+    guarded.copy = async (accessor, src, dst) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) {
+        await policyAdmit(p, 'copy', src, false)
+        await policyAdmit(p, 'copy', dst, true)
+      }
+      return cp(accessor, src, dst)
+    }
+  }
+  const dc = ops.dirCopy
+  if (dc !== undefined) {
+    guarded.dirCopy = async (accessor, src, dst) => {
+      const p = livePolicyScope(scope)
+      if (p !== null) {
+        await policyAdmit(p, 'dir_copy', src, false)
+        await policyAdmit(p, 'dir_copy', dst, true)
+      }
+      return dc(accessor, src, dst)
+    }
+  }
+  return guarded
+}
+
 /**
  * Guard one bare backend write the way the adapter guards a slot.
  *
  * For a bespoke command wired from loose functions rather than a
  * `CommandIO` (the google `rm` family binds an index-threaded unlink):
  * the same chain in the same order, judging the written path. A hidden
- * path answers ENOENT, the flavor of the flat mutation slots.
+ * path answers ENOENT, the flavor of the flat mutation slots. The
+ * policy arm rides outermost, as it does on the slot chain, and reads
+ * the live context (this wrap happens at registration, its handlers
+ * are eager).
  */
 export function withWriteGuards<A extends Accessor, R>(
-  fn: (accessor: A, path: PathSpec, index?: IndexCacheStore) => R,
-): (accessor: A, path: PathSpec, index?: IndexCacheStore) => R {
-  return (accessor, path, index) => {
+  fn: (accessor: A, path: PathSpec, index?: IndexCacheStore) => Promise<R> | R,
+): (accessor: A, path: PathSpec, index?: IndexCacheStore) => Promise<R> {
+  return async (accessor, path, index) => {
+    const p = opPolicyScope(null)
+    if (p !== null) await policyAdmit(p, 'unlink', path, true)
     refuseHidden(path, false)
     ruleCheck(path)
     modeCheck(path)
-    return fn(accessor, path, index)
+    return await fn(accessor, path, index)
   }
 }
 
