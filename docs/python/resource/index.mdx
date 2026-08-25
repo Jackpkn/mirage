@@ -1,68 +1,18 @@
 ---
-title: Resources
+title: Overview
 icon: grid-2
 description: Python resources you can mount in a Mirage workspace.
 ---
 
-Each page describes a Python-supported resource: what config it needs, what the mounted tree looks like, and any resource-specific behavior. Setup docs (credentials, OAuth, etc.) live under [Setup](/home/setup/s3), these pages focus on mounted layout and behavior.
+Resources are the storage systems and services you mount into a Mirage
+workspace. Open **Providers** in the sidebar to browse every Python-supported
+backend by category.
 
-## Infrastructure
+Each provider page covers the required configuration, mounted tree, and
+resource-specific behavior. Use the [Resource Matrix](/home/resource-matrix)
+to compare Python and TypeScript availability, watch support, and mount
+capabilities at a glance.
 
-- [Disk](/python/resource/disk)
-- [RAM](/python/resource/ram)
-- [Redis](/python/resource/redis)
-- [SSH](/python/resource/ssh)
-
-## Object Storage
-
-- [S3](/python/resource/s3)
-- [R2](/python/resource/r2)
-- [GCS](/python/resource/gcs)
-- [OCI](/python/resource/oci)
-- [Supabase](/python/resource/supabase)
-
-## Cloud Files
-
-- [Databricks Volume](/python/resource/databricks_volume)
-
-## Google Workspace
-
-- [Gmail](/python/resource/gmail)
-- [Google Drive](/python/resource/gdrive)
-- [Google Docs](/python/resource/gdocs)
-- [Google Sheets](/python/resource/gsheets)
-- [Google Slides](/python/resource/gslides)
-
-## Code & DevOps
-
-- [GitHub](/python/resource/github)
-- [Linear](/python/resource/linear)
-- [Langfuse](/python/resource/langfuse)
-
-## Messaging
-
-- [Slack](/python/resource/slack)
-- [Discord](/python/resource/discord)
-- [Email](/python/resource/email)
-
-## Database
-
-- [MongoDB](/python/resource/mongodb)
-- [GridFS](/python/resource/gridfs)
-- [Postgres](/python/resource/postgres)
-- [LanceDB](/python/resource/lancedb)
-- [Qdrant](/python/resource/qdrant)
-
-## Knowledge
-
-- [Dify](/python/resource/dify)
-- [Chroma](/python/resource/chroma)
-
-## Notes
-
-- [Notion](/python/resource/notion)
-
-## Others
-
-- [Trello](/python/resource/trello)
-- [Adding a New Resource](/python/resource/new)
+Provider setup spans local filesystems, object stores, cloud drives,
+collaboration tools, databases, vector stores, and agent memory systems. To
+implement another backend, see [Adding a New Resource](/python/resource/new).
