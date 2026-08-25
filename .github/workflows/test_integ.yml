@@ -1047,14 +1047,16 @@ jobs:
     needs: [changes, typescript-build]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.nfs == 'true') }}
     runs-on: macos-15
-    # Not in the gate yet. This is the first job in the repo to build
-    # either NFS extension -- nothing has ever run cargo in CI. Both
-    # batteries are verified on a developer Mac, where each prints the
-    # same 27 keys and check_json.py accepts them against
-    # integ/nfs/truth_nfs.json, and the Python one is green on a hosted
-    # runner too: a loopback NFS mount needs no privileges there either.
-    # Promote by adding integ-nfs-macos to gate.needs once the
-    # TypeScript half has had a green run as well.
+    # In the gate. This is the only job in the repo that runs cargo, and
+    # it builds both NFS extensions from source: the whole backend is
+    # unverified without it. Both batteries print the same 27 keys and
+    # check_json.py accepts them against integ/nfs/truth_nfs.json, on a
+    # developer Mac and on a hosted runner alike -- a loopback NFS mount
+    # needs no privileges on either.
+    #
+    # It skips on a PR that touches no nfs path, and the gate reads a
+    # skipped job as neither failure nor cancellation, so promoting it
+    # costs unrelated PRs nothing.
     #
     # macOS rather than linux because a loopback NFS mount needs no
     # privileges there: linux reserves mount(2) for root, and neither
@@ -1582,7 +1584,7 @@ jobs:
   gate:
     name: integ-gate
     runs-on: ubuntu-latest
-    needs: [changes, typescript-build, integ, integ-ts, integ-shared-py, integ-shared-ts, integ-shared-parity, integ-database, integ-data, integ-fuse, integ-observability, integ-facets, integ-runtime]
+    needs: [changes, typescript-build, integ, integ-ts, integ-shared-py, integ-shared-ts, integ-shared-parity, integ-database, integ-data, integ-fuse, integ-nfs-macos, integ-observability, integ-facets, integ-runtime]
     if: always()
     steps:
       - name: Check required jobs
