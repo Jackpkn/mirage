@@ -17,6 +17,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { getCurrentSession } from '@struktoai/mirage-core/context/session_context'
+import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import { describe, expect, it } from 'vitest'
 import { EINVAL, ENOENT } from '../fuse/errors.ts'
 import { ESTALE_WIRE, RenameIntoSelfError, StaleHandleError } from './errors.ts'
@@ -439,5 +441,51 @@ describe('loadAddon', () => {
       if (previous === undefined) delete process.env.MIRAGE_NFS_ADDON
       else process.env.MIRAGE_NFS_ADDON = previous
     }
+  })
+})
+
+describe('buildDelegate session binding', () => {
+  it('lands every call on the ops facade with the session in force', async () => {
+    // Not "the wrapper sets a store" -- that a call arriving from the
+    // kernel reaches the adapter under the session, which is what makes
+    // the grants apply.
+    const seen: (Session | null)[] = []
+    const session = { sessionId: 'agent' } as unknown as Session
+    const delegate = buildDelegate(
+      target({
+        lookup: () => {
+          seen.push(getCurrentSession())
+          return Promise.resolve(7)
+        },
+      }),
+      session,
+    )
+
+    await delegate.lookup({ dirId: 1, name: 'a.txt' })
+    expect(seen).toEqual([session])
+  })
+
+  it('leaves the delegate unbound when no session is given', async () => {
+    const seen: (Session | null)[] = []
+    const delegate = buildDelegate(
+      target({
+        lookup: () => {
+          seen.push(getCurrentSession())
+          return Promise.resolve(7)
+        },
+      }),
+    )
+
+    await delegate.lookup({ dirId: 1, name: 'a.txt' })
+    expect(seen).toEqual([null])
+  })
+
+  it('still answers the reply through the wrap', async () => {
+    // runWithSession returns the promise, unlike the FUSE callback
+    // table's void wrap; a delegate that swallowed it would answer
+    // every op with undefined.
+    const session = { sessionId: 'agent' } as unknown as Session
+    const delegate = buildDelegate(target(), session)
+    await expect(delegate.lookup({ dirId: 1, name: 'a.txt' })).resolves.toEqual({ fileid: 7 })
   })
 })

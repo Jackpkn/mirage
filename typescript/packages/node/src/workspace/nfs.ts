@@ -14,6 +14,7 @@
 
 import { rmdirSync } from 'node:fs'
 
+import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
 import { NFSConfig } from '../nfs/config.ts'
@@ -33,6 +34,7 @@ export interface NFSFlushTarget {
 export type StartFn = (
   ws: Workspace,
   config: NFSConfig,
+  session?: Session | null,
 ) => Promise<[NFSFlushTarget, NFSServerHandle]>
 export type MountFn = (
   mountpoint: string,
@@ -60,10 +62,13 @@ export interface NFSManagerOptions {
  *
  * The twin of python's `workspace/nfs.py`, with the same seam difference
  * the FUSE managers already carry: python mounts the ops facade, node
- * mounts the workspace itself. Session-bound mounts (the FUSE manager's
- * `session`) are not offered yet: one server serves one delegate, so a
- * per-session narrowing needs a second server, which is a deliberate
- * follow-up.
+ * mounts the workspace itself.
+ *
+ * One manager is one session's view, because one server serves one
+ * delegate. A session-scoped mount therefore does not narrow this
+ * server; it gets a second one, which is what `KernelMounts` keeps a
+ * manager per session for. The session is fixed by the first mount for
+ * the same reason the config is.
  */
 export class NFSManager {
   private readonly startFn: StartFn
@@ -72,6 +77,7 @@ export class NFSManager {
   private fs: NFSFlushTarget | null = null
   private handle: NFSServerHandle | null = null
   private config: NFSConfig | null = null
+  private session: Session | null = null
   private readonly mounts = new Map<string, [string, boolean]>()
 
   constructor(options: NFSManagerOptions = {}) {
@@ -98,6 +104,7 @@ export class NFSManager {
     prefix = '/',
     mountpoint?: string,
     config?: NFSConfig,
+    session?: Session | null,
   ): Promise<string> {
     // Collision answers from the registry BEFORE the path is touched: a
     // colliding mountpoint may be a live mount served by this very loop,
@@ -113,13 +120,20 @@ export class NFSManager {
         }
       }
     }
+    if (this.handle !== null && (session ?? null) !== this.session) {
+      throw new Error(
+        'this nfs server is bound to a different session; a session-scoped ' +
+          'mount needs its own manager',
+      )
+    }
     const [resolved, owns] = prepareMountpoint(mountpoint)
     // One server backs every prefix, so the first mount fixes the knobs
     // -- the mount options included, since a second mountpoint into the
     // same server must not answer to different timeouts than the first.
     this.config ??= config ?? new NFSConfig()
     if (this.handle === null) {
-      const [fs, handle] = await this.startFn(ws, this.config)
+      this.session = session ?? null
+      const [fs, handle] = await this.startFn(ws, this.config, this.session)
       this.fs = fs
       this.handle = handle
     }
@@ -166,6 +180,7 @@ export class NFSManager {
     this.fs = null
     this.handle = null
     this.config = null
+    this.session = null
   }
 
   /** Remove a mirage-owned, now-empty mountpoint directory. */

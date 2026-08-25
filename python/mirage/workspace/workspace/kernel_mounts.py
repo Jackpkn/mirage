@@ -50,7 +50,10 @@ class KernelMounts:
         self._mountpoints: dict[str, str] = {}
         self._managers: dict[str, FuseManager] = {}
         self._backends: dict[str, MountBackend] = {}
-        self._nfs: NFSManager | None = None
+        # One manager per session, keyed by session id (None is the
+        # unscoped one). A server serves one delegate, so a scoped mount
+        # cannot narrow an existing server -- it needs its own.
+        self._nfs: dict[str | None, NFSManager] = {}
         self._deferred: list[tuple[str, str | None]] = []
 
     def add(self,
@@ -140,34 +143,50 @@ class KernelMounts:
     async def add_nfs(self,
                       prefix: str,
                       mountpoint: str | None = None,
-                      config: NFSConfig | None = None) -> str:
+                      config: NFSConfig | None = None,
+                      session_id: str | None = None) -> str:
         """Expose ``prefix`` over nfs and return its mountpoint.
+
+        A session-scoped mount runs every op under that session's mount
+        grants, the same narrowing ``add`` gives a fuse mount. It costs
+        a second server rather than a second mount, because one server
+        serves one delegate; managers are kept per session so a second
+        scoped prefix reuses the one its session already has.
 
         Args:
             prefix (str): the virtual prefix to expose.
             mountpoint (str | None): where to mount; None picks a path.
             config (NFSConfig | None): server knobs. One server backs
-                every prefix, so the first mount fixes them and a later
-                config is ignored.
+                every prefix of a session, so the first mount fixes them
+                and a later config is ignored.
+            session_id (str | None): session whose grants scope the ops.
 
         Returns:
             str: the mountpoint now serving the prefix.
 
         Raises:
             ValueError: the mountpoint is already serving another prefix.
+            KeyError: no such session.
         """
+        key = prefix if session_id is None else f"{prefix}@{session_id}"
+        session = (self._sessions.get(session_id)
+                   if session_id is not None else None)
         if mountpoint is not None:
-            self._register(prefix, mountpoint)
-        if self._nfs is None:
-            self._nfs = NFSManager()
+            self._register(key, mountpoint)
+        manager = self._nfs.get(session_id)
+        if manager is None:
+            manager = NFSManager()
+            self._nfs[session_id] = manager
         try:
-            resolved = await self._nfs.setup(self._ops, prefix, mountpoint,
-                                             config)
+            resolved = await manager.setup(self._ops, prefix, mountpoint,
+                                           config, session)
         except Exception:
-            self._mountpoints.pop(prefix, None)
+            self._mountpoints.pop(key, None)
+            if not manager.mountpoints:
+                self._nfs.pop(session_id, None)
             raise
-        self._register(prefix, resolved)
-        self._backends[prefix] = MountBackend.NFS
+        self._register(key, resolved)
+        self._backends[key] = MountBackend.NFS
         return resolved
 
     def remove(self, prefix: str, session_id: str | None = None) -> None:
@@ -192,17 +211,31 @@ class KernelMounts:
         self._mountpoints.pop(key, None)
         self._backends.pop(key, None)
 
-    async def remove_nfs(self, prefix: str) -> None:
+    async def remove_nfs(self,
+                         prefix: str,
+                         session_id: str | None = None) -> None:
         """Unmount one exposed nfs prefix. Missing prefixes no-op.
+
+        A session's server stops with its last mount: it exists to serve
+        that session's view, so past the view it is a delegate nothing
+        can reach. The unscoped server outlives its mounts on purpose --
+        it is the workspace's own, and a remove-then-add cycle should
+        not cost a restart.
 
         Args:
             prefix (str): the virtual prefix that was exposed.
+            session_id (str | None): the session it was scoped to.
         """
-        if self._nfs is None:
+        manager = self._nfs.get(session_id)
+        if manager is None:
             return
-        await self._nfs.unmount(prefix)
-        self._mountpoints.pop(prefix, None)
-        self._backends.pop(prefix, None)
+        key = prefix if session_id is None else f"{prefix}@{session_id}"
+        await manager.unmount(prefix)
+        self._mountpoints.pop(key, None)
+        self._backends.pop(key, None)
+        if session_id is not None and not manager.mountpoints:
+            await manager.close()
+            self._nfs.pop(session_id, None)
 
     def close(self) -> None:
         """Unmount everything that needs no event loop.
@@ -215,11 +248,14 @@ class KernelMounts:
         for manager in list(self._managers.values()):
             manager.unmount()
         self._managers.clear()
-        if self._nfs is not None and self._nfs.mountpoints:
+        live = [
+            point for manager in self._nfs.values()
+            for point in manager.mountpoints.values()
+        ]
+        if live:
             logger.warning(
                 "nfs mounts still live at close: %s; they are unmounted by "
-                "the async close, not this one",
-                sorted(self._nfs.mountpoints.values()))
+                "the async close, not this one", sorted(live))
             for key in list(self._mountpoints):
                 if self._backends.get(key) is not MountBackend.NFS:
                     self._mountpoints.pop(key, None)
@@ -235,14 +271,15 @@ class KernelMounts:
     async def close_nfs(self) -> None:
         """Unmount every nfs prefix and stop the server. Idempotent."""
         self._deferred.clear()
-        if self._nfs is None:
+        if not self._nfs:
             return
-        await self._nfs.close()
+        for manager in list(self._nfs.values()):
+            await manager.close()
         for key, backend in list(self._backends.items()):
             if backend is MountBackend.NFS:
                 self._mountpoints.pop(key, None)
                 self._backends.pop(key, None)
-        self._nfs = None
+        self._nfs.clear()
 
     @property
     def mountpoint(self) -> str | None:
@@ -271,7 +308,7 @@ class KernelMounts:
 
     @property
     def nfs_mountpoints(self) -> dict[str, str]:
-        """The nfs mountpoints, keyed by prefix."""
+        """The nfs mountpoints, keyed as they were added."""
         return {
             key: path
             for key, path in self._mountpoints.items()

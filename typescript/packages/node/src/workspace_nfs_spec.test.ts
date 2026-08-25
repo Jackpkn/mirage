@@ -143,14 +143,34 @@ describe('Workspace nfs backend (without a real kernel mount)', () => {
     expect(ws.nfsMountpoints).toEqual({})
   })
 
-  it('refuses a session-bound nfs mount', async () => {
+  it('gives a session-scoped mount its own server', async () => {
+    // One server serves one delegate, so narrowing to a session cannot
+    // reuse the unscoped one: the two views need two servers.
     const ws = nfsWorkspace('/tmp/pinned-data')
     await ws.nfsReady()
-    const session = ws.createSession('bound')
+    ws.createSession('agent')
 
-    await expect(
-      ws.addFuseMount('/data', undefined, session.sessionId, MountBackend.NFS),
-    ).rejects.toThrow(/session-bound/)
+    await ws.addNfsMount('/data', '/tmp/agent-data', undefined, 'agent')
+
+    expect(mocks.startServer).toHaveBeenCalledTimes(2)
+    expect(mocks.startServer.mock.calls[0]?.[2] ?? null).toBeNull()
+    expect(mocks.startServer.mock.calls[1]?.[2]).toBeDefined()
+    expect(Object.keys(ws.nfsMountpoints).sort()).toEqual(['/data', '/data@agent'])
+
+    await ws.close()
+  })
+
+  it('routes a session-scoped mount through addFuseMount too', async () => {
+    // The constructor's own route carries a backend, so it has to reach
+    // the same place the explicit call does.
+    const ws = nfsWorkspace('/tmp/pinned-data')
+    await ws.nfsReady()
+    ws.createSession('agent')
+
+    await ws.addFuseMount('/data', '/tmp/agent-data', 'agent', MountBackend.NFS)
+
+    expect(mocks.startServer).toHaveBeenCalledTimes(2)
+    expect(ws.nfsMountpoints['/data@agent']).toBe('/tmp/agent-data')
 
     await ws.close()
   })

@@ -341,6 +341,40 @@ async function runWorkspaceBackend(result: Result): Promise<void> {
     Object.keys(ws.nfsMountpoints).length === 0 && gone(point);
 }
 
+/**
+ * A scoped mount serves its session's grants, not the workspace's.
+ *
+ * The narrowing has to survive the whole round trip -- kernel client,
+ * server, adapter, op door -- so it is asserted through a real mount
+ * rather than at the adapter, where a passing test would only prove the
+ * wrapper was called.
+ */
+async function runSessionScope(result: Result): Promise<void> {
+  const ws = new Workspace({ "/data": new RAMResource() }, { mode: MountMode.WRITE });
+  await ws.execute("echo seed > /data/a.txt");
+  ws.createSession("agent", { mounts: { "/data": "read" } });
+  let openPoint = "";
+  try {
+    openPoint = await ws.addNfsMount("/data", undefined, EPHEMERAL);
+    MOUNTPOINTS.add(openPoint);
+    const scoped = await ws.addNfsMount("/data", undefined, EPHEMERAL, "agent");
+    MOUNTPOINTS.add(scoped);
+    result.session_distinct_mounts = scoped !== openPoint;
+
+    let out: string;
+    [, out] = await sh("cat", `${scoped}/a.txt`);
+    result.session_read = out;
+    let code: number;
+    [code] = await sh("sh", "-c", `echo blocked > ${scoped}/new.txt 2>/dev/null`);
+    result.session_write_refused = code !== 0;
+    [code] = await sh("sh", "-c", `echo allowed > ${openPoint}/ok.txt`);
+    result.unscoped_write_ok = code === 0;
+  } finally {
+    await ws.close();
+  }
+  result.session_cleaned = Object.keys(ws.nfsMountpoints).length === 0;
+}
+
 /** Every scenario, in order. */
 async function runAll(result: Result): Promise<void> {
   try {
@@ -352,6 +386,7 @@ async function runAll(result: Result): Promise<void> {
 
   await runBattery(result);
   await runWorkspaceBackend(result);
+  await runSessionScope(result);
   await runSizeless(result);
   await runBigfile(result);
 }

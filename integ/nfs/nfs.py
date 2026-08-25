@@ -357,6 +357,40 @@ async def run_workspace_backend(result: dict[str, object]) -> None:
                                            and gone(point))
 
 
+async def run_session_scope(result: dict[str, object]) -> None:
+    """A scoped mount serves its session's grants, not the workspace's.
+
+    The narrowing has to survive the whole round trip -- kernel client,
+    server, adapter, op door -- so it is asserted through a real mount
+    rather than at the adapter, where a passing test would only prove
+    the wrapper was called.
+
+    Args:
+        result (dict): probe results.
+    """
+    ws = Workspace({"/data": RAMResource()}, mode=MountMode.WRITE)
+    await ws.execute("echo seed > /data/a.txt")
+    ws.create_session("agent", mounts={"/data": "read"})
+    open_point = ""
+    try:
+        open_point = await ws.add_nfs_mount("/data", None, EPHEMERAL)
+        MOUNTPOINTS.add(open_point)
+        scoped = await ws.add_nfs_mount("/data", None, EPHEMERAL, "agent")
+        MOUNTPOINTS.add(scoped)
+        result["session_distinct_mounts"] = scoped != open_point
+
+        _, out = await sh("cat", f"{scoped}/a.txt")
+        result["session_read"] = out
+        code, _ = await sh("sh", "-c",
+                           f"echo blocked > {scoped}/new.txt 2>/dev/null")
+        result["session_write_refused"] = code != 0
+        code, _ = await sh("sh", "-c", f"echo allowed > {open_point}/ok.txt")
+        result["unscoped_write_ok"] = code == 0
+    finally:
+        await ws.close()
+    result["session_cleaned"] = ws.nfs_mountpoints == {}
+
+
 async def run_all(result: dict[str, object]) -> None:
     """Every scenario, in order.
 
@@ -371,6 +405,7 @@ async def run_all(result: dict[str, object]) -> None:
 
     await run_battery(result)
     await run_workspace_backend(result)
+    await run_session_scope(result)
     await run_sizeless(result)
     await run_bigfile(result)
 

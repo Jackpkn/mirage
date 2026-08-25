@@ -485,9 +485,23 @@ the adapter, where they are unit-testable without a mount.
   (`127.0.0.1:/` here, `:/docs` there) — the macOS one-FUSE-mount-per-process
   limit dissolved. That is why `NFSManager` (`workspace/nfs.py`,
   `workspace/nfs.ts`) owns the server rather than the mount: the first mount
-  starts it and fixes its config, every later mount reuses both. Session-bound
-  mounts are what that costs, since one server serves one delegate, so a
-  `session_id` is refused loudly rather than silently unscoped.
+  starts it and fixes its config, every later mount reuses both.
+- **A session-scoped mount gets its own server**, for the same reason: one
+  server serves one delegate, so narrowing to a session cannot reuse the
+  unscoped one. `KernelMounts` keeps a manager per session id, so a second
+  scoped prefix of the same session reuses that session's server, and its last
+  unmount stops it — the unscoped server outlives its mounts on purpose,
+  because it is the workspace's own. The scoping itself wraps the *entry
+  points* the server calls (`SessionBoundNFS`, `bindSession`), never the op
+  call sites inside the adapter: an adapter that binds sixteen of seventeen
+  call sites still serves the seventeenth with the workspace's full reach, and
+  nothing at the missing call site looks wrong. `tests/nfs/test_session.py`
+  fails if the adapter grows a method the bound list does not name.
+- **Python's sync `KernelMounts.add` refuses `nfs`; TypeScript's async one
+  routes it.** Not a divergence to fix: python's seam is synchronous and this
+  server needs a running loop, so the only honest answer there is to name
+  `add_nfs_mount`. TypeScript's `add` is already async, so it forwards, and
+  its constructor route reaches the same place.
 - **The self-touch rule reaches Python here.** Under FUSE, python is immune
   because libfuse runs its loop on a thread; under NFS the server is served by
   the workspace's loop in *both* languages, so a synchronous stat of your own

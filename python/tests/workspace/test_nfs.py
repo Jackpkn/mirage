@@ -48,12 +48,14 @@ class Recorder:
         self.handle = FakeHandle()
         self.fs = FakeFS()
         self.starts: list[NFSConfig] = []
+        self.sessions: list[object] = []
         self.mounts: list[tuple[str, int, str]] = []
         self.mount_configs: list[NFSConfig | None] = []
         self.unmounts: list[str] = []
 
-    async def start(self, ops, config):
+    async def start(self, ops, config, session=None):
         self.starts.append(config)
+        self.sessions.append(session)
         return self.fs, self.handle
 
     async def mount(self, mountpoint: str, port: int, export: str,
@@ -192,3 +194,32 @@ def test_the_mount_options_come_from_the_server_config(tmp_path):
     asyncio.run(manager.setup(None, "/", str(tmp_path / "a"), config))
     asyncio.run(manager.setup(None, "/docs", str(tmp_path / "b")))
     assert rec.mount_configs == [config, config]
+
+
+def test_the_session_is_handed_to_the_server(tmp_path):
+    # One server serves one delegate, so the scoping happens where the
+    # server is started, not per mount.
+    manager, rec = make()
+    session = object()
+    asyncio.run(manager.setup(None, "/", str(tmp_path / "a"), None, session))
+    assert rec.sessions == [session]
+
+
+def test_a_second_session_on_one_server_is_refused(tmp_path):
+    # Silently serving the first session's view under the second's name
+    # is the failure this prevents.
+    manager, _ = make()
+    asyncio.run(manager.setup(None, "/", str(tmp_path / "a"), None, object()))
+    with pytest.raises(ValueError, match="different session"):
+        asyncio.run(
+            manager.setup(None, "/docs", str(tmp_path / "b"), None, object()))
+
+
+def test_the_same_session_reuses_the_server(tmp_path):
+    manager, rec = make()
+    session = object()
+    asyncio.run(manager.setup(None, "/", str(tmp_path / "a"), None, session))
+    asyncio.run(
+        manager.setup(None, "/docs", str(tmp_path / "b"), None, session))
+    assert len(rec.starts) == 1
+    assert len(manager.mountpoints) == 2

@@ -17,12 +17,14 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from mirage.nfs.config import NFSConfig
-from mirage.nfs.fs import MirageNFS
 from mirage.nfs.mount import (prepare_mountpoint, run_mount, run_umount,
                               start_server)
+from mirage.nfs.session import NFSDelegate
 from mirage.ops import Ops
+from mirage.workspace.session.session import Session
 
-StartFn = Callable[[Ops, NFSConfig], Awaitable[tuple[MirageNFS, Any]]]
+StartFn = Callable[[Ops, NFSConfig, "Session | None"],
+                   Awaitable[tuple[NFSDelegate, Any]]]
 MountFn = Callable[[str, int, str, NFSConfig | None], Awaitable[None]]
 UnmountFn = Callable[[str], Awaitable[None]]
 
@@ -38,11 +40,13 @@ class NFSManager:
     later mount reuses it.
 
     Everything is async and thread-free, so this manager is only
-    reachable from an async context; the sync ``KernelMounts.add``
-    seam grows an async route in the integration PR. Session-bound
-    mounts (the FUSE manager's ``session=``) are not offered yet: one
-    server serves one delegate, so a per-session narrowing needs a
-    second server, which is a deliberate follow-up.
+    reachable from an async context.
+
+    One manager is one session's view, because one server serves one
+    delegate. A session-scoped mount therefore does not narrow this
+    server; it gets a second one, which is what ``KernelMounts`` keeps
+    a manager per session for. The session is fixed by the first mount
+    for the same reason the config is.
 
     Args:
         start_fn (StartFn): starts the server; injectable for tests.
@@ -57,7 +61,8 @@ class NFSManager:
         self._start = start_fn
         self._mount = mount_fn
         self._unmount = unmount_fn
-        self._fs: MirageNFS | None = None
+        self._fs: NFSDelegate | None = None
+        self._session: Session | None = None
         self._handle: Any | None = None
         self._config: NFSConfig | None = None
         self._mounts: dict[str, tuple[str, bool]] = {}
@@ -71,11 +76,15 @@ class NFSManager:
                     ops: Ops,
                     prefix: str = "/",
                     mountpoint: str | None = None,
-                    config: NFSConfig | None = None) -> str:
+                    config: NFSConfig | None = None,
+                    session: Session | None = None) -> str:
         """Expose ``prefix`` at a kernel mountpoint and return its path.
 
-        The first call starts the server and fixes its config; later
-        calls reuse both, so ``config`` is honored only once.
+        The first call starts the server and fixes its config and its
+        session; later calls reuse all three, so ``config`` is honored
+        only once and a different ``session`` is refused rather than
+        quietly ignored -- one server serves one delegate, and a second
+        session's mounts belong to a second manager.
 
         Args:
             ops (Ops): the op facade to serve.
@@ -83,12 +92,15 @@ class NFSManager:
             mountpoint (str | None): where to mount; None picks a
                 temporary directory mirage owns.
             config (NFSConfig | None): server knobs, first call only.
+            session (Session | None): scope every op to this session's
+                mount grants, first call only.
 
         Returns:
             str: the mountpoint now serving the prefix.
 
         Raises:
-            ValueError: the mountpoint already serves another prefix.
+            ValueError: the mountpoint already serves another prefix, or
+                a live server is bound to a different session.
         """
         # Collision answers from the registry BEFORE the path is
         # touched: a colliding mountpoint may be a live mount served by
@@ -100,10 +112,16 @@ class NFSManager:
                     raise ValueError(
                         f"nfs mountpoint {mountpoint!r} already serves "
                         f"{other_prefix!r}")
+        if self._handle is not None and session is not self._session:
+            raise ValueError(
+                "this nfs server is bound to a different session; a "
+                "session-scoped mount needs its own manager")
         resolved, owns = prepare_mountpoint(mountpoint)
         if self._handle is None:
             self._config = config or NFSConfig()
-            self._fs, self._handle = await self._start(ops, self._config)
+            self._session = session
+            self._fs, self._handle = await self._start(ops, self._config,
+                                                       session)
         export = ("/" if prefix.strip("/") == "" else "/" + prefix.strip("/"))
         try:
             await self._mount(resolved, self._handle.port(), export,
@@ -144,6 +162,7 @@ class NFSManager:
         self._fs = None
         self._handle = None
         self._config = None
+        self._session = None
 
     def _discard_mountpoint(self, path: str, owns: bool) -> None:
         """Remove a mirage-owned, now-empty mountpoint directory.

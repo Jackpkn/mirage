@@ -21,6 +21,7 @@ import { MountMode } from '@struktoai/mirage-core/types'
 import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import { NFSConfig } from '../nfs/config.ts'
 import type * as MountModule from '../nfs/mount.ts'
 import type { NFSServerHandle } from '../nfs/mount.ts'
@@ -69,9 +70,15 @@ class Recorder {
   readonly mounts: [string, number, string][] = []
   readonly unmounts: string[] = []
   readonly mountConfigs: NFSConfig[] = []
+  readonly sessions: (Session | null)[] = []
 
-  start = (_ws: CoreWorkspace, config: NFSConfig): Promise<[FakeFS, FakeHandle]> => {
+  start = (
+    _ws: CoreWorkspace,
+    config: NFSConfig,
+    session?: Session | null,
+  ): Promise<[FakeFS, FakeHandle]> => {
     this.starts.push(config)
+    this.sessions.push(session ?? null)
     return Promise.resolve([this.fs, this.handle])
   }
 
@@ -263,5 +270,39 @@ describe('NFSManager', () => {
     await manager.setup(target, '/', '/tmp/mirage-nfs-a', config)
     await manager.setup(target, '/docs', '/tmp/mirage-nfs-b')
     expect(rec.mountConfigs).toEqual([config, config])
+  })
+
+  it('hands the session to the server, not to each mount', async () => {
+    // One server serves one delegate, so the scoping happens where the
+    // server is started.
+    const [manager, rec] = make()
+    const session = { sessionId: 'agent' } as unknown as Session
+    await manager.setup(workspace(), '/', '/tmp/mirage-nfs-s1', undefined, session)
+    expect(rec.sessions).toEqual([session])
+  })
+
+  it('refuses a second session on one server', async () => {
+    // Silently serving the first session's view under the second's name
+    // is the failure this prevents.
+    const [manager] = make()
+    const target = workspace()
+    await manager.setup(target, '/', '/tmp/mirage-nfs-s2', undefined, {
+      sessionId: 'a',
+    } as unknown as Session)
+    await expect(
+      manager.setup(target, '/docs', '/tmp/mirage-nfs-s3', undefined, {
+        sessionId: 'b',
+      } as unknown as Session),
+    ).rejects.toThrow(/different session/)
+  })
+
+  it('reuses the server for the same session', async () => {
+    const [manager, rec] = make()
+    const session = { sessionId: 'agent' } as unknown as Session
+    const target = workspace()
+    await manager.setup(target, '/', '/tmp/mirage-nfs-s4', undefined, session)
+    await manager.setup(target, '/docs', '/tmp/mirage-nfs-s5', undefined, session)
+    expect(rec.starts).toHaveLength(1)
+    expect(Object.keys(manager.mountpoints)).toHaveLength(2)
   })
 })

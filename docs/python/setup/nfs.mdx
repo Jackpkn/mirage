@@ -140,12 +140,21 @@ buffer); MIRAGE's own command surface sees them after the flush.
 `examples/python/nfs/nfs.py` demonstrates exactly that, along with both
 mounts of one server.
 
-## Not offered yet
+## Session-scoped mounts
 
-Session-bound mounts (the FUSE manager's `session=`) have no nfs
-equivalent: one server serves one delegate, so narrowing per session needs
-a second server. Asking for one raises rather than silently mounting the
-unscoped tree.
+Pass `session_id` and every op served through that mountpoint runs under
+that session's mount grants, exactly as a shell command in it would:
+
+```python
+ws.create_session("agent", mounts={"/data": "read"})
+point = await ws.add_nfs_mount("/data", session_id="agent")
+```
+
+It costs a second server rather than a second mount, because one server
+serves one delegate. Every scoped prefix of the same session shares that
+session's server, and its last unmount stops it; the unscoped server
+outlives its mounts, since it is the workspace's own. Mixing the two on one
+server is refused rather than silently served under the wrong grants.
 
 TypeScript supports the same backend with the same guards
 ([details](/typescript/setup/nfs)).

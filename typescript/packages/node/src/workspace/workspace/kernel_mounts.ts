@@ -42,7 +42,10 @@ export class KernelMounts {
   private readonly mountpointsMap = new Map<string, string>()
   private readonly managers = new Map<string, FuseManager>()
   private readonly backends = new Map<string, MountBackend>()
-  private nfs: NFSManager | null = null
+  // One manager per session, keyed by session id ('' is the unscoped
+  // one). A server serves one delegate, so a scoped mount cannot narrow
+  // an existing server -- it needs its own.
+  private readonly nfs = new Map<string, NFSManager>()
 
   constructor(workspace: Workspace) {
     this.workspace = workspace
@@ -112,21 +115,23 @@ export class KernelMounts {
     sessionId?: string,
     config?: NFSConfig,
   ): Promise<string> {
-    if (sessionId !== undefined) {
-      throw new Error(
-        'the nfs backend serves one delegate per server, so a session-bound mount ' +
-          'needs its own NFSManager',
-      )
+    const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`
+    const session = sessionId !== undefined ? this.workspace.getSession(sessionId) : undefined
+    if (mountpoint !== undefined) this.register(key, mountpoint)
+    const managerKey = sessionId ?? ''
+    let manager = this.nfs.get(managerKey)
+    if (manager === undefined) {
+      manager = new NFSManager()
+      this.nfs.set(managerKey, manager)
     }
-    if (mountpoint !== undefined) this.register(prefix, mountpoint)
-    this.nfs ??= new NFSManager()
     try {
-      const resolved = await this.nfs.setup(this.workspace, prefix, mountpoint, config)
-      this.register(prefix, resolved)
-      this.backends.set(prefix, MountBackend.NFS)
+      const resolved = await manager.setup(this.workspace, prefix, mountpoint, config, session)
+      this.register(key, resolved)
+      this.backends.set(key, MountBackend.NFS)
       return resolved
     } catch (err) {
-      this.mountpointsMap.delete(prefix)
+      this.mountpointsMap.delete(key)
+      if (Object.keys(manager.mountpoints).length === 0) this.nfs.delete(managerKey)
       throw err
     }
   }
@@ -140,7 +145,20 @@ export class KernelMounts {
   async remove(prefix: string, sessionId?: string): Promise<void> {
     const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`
     if (this.backends.get(key) === MountBackend.NFS) {
-      if (this.nfs !== null) await this.nfs.unmount(prefix)
+      const managerKey = sessionId ?? ''
+      const nfs = this.nfs.get(managerKey)
+      if (nfs !== undefined) {
+        await nfs.unmount(prefix)
+        // A session's server exists to serve that session's view; past
+        // the last mount of it, nothing can reach the delegate. The
+        // unscoped server outlives its mounts on purpose -- it is the
+        // workspace's own, and a remove-then-add cycle should not cost
+        // a restart.
+        if (managerKey !== '' && Object.keys(nfs.mountpoints).length === 0) {
+          await nfs.close()
+          this.nfs.delete(managerKey)
+        }
+      }
       this.mountpointsMap.delete(key)
       this.backends.delete(key)
       return
@@ -161,10 +179,8 @@ export class KernelMounts {
   async close(): Promise<void> {
     for (const manager of this.managers.values()) await manager.unmount()
     this.managers.clear()
-    if (this.nfs !== null) {
-      await this.nfs.close()
-      this.nfs = null
-    }
+    for (const nfs of this.nfs.values()) await nfs.close()
+    this.nfs.clear()
     this.mountpointsMap.clear()
     this.backends.clear()
   }

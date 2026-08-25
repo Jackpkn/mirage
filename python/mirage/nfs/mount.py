@@ -23,7 +23,9 @@ from typing import Any
 from mirage.nfs.backend import prepare_nfs_mount
 from mirage.nfs.config import NFSConfig
 from mirage.nfs.fs import MirageNFS
+from mirage.nfs.session import NFSDelegate, scoped
 from mirage.ops import Ops
+from mirage.workspace.session.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -362,23 +364,36 @@ async def run_umount(mountpoint: str,
         "with: sudo %s", mountpoint, recovery)
 
 
-async def start_server(ops: Ops, config: NFSConfig) -> tuple[MirageNFS, Any]:
+async def start_server(
+        ops: Ops,
+        config: NFSConfig,
+        session: Session | None = None) -> tuple[NFSDelegate, Any]:
     """Run the mount guards and start the NFS server for one op tree.
+
+    One server serves one delegate, so the session is fixed here rather
+    than per mount: a second session needs a second server, which is
+    what ``KernelMounts`` gives it.
 
     Args:
         ops (Ops): the op facade to serve.
         config (NFSConfig): host, port and flush knobs.
+        session (Session | None): bind every call to this session's
+            mount grants, exactly as a shell command in it would run.
 
     Returns:
-        tuple[MirageNFS, Any]: the delegate and the server handle,
+        tuple[NFSDelegate, Any]: the delegate and the server handle,
         whose ``port()`` reports the bound port.
     """
     prepare_nfs_mount("nfs", ops, config)
     wheel = load_wheel()
     fs = MirageNFS(ops, config)
+    delegate = scoped(fs, session)
     uid = os.getuid() if hasattr(os, "getuid") else 0
     gid = os.getgid() if hasattr(os, "getgid") else 0
-    handle = wheel.start(fs,
+    handle = wheel.start(delegate,
                          asyncio.get_running_loop(), config.host, config.port,
                          fs.root_dir(), uid, gid, config.idle_flush_seconds)
-    return fs, handle
+    # The manager holds the scoped delegate too: its teardown flush
+    # writes bytes this session's ops accepted, so it runs under the
+    # same grants that accepted them.
+    return delegate, handle

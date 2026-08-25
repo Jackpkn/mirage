@@ -387,32 +387,42 @@ class Workspace:
     async def add_nfs_mount(self,
                             prefix: str,
                             mountpoint: str | None = None,
-                            config: NFSConfig | None = None) -> str:
+                            config: NFSConfig | None = None,
+                            session_id: str | None = None) -> str:
         """Expose ``prefix`` over nfs and return its mountpoint.
 
-        One server backs every nfs mount of a workspace, so a second
-        prefix costs a kernel mount rather than a second server. The
-        server runs on this loop, so never stat the mountpoint from it;
-        read it from a subprocess or with async file APIs.
+        One server backs every unscoped nfs mount of a workspace, so a
+        second prefix costs a kernel mount rather than a second server.
+        A session-scoped mount is the exception and gets its own server,
+        because a server serves one delegate; every scoped prefix of the
+        same session then shares that one. The server runs on this loop,
+        so never stat the mountpoint from it; read it from a subprocess
+        or with async file APIs.
 
         Args:
             prefix (str): the virtual prefix to expose.
             mountpoint (str | None): where to mount; None picks a path.
             config (NFSConfig | None): server knobs, honored by the
                 first mount that starts the server.
+            session_id (str | None): session whose mount grants scope
+                every op served through this mountpoint.
 
         Returns:
             str: the mountpoint now serving the prefix.
         """
-        return await self._kernel_mounts.add_nfs(prefix, mountpoint, config)
+        return await self._kernel_mounts.add_nfs(prefix, mountpoint, config,
+                                                 session_id)
 
-    async def remove_nfs_mount(self, prefix: str) -> None:
+    async def remove_nfs_mount(self,
+                               prefix: str,
+                               session_id: str | None = None) -> None:
         """Unmount one exposed nfs prefix.
 
         Args:
             prefix (str): the virtual prefix that was exposed.
+            session_id (str | None): the session it was scoped to.
         """
-        await self._kernel_mounts.remove_nfs(prefix)
+        await self._kernel_mounts.remove_nfs(prefix, session_id)
 
     async def nfs_ready(self) -> None:
         """Mount every ``backend=nfs`` declaration of this workspace.

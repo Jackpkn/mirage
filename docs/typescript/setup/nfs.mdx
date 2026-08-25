@@ -120,12 +120,21 @@ surface sees the bytes after the flush.
 `examples/typescript/nfs/nfs.ts` demonstrates exactly that, along with both
 mounts of one server.
 
-## Not offered yet
+## Session-scoped mounts
 
-Session-bound mounts (the FUSE manager's `session`) have no nfs equivalent:
-one server serves one delegate, so narrowing per session needs a second
-server. Asking for one throws rather than silently mounting the unscoped
-tree.
+Pass a session id and every op served through that mountpoint runs under
+that session's mount grants, exactly as a shell command in it would:
+
+```typescript
+ws.createSession('agent', { mounts: { '/data': 'read' } })
+const point = await ws.addNfsMount('/data', undefined, undefined, 'agent')
+```
+
+It costs a second server rather than a second mount, because one server
+serves one delegate. Every scoped prefix of the same session shares that
+session's server, and its last unmount stops it; the unscoped server
+outlives its mounts, since it is the workspace's own. Mixing the two on one
+server is refused rather than silently served under the wrong grants.
 
 Python supports the same backend with the same guards
 ([details](/python/setup/nfs)).

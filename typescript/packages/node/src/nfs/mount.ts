@@ -20,6 +20,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
 
+import { runWithSession } from '@struktoai/mirage-core/context/session_context'
+import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
 import { prepareNfsMount } from './backend.ts'
@@ -226,8 +228,34 @@ export function loadAddon(): NFSAddon {
  * catches and answers with an errno reply instead — the one place that
  * translation happens.
  */
-export function buildDelegate(fs: NFSDelegateTarget): NFSDelegate {
-  return {
+/** What the manager needs of a delegate at teardown. */
+export interface NFSFlushable {
+  flushAll: () => Promise<void>
+}
+
+/**
+ * Every entry point under one session's mount grants.
+ *
+ * The wrap is at the boundary the server calls, not at each op inside
+ * the adapter: an adapter that binds twelve of thirteen entry points
+ * still serves the thirteenth with the workspace's full reach, and
+ * nothing about the missing one looks wrong at the call site. Mirrors
+ * how `MirageFS` binds a session-scoped FUSE callback table, and
+ * python's `SessionBoundNFS`.
+ */
+function bindSession(table: NFSDelegate, session: Session): NFSDelegate {
+  const bound: Record<string, unknown> = {}
+  for (const [name, fn] of Object.entries(table)) {
+    const call = fn as (args: never) => Promise<unknown>
+    // The reply is the return value here, unlike the FUSE table's
+    // callbacks, so the promise is returned rather than voided.
+    bound[name] = (args: never) => runWithSession(session, () => call(args))
+  }
+  return bound as unknown as NFSDelegate
+}
+
+export function buildDelegate(fs: NFSDelegateTarget, session?: Session | null): NFSDelegate {
+  const table: NFSDelegate = {
     lookup: async ({ dirId, name }) => idReply(() => fs.lookup(dirId, name)),
     getattr: async ({ id }) => attrsReply(id, () => fs.getattr(id)),
     setSize: async ({ id, size }) => attrsReply(id, () => fs.setSize(id, size ?? null)),
@@ -264,6 +292,7 @@ export function buildDelegate(fs: NFSDelegateTarget): NFSDelegate {
     },
     flushIdle: async () => unitReply(() => fs.flushIdle()),
   }
+  return session === undefined || session === null ? table : bindSession(table, session)
 }
 
 async function idReply(call: () => Promise<number>): Promise<IdReply> {
@@ -573,11 +602,12 @@ export async function runUmount(
 export async function startServer(
   ws: Workspace,
   config: NFSConfig = new NFSConfig(),
-): Promise<[MirageNFS, NFSServerHandle]> {
+  session?: Session | null,
+): Promise<[NFSFlushable, NFSServerHandle]> {
   await prepareNfsMount('nfs', ws, config)
   const addon = loadAddon()
   const fs = new MirageNFS(ws.fs, config)
-  const delegate = buildDelegate(fs)
+  const delegate = buildDelegate(fs, session)
   const uid = process.getuid?.() ?? 0
   const gid = process.getgid?.() ?? 0
   const handle = await addon.start(
@@ -601,5 +631,11 @@ export async function startServer(
     gid,
     config.idleFlushSeconds,
   )
-  return [fs, handle]
+  // The teardown flush writes bytes this session's ops accepted, so it
+  // runs under the same grants that accepted them.
+  const flushable: NFSFlushable =
+    session === undefined || session === null
+      ? fs
+      : { flushAll: () => runWithSession(session, () => fs.flushAll()) }
+  return [flushable, handle]
 }

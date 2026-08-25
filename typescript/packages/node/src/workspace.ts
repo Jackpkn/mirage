@@ -129,17 +129,30 @@ export class Workspace extends CoreWorkspace {
   /**
    * Expose a subtree over nfs and return its mountpoint.
    *
-   * One server backs every nfs mount of a workspace, so a second prefix
-   * costs a kernel mount rather than a second server. That server runs on
-   * this process's event loop, so the self-touch rule applies verbatim:
-   * never stat or read the mountpoint synchronously from here.
+   * One server backs every unscoped nfs mount of a workspace, so a second
+   * prefix costs a kernel mount rather than a second server. A
+   * session-scoped mount is the exception and gets its own server,
+   * because a server serves one delegate; every scoped prefix of the same
+   * session then shares that one. The server runs on this process's event
+   * loop, so the self-touch rule applies verbatim: never stat or read the
+   * mountpoint synchronously from here.
+   *
+   * @param prefix the virtual prefix to expose
+   * @param mountpoint where to mount; undefined picks a path
+   * @param config server knobs, honored by the mount that starts the server
+   * @param sessionId session whose mount grants scope every op served here
    */
-  addNfsMount(prefix: string, mountpoint?: string, config?: NFSConfig): Promise<string> {
-    return this.kernelMounts.addNfs(prefix, mountpoint, undefined, config)
+  addNfsMount(
+    prefix: string,
+    mountpoint?: string,
+    config?: NFSConfig,
+    sessionId?: string,
+  ): Promise<string> {
+    return this.kernelMounts.addNfs(prefix, mountpoint, sessionId, config)
   }
 
-  removeNfsMount(prefix: string): Promise<void> {
-    return this.kernelMounts.remove(prefix)
+  removeNfsMount(prefix: string, sessionId?: string): Promise<void> {
+    return this.kernelMounts.remove(prefix, sessionId)
   }
 
   get fuseMountpoints(): Record<string, string> {
