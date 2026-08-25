@@ -284,18 +284,23 @@ class GraphServer:
 
     def __init__(self, state: FakeGraph) -> None:
         self.state = state
+        # Which drives exist is settled before the first request: the only
+        # callers of `add_drive` are `serve_forever`, reading
+        # MIRAGE_GRAPH_DRIVES, and the test adapter reading its mounts. No
+        # route creates one, so the registry is launch state and `_fresh`
+        # leaves it alone.
+        self.drives: dict[str, FakeGraph] = {state.key: state}
+        self.site_drives: list[str] = [state.key]
         self._fresh()
 
     def _fresh(self) -> None:
-        """Put the server's own state back to what construction gives it.
+        """Put the server's own transient state back to what launch gives it.
 
-        Deliberately does not touch `self.state`: a caller that seeded the
-        drive before handing it over would not expect the constructor to
-        empty it. `reset` resets both, because that is what a caller asking
-        for a reset means.
+        Deliberately touches neither the drives nor their contents: a caller
+        that seeded a drive before handing it over would not expect the
+        constructor to empty it. `reset` empties the drives too, because
+        that is what a caller asking for a reset means.
         """
-        self.drives: dict[str, FakeGraph] = {self.state.key: self.state}
-        self.site_drives: list[str] = [self.state.key]
         self.uploads: dict[str, dict] = {}
         self.monitors: dict[str, dict] = {}
         self.calls: Counter = Counter()
@@ -313,11 +318,13 @@ class GraphServer:
             web.Response: 200 once the launch state is back.
         """
         del request
-        # Both halves: the server holds more than the default drive does --
-        # the drives added since launch, the open upload sessions, the
-        # monitors -- so resetting the drive alone would leave a SharePoint
-        # drive created by the previous run still discoverable.
-        self.state.reset()
+        # Every drive, not just the default: a SharePoint drive named in
+        # MIRAGE_GRAPH_DRIVES holds writes too. Their contents go; the
+        # drives themselves stay, because nothing can recreate one short of
+        # restarting the process, and `FakeGraph.reset` keeps the `key` and
+        # `base` that say which drive this is and where it answers.
+        for drive in self.drives.values():
+            drive.reset()
         self._fresh()
         return web.json_response({"ok": True})
 

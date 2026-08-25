@@ -242,6 +242,9 @@ class HubServer:
 
     def __init__(self, hub: FakeHub) -> None:
         self.hub = hub
+        # Overwritten with the real port once the site is listening. Set
+        # here so `endpoint` reads rather than raises in between.
+        self.port = 0
 
     async def reset(self, request: web.Request) -> web.Response:
         """Drop every write since startup. Mirrors `POST /reset` on the
@@ -256,7 +259,6 @@ class HubServer:
         del request
         self.hub.reset()
         return web.json_response({"ok": True})
-        self.port = 0
 
     @property
     def endpoint(self) -> str:
