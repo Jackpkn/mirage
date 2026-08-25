@@ -166,6 +166,7 @@ def prepare_nfs_mount(value: "str | MountBackend | None",
     check_sizes_nfs(ops, root_prefix)
     if requires_privilege():
         logger.warning(
-            "mounting an nfs export on %s needs elevated privileges; the "
-            "mount command will be run with sudo", sys.platform)
+            "mounting an nfs export on %s needs elevated privileges, and "
+            "mirage does not elevate for you: run this process with them, "
+            "or the mount command fails with EPERM", sys.platform)
     return backend

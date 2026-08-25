@@ -125,6 +125,13 @@ jobs:
               - 'typescript/packages/node/src/nfs/**'
               - 'typescript/packages/node/src/workspace/nfs.ts'
               - 'typescript/packages/mirage-nfs/**'
+              # The kernel-mount registry routes nfs prefixes and keeps a
+              # manager per session, and lifecycle drives the teardown
+              # order the batteries assert; both can break an nfs mount
+              # without a file under the paths above changing.
+              - 'python/mirage/workspace/workspace/kernel_mounts.py'
+              - 'python/mirage/workspace/workspace/lifecycle.py'
+              - 'typescript/packages/node/src/workspace/workspace/kernel_mounts.ts'
               - '.github/workflows/test_integ.yml'
 
   typescript-build:
@@ -1154,6 +1161,98 @@ jobs:
           MIRAGE_NFS_ADDON: ${{ github.workspace }}/typescript/packages/mirage-nfs/mirage_nfs_node.node
         run: |
           pnpm exec tsx nfs/nfs.ts 2>&1 \
+            | ../python/.venv/bin/python check_json.py nfs/truth_nfs.json
+
+  integ-nfs-linux:
+    needs: [changes, typescript-build]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.nfs == 'true') }}
+    runs-on: ubuntu-latest
+    # Advisory until it has had a green run, the way integ-nfs-macos was.
+    # The macOS job is the one in the gate because a loopback mount needs
+    # no privileges there; linux reserves mount(2) for root, so both
+    # batteries run under sudo here and nothing else in this workflow
+    # does. What it buys is the platform the macOS job cannot cover:
+    # `nolock` rather than `nolocks`, `umount -l` as the last teardown
+    # rung, and mount.nfs instead of mount_nfs.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the kernel nfs client
+        # mount.nfs lives in nfs-common; without it the mount command
+        # fails as "unknown filesystem type 'nfs'", which reads like a
+        # kernel gap rather than a missing package.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nfs-common
+
+      - name: Show the toolchain (the runner image ships rust)
+        run: |
+          uname -a
+          cargo --version
+          rustc --version
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        working-directory: python
+        run: uv sync
+
+      - name: Build and install the mirage-nfs wheel
+        working-directory: python
+        run: uv pip install ./mirage-nfs
+
+      - name: Run the Python NFS battery and check
+        # Under sudo because the mount command needs the privilege and
+        # mirage does not elevate for you -- a library that shelled out to
+        # sudo would hang on a password prompt anywhere but here.
+        run: |
+          sudo ./python/.venv/bin/python integ/nfs/nfs.py 2>&1 \
+            | ./python/.venv/bin/python integ/check_json.py integ/nfs/truth_nfs.json
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 10.32.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      - name: Install dependencies
+        # --ignore-scripts for the same reason as the macOS job: this
+        # runner has no libfuse headers and the nfs backend must not need
+        # them. See that job for why --no-optional does not reach it.
+        working-directory: typescript
+        run: pnpm install --frozen-lockfile=false --ignore-scripts
+
+      - name: Download TypeScript build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: integ-typescript-dist
+          path: typescript/packages
+
+      - name: Build the napi addon
+        working-directory: typescript/packages/mirage-nfs
+        run: |
+          cargo build --release
+          cp target/release/libmirage_nfs_node.so mirage_nfs_node.node
+
+      - name: Run the TypeScript NFS battery and check
+        working-directory: integ
+        run: |
+          sudo MIRAGE_NFS_ADDON=${{ github.workspace }}/typescript/packages/mirage-nfs/mirage_nfs_node.node \
+            node_modules/.bin/tsx nfs/nfs.ts 2>&1 \
             | ../python/.venv/bin/python check_json.py nfs/truth_nfs.json
 
   integ-runtime:

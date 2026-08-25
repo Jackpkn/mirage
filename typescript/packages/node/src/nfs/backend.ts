@@ -123,8 +123,8 @@ export async function prepareNfsMount(
   if (requiresPrivilege()) {
     // Nothing here elevates: the argv is a bare mount command, so the
     // process has to hold the privilege already (or the mountpoint needs
-    // an fstab entry). Python's twin says "will be run with sudo", which
-    // no code in either language does.
+    // an fstab entry). Python's twin says the same thing; it used to
+    // promise sudo, which no code in either language has ever run.
     console.warn(
       `mirage: mounting an nfs export on ${process.platform} needs elevated privileges; run ` +
         'the process with them, or give the mountpoint an fstab entry, or the mount command ' +
