@@ -1181,9 +1181,12 @@ jobs:
         # mount.nfs lives in nfs-common; without it the mount command
         # fails as "unknown filesystem type 'nfs'", which reads like a
         # kernel gap rather than a missing package.
+        # fuse3 rides along for the differential below: this is the only
+        # runner where both kernel tiers exist at once, which is what
+        # makes diffing them possible at all.
         run: |
           sudo apt-get update
-          sudo apt-get install -y nfs-common
+          sudo apt-get install -y nfs-common fuse3
 
       - name: Show the toolchain (the runner image ships rust)
         run: |
@@ -1216,6 +1219,16 @@ jobs:
         run: |
           sudo ./python/.venv/bin/python integ/nfs/nfs.py 2>&1 \
             | ./python/.venv/bin/python integ/check_json.py integ/nfs/truth_nfs.json
+
+      - name: Diff the two kernel mounts of one tree
+        # The adapter-level parity suites run everywhere and prove the
+        # two adapters answer alike; this proves it still holds with a
+        # real client asking, which is the run #888 asked for and the
+        # only place it can happen.
+        run: |
+          sudo ./python/.venv/bin/python integ/nfs/differential.py 2>&1 \
+            | ./python/.venv/bin/python integ/check_json.py \
+                integ/nfs/truth_differential.json
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
