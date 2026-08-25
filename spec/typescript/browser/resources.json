@@ -383,6 +383,33 @@
         "write"
       ]
     },
+    "dev": {
+      "local": true,
+      "max_du_entries": 10000,
+      "max_glob_matches": 50000,
+      "slots": [
+        "append",
+        "copy",
+        "create",
+        "du",
+        "exists",
+        "find",
+        "is_mounted",
+        "mkdir",
+        "read_bytes",
+        "read_range",
+        "read_stream",
+        "readdir",
+        "rename",
+        "rm_r",
+        "rmdir",
+        "set_attrs",
+        "stat",
+        "truncate",
+        "unlink",
+        "write"
+      ]
+    },
     "dify": {
       "local": false,
       "max_du_entries": 10000,

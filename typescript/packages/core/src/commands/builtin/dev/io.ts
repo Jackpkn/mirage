@@ -15,9 +15,24 @@
 import type { RAMAccessor } from '../../../accessor/ram.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import { read, readRange, stat, stream } from '../../../core/dev/index.ts'
+import { appendBytes as ramAppend } from '../../../core/ram/append.ts'
+import { copy as ramCopy } from '../../../core/ram/copy.ts'
+import { create as ramCreate } from '../../../core/ram/create.ts'
+import { SCOPE_ERROR } from '../../../core/ram/constants.ts'
+import { size as ramDu, entries as ramDuAll } from '../../../core/ram/du/index.ts'
+import { exists as ramExists } from '../../../core/ram/exists.ts'
+import { find as ramFind } from '../../../core/ram/find.ts'
+import { mkdir as ramMkdir } from '../../../core/ram/mkdir.ts'
+import { readdir as ramReaddir } from '../../../core/ram/readdir.ts'
+import { rename as ramRename } from '../../../core/ram/rename.ts'
+import { rmR as ramRmR } from '../../../core/ram/rm.ts'
+import { rmdir as ramRmdir } from '../../../core/ram/rmdir.ts'
+import { setAttrs as ramSetAttrs } from '../../../core/ram/set_attrs.ts'
+import { truncate as ramTruncate } from '../../../core/ram/truncate.ts'
+import { unlink as ramUnlink } from '../../../core/ram/unlink.ts'
+import { writeBytes as ramWrite } from '../../../core/ram/write.ts'
 import type { PathSpec } from '../../../types.ts'
 import type { CommandIO } from '../generic_bind/index.ts'
-import { RAM_IO } from '../ram/io.ts'
 
 async function* finiteStream(
   accessor: RAMAccessor,
@@ -28,15 +43,32 @@ async function* finiteStream(
   if (data.byteLength > 0) yield data
 }
 
-export const DEV_STREAMING_IO: CommandIO<RAMAccessor> = {
-  ...RAM_IO,
+export const DEV_IO: CommandIO<RAMAccessor> = {
+  readdir: ramReaddir,
   readBytes: read,
   readRange,
-  readStream: stream,
+  readStream: finiteStream,
   stat,
+  isMounted: () => true,
+  local: true,
+  maxGlobMatches: SCOPE_ERROR,
+  write: ramWrite,
+  exists: ramExists,
+  mkdir: ramMkdir,
+  unlink: ramUnlink,
+  rmdir: ramRmdir,
+  rmR: ramRmR,
+  rename: ramRename,
+  copy: ramCopy,
+  create: ramCreate,
+  truncate: ramTruncate,
+  append: ramAppend,
+  setAttrs: ramSetAttrs,
+  find: ramFind,
+  du: { size: ramDu, entries: ramDuAll },
 }
 
-export const DEV_IO: CommandIO<RAMAccessor> = {
-  ...DEV_STREAMING_IO,
-  readStream: finiteStream,
+export const DEV_STREAMING: CommandIO<RAMAccessor> = {
+  ...DEV_IO,
+  readStream: stream,
 }
