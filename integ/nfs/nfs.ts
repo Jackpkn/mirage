@@ -12,16 +12,19 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname, basename } from "node:path";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   checkPlatformNfs,
   FileStat,
   FileType,
+  Mount,
+  MountBackend,
   MountMode,
   NFSManager,
   RAMResource,
@@ -42,6 +45,73 @@ if (process.env.MIRAGE_NFS_ADDON === undefined) {
 
 const DEC = new TextDecoder();
 type Result = Record<string, string | number | boolean | string[] | null>;
+
+// Every mountpoint this run has created, so a crash, a Ctrl-C or a hung
+// battery can still force them down. A live mount whose server has gone
+// is the one state that outlives the process: every access to it blocks
+// in the kernel, and on macOS that reaches anything walking the mount
+// table, which is Finder and df and Spotlight rather than just this
+// script.
+const MOUNTPOINTS = new Set<string>();
+
+const BATTERY_TIMEOUT_SECONDS = 300;
+const FORCE_UMOUNT_TIMEOUT_SECONDS = 15;
+
+/**
+ * Whether a mountpoint directory is gone, without stat'ing it.
+ *
+ * A stat of the path would be answered by the server that has just
+ * stopped if the unmount had failed -- the one check that only runs
+ * after something went wrong would be the one that hangs. Listing the
+ * parent names the entry without ever crossing into it.
+ */
+function gone(path: string): boolean {
+  const trimmed = path.replace(/\/+$/, "");
+  if (trimmed === "") return true;
+  try {
+    return !readdirSync(dirname(trimmed)).includes(basename(trimmed));
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Force every recorded mountpoint down, synchronously.
+ *
+ * Sync on purpose: this runs from a signal handler and from the exit
+ * path, where the event loop may be the thing that is stuck, so it
+ * cannot await. `umount -f` is what makes that safe -- a plain unmount
+ * asks the filesystem to flush, and the server that would answer is the
+ * process being torn down.
+ */
+function forceUnmountAll(): void {
+  for (const point of [...MOUNTPOINTS].sort()) {
+    if (gone(point)) continue;
+    const done = spawnSync("umount", ["-f", point], {
+      stdio: "ignore",
+      timeout: FORCE_UMOUNT_TIMEOUT_SECONDS * 1000,
+    });
+    if (done.status !== 0) {
+      process.stderr.write(
+        `integ/nfs: umount -f ${point} did not clear it; clear it with ` +
+          `sudo umount -f ${point}\n`,
+      );
+    }
+  }
+  MOUNTPOINTS.clear();
+}
+
+/** Mount through the manager and record the mountpoint. */
+async function track(
+  manager: NFSManager,
+  ws: Workspace,
+  prefix = "/",
+  mountpoint?: string,
+): Promise<string> {
+  const point = await manager.setup(ws, prefix, mountpoint);
+  MOUNTPOINTS.add(point);
+  return point;
+}
 
 /**
  * Run one command in a child process and capture its output.
@@ -80,8 +150,8 @@ async function runBattery(result: Result): Promise<void> {
   let whole = "";
   let docs = "";
   try {
-    whole = await manager.setup(ws, "/");
-    docs = await manager.setup(ws, "/docs");
+    whole = await track(manager, ws, "/");
+    docs = await track(manager, ws, "/docs");
     result.distinct_mounts = whole !== docs;
 
     let out: string;
@@ -121,7 +191,7 @@ async function runBattery(result: Result): Promise<void> {
     result.mkdir_mv_ok = code === 0;
 
     try {
-      await manager.setup(ws, "/dev", whole);
+      await track(manager, ws, "/dev", whole);
       result.collision_rejected = false;
     } catch {
       result.collision_rejected = true;
@@ -135,7 +205,7 @@ async function runBattery(result: Result): Promise<void> {
   // only if that order held.
   const io = await ws.execute("cat /d/m.txt");
   result.close_flushed = DEC.decode((io as { stdout: Uint8Array }).stdout).trim();
-  result.mountpoints_cleaned = !existsSync(whole) && !existsSync(docs);
+  result.mountpoints_cleaned = gone(whole) && gone(docs);
 }
 
 /**
@@ -168,7 +238,7 @@ async function runSizeless(result: Result): Promise<void> {
 
   const manager = new NFSManager();
   try {
-    const mnt = await manager.setup(ws, "/");
+    const mnt = await track(manager, ws, "/");
     const [, empty] = await sh("cat", `${mnt}/api.json`);
     result.sizeless_reads_empty = empty === "";
     let [code, size] = await sh("stat", "-f", "%z", `${mnt}/api.json`);
@@ -202,7 +272,7 @@ async function runBigfile(result: Result): Promise<void> {
   const ws = new Workspace({ "/": new RAMResource() }, { mode: MountMode.WRITE });
   const manager = new NFSManager();
   try {
-    const mnt = await manager.setup(ws, "/");
+    const mnt = await track(manager, ws, "/");
     const [inCode] = await sh("cp", src, `${mnt}/big.bin`);
     result.bigfile_cp_in = inCode === 0;
     const [outCode] = await sh("cp", `${mnt}/big.bin`, back);
@@ -211,6 +281,9 @@ async function runBigfile(result: Result): Promise<void> {
       createHash("md5").update(readFileSync(back)).digest("hex") === want;
   } finally {
     await manager.close();
+    // Host-side scratch, not a mountpoint: nothing unmounts it, so the
+    // run that made it is the run that removes it.
+    rmSync(hostDir, { recursive: true, force: true });
   }
   // Verified at the ops tier, not through the executor: `cat` is the
   // agent surface and its output is capped by the post gate (a 1 MiB
@@ -221,8 +294,45 @@ async function runBigfile(result: Result): Promise<void> {
     createHash("md5").update(Buffer.from(stored)).digest("hex") === want;
 }
 
-async function main(): Promise<void> {
-  const result: Result = {};
+/**
+ * A Mount declaring backend=nfs is served by the workspace itself.
+ *
+ * The declaration is kicked off by the constructor and awaited by the
+ * first `execute`, so this also pins that an nfs mount never shows up in
+ * the fuse view.
+ */
+async function runWorkspaceBackend(result: Result): Promise<void> {
+  const ws = new Workspace(
+    { "/data": new Mount(new RAMResource(), { backend: MountBackend.NFS }) },
+    { mode: MountMode.WRITE },
+  );
+  let point = "";
+  try {
+    await ws.execute("echo declared > /data/w.txt");
+    await ws.execute("mkdir -p /data/docs && echo nested > /data/docs/n.txt");
+    await ws.nfsReady();
+    point = ws.nfsMountpoints["/data"] ?? "";
+    MOUNTPOINTS.add(point);
+    let out: string;
+    [, out] = await sh("cat", `${point}/w.txt`);
+    result.workspace_backend_cat = out;
+    result.workspace_backend_not_fuse =
+      Object.keys(ws.fuseMountpoints).length === 0;
+
+    const docs = await ws.addNfsMount("/data/docs");
+    MOUNTPOINTS.add(docs);
+    result.workspace_backend_distinct = docs !== point;
+    [, out] = await sh("cat", `${docs}/n.txt`);
+    result.workspace_backend_second = out;
+  } finally {
+    await ws.close();
+  }
+  result.workspace_backend_cleaned =
+    Object.keys(ws.nfsMountpoints).length === 0 && gone(point);
+}
+
+/** Every scenario, in order. */
+async function runAll(result: Result): Promise<void> {
   try {
     checkPlatformNfs("win32");
     result.win32_refused = false;
@@ -231,8 +341,34 @@ async function main(): Promise<void> {
   }
 
   await runBattery(result);
+  await runWorkspaceBackend(result);
   await runSizeless(result);
   await runBigfile(result);
+}
+
+/**
+ * Run the battery under a deadline, and never leave a mount behind.
+ *
+ * A hung scenario has to end as a failed run rather than as a live mount
+ * with no server, so the whole battery is bounded and the teardown runs
+ * whatever the outcome.
+ */
+async function main(): Promise<void> {
+  const result: Result = {};
+  let deadline: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      runAll(result),
+      new Promise<never>((_keep, fail) => {
+        deadline = setTimeout(() => {
+          fail(new Error(`nfs battery outlived ${String(BATTERY_TIMEOUT_SECONDS)}s`));
+        }, BATTERY_TIMEOUT_SECONDS * 1000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+    forceUnmountAll();
+  }
   // The addon's idle-flush task holds its callback for the process's
   // lifetime, so stopping the server does not release this event loop
   // and the run has to exit itself. The write is awaited before that
@@ -247,7 +383,17 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
+// Sync handlers (see forceUnmountAll), installed before anything mounts,
+// so an interrupt at any point in the run still clears the mounts.
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    forceUnmountAll();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  });
+}
+
 main().catch((err: unknown) => {
   process.stderr.write(String(err) + "\n");
+  forceUnmountAll();
   process.exit(1);
 });
