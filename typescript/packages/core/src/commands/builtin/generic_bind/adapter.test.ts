@@ -34,8 +34,9 @@ import {
   runWithOpPolicies,
   runWithSession,
 } from '../../../context/session_context.ts'
+import type { Policy } from '../../../policy/base.ts'
 import { Policies } from '../../../policy/policies.ts'
-import type { Action, OpsContext, Policy } from '../../../policy/types.ts'
+import type { Action, OpsContext } from '../../../policy/types.ts'
 import { Session } from '../../../workspace/session/session.ts'
 
 const accessor = {} as never
