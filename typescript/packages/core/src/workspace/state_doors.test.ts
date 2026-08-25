@@ -587,6 +587,15 @@ class OpRecorder implements Policy {
   }
 }
 
+/** Record each op with the identity fields a scoped policy keys on. */
+class IdentityRecorder implements Policy {
+  readonly asked: [string, string, string, string][] = []
+  preOps(ctx: OpsContext): Action | null {
+    this.asked.push([ctx.op, ctx.path.virtual, ctx.prefix, ctx.sessionId ?? ''])
+    return null
+  }
+}
+
 async function makeSealedWs(policies: Policy[]): Promise<Workspace> {
   // Seeded through the door (not the raw store) so the index knows the
   // implicit /a/prod directory, then the policies join, mirroring the
@@ -681,6 +690,37 @@ describe('op hooks bind at the op doors and the command tier', () => {
     expect(refused.exitCode).not.toBe(0)
     const survives = await sealed.execute('cat /a/prod/keep.txt')
     expect(survives.exitCode).toBe(0)
+  })
+
+  it('find -delete admits each deletion exactly once', async () => {
+    // find's -delete admits the removal itself (in find's own refusal
+    // voice) and suspends the delegated rm's slots, so a counting or
+    // budget policy sees one deletion once, not twice.
+    const recorder = new OpRecorder()
+    const ws = await makeSealedWs([recorder])
+    const removed = await ws.execute('find /a/prod -name keep.txt -delete')
+    expect(removed.exitCode).toBe(0)
+    const gone = await ws.execute('cat /a/prod/keep.txt')
+    expect(gone.exitCode).not.toBe(0)
+    const writes = recorder.asked.filter(([, path, write]) => path === '/a/prod/keep.txt' && write)
+    expect(writes).toEqual([['unlink', '/a/prod/keep.txt', true]])
+  })
+
+  it('preOps sees the session and prefix on lazy drains', async () => {
+    // OpsContext.prefix and .sessionId name the command's identity on
+    // the command tier exactly as at the op doors, including for a
+    // reader the pipeline drains after the gate scopes return (head
+    // binds a lazy stream); both ride the wrap-time capture.
+    const recorder = new IdentityRecorder()
+    const ws = await makeSealedWs([recorder])
+    expect((await ws.execute('cat /a/ok.txt')).exitCode).toBe(0)
+    expect((await ws.execute('head -c 3 /a/ok.txt')).exitCode).toBe(0)
+    const reads = recorder.asked.filter(([, path]) => path === '/a/ok.txt')
+    expect(reads.length).toBeGreaterThan(0)
+    for (const [, , prefix, sessionId] of reads) {
+      expect(prefix).toBe('/a')
+      expect(sessionId).toBe(ws.defaultSessionId)
+    }
   })
 })
 

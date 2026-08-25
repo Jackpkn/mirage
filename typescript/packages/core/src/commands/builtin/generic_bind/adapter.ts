@@ -730,14 +730,24 @@ export function withPathGuards<A extends Accessor = Accessor>(ops: CommandIO<A>)
   return withHiddenGuard(withRuleGuard(withModeGuard(ops)))
 }
 
+/** The policies to consult for one slot call, with the mount prefix
+ * and session identity the call belongs to. */
+interface OpPolicyScope {
+  policies: Policies
+  /** The wrap site's mount prefix; null resolves per path at admit
+   * time (a registration-time wrap has no one mount). */
+  prefix: string | null
+  sessionId: string
+}
+
 /**
- * The policies to consult for this op call: null is the fast path (no
+ * The scope to consult for this op call: null is the fast path (no
  * dispatched command bound policies, or none of them override preOps).
  */
-function opPolicyScope(): Policies | null {
+function opPolicyScope(prefix: string | null): OpPolicyScope | null {
   const policies = getOpPolicies()
   if (!policies?.wants('preOps')) return null
-  return policies
+  return { policies, prefix, sessionId: getCurrentSession()?.sessionId ?? '' }
 }
 
 /**
@@ -747,35 +757,36 @@ function opPolicyScope(): Policies | null {
  * The factory applies the guard inside the command's window, so its
  * wrap-time capture also covers a reader the output pipeline drains
  * after dispatch has reset the context (head/tail/wc bind lazy
- * readers); a registration-time wrap (the object-store overrides, the
- * loose-write chain) has no window when applied and reads the live
- * context instead, which its eager handlers are inside.
+ * readers), with the prefix and session identity the drained op
+ * belongs to; a registration-time wrap (the object-store overrides,
+ * the loose-write chain) has no window when applied and reads the
+ * live context instead, which its eager handlers are inside.
  */
-function livePolicyScope(scope: Policies | null): Policies | null {
-  return scope ?? opPolicyScope()
+function livePolicyScope(scope: OpPolicyScope | null): OpPolicyScope | null {
+  return scope ?? opPolicyScope(null)
 }
 
 /** Fire preOps for one PathSpec of one slot call; the op is the slot
  * name in its shared snake spelling, so a policy portable across the
  * languages and tiers sees one vocabulary. */
 async function policyAdmit(
-  policies: Policies,
+  scope: OpPolicyScope,
   op: string,
   path: PathSpec,
   write: boolean,
 ): Promise<void> {
-  const prefix = mountGateFor(path.virtual)?.[0] ?? ''
-  await preOpsGate(policies, op, path, write, prefix, getCurrentSession()?.sessionId ?? '')
+  const prefix = scope.prefix ?? mountGateFor(path.virtual)?.[0] ?? ''
+  await preOpsGate(scope.policies, op, path, write, prefix, scope.sessionId)
 }
 
 /** Drain `source` once the read is admitted, before any byte is
  * pulled; the inner iterable was built eagerly by the caller. */
 async function* policyStream(
-  policies: Policies,
+  scope: OpPolicyScope,
   path: PathSpec,
   source: AsyncIterable<Uint8Array>,
 ): AsyncIterable<Uint8Array> {
-  await policyAdmit(policies, 'read_stream', path, false)
+  await policyAdmit(scope, 'read_stream', path, false)
   yield* source
 }
 
@@ -791,11 +802,18 @@ async function* policyStream(
  * stay unguarded as presence facts, the mode-000 shape the rule guard
  * already states, so a denied entry still lists and stats while the
  * read of it is what fails. Inert unless a dispatched command bound
- * policies overriding preOps (`opPolicyScope`, captured at wrap time
- * so a lazily drained reader still answers, see `livePolicyScope`).
+ * policies overriding preOps (`opPolicyScope`, with the mount prefix
+ * and session identity captured at wrap time so a lazily drained
+ * reader still answers as the command that bound it, see
+ * `livePolicyScope`; `prefix` arrives from the wrap site because the
+ * fallback mount-gate storage resolves by path, which a drained
+ * reader no longer has a live gate for).
  */
-export function withPolicyGuard<A extends Accessor = Accessor>(ops: CommandIO<A>): CommandIO<A> {
-  const scope = opPolicyScope()
+export function withPolicyGuard<A extends Accessor = Accessor>(
+  ops: CommandIO<A>,
+  prefix?: string,
+): CommandIO<A> {
+  const scope = opPolicyScope(prefix ?? null)
   const guarded: CommandIO<A> = {
     ...ops,
     readdir: async (accessor, path, index) => {
@@ -946,7 +964,7 @@ export function withWriteGuards<A extends Accessor, R>(
   fn: (accessor: A, path: PathSpec, index?: IndexCacheStore) => Promise<R> | R,
 ): (accessor: A, path: PathSpec, index?: IndexCacheStore) => Promise<R> {
   return async (accessor, path, index) => {
-    const p = opPolicyScope()
+    const p = opPolicyScope(null)
     if (p !== null) await policyAdmit(p, 'unlink', path, true)
     refuseHidden(path, false)
     ruleCheck(path)

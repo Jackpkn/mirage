@@ -13,7 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.commands.spec.types import FlagValue
-from mirage.context import get_current_session
+from mirage.context import (get_current_session, reset_op_policies,
+                            suspend_op_policies)
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
 from mirage.ops.types import ChildMounts, NamespaceView, StatPath
@@ -89,16 +90,24 @@ async def _apply_find_actions(
                 # command rule sees it; it is a removal all the same, so
                 # it clears the op door a path rule guards (the same
                 # gate `ws.ops`, FUSE and a redirect clear), by the
-                # session the line runs under. -d so directories emptied
-                # by the deepest-first pass are removable, matching GNU
+                # session the line runs under, and a refusal reports in
+                # find's voice. The delegated rm's own slots are
+                # suspended for the call, so the deletion admits
+                # exactly once. -d so directories emptied by the
+                # deepest-first pass are removable, matching GNU
                 # -delete's rmdir behavior.
                 sess = get_current_session()
                 await pre_ops_gate(registry.policies, "unlink", ps, True,
                                    mount.prefix,
                                    sess.session_id if sess is not None else "")
-                _, rm_io = await mount.execute_cmd("rm", [ps], [], {"d": True},
-                                                   stdin=None,
-                                                   cwd=cwd)
+                token = suspend_op_policies()
+                try:
+                    _, rm_io = await mount.execute_cmd("rm", [ps], [],
+                                                       {"d": True},
+                                                       stdin=None,
+                                                       cwd=cwd)
+                finally:
+                    reset_op_policies(token)
             except (FileNotFoundError, NotADirectoryError, PermissionError,
                     ValueError) as exc:
                 # GNU words it with the errno text; a policy refusal

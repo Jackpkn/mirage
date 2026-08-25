@@ -21,7 +21,8 @@ from mirage.context.session_context import (  # isort: skip
     reset_admission, reset_current_session, reset_mount_gate,
     reset_op_policies, reset_redirect_paths, session_path_allowed,
     session_umask, set_admission, set_current_session, set_mount_gate,
-    set_op_policies, set_redirect_paths, strongest_mode_under)
+    set_op_policies, set_redirect_paths, strongest_mode_under,
+    suspend_op_policies)
 
 __all__ = [
     "DEFAULT_UMASK",
@@ -54,4 +55,5 @@ __all__ = [
     "set_op_policies",
     "set_redirect_paths",
     "strongest_mode_under",
+    "suspend_op_policies",
 ]

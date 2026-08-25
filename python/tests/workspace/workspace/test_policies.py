@@ -554,6 +554,58 @@ async def test_shell_rm_r_admits_through_pre_ops():
         await ws.close()
 
 
+@pytest.mark.asyncio
+async def test_find_delete_admits_each_deletion_exactly_once():
+    # find's -delete admits the removal itself (in find's own refusal
+    # voice) and suspends the delegated rm's slots, so a counting or
+    # budget policy sees one deletion once, not twice.
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        await ws.execute("mkdir -p /data/d")
+        await ws.ops.write("/data/d/x.txt", b"x\n")
+        rec = OpRecorder()
+        ws.policies.add(rec)
+        removed = await ws.execute("find /data/d -name x.txt -delete")
+        assert removed.exit_code == 0
+        gone = await ws.execute("cat /data/d/x.txt")
+        assert gone.exit_code != 0
+        writes = [a for a in rec.asked if a[1] == "/data/d/x.txt" and a[2]]
+        assert writes == [("unlink", "/data/d/x.txt", True)]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_ops_sees_the_session_on_the_command_tier():
+    # OpsContext.session_id names the session on the command tier
+    # exactly as at the op doors, including for a reader the pipeline
+    # drains after dispatch (head), so a session-scoped policy holds on
+    # both.
+    ws = Workspace({"/data/": RAMResource()}, mode=MountMode.WRITE)
+    try:
+        await ws.ops.write("/data/ok.txt", b"fine\n")
+        rec = SessionRecorder()
+        ws.policies.add(rec)
+        assert (await ws.execute("cat /data/ok.txt")).exit_code == 0
+        assert (await ws.execute("head -c 3 /data/ok.txt")).exit_code == 0
+        reads = [(op, sid) for op, path, sid in rec.asked
+                 if path == "/data/ok.txt"]
+        assert reads
+        assert all(sid == ws.default_session_id for _, sid in reads)
+    finally:
+        await ws.close()
+
+
+class SessionRecorder(Policy):
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[str, str, str]] = []
+
+    async def pre_ops(self, ctx: OpsContext) -> Action | None:
+        self.asked.append((ctx.op, ctx.path.virtual, ctx.session_id))
+        return None
+
+
 class CapLines(Policy):
 
     async def post_execute(self, ctx: ExecuteResultContext) -> Action | None:

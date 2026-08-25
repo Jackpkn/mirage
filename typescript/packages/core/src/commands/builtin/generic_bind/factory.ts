@@ -183,7 +183,9 @@ export function makeGenericCommands<A extends Accessor = Accessor>(
     // Python's `glob_children` is `| None` and takes the uniform path.
     // The policy guard sits outside the cache wraps (`finish`) so a
     // coded preOps deny fires before a warm serve, the dispatcher's
-    // own order at the op door.
+    // own order at the op door; the invocation's mount prefix rides
+    // into its wrap-time scope for readers drained after the gate
+    // scopes return.
     const fn: CommandFn = (accessor, paths, texts, opts) =>
       b.fn(
         withDirGuard(
@@ -195,6 +197,7 @@ export function makeGenericCommands<A extends Accessor = Accessor>(
                   : { ...raw, globChildren: opts.ns.childMounts },
               ),
             ),
+            opts.mountPrefix,
           ),
         ),
         accessor,
