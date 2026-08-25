@@ -133,8 +133,8 @@ async function main(): Promise<void> {
   console.log('')
   await runLabeled(ws, 'ls /dev/', 'ls /dev/')
   await runLabeled(ws, 'wc -c /dev/null', 'wc -c /dev/null')
-  await runLabeled(ws, 'wc -c /dev/zero', 'wc -c /dev/zero')
-  await runLabeled(ws, 'md5 /dev/zero', 'md5 /dev/zero')
+  await runLabeled(ws, 'head -c 2M /dev/zero | wc -c', 'head -c 2M /dev/zero | wc -c')
+  await runLabeled(ws, "stat -c '%F %t %T' /dev/null", "stat -c '%F %t %T' /dev/null")
   await runLabeled(ws, 'head -c 8 /dev/zero | xxd', 'head -c 8 /dev/zero | xxd')
 
   console.log('')

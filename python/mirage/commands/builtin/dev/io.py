@@ -32,6 +32,7 @@ async def _finite_read_stream(
     if data:
         yield data
 
+
 # /dev is a RAM mount whose read and stat know the two synthetic
 # character devices; every other slot is RAM's. Commands that consume a
 # whole input use the refusing read operation, while the two bounded
