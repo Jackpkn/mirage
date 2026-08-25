@@ -30,7 +30,21 @@ export interface GitHubTransport {
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    headers?: Record<string, string>,
   ): Promise<unknown>
+  requestWithResponse?(
+    method: string,
+    path: string,
+    body?: unknown,
+    params?: Record<string, string>,
+    headers?: Record<string, string>,
+  ): Promise<GitHubResponse>
+}
+
+export interface GitHubResponse {
+  data: unknown
+  status: number
+  headers: Record<string, string>
 }
 
 const Kit = Octokit.plugin(retry, throttling)
@@ -86,7 +100,18 @@ export class HttpGitHubTransport implements GitHubTransport {
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    headers?: Record<string, string>,
   ): Promise<unknown> {
+    return (await this.requestWithResponse(method, path, body, params, headers)).data
+  }
+
+  async requestWithResponse(
+    method: string,
+    path: string,
+    body?: unknown,
+    params?: Record<string, string>,
+    headers?: Record<string, string>,
+  ): Promise<GitHubResponse> {
     try {
       // Octokit reads loose parameters off the same object that carries
       // `url`, `method` and `headers`, so a field the agent typed would
@@ -98,13 +123,21 @@ export class HttpGitHubTransport implements GitHubTransport {
       const query = new URLSearchParams(params ?? {}).toString()
       const r = await this.kit.request({
         method: method.toUpperCase(),
-        url: escapeBraces(path) + (query === '' ? '' : `?${query}`),
-        headers: { 'X-GitHub-Api-Version': GITHUB_API_VERSION },
+        url: escapeBraces(path) + (query === '' ? '' : `${path.includes('?') ? '&' : '?'}${query}`),
+        headers: { 'X-GitHub-Api-Version': GITHUB_API_VERSION, ...headers },
         ...(body === undefined ? {} : { data: body }),
       })
       // 204 and an empty 202 decode to '' rather than a body; the caller gets
       // null on a call that worked.
-      return r.data === '' ? null : r.data
+      const responseHeaders: Record<string, string> = {}
+      for (const [key, value] of Object.entries(r.headers)) {
+        if (value !== undefined) responseHeaders[key.toLowerCase()] = String(value)
+      }
+      return {
+        data: r.data === '' ? null : r.data,
+        status: r.status,
+        headers: responseHeaders,
+      }
     } catch (err) {
       if (err instanceof RequestError) {
         // Octokit composes its message as `<message> - <documentation_url>`.

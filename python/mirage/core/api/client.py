@@ -22,6 +22,7 @@ from functools import partial
 from typing import Any, Literal
 
 import aiohttp
+from aiohttp.payload import JsonPayload
 from tenacity import (AsyncRetrying, RetryCallState, before_sleep_log,
                       retry_if_exception_type, stop_after_attempt)
 
@@ -30,7 +31,16 @@ from mirage.utils.ranges import ByteWindow, range_header, window_of
 
 logger = logging.getLogger(__name__)
 
-ReadMode = Literal["json", "none", "bytes", "text", "location"]
+ReadMode = Literal["json", "none", "bytes", "text", "location", "response"]
+
+
+@dataclass(frozen=True, slots=True)
+class ApiResponse:
+    """Decoded response plus the wire metadata pagination needs."""
+
+    data: Any
+    status: int
+    headers: Mapping[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,17 +194,32 @@ async def _attempt(
     headers: Mapping[str, str] | None,
     params: Mapping[str, Any] | None,
     json_body: JsonValue,
+    json_body_present: bool,
     data: Any,
     retry: RetryPolicy,
     read: ReadMode,
     window: ByteWindow | None,
 ) -> Any:
-    async with session.request(method,
-                               url,
-                               headers=_merged_headers(headers, window),
-                               params=params,
-                               json=json_body,
-                               data=data) as resp:
+    if json_body_present and json_body is None:
+        request = session.request(method,
+                                  url,
+                                  headers=_merged_headers(headers, window),
+                                  params=params,
+                                  data=JsonPayload(None))
+    elif json_body_present:
+        request = session.request(method,
+                                  url,
+                                  headers=_merged_headers(headers, window),
+                                  params=params,
+                                  json=json_body,
+                                  data=data)
+    else:
+        request = session.request(method,
+                                  url,
+                                  headers=_merged_headers(headers, window),
+                                  params=params,
+                                  data=data)
+    async with request as resp:
         if resp.status in retry.statuses:
             raise _RetryableStatus(resp, await resp.text())
         if resp.status >= 400:
@@ -211,8 +236,20 @@ async def _attempt(
         if not text:
             # 204 and an empty 2xx have nothing to decode; the caller gets
             # None rather than a parse error on a call that worked
-            return None
-        return json.loads(text)
+            data = None
+        elif read == "response":
+            try:
+                data = json.loads(text)
+            except ValueError:
+                data = text
+        else:
+            data = json.loads(text)
+        if read == "response":
+            return ApiResponse(data, resp.status, {
+                key.lower(): value
+                for key, value in resp.headers.items()
+            })
+        return data
 
 
 async def api_request(
@@ -223,6 +260,7 @@ async def api_request(
     headers: Mapping[str, str] | None = None,
     params: Mapping[str, Any] | None = None,
     json_body: JsonValue = None,
+    json_body_present: bool | None = None,
     data: Any = None,
     retry: RetryPolicy = NO_RETRY,
     read: ReadMode = "json",
@@ -243,13 +281,17 @@ async def api_request(
         json_body (JsonValue): JSON request body. None sends no body, so a
             caller that means "send an empty object" passes ``{}``
             explicitly.
+        json_body_present (bool | None): override whether ``json_body`` is
+            sent. This distinguishes an explicit JSON null from no body;
+            absent preserves the historical None-means-no-body contract.
         data (Any): raw request body (bytes, or a mapping sent as a form),
             for endpoints that do not speak JSON; exclusive with json_body.
         retry (RetryPolicy): which statuses to retry and how long to wait.
         read (ReadMode): "json" parses the body (an empty one reads as
             None); "none" ignores it; "bytes" returns it raw, trimmed to
             ``window`` when the server ignored the Range; "text" returns it
-            as a string; "location" returns the Location header.
+            as a string; "location" returns the Location header; "response"
+            returns decoded data with status and lower-cased headers.
         window (ByteWindow | None): the byte range to request; the Range
             header and the trim-if-unranged guard both come from it.
         session (aiohttp.ClientSession | None): a session to reuse across
@@ -270,9 +312,11 @@ async def api_request(
         timeout=timeout))
     try:
         try:
+            present = (json_body is not None
+                       if json_body_present is None else json_body_present)
             return await retrying(_attempt, sess, method, url, error_of,
-                                  headers, params, json_body, data, retry,
-                                  read, window)
+                                  headers, params, json_body, present, data,
+                                  retry, read, window)
         except _RetryableStatus as exhausted:
             # retries ran dry: the final retryable response maps through
             # the same hook a plain error status does

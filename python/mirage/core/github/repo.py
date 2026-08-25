@@ -14,11 +14,13 @@
 
 import base64
 from dataclasses import dataclass
+from typing import Any
 
 from mirage.accessor.github import GitHubAccessor
 from mirage.core.github.client import (GitHubApiError, github_get,
                                        github_request)
 from mirage.core.github.config import GhConfig, GitHubConfig
+from mirage.core.github.paginate import github_pages
 from mirage.types import JsonValue
 
 
@@ -182,4 +184,34 @@ async def rename_repo(config: GhConfig, ref: RepoRef, name: str) -> JsonValue:
                                 "PATCH",
                                 f"/repos/{ref.owner}/{ref.repo}",
                                 {"name": name},
+                                base_url=config.base_url)
+
+
+async def list_repos(config: GhConfig, owner: str | None,
+                     limit: int) -> list[dict[str, Any]]:
+    path = "/user/repos"
+    if owner is not None:
+        account = await github_request(config.token,
+                                       "GET",
+                                       f"/users/{owner}",
+                                       base_url=config.base_url)
+        kind = account.get("type") if isinstance(account, dict) else None
+        prefix = "orgs" if kind == "Organization" else "users"
+        path = f"/{prefix}/{owner}/repos"
+    return await github_pages(config,
+                              path,
+                              params={"sort": "pushed"},
+                              limit=limit)
+
+
+async def create_repo(config: GhConfig, owner: str | None,
+                      body: dict[str, JsonValue]) -> JsonValue:
+    personal = owner is None
+    if owner is not None:
+        personal = owner.casefold() == (await login(config)).casefold()
+    path = "/user/repos" if personal else f"/orgs/{owner}/repos"
+    return await github_request(config.token,
+                                "POST",
+                                path,
+                                body,
                                 base_url=config.base_url)

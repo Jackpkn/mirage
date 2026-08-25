@@ -269,7 +269,7 @@
       "command": "man gh | head -8",
       "expect": {
         "exit": 0,
-        "stdout": "gh: GitHub CLI\n\nUsage: gh [flags] <command> [<args>]\n\nCommands:\n  api   Make an authenticated GitHub API request\n  repo  Manage repositories\n\n",
+        "stdout": "gh: GitHub CLI\n\nUsage: gh [flags] <command> [<args>]\n\nCommands:\n  api       Make an authenticated GitHub API request\n  issue     Manage issues\n  pr        Manage pull requests\n",
         "stderr": ""
       }
     },
@@ -441,6 +441,292 @@
       "targets": [
         "cli-gh"
       ]
+    },
+    {
+      "id": "gh_api_input_and_silent_create_an_issue",
+      "seq": 569035,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "echo '{\"title\":\"from input\",\"body\":\"input body\"}' > /scratch/issue.json && gh api repos/integ/repo-cli/issues --input /scratch/issue.json --silent && gh issue view 2 --json title,body --jq '[.title,.body]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[\"from input\",\"input body\"]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_nested_arrays_reach_the_service",
+      "seq": 569036,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli/issues -F title=nested -F 'labels[]=bug' -F 'assignees[]=integ-user' --jq '[.labels[0].name,.assignees[0].login]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[\"bug\",\"integ-user\"]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_paginate_slurp_follows_link_headers",
+      "seq": 569037,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api 'repos/integ/repo-cli/issues?state=all&per_page=1' --paginate --slurp --jq 'map(length)'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[1,1,1]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_issue_create_accepts_body_file",
+      "seq": 569038,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "echo 'typed body' > /scratch/body.md && gh issue create --title typed --body-file /scratch/body.md --label docs --assignee integ-user",
+      "expect": {
+        "exit": 0,
+        "stdout": "https://github.com/integ/repo-cli/issues/4\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_issue_edit_comment_close_and_reopen",
+      "seq": 569039,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh issue edit 4 --title updated --add-label bug && gh issue comment 4 --body note && gh issue close 4 && gh issue reopen 4",
+      "expect": {
+        "exit": 0,
+        "stdout": "https://github.com/integ/repo-cli/issues/4\nhttps://github.com/integ/repo-cli/issues/4#issuecomment-1\n\u2713 Closed issue integ/repo-cli#4 (updated)\n\u2713 Reopened issue integ/repo-cli#4 (updated)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_issue_list_projects_typed_json",
+      "seq": 569040,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh issue list --limit 1 --json number,title,url --jq '.[0]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"number\":4,\"title\":\"updated\",\"url\":\"https://github.com/integ/repo-cli/issues/4\"}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_pr_create_requires_explicit_noninteractive_fields",
+      "seq": 569041,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "echo 'pull body' | gh pr create --title change --head feature --base main --body-file -",
+      "expect": {
+        "exit": 0,
+        "stdout": "https://github.com/integ/repo-cli/pull/5\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_pr_view_diff_and_checks",
+      "seq": 569042,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh pr view 5 --json title,headRefName,baseRefName,url --jq '[.title,.headRefName,.baseRefName,.url]'; gh pr diff 5 | head -1; gh pr checks 5 --json name,bucket --jq '.[0]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[\"change\",\"feature\",\"main\",\"https://github.com/integ/repo-cli/pull/5\"]\ndiff --git a/README.md b/README.md\n{\"name\":\"test\",\"bucket\":\"pass\"}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_issue_view_rejects_a_pull_request_number",
+      "seq": 569052,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh issue view 5",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "gh issue view: #5 is a pull request, not an issue\n"
+      }
+    },
+    {
+      "id": "gh_pr_comment_rejects_an_issue_number",
+      "seq": 569053,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh pr comment 4 --body no",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "gh pr comment: Not Found\n"
+      }
+    },
+    {
+      "id": "gh_release_view_encodes_the_tag_segment",
+      "seq": 569054,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh release create 'v1#hot' --notes hot && gh release view 'v1#hot' --json tagName --jq .tagName",
+      "expect": {
+        "exit": 0,
+        "stdout": "https://github.com/integ/repo-cli/releases/tag/v1#hot\nv1#hot\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_pr_edit_comment_and_merge",
+      "seq": 569043,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh pr edit 5 --title merged-title --body merged-body && gh pr comment 5 --body review && gh pr merge 5 --squash --subject merged",
+      "expect": {
+        "exit": 0,
+        "stdout": "https://github.com/integ/repo-cli/pull/5\nhttps://github.com/integ/repo-cli/issues/5#issuecomment-2\n\u2713 Merged pull request integ/repo-cli#5\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_pr_close_is_a_separate_state_transition",
+      "seq": 569044,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh pr create -t abandoned -H old -B main -b no && gh pr close 6",
+      "expect": {
+        "exit": 0,
+        "stdout": "https://github.com/integ/repo-cli/pull/6\n\u2713 Closed pull request integ/repo-cli#6 (abandoned)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_repo_list_and_view_share_structured_output",
+      "seq": 569045,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh repo list integ --limit 1 --json nameWithOwner --jq '.[0].nameWithOwner'; gh repo view --json defaultBranchRef,url --jq '[.defaultBranchRef.name,.url]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "integ/repo-cli\n[\"main\",\"https://github.com/integ/repo-cli\"]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_repo_create_surfaces_token_permissions",
+      "seq": 569046,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh repo create fresh --private --add-readme",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "gh repo create: Resource not accessible by personal access token\n"
+      }
+    },
+    {
+      "id": "gh_release_create_view_and_list",
+      "seq": 569047,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "echo 'release notes' | gh release create v1.0.0 --title One --notes-file - && gh release view v1.0.0 --json tagName,name,body,url,isLatest --jq '[.tagName,.name,.body,.url,.isLatest]' && gh release list --limit 1 --json tagName,isLatest --jq '.[0]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "https://github.com/integ/repo-cli/releases/tag/v1.0.0\n[\"v1.0.0\",\"One\",\"release notes\\n\",\"https://github.com/integ/repo-cli/releases/tag/v1.0.0\",true]\n{\"tagName\":\"v1.0.0\",\"isLatest\":true}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_workflow_list_and_view",
+      "seq": 569048,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh workflow list --json id,name,state --jq '.[0]'; gh workflow view ci.yml",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"id\":101,\"name\":\"CI\",\"state\":\"active\"}\nCI - active\nID: 101\nFile: .github/workflows/ci.yml\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_workflow_run_creates_a_visible_run",
+      "seq": 569049,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh workflow run ci.yml --ref main -f mode=fast && gh run list --limit 1 --json databaseId,event --jq '.[0]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "{\"databaseId\":202,\"event\":\"workflow_dispatch\"}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_run_view_and_rerun",
+      "seq": 569050,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh run view 201 --json databaseId,attempt,status --jq '[.databaseId,.attempt,.status]'; gh run rerun 201; gh run view 201 --json attempt,status --jq '[.attempt,.status]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[201,1,\"completed\"]\n[2,\"queued\"]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_api_custom_accept_emits_text_verbatim",
+      "seq": 569051,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh api repos/integ/repo-cli/pulls/5 -H 'Accept: application/vnd.github.v3.diff' | head -1",
+      "expect": {
+        "exit": 0,
+        "stdout": "diff --git a/README.md b/README.md\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_list_limits_apply_after_filters_and_preserve_zero",
+      "seq": 569055,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh issue list --limit 0 --json number; gh pr list --state merged --limit 1 --json number --jq '.[0].number'; gh workflow list --limit 1 --json id --jq '.[0].id'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[]\n5\n101\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_stdin_file_spellings_and_subject_urls",
+      "seq": 569056,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "printf 'spaced' | gh issue create --title spaced -F - >/dev/null; url=$(printf 'attached' | gh issue create --title attached -F-); gh issue close \"$url\" -R missing/repo >/dev/null && gh issue view \"$url\" -R missing/repo --json body,state --jq '[.body,.state]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[\"attached\",\"closed\"]\n",
+        "stderr": ""
+      }
     }
   ]
 }

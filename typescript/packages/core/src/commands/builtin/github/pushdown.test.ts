@@ -52,6 +52,9 @@ function makeAccessor(searchHits: string[], calls: SearchCall[]): GitHubAccessor
     request(method: string, path: string): Promise<unknown> {
       throw new Error(`unexpected transport call: ${method} ${path}`)
     },
+    requestWithResponse(method: string, path: string): Promise<never> {
+      throw new Error(`unexpected transport call: ${method} ${path}`)
+    },
   }
   return new GitHubAccessor({
     transport,
