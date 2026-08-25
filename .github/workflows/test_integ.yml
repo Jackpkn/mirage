@@ -1048,11 +1048,13 @@ jobs:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.nfs == 'true') }}
     runs-on: macos-15
     # Not in the gate yet. This is the first job in the repo to build
-    # either NFS extension -- nothing has ever run cargo in CI -- and a
-    # loopback NFS mount on a hosted runner is unproven. Both batteries
-    # are verified on a developer Mac, where each prints the same 22 keys
-    # and check_json.py accepts them against integ/nfs/truth_nfs.json.
-    # Promote by adding integ-nfs-macos to gate.needs after a green run.
+    # either NFS extension -- nothing has ever run cargo in CI. Both
+    # batteries are verified on a developer Mac, where each prints the
+    # same 27 keys and check_json.py accepts them against
+    # integ/nfs/truth_nfs.json, and the Python one is green on a hosted
+    # runner too: a loopback NFS mount needs no privileges there either.
+    # Promote by adding integ-nfs-macos to gate.needs once the
+    # TypeScript half has had a green run as well.
     #
     # macOS rather than linux because a loopback NFS mount needs no
     # privileges there: linux reserves mount(2) for root, and neither
@@ -1104,8 +1106,13 @@ jobs:
           cache-dependency-path: typescript/pnpm-lock.yaml
 
       - name: Install dependencies
+        # --no-optional because this runner has no macFUSE, deliberately:
+        # the point of the nfs backend is that it needs no filesystem
+        # driver. @zkochan/fuse-native is an optional dependency of the
+        # integ package that compiles against fuse.h, so installing it
+        # here fails the whole install on a header this job must not need.
         working-directory: typescript
-        run: pnpm install --frozen-lockfile=false
+        run: pnpm install --frozen-lockfile=false --no-optional
 
       - name: Download TypeScript build outputs
         uses: actions/download-artifact@v4
