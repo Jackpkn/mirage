@@ -26,6 +26,7 @@ from mirage.commands.cli import CLISpec
 from mirage.commands.cli.specs import cli_spec_for
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
+from mirage.nfs.config import NFSConfig
 from mirage.observe.observer import Observer
 from mirage.observe.record import OpRecord
 from mirage.observe.store import ObserverStore
@@ -249,7 +250,14 @@ class Workspace:
                 self._registry.clis.install(cli_name, cli_spec, cli_config)
 
         for prefix, target_backend, target_point in kernel_targets(specs):
-            self.add_fuse_mount(prefix, target_point, backend=target_backend)
+            if target_backend is MountBackend.NFS:
+                # Served by the caller's loop, which this constructor is
+                # not running on; the first ``execute`` mounts it.
+                self._kernel_mounts.defer_nfs(prefix, target_point)
+            else:
+                self.add_fuse_mount(prefix,
+                                    target_point,
+                                    backend=target_backend)
 
     async def history(self) -> list[dict[str, Any]]:
         """Command events recorded by the hidden recorder.
@@ -376,6 +384,45 @@ class Workspace:
                           session_id: str | None = None) -> None:
         self._kernel_mounts.remove(prefix, session_id)
 
+    async def add_nfs_mount(self,
+                            prefix: str,
+                            mountpoint: str | None = None,
+                            config: NFSConfig | None = None) -> str:
+        """Expose ``prefix`` over nfs and return its mountpoint.
+
+        One server backs every nfs mount of a workspace, so a second
+        prefix costs a kernel mount rather than a second server. The
+        server runs on this loop, so never stat the mountpoint from it;
+        read it from a subprocess or with async file APIs.
+
+        Args:
+            prefix (str): the virtual prefix to expose.
+            mountpoint (str | None): where to mount; None picks a path.
+            config (NFSConfig | None): server knobs, honored by the
+                first mount that starts the server.
+
+        Returns:
+            str: the mountpoint now serving the prefix.
+        """
+        return await self._kernel_mounts.add_nfs(prefix, mountpoint, config)
+
+    async def remove_nfs_mount(self, prefix: str) -> None:
+        """Unmount one exposed nfs prefix.
+
+        Args:
+            prefix (str): the virtual prefix that was exposed.
+        """
+        await self._kernel_mounts.remove_nfs(prefix)
+
+    async def nfs_ready(self) -> None:
+        """Mount every ``backend=nfs`` declaration of this workspace.
+
+        The twin of TypeScript's ``fuseReady``: the constructor cannot
+        await, so a declared nfs mount comes up here. ``execute`` awaits
+        it, so a caller that only runs commands never has to.
+        """
+        await self._kernel_mounts.ready()
+
     @property
     def fuse_mountpoint(self) -> str | None:
         return self._kernel_mounts.mountpoint
@@ -383,6 +430,10 @@ class Workspace:
     @property
     def fuse_mountpoints(self) -> dict[str, str]:
         return self._kernel_mounts.mountpoints
+
+    @property
+    def nfs_mountpoints(self) -> dict[str, str]:
+        return self._kernel_mounts.nfs_mountpoints
 
     def register_cli(self,
                      name: str,
@@ -946,6 +997,7 @@ class Workspace:
                 forwarded by the executor's nested evals so inner
                 lines never re-route.
         """
+        await self.nfs_ready()
         return await execute_line(self, command, session_id, stdin, provision,
                                   agent_id, cwd, env, cancel, record, runtime,
                                   routing_decision)

@@ -12,18 +12,26 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { MountBackend } from '@struktoai/mirage-core/types'
+import { MountBackend } from '@struktoai/mirage-core/types'
 import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
+import type { NFSConfig } from '../../nfs/config.ts'
 import { FuseManager } from '../fuse.ts'
+import { NFSManager } from '../nfs.ts'
 
 /**
- * The workspace's real mountpoints, one {@link FuseManager} per subtree.
+ * The workspace's real mountpoints, one manager per subtree.
  *
- * A `vfs` mount lives only inside mirage; a `fuse` or `fskit` mount also
- * registers a mountpoint with the kernel. This owns the set of those:
- * which prefix is exposed where, and the manager serving it. Keys are
- * `prefix` or `prefix@sessionId`, so the same subtree can be exposed
+ * A `vfs` mount lives only inside mirage; a `fuse`, `fskit` or `nfs`
+ * mount also registers a mountpoint with the kernel. This owns the set of
+ * those: which prefix is exposed where, and the manager serving it. Keys
+ * are `prefix` or `prefix@sessionId`, so the same subtree can be exposed
  * both unbound and bound to a session.
+ *
+ * The nfs tier differs in what serves it: one {@link NFSManager} backs
+ * every nfs prefix of the workspace, because one server can export any
+ * number of them, which is the macOS one-mount-per-process limit
+ * dissolved. It is created on the first nfs mount and stopped by
+ * {@link close}.
  *
  * Twin of python's `workspace/workspace/kernel_mounts.py`. Python takes
  * `(ops, sessions)` because its FuseManager mounts the ops facade; the
@@ -33,6 +41,8 @@ export class KernelMounts {
   private readonly workspace: Workspace
   private readonly mountpointsMap = new Map<string, string>()
   private readonly managers = new Map<string, FuseManager>()
+  private readonly backends = new Map<string, MountBackend>()
+  private nfs: NFSManager | null = null
 
   constructor(workspace: Workspace) {
     this.workspace = workspace
@@ -48,7 +58,7 @@ export class KernelMounts {
    * @param prefix the virtual prefix to expose
    * @param mountpoint where to mount; undefined picks a path
    * @param sessionId session whose grants scope the ops
-   * @param backend fuse or fskit
+   * @param backend fuse, fskit or nfs
    */
   async add(
     prefix: string,
@@ -56,6 +66,7 @@ export class KernelMounts {
     sessionId?: string,
     backend?: MountBackend,
   ): Promise<string> {
+    if (backend === MountBackend.NFS) return this.addNfs(prefix, mountpoint, sessionId)
     const session = sessionId !== undefined ? this.workspace.getSession(sessionId) : undefined
     const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`
     // Register a pinned path BEFORE mounting so a collision is rejected
@@ -71,12 +82,51 @@ export class KernelMounts {
         ...(backend !== undefined ? { backend } : {}),
       })
       if (mountpoint === undefined) this.register(key, resolved)
+      this.backends.set(key, backend ?? MountBackend.FUSE)
       return resolved
     } catch (err) {
       // The mount never came up; drop the manager and any registered path
       // so mountpoints does not misreport it as live.
       this.managers.delete(key)
       this.mountpointsMap.delete(key)
+      throw err
+    }
+  }
+
+  /**
+   * Expose `prefix` over nfs and return its mountpoint.
+   *
+   * A session-bound mount is refused rather than silently unscoped: one
+   * server serves one delegate, so narrowing per session needs a second
+   * server, which is a deliberate follow-up.
+   *
+   * @param prefix the virtual prefix to expose
+   * @param mountpoint where to mount; undefined picks a path
+   * @param sessionId must be undefined; see above
+   * @param config server knobs; one server backs every prefix, so the
+   *   first mount fixes them and a later config is ignored
+   */
+  async addNfs(
+    prefix: string,
+    mountpoint?: string,
+    sessionId?: string,
+    config?: NFSConfig,
+  ): Promise<string> {
+    if (sessionId !== undefined) {
+      throw new Error(
+        'the nfs backend serves one delegate per server, so a session-bound mount ' +
+          'needs its own NFSManager',
+      )
+    }
+    if (mountpoint !== undefined) this.register(prefix, mountpoint)
+    this.nfs ??= new NFSManager()
+    try {
+      const resolved = await this.nfs.setup(this.workspace, prefix, mountpoint, config)
+      this.register(prefix, resolved)
+      this.backends.set(prefix, MountBackend.NFS)
+      return resolved
+    } catch (err) {
+      this.mountpointsMap.delete(prefix)
       throw err
     }
   }
@@ -89,30 +139,62 @@ export class KernelMounts {
    */
   async remove(prefix: string, sessionId?: string): Promise<void> {
     const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`
+    if (this.backends.get(key) === MountBackend.NFS) {
+      if (this.nfs !== null) await this.nfs.unmount(prefix)
+      this.mountpointsMap.delete(key)
+      this.backends.delete(key)
+      return
+    }
     const manager = this.managers.get(key)
     this.managers.delete(key)
     if (manager !== undefined) await manager.unmount()
     this.mountpointsMap.delete(key)
+    this.backends.delete(key)
   }
 
-  /** Unmount everything this workspace exposed. */
+  /**
+   * Unmount everything this workspace exposed.
+   *
+   * The nfs server stops last: unmounting makes the kernel client flush
+   * its dirty pages as final WRITEs, which a stopped server cannot take.
+   */
   async close(): Promise<void> {
     for (const manager of this.managers.values()) await manager.unmount()
     this.managers.clear()
+    if (this.nfs !== null) {
+      await this.nfs.close()
+      this.nfs = null
+    }
     this.mountpointsMap.clear()
+    this.backends.clear()
   }
 
-  /** The single active mountpoint, when there is exactly one. */
+  /** The single active fuse or fskit mountpoint, when there is exactly one. */
   get mountpoint(): string | null {
-    if (this.mountpointsMap.size === 0) return null
-    if (this.mountpointsMap.size > 1) {
+    const fuse = Object.values(this.mountpoints)
+    if (fuse.length === 0) return null
+    if (fuse.length > 1) {
       throw new Error('multiple FUSE mounts active; use fuseMountpoints to select one by prefix')
     }
-    return this.mountpointsMap.values().next().value ?? null
+    return fuse[0] ?? null
   }
 
+  /** The fuse and fskit mountpoints, keyed as they were added. */
   get mountpoints(): Record<string, string> {
-    return Object.fromEntries(this.mountpointsMap)
+    const out: Record<string, string> = {}
+    for (const [key, path] of this.mountpointsMap) {
+      if (this.backends.get(key) !== MountBackend.NFS) out[key] = path
+    }
+    return out
+  }
+
+  /** The nfs mountpoints, keyed by prefix. */
+  get nfsMountpoints(): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const [key, path] of this.mountpointsMap) {
+      if (this.backends.get(key) === MountBackend.NFS) out[key] = path
+    }
+    return out
   }
 
   private register(key: string, mountpoint: string): void {

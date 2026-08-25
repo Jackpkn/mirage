@@ -19,6 +19,7 @@ import { createShellParser } from '@struktoai/mirage-core/shell/parse'
 import type { ShellParser } from '@struktoai/mirage-core/shell/parse'
 import { KERNEL_BACKENDS, MountBackend } from '@struktoai/mirage-core/types'
 import type { Limit } from '@struktoai/mirage-core/types'
+import type { NFSConfig } from './nfs/config.ts'
 import { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import type {
   ExecuteOptions,
@@ -90,7 +91,7 @@ export class Workspace extends CoreWorkspace {
           () => undefined,
           (err: unknown) => {
             process.stderr.write(
-              `mirage: FUSE auto-mount failed for ${prefix}, continuing without it: ${
+              `mirage: ${backend} auto-mount failed for ${prefix}, continuing without it: ${
                 err instanceof Error ? err.message : String(err)
               }\n`,
             )
@@ -125,12 +126,41 @@ export class Workspace extends CoreWorkspace {
     return this.kernelMounts.remove(prefix, sessionId)
   }
 
+  /**
+   * Expose a subtree over nfs and return its mountpoint.
+   *
+   * One server backs every nfs mount of a workspace, so a second prefix
+   * costs a kernel mount rather than a second server. That server runs on
+   * this process's event loop, so the self-touch rule applies verbatim:
+   * never stat or read the mountpoint synchronously from here.
+   */
+  addNfsMount(prefix: string, mountpoint?: string, config?: NFSConfig): Promise<string> {
+    return this.kernelMounts.addNfs(prefix, mountpoint, undefined, config)
+  }
+
+  removeNfsMount(prefix: string): Promise<void> {
+    return this.kernelMounts.remove(prefix)
+  }
+
   get fuseMountpoints(): Record<string, string> {
     return this.kernelMounts.mountpoints
   }
 
   get fuseMountpoint(): string | null {
     return this.kernelMounts.mountpoint
+  }
+
+  get nfsMountpoints(): Record<string, string> {
+    return this.kernelMounts.nfsMountpoints
+  }
+
+  /**
+   * Await the eager kernel mounts started in the constructor, nfs ones
+   * included. The twin of python's `nfs_ready`, which exists there
+   * because its constructor mounts fuse synchronously and cannot await.
+   */
+  async nfsReady(): Promise<void> {
+    await this.fuseReady()
   }
 
   /** Await the eager per-mount fuse mounts started in the constructor. */
