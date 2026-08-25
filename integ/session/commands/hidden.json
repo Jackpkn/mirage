@@ -499,6 +499,46 @@
         "stdout": "h\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "subtree_mounted_prep",
+      "seq": 923350,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "rm -r /vault/d/sub && mkdir -p /vault/d/sec && echo k > /vault/d/sec/k",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "subtree_visible_mounted_child_keeps_the_refusal",
+      "seq": 923351,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "ls /vault/d && rmdir /vault/d",
+      "expect": {
+        "exit": 1,
+        "stdout": "inner\n",
+        "stderr": "rmdir: failed to remove '/vault/d': Directory not empty\n"
+      },
+      "session": "shrouded"
+    },
+    {
+      "id": "subtree_mounted_child_refusal_kept_the_remnant",
+      "seq": 923352,
+      "targets": [
+        "ram-commands"
+      ],
+      "command": "cat /vault/d/sec/k",
+      "expect": {
+        "exit": 0,
+        "stdout": "k\n",
+        "stderr": ""
+      }
     }
   ]
 }

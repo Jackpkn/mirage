@@ -1106,7 +1106,16 @@
           "backend": "ssh",
           "root": "links"
         }
-      ]
+      ],
+      "sessions": {
+        "veiled": {
+          "paths": {
+            "hide": [
+              "/data/qsubh/sec"
+            ]
+          }
+        }
+      }
     },
     {
       "id": "nextcloud",
@@ -2403,6 +2412,13 @@
           "paths": {
             "hide": [
               "/vault/d/inner"
+            ]
+          }
+        },
+        "shrouded": {
+          "paths": {
+            "hide": [
+              "/vault/d/sec"
             ]
           }
         },
