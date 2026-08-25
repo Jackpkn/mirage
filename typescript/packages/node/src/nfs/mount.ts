@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { lstat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -31,6 +31,9 @@ import type { DirEntry, NFSAttrs } from './types.ts'
 const run = promisify(execFile)
 
 export const MOUNT_TIMEOUT_SECONDS = 10
+export const UMOUNT_TIMEOUT_SECONDS = 15
+export const UMOUNT_RETRY_PAUSE = 0.5
+export const PROBE_TIMEOUT_SECONDS = 2
 const POLL_SECONDS = 0.05
 
 /** The npm package carrying the prebuilt addon (`mirage-nfs-node`). */
@@ -289,40 +292,97 @@ async function attrsReply(fileid: number, call: () => Promise<NFSAttrs>): Promis
 }
 
 /**
- * The kernel mount command for one export.
+ * The `-o` string for one export.
  *
  * `port=mountport=<port>` keeps portmap (111) and NLM out of the picture
  * entirely; `actimeo=0` keeps client attribute caches fresh, the
  * analogue of the FUSE mounts' `attr_timeout=0`.
+ *
+ * The rest is the escape hatch, and it is the difference between a
+ * stalled server costing an error and costing the host. A hard mount --
+ * the platform default -- blocks every I/O on the mountpoint forever and
+ * uninterruptibly when nothing answers, and since macOS walks the mount
+ * table for Finder, df and Spotlight, one wedged mount takes the desktop
+ * with it. `soft` + `timeo` + `retrans` bound the wait and fail the call
+ * instead; `intr` makes even a hard mount killable; `deadtimeout` lets
+ * the kernel forcibly unmount a mount nothing has answered for, which is
+ * the only cleanup left when the serving process died without unmounting.
+ *
+ * `intr` is darwin-only because Linux has ignored it since 2.6.25, where
+ * `soft` is the whole answer.
  */
+export function mountOptions(
+  port: number,
+  config: NFSConfig,
+  platform: string = process.platform,
+): string {
+  const darwin = platform === 'darwin'
+  const bare = String(port)
+  const parts = [
+    darwin ? 'nolocks' : 'nolock',
+    'vers=3',
+    'tcp',
+    'rsize=131072',
+    'actimeo=0',
+    `port=${bare}`,
+    `mountport=${bare}`,
+    `timeo=${String(config.timeo)}`,
+    `retrans=${String(config.retrans)}`,
+  ]
+  if (config.soft) parts.push('soft')
+  if (darwin) {
+    parts.push('intr')
+    if (config.deadTimeout > 0) parts.push(`deadtimeout=${String(config.deadTimeout)}`)
+  }
+  return parts.join(',')
+}
+
+/** The kernel mount command for one export. */
 export function mountArgs(
   mountpoint: string,
   port: number,
   exportPath: string,
+  config: NFSConfig = new NFSConfig(),
   platform: string = process.platform,
 ): [string, ...string[]] {
   const source = `127.0.0.1:${exportPath}`
-  if (platform === 'darwin') {
-    const port_ = String(port)
-    const opts = `nolocks,vers=3,tcp,rsize=131072,actimeo=0,port=${port_},mountport=${port_}`
-    return ['mount_nfs', '-o', opts, source, mountpoint]
-  }
-  const bare = String(port)
-  const opts = `nolock,vers=3,tcp,rsize=131072,actimeo=0,port=${bare},mountport=${bare}`
+  const opts = mountOptions(port, config, platform)
+  if (platform === 'darwin') return ['mount_nfs', '-o', opts, source, mountpoint]
   return ['mount', '-t', 'nfs', '-o', opts, source, mountpoint]
 }
 
 /**
  * The unmount command for a mountpoint.
  *
- * Plain `umount` everywhere; `runUmount` falls back to
- * `diskutil unmount force` on a darwin refusal.
+ * `umount -f` is the NFS force path on both platforms, and it is the one
+ * that answers when the server behind the mount is already gone: a plain
+ * unmount asks the filesystem to flush first, which is a request nothing
+ * is left to serve.
  */
 export function umountArgs(
   mountpoint: string,
+  force = false,
   _platform: string = process.platform,
 ): [string, ...string[]] {
-  return ['umount', mountpoint]
+  return force ? ['umount', '-f', mountpoint] : ['umount', mountpoint]
+}
+
+/**
+ * The unmount of last resort, which differs by platform.
+ *
+ * Linux has `umount -l`: a lazy detach is a namespace operation, so it
+ * succeeds without asking the filesystem anything and takes the
+ * mountpoint out of every path lookup immediately, with the old mount
+ * surviving only for handles already open. macOS has no lazy unmount at
+ * all -- its `umount` takes only `-fv` -- so the last rung there is
+ * `diskutil`, which asks the volume layer instead.
+ */
+export function lastResortArgs(
+  mountpoint: string,
+  platform: string = process.platform,
+): [string, ...string[]] {
+  if (platform === 'darwin') return ['diskutil', 'unmount', 'force', mountpoint]
+  return ['umount', '-l', mountpoint]
 }
 
 /** Resolve the mountpoint, creating a temporary one when unnamed. */
@@ -360,15 +420,34 @@ export async function isMountPoint(path: string): Promise<boolean> {
   }
 }
 
-/** Wait until the kernel reports a live mount, or fail loudly. */
+/**
+ * Wait until the kernel reports a live mount, or fail loudly.
+ *
+ * Every probe is bounded, not just the loop around them. A probe is a
+ * stat, and a stat of a mount whose server never answers does not
+ * resolve -- so a deadline checked only between probes is a deadline
+ * that never fires, and the wait that was supposed to fail after ten
+ * seconds hangs instead. The abandoned probe stays pending on a libuv
+ * thread; that is the cost of not hanging the loop, and it is bounded
+ * by the deadline above.
+ */
 export async function awaitIsMount(
   mountpoint: string,
   timeout: number = MOUNT_TIMEOUT_SECONDS,
   probe: (path: string) => Promise<boolean> = isMountPoint,
+  probeTimeout: number = PROBE_TIMEOUT_SECONDS,
 ): Promise<void> {
   const deadline = Date.now() + timeout * 1000
   while (Date.now() < deadline) {
-    if (await probe(mountpoint)) return
+    const answered = await Promise.race([
+      probe(mountpoint),
+      new Promise<null>((wake) =>
+        setTimeout(() => {
+          wake(null)
+        }, probeTimeout * 1000),
+      ),
+    ])
+    if (answered === true) return
     await new Promise((wake) => setTimeout(wake, POLL_SECONDS * 1000))
   }
   throw new Error(
@@ -376,13 +455,13 @@ export async function awaitIsMount(
   )
 }
 
-/** Run the kernel mount command and wait for the mount to be live. */
 export async function runMount(
   mountpoint: string,
   port: number,
   exportPath: string,
+  config: NFSConfig = new NFSConfig(),
 ): Promise<void> {
-  const [program, ...argv] = mountArgs(mountpoint, port, exportPath)
+  const [program, ...argv] = mountArgs(mountpoint, port, exportPath, config)
   try {
     await run(program, argv)
   } catch (err) {
@@ -391,25 +470,91 @@ export async function runMount(
     const reason = output === '' ? String(err) : output
     throw new Error(`${program} failed (${String(failure.code ?? 1)}): ${reason}`)
   }
-  await awaitIsMount(mountpoint)
+  await awaitIsMount(mountpoint, MOUNT_TIMEOUT_SECONDS, isMountPoint)
 }
 
-/** Unmount, falling back to diskutil force on a darwin refusal. */
-export async function runUmount(mountpoint: string): Promise<void> {
-  const [program, ...argv] = umountArgs(mountpoint)
-  try {
-    await run(program, argv)
-    return
-  } catch {
-    // busy or already gone; darwin gets one forced attempt below
+/**
+ * Run a teardown command, giving up rather than waiting forever.
+ *
+ * `execFile`'s own `timeout` is not enough: it signals the child at the
+ * deadline and settles when the child exits, and a child stuck in an
+ * uninterruptible kernel wait on a dead mount never does. The race is
+ * what bounds the caller; the SIGKILL is a courtesy the child may well
+ * ignore, which is why it is unref'd and never awaited again.
+ *
+ * @returns the exit status, or null if it outlived the wait
+ */
+export type BoundedRunner = (
+  program: string,
+  argv: string[],
+  timeout: number,
+) => Promise<number | null>
+
+const runBounded: BoundedRunner = async (program, argv, timeout) => {
+  const child = spawn(program, argv, { stdio: 'ignore' })
+  return await new Promise<number | null>((settle) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      child.unref()
+      settle(null)
+    }, timeout * 1000)
+    child.once('exit', (code) => {
+      clearTimeout(timer)
+      settle(code ?? 1)
+    })
+    child.once('error', () => {
+      clearTimeout(timer)
+      settle(null)
+    })
+  })
+}
+
+/**
+ * Unmount, escalating, and never blocking forever.
+ *
+ * Four rungs, each bounded: a plain unmount, the same one again after a
+ * pause, `umount -f`, and the platform's last resort (`umount -l` on
+ * linux, `diskutil unmount force` on darwin). Every one of them can
+ * block in the kernel when the mount's server has stopped answering,
+ * which is exactly when teardown is being asked to run, so the wait is
+ * what has to be bounded rather than the outcome trusted.
+ *
+ * The retry is the EBUSY rung, and it only runs when the first attempt
+ * *answered*: a busy target is usually a child that has not finished
+ * exiting, and one that answered will answer again in milliseconds. A
+ * first attempt that timed out is a wedged mount instead, where a
+ * second plain unmount would only spend the same wait again, so that
+ * case escalates straight to force. The runner reports a status, not an
+ * errno, so the rung is not conditioned on EBUSY itself -- checking
+ * that would mean parsing umount's wording in whatever locale it was
+ * written for.
+ *
+ * Failing every rung leaves a live mount whose server is about to stop,
+ * which is the state that wedges a machine, so it is reported with the
+ * command that clears it rather than passed over.
+ */
+export async function runUmount(
+  mountpoint: string,
+  timeout: number = UMOUNT_TIMEOUT_SECONDS,
+  runner: BoundedRunner = runBounded,
+  retryPause: number = UMOUNT_RETRY_PAUSE,
+): Promise<void> {
+  const [plain, ...plainArgv] = umountArgs(mountpoint)
+  const answered = await runner(plain, plainArgv, timeout)
+  if (answered === 0) return
+  if (answered !== null) {
+    await new Promise((wake) => setTimeout(wake, retryPause * 1000))
+    if ((await runner(plain, plainArgv, timeout)) === 0) return
   }
-  if (process.platform === 'darwin') {
-    try {
-      await run('diskutil', ['unmount', 'force', mountpoint])
-    } catch {
-      // best effort: the caller already tried the clean path
-    }
-  }
+  const [forced, ...forcedArgv] = umountArgs(mountpoint, true)
+  if ((await runner(forced, forcedArgv, timeout)) === 0) return
+  const [resort, ...resortArgv] = lastResortArgs(mountpoint)
+  if ((await runner(resort, resortArgv, timeout)) === 0) return
+  process.stderr.write(
+    `mirage: nfs mountpoint ${mountpoint} could not be unmounted; it is still ` +
+      'live with no server behind it, which blocks anything that touches it. ' +
+      `Clear it with: sudo ${[resort, ...resortArgv].join(' ')}\n`,
+  )
 }
 
 /**

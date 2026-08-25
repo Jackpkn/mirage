@@ -23,7 +23,7 @@ from mirage.nfs.mount import (prepare_mountpoint, run_mount, run_umount,
 from mirage.ops import Ops
 
 StartFn = Callable[[Ops, NFSConfig], Awaitable[tuple[MirageNFS, Any]]]
-MountFn = Callable[[str, int, str], Awaitable[None]]
+MountFn = Callable[[str, int, str, NFSConfig | None], Awaitable[None]]
 UnmountFn = Callable[[str], Awaitable[None]]
 
 
@@ -106,7 +106,8 @@ class NFSManager:
             self._fs, self._handle = await self._start(ops, self._config)
         export = ("/" if prefix.strip("/") == "" else "/" + prefix.strip("/"))
         try:
-            await self._mount(resolved, self._handle.port(), export)
+            await self._mount(resolved, self._handle.port(), export,
+                              self._config)
         except Exception:
             self._discard_mountpoint(resolved, owns)
             raise

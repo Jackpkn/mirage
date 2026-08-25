@@ -60,4 +60,26 @@ describe('NFSConfig', () => {
     }).toThrow(TypeError)
     expect(config.port).toBe(DEFAULT_PORT)
   })
+
+  it('defaults to a soft, bounded mount', () => {
+    // The default has to be the survivable one: a hard mount blocks
+    // every I/O forever when the server stops, and the server is the
+    // process that set the mount up.
+    const config = new NFSConfig()
+    expect(config.soft).toBe(true)
+    expect(config.timeo).toBe(50)
+    expect(config.retrans).toBe(3)
+    expect(config.deadTimeout).toBe(60)
+  })
+
+  it('can express a hard mount', () => {
+    expect(new NFSConfig({ soft: false }).soft).toBe(false)
+    expect(new NFSConfig({ deadTimeout: 0 }).deadTimeout).toBe(0)
+  })
+
+  it('refuses resilience knobs that describe no wait at all', () => {
+    expect(() => new NFSConfig({ timeo: 0 })).toThrow(/timeo/)
+    expect(() => new NFSConfig({ retrans: -1 })).toThrow(/retrans/)
+    expect(() => new NFSConfig({ deadTimeout: -1 })).toThrow(/deadTimeout/)
+  })
 })

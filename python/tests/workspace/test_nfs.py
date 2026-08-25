@@ -49,14 +49,17 @@ class Recorder:
         self.fs = FakeFS()
         self.starts: list[NFSConfig] = []
         self.mounts: list[tuple[str, int, str]] = []
+        self.mount_configs: list[NFSConfig | None] = []
         self.unmounts: list[str] = []
 
     async def start(self, ops, config):
         self.starts.append(config)
         return self.fs, self.handle
 
-    async def mount(self, mountpoint: str, port: int, export: str) -> None:
+    async def mount(self, mountpoint: str, port: int, export: str,
+                    config: NFSConfig | None) -> None:
         self.mounts.append((mountpoint, port, export))
+        self.mount_configs.append(config)
 
     async def unmount(self, mountpoint: str) -> None:
         self.unmounts.append(mountpoint)
@@ -132,7 +135,9 @@ def test_collision_is_detected_before_the_path_is_touched(
 def test_a_failed_mount_leaves_no_registration(tmp_path):
     rec = Recorder()
 
-    async def failing_mount(mountpoint: str, port: int, export: str) -> None:
+    async def failing_mount(mountpoint: str, port: int, export: str,
+                            config: NFSConfig | None) -> None:
+        del config
         raise RuntimeError("mount refused")
 
     manager = NFSManager(start_fn=rec.start,
@@ -175,3 +180,15 @@ def test_close_is_idempotent_and_safe_before_setup():
     asyncio.run(manager.close())
     asyncio.run(manager.close())
     assert rec.unmounts == []
+
+
+def test_the_mount_options_come_from_the_server_config(tmp_path):
+    # The mount command carries the resilience knobs, so the seam has to
+    # hand the same config to the mount that started the server: a
+    # second mountpoint answering to different timeouts than the first
+    # is a mount the teardown cannot reason about.
+    manager, rec = make()
+    config = NFSConfig(timeo=11, retrans=2)
+    asyncio.run(manager.setup(None, "/", str(tmp_path / "a"), config))
+    asyncio.run(manager.setup(None, "/docs", str(tmp_path / "b")))
+    assert rec.mount_configs == [config, config]

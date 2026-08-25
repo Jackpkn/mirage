@@ -12,14 +12,14 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { existsSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
 import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { NFSConfig } from '../nfs/config.ts'
 import type * as MountModule from '../nfs/mount.ts'
@@ -68,14 +68,21 @@ class Recorder {
   readonly starts: NFSConfig[] = []
   readonly mounts: [string, number, string][] = []
   readonly unmounts: string[] = []
+  readonly mountConfigs: NFSConfig[] = []
 
   start = (_ws: CoreWorkspace, config: NFSConfig): Promise<[FakeFS, FakeHandle]> => {
     this.starts.push(config)
     return Promise.resolve([this.fs, this.handle])
   }
 
-  mount = (mountpoint: string, port: number, exportPath: string): Promise<void> => {
+  mount = (
+    mountpoint: string,
+    port: number,
+    exportPath: string,
+    config: NFSConfig,
+  ): Promise<void> => {
     this.mounts.push([mountpoint, port, exportPath])
+    this.mountConfigs.push(config)
     return Promise.resolve()
   }
 
@@ -99,13 +106,24 @@ function workspace(): Workspace {
   return new Workspace({ '/': new RAMResource() }, { mode: MountMode.WRITE })
 }
 
+// Recorded rather than left behind: these are scratch mountpoints for a
+// manager that never mounts anything, so nothing unmounts them and a
+// full test run used to leave one temp directory per case in /tmp.
+const bases: string[] = []
+
 function tempBase(): string {
-  return mkdtempSync(join(tmpdir(), 'mirage-nfs-mgr-'))
+  const base = mkdtempSync(join(tmpdir(), 'mirage-nfs-mgr-'))
+  bases.push(base)
+  return base
 }
 
 describe('NFSManager', () => {
   beforeEach(() => {
     touched.length = 0
+  })
+
+  afterEach(() => {
+    for (const base of bases.splice(0)) rmSync(base, { recursive: true, force: true })
   })
 
   it('serves many kernel mounts from one server', async () => {
@@ -232,5 +250,18 @@ describe('NFSManager', () => {
     await manager.close()
     expect(existsSync(owned)).toBe(false)
     expect(existsSync(named)).toBe(true)
+  })
+
+  it('mounts with the config that started the server', async () => {
+    // The mount command carries the resilience knobs, so the seam has to
+    // hand the same config to the mount that started the server: a
+    // second mountpoint answering to different timeouts than the first
+    // is a mount the teardown cannot reason about.
+    const [manager, rec] = make()
+    const config = new NFSConfig({ timeo: 11, retrans: 2 })
+    const target = workspace()
+    await manager.setup(target, '/', '/tmp/mirage-nfs-a', config)
+    await manager.setup(target, '/docs', '/tmp/mirage-nfs-b')
+    expect(rec.mountConfigs).toEqual([config, config])
   })
 })

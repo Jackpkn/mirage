@@ -48,3 +48,28 @@ def test_config_is_frozen():
     config = NFSConfig()
     with pytest.raises(Exception):
         config.port = 1234
+
+
+def test_defaults_are_a_soft_bounded_mount():
+    # The default has to be the survivable one: a hard mount blocks
+    # every I/O forever when the server stops, and the server is the
+    # process that set the mount up.
+    config = NFSConfig()
+    assert config.soft is True
+    assert config.timeo == 50
+    assert config.retrans == 3
+    assert config.dead_timeout == 60
+
+
+def test_a_hard_mount_is_expressible():
+    assert NFSConfig(soft=False).soft is False
+    assert NFSConfig(dead_timeout=0).dead_timeout == 0
+
+
+def test_bad_resilience_knobs_are_refused():
+    with pytest.raises(ValueError, match="timeo"):
+        NFSConfig(timeo=0)
+    with pytest.raises(ValueError, match="retrans"):
+        NFSConfig(retrans=-1)
+    with pytest.raises(ValueError, match="dead_timeout"):
+        NFSConfig(dead_timeout=-1)

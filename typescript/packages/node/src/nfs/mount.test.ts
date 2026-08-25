@@ -26,12 +26,16 @@ import {
   awaitIsMount,
   buildDelegate,
   isMountPoint,
+  lastResortArgs,
   loadAddon,
   mountArgs,
+  mountOptions,
   prepareMountpoint,
+  runUmount,
   umountArgs,
 } from './mount.ts'
-import type { NFSDelegateTarget } from './mount.ts'
+import { NFSConfig } from './config.ts'
+import type { BoundedRunner, NFSDelegateTarget } from './mount.ts'
 import type { DirEntry, NFSAttrs } from './types.ts'
 
 const ATTRS: NFSAttrs = { fileid: 7, size: 3, isDir: false, isSymlink: false }
@@ -57,7 +61,7 @@ function target(overrides: Partial<NFSDelegateTarget> = {}): NFSDelegateTarget {
 
 describe('mountArgs', () => {
   it('pins port, mountport and actimeo on darwin', () => {
-    const argv = mountArgs('/tmp/m', 20490, '/docs', 'darwin')
+    const argv = mountArgs('/tmp/m', 20490, '/docs', new NFSConfig(), 'darwin')
     expect(argv[0]).toBe('mount_nfs')
     const joined = argv.join(' ')
     expect(joined).toContain('port=20490')
@@ -68,18 +72,128 @@ describe('mountArgs', () => {
   })
 
   it('uses mount -t nfs on linux', () => {
-    const argv = mountArgs('/tmp/m', 111, '/', 'linux')
+    const argv = mountArgs('/tmp/m', 111, '/', new NFSConfig(), 'linux')
     expect(argv.slice(0, 3)).toEqual(['mount', '-t', 'nfs'])
     // linux spells the no-lock option without the trailing s
     expect(argv.join(' ')).toContain('nolock,')
     expect(argv.at(-2)).toBe('127.0.0.1:/')
   })
+
+  it('carries the config options', () => {
+    const argv = mountArgs('/tmp/m', 20490, '/', new NFSConfig({ timeo: 11 }), 'darwin')
+    expect(argv[2]).toContain('timeo=11')
+  })
+})
+
+describe('mountOptions', () => {
+  it('carries the whole escape hatch on darwin', () => {
+    const parts = mountOptions(20490, new NFSConfig(), 'darwin').split(',')
+    expect(parts).toContain('soft')
+    expect(parts).toContain('intr')
+    expect(parts).toContain('timeo=50')
+    expect(parts).toContain('retrans=3')
+    expect(parts).toContain('deadtimeout=60')
+  })
+
+  it('omits intr on linux', () => {
+    // Linux has ignored intr since 2.6.25; soft is the whole answer
+    // there, and an option the kernel drops is noise in the argv.
+    const parts = mountOptions(20490, new NFSConfig(), 'linux').split(',')
+    expect(parts).toContain('soft')
+    expect(parts).toContain('timeo=50')
+    expect(parts).not.toContain('intr')
+    expect(parts.some((part) => part.startsWith('deadtimeout='))).toBe(false)
+  })
+
+  it('honors a hard mount choice', () => {
+    const config = new NFSConfig({ soft: false, deadTimeout: 0, timeo: 17, retrans: 9 })
+    const parts = mountOptions(20490, config, 'darwin').split(',')
+    expect(parts).not.toContain('soft')
+    expect(parts.some((part) => part.startsWith('deadtimeout='))).toBe(false)
+    expect(parts).toContain('timeo=17')
+    expect(parts).toContain('retrans=9')
+    // intr survives a hard mount on purpose: it is what makes the
+    // blocked I/O killable, which is the only escape a hard mount has.
+    expect(parts).toContain('intr')
+  })
 })
 
 describe('umountArgs', () => {
   it('is plain umount on every platform', () => {
-    expect(umountArgs('/tmp/m', 'linux')).toEqual(['umount', '/tmp/m'])
-    expect(umountArgs('/tmp/m', 'darwin')).toEqual(['umount', '/tmp/m'])
+    expect(umountArgs('/tmp/m', false, 'linux')).toEqual(['umount', '/tmp/m'])
+    expect(umountArgs('/tmp/m', false, 'darwin')).toEqual(['umount', '/tmp/m'])
+  })
+
+  it('forces with -f, which is the nfs escape', () => {
+    expect(umountArgs('/tmp/m', true)).toEqual(['umount', '-f', '/tmp/m'])
+  })
+})
+
+describe('lastResortArgs', () => {
+  it('is lazy on linux and diskutil on darwin', () => {
+    // macOS umount takes only -fv, so a lazy detach is not expressible
+    // there; linux has no diskutil.
+    expect(lastResortArgs('/tmp/m', 'linux')).toEqual(['umount', '-l', '/tmp/m'])
+    expect(lastResortArgs('/tmp/m', 'darwin')).toEqual(['diskutil', 'unmount', 'force', '/tmp/m'])
+  })
+})
+
+describe('runUmount', () => {
+  it('walks every rung, then gives up', async () => {
+    const calls: string[][] = []
+    const refuse: BoundedRunner = (program, argv) => {
+      calls.push([program, ...argv])
+      return Promise.resolve(1)
+    }
+    await runUmount('/tmp/m', 1, refuse, 0)
+    expect(calls.slice(0, 3)).toEqual([
+      ['umount', '/tmp/m'],
+      ['umount', '/tmp/m'],
+      ['umount', '-f', '/tmp/m'],
+    ])
+    expect(calls[3]).toEqual(lastResortArgs('/tmp/m'))
+  })
+
+  it('retries a busy target before forcing', async () => {
+    // EBUSY is usually a child that has not finished exiting, so the
+    // same plain unmount answers a moment later.
+    const calls: string[][] = []
+    const codes = [1, 0]
+    const busyThenFree: BoundedRunner = (program, argv) => {
+      calls.push([program, ...argv])
+      return Promise.resolve(codes.shift() ?? 1)
+    }
+    await runUmount('/tmp/m', 1, busyThenFree, 0)
+    expect(calls).toEqual([
+      ['umount', '/tmp/m'],
+      ['umount', '/tmp/m'],
+    ])
+  })
+
+  it('skips the retry when the first attempt hung', async () => {
+    // A timeout is a wedged mount, not a busy one: repeating the plain
+    // unmount would only spend the same wait again.
+    const calls: string[][] = []
+    const hangThenRefuse: BoundedRunner = (program, argv) => {
+      calls.push([program, ...argv])
+      return Promise.resolve(calls.length === 1 ? null : 1)
+    }
+    await runUmount('/tmp/m', 1, hangThenRefuse, 0)
+    expect(calls.slice(0, 2)).toEqual([
+      ['umount', '/tmp/m'],
+      ['umount', '-f', '/tmp/m'],
+    ])
+    expect(calls[2]).toEqual(lastResortArgs('/tmp/m'))
+  })
+
+  it('stops at the first success', async () => {
+    const calls: string[][] = []
+    const accept: BoundedRunner = (program, argv) => {
+      calls.push([program, ...argv])
+      return Promise.resolve(0)
+    }
+    await runUmount('/tmp/m', 1, accept, 0)
+    expect(calls).toEqual([['umount', '/tmp/m']])
   })
 })
 
@@ -110,6 +224,14 @@ describe('prepareMountpoint', () => {
 })
 
 describe('awaitIsMount', () => {
+  it('fails loudly when a probe never answers, not only when it answers false', async () => {
+    // The stat of a mount whose server has stopped never resolves, so a
+    // deadline checked only between probes is a deadline that never
+    // fires. This is the regression that hung the battery.
+    const never = () => new Promise<boolean>(() => undefined)
+    await expect(awaitIsMount('/tmp/wedged', 0.2, never, 0.05)).rejects.toThrow(/wedged/)
+  })
+
   it('fails loudly, naming the mountpoint, when no mount appears', async () => {
     await expect(awaitIsMount('/tmp/never', 0.05, () => Promise.resolve(false))).rejects.toThrow(
       '/tmp/never',

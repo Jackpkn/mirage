@@ -16,6 +16,9 @@ export const DEFAULT_PORT = 20490
 export const DEFAULT_HOST = '127.0.0.1'
 export const DEFAULT_IDLE_FLUSH_SECONDS = 5.0
 export const DEFAULT_MAX_BUFFERED_BYTES = 16 * 1024 * 1024
+const DEFAULT_TIMEO_DECISECONDS = 50
+const DEFAULT_RETRANS = 3
+const DEFAULT_DEAD_TIMEOUT_SECONDS = 60
 
 /** Knobs for one NFS-backed mount. */
 export interface NFSConfigInit {
@@ -42,6 +45,35 @@ export interface NFSConfigInit {
    * never stops writing cannot grow the buffer without bound.
    */
   maxBufferedBytes?: number
+  /**
+   * Mount soft rather than the platform default, hard. A hard mount
+   * blocks every I/O forever when the server stops answering,
+   * uninterruptibly, and on macOS that wedges anything that walks the
+   * mount table -- Finder, df, Spotlight -- not just the caller. The
+   * server here is this very process, so a deadlock in it is exactly
+   * the case that would freeze the host that started it. False is
+   * honest for a deployment that would rather wait out a slow server
+   * than see EIO, and it is only safe when something else can force
+   * the unmount.
+   */
+  soft?: boolean
+  /**
+   * Initial retransmit timeout in TENTHS of a second, the unit both
+   * mount_nfs and mount.nfs read.
+   */
+  timeo?: number
+  /**
+   * Retransmits before a soft mount gives up. With `timeo`, this bounds
+   * a stalled I/O at roughly `timeo * retrans` tenths of a second.
+   */
+  retrans?: number
+  /**
+   * Seconds a mount may stay unresponsive before the kernel forcibly
+   * unmounts it. Darwin only, and 0 disables it -- the last line of
+   * defence when the server dies without unmounting, which is what
+   * leaves a wedged mountpoint behind.
+   */
+  deadTimeout?: number
 }
 
 export class NFSConfig {
@@ -49,12 +81,20 @@ export class NFSConfig {
   readonly port: number
   readonly idleFlushSeconds: number
   readonly maxBufferedBytes: number
+  readonly soft: boolean
+  readonly timeo: number
+  readonly retrans: number
+  readonly deadTimeout: number
 
   constructor(init: NFSConfigInit = {}) {
     this.host = init.host ?? DEFAULT_HOST
     this.port = init.port ?? DEFAULT_PORT
     this.idleFlushSeconds = init.idleFlushSeconds ?? DEFAULT_IDLE_FLUSH_SECONDS
     this.maxBufferedBytes = init.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES
+    this.soft = init.soft ?? true
+    this.timeo = init.timeo ?? DEFAULT_TIMEO_DECISECONDS
+    this.retrans = init.retrans ?? DEFAULT_RETRANS
+    this.deadTimeout = init.deadTimeout ?? DEFAULT_DEAD_TIMEOUT_SECONDS
     if (!Number.isInteger(this.port) || this.port < 0 || this.port > 65535) {
       throw new RangeError(`port out of range: ${String(this.port)}`)
     }
@@ -63,6 +103,15 @@ export class NFSConfig {
     }
     if (this.maxBufferedBytes <= 0) {
       throw new RangeError(`maxBufferedBytes must be positive: ${String(this.maxBufferedBytes)}`)
+    }
+    if (this.timeo <= 0) {
+      throw new RangeError(`timeo must be positive: ${String(this.timeo)}`)
+    }
+    if (this.retrans <= 0) {
+      throw new RangeError(`retrans must be positive: ${String(this.retrans)}`)
+    }
+    if (this.deadTimeout < 0) {
+      throw new RangeError(`deadTimeout must not be negative: ${String(this.deadTimeout)}`)
     }
     // The twin of python's frozen dataclass, the way core's stat rows are
     // frozen: the server is started from these values, so a later write

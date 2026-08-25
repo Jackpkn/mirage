@@ -18,6 +18,9 @@ DEFAULT_PORT = 20490
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_IDLE_FLUSH_SECONDS = 5.0
 DEFAULT_MAX_BUFFERED_BYTES = 16 * 1024 * 1024
+DEFAULT_TIMEO_DECISECONDS = 50
+DEFAULT_RETRANS = 3
+DEFAULT_DEAD_TIMEOUT_SECONDS = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,12 +40,34 @@ class NFSConfig:
         max_buffered_bytes (int): per-handle ceiling that forces an early
             flush, so a client that never stops writing cannot grow the
             buffer without bound.
+        soft (bool): mount soft rather than the platform default, hard.
+            A hard mount blocks every I/O forever when the server stops
+            answering, uninterruptibly, and on macOS that wedges anything
+            that walks the mount table -- Finder, df, Spotlight -- not
+            just the caller. The server here is this very process, so a
+            deadlock in it is exactly the case that would freeze the host
+            that started it. False is honest for a deployment that would
+            rather wait out a slow server than see EIO, and it is only
+            safe when something else can force the unmount.
+        timeo (int): initial retransmit timeout in TENTHS of a second,
+            the unit both mount_nfs and mount.nfs read.
+        retrans (int): retransmits before a soft mount gives up. With
+            timeo, this bounds a stalled I/O at roughly
+            ``timeo * retrans`` tenths of a second.
+        dead_timeout (int): seconds a mount may stay unresponsive before
+            the kernel forcibly unmounts it. Darwin only, and 0 disables
+            it -- the last line of defence when the server dies without
+            unmounting, which is what leaves a wedged mountpoint behind.
     """
 
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     idle_flush_seconds: float = DEFAULT_IDLE_FLUSH_SECONDS
     max_buffered_bytes: int = DEFAULT_MAX_BUFFERED_BYTES
+    soft: bool = True
+    timeo: int = DEFAULT_TIMEO_DECISECONDS
+    retrans: int = DEFAULT_RETRANS
+    dead_timeout: int = DEFAULT_DEAD_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
         if not 0 <= self.port <= 65535:
@@ -53,3 +78,10 @@ class NFSConfig:
         if self.max_buffered_bytes <= 0:
             raise ValueError("max_buffered_bytes must be positive: "
                              f"{self.max_buffered_bytes}")
+        if self.timeo <= 0:
+            raise ValueError(f"timeo must be positive: {self.timeo}")
+        if self.retrans <= 0:
+            raise ValueError(f"retrans must be positive: {self.retrans}")
+        if self.dead_timeout < 0:
+            raise ValueError("dead_timeout must not be negative: "
+                             f"{self.dead_timeout}")

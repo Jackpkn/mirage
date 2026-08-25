@@ -34,7 +34,12 @@ export type StartFn = (
   ws: Workspace,
   config: NFSConfig,
 ) => Promise<[NFSFlushTarget, NFSServerHandle]>
-export type MountFn = (mountpoint: string, port: number, exportPath: string) => Promise<void>
+export type MountFn = (
+  mountpoint: string,
+  port: number,
+  exportPath: string,
+  config: NFSConfig,
+) => Promise<void>
 export type UnmountFn = (mountpoint: string) => Promise<void>
 
 /** Injection seams, so a test drives the manager without a kernel mount. */
@@ -66,6 +71,7 @@ export class NFSManager {
   private readonly unmountFn: UnmountFn
   private fs: NFSFlushTarget | null = null
   private handle: NFSServerHandle | null = null
+  private config: NFSConfig | null = null
   private readonly mounts = new Map<string, [string, boolean]>()
 
   constructor(options: NFSManagerOptions = {}) {
@@ -108,15 +114,19 @@ export class NFSManager {
       }
     }
     const [resolved, owns] = prepareMountpoint(mountpoint)
+    // One server backs every prefix, so the first mount fixes the knobs
+    // -- the mount options included, since a second mountpoint into the
+    // same server must not answer to different timeouts than the first.
+    this.config ??= config ?? new NFSConfig()
     if (this.handle === null) {
-      const [fs, handle] = await this.startFn(ws, config ?? new NFSConfig())
+      const [fs, handle] = await this.startFn(ws, this.config)
       this.fs = fs
       this.handle = handle
     }
     const bare = prefix.replace(/^\/+/, '').replace(/\/+$/, '')
     const exportPath = bare === '' ? '/' : `/${bare}`
     try {
-      await this.mountFn(resolved, this.handle.port(), exportPath)
+      await this.mountFn(resolved, this.handle.port(), exportPath, this.config)
     } catch (err) {
       this.discardMountpoint(resolved, owns)
       throw err
@@ -154,6 +164,7 @@ export class NFSManager {
     if (this.handle !== null) this.handle.stop()
     this.fs = null
     this.handle = null
+    this.config = null
   }
 
   /** Remove a mirage-owned, now-empty mountpoint directory. */
