@@ -261,7 +261,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -613,7 +613,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -855,7 +855,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -1108,7 +1108,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -1232,7 +1232,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -1332,7 +1332,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
