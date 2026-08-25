@@ -1181,12 +1181,16 @@ jobs:
         # mount.nfs lives in nfs-common; without it the mount command
         # fails as "unknown filesystem type 'nfs'", which reads like a
         # kernel gap rather than a missing package.
-        # fuse3 rides along for the differential below: this is the only
-        # runner where both kernel tiers exist at once, which is what
-        # makes diffing them possible at all.
+        # The fuse packages ride along for the differential below: this
+        # is the only runner where both kernel tiers exist at once, which
+        # is what makes diffing them possible at all. mfusepy is ctypes
+        # over libfuse *2*, so fuse3 alone is not enough -- the same pair
+        # integ-fuse installs, minus the libfuse3 headers, which only
+        # fuse-native needs and this job never builds.
         run: |
           sudo apt-get update
-          sudo apt-get install -y nfs-common fuse3
+          sudo apt-get install -y nfs-common fuse3 libfuse2t64 || \
+            sudo apt-get install -y nfs-common fuse3 libfuse2
 
       - name: Show the toolchain (the runner image ships rust)
         run: |
@@ -1205,8 +1209,10 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
+        # --extra fuse for the differential: it mounts the same tree both
+        # ways, so it needs mfusepy as well as the nfs wheel.
         working-directory: python
-        run: uv sync
+        run: uv sync --extra fuse
 
       - name: Build and install the mirage-nfs wheel
         working-directory: python
