@@ -45,7 +45,6 @@ await ws.execute('echo hello > /data/hello.txt')
 await ws.nfsReady()
 console.log('mountpoints:', ws.nfsMountpoints)
 await ws.close()
-process.exit(0)
 ```
 
 On macOS this needs no privileges at all. On Linux `mount` does, so run the
@@ -101,13 +100,14 @@ const { stdout } = await run('cat', [`${mountpoint}/hello.txt`])
 ```
 </Warning>
 
-<Warning>
-  **End the process explicitly.** The addon's idle-flush task holds its
-  callback for the process's lifetime, so `close()` unmounts and stops the
-  exports but does not release the event loop. A script that mounts and
-  exits needs a final `process.exit(0)`. Python does not: it owns its
-  runtime and aborts both tasks on shutdown.
-</Warning>
+<Note>
+  **`close()` lets the process exit.** It unmounts, flushes what is still
+  buffered, and stops the server, and the addon releases the event loop
+  with it — no final `process.exit(0)` needed. Before the addon's idle
+  flusher learned to stop, it held the loop for the process's lifetime and
+  a clean run hung; if you are pinned to an older build, that is the
+  symptom.
+</Note>
 
 ## Writes are buffered
 

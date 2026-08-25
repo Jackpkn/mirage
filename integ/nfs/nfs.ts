@@ -369,12 +369,11 @@ async function main(): Promise<void> {
     clearTimeout(deadline);
     forceUnmountAll();
   }
-  // The addon's idle-flush task holds its callback for the process's
-  // lifetime, so stopping the server does not release this event loop
-  // and the run has to exit itself. The write is awaited before that
-  // exit because node's stdout is asynchronous when it is a pipe, which
-  // is how CI runs this (`... | check_json.py`), and a pending write is
-  // dropped by process.exit().
+  // The exit is for stdout, not for the server: node's stdout is
+  // asynchronous when it is a pipe, which is how CI runs this
+  // (`... | check_json.py`), and a pending write is dropped by
+  // process.exit() -- so the write is awaited first. The server itself
+  // releases the event loop on close() and needs no help.
   await new Promise<void>((flushed) => {
     process.stdout.write(JSON.stringify(result) + "\n", () => {
       flushed();

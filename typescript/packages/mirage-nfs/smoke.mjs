@@ -197,5 +197,19 @@ checks.push(['target survives', o === 'hello-from-node'])
 await run('umount', [mnt])
 handle.stop()
 for (const [line, ok] of checks) console.log((ok ? 'PASS ' : 'FAIL ') + line)
-console.log(checks.every(([, ok]) => ok) ? 'TS-SMOKE-OK' : 'TS-SMOKE-FAILED')
-process.exit(0)
+const passed = checks.every(([, ok]) => ok)
+console.log(passed ? 'TS-SMOKE-OK' : 'TS-SMOKE-FAILED')
+process.exitCode = passed ? 0 : 1
+
+// No process.exit() on purpose: stop() has to release node's event loop
+// by itself, and this is exactly where that regressed once -- the idle
+// flusher looped forever, so its threadsafe function kept the loop
+// referenced and a clean run still hung. The watchdog is unref'd, so it
+// cannot hold the loop open itself; it only ever fires if something
+// else does.
+setTimeout(() => {
+  console.log(
+    'TS-SMOKE-FAILED: still running after stop(); the addon kept the event loop referenced',
+  )
+  process.exit(1)
+}, 10_000).unref()

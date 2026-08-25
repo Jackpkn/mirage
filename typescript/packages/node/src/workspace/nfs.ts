@@ -153,10 +153,11 @@ export class NFSManager {
    * `flushAll` then stores whatever is still buffered; only then does
    * the server stop. Idempotent.
    *
-   * Stopping ends the exports but does not release node's event loop:
-   * the addon's idle-flush task holds its callback for the process's
-   * lifetime, so a script that mounts and closes still has to
-   * `process.exit()`.
+   * Stopping releases node's event loop too, so a script that mounts and
+   * closes exits on its own. It did not always: the addon's idle flusher
+   * looped forever, and the threadsafe function it held kept the loop
+   * referenced for the process's lifetime. `smoke.mjs` fails now if that
+   * comes back.
    */
   async close(): Promise<void> {
     for (const prefix of [...this.mounts.keys()]) await this.unmount(prefix)

@@ -30,7 +30,10 @@ use vfs::{Delegate, MirageVFS};
 #[napi]
 pub struct NfsServerHandle {
     port: u16,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Both background tasks watch this. A watch channel rather than a
+    /// oneshot because there are two of them, and because dropping the
+    /// handle closes it, which the receivers read as a stop too.
+    shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 #[napi]
@@ -42,13 +45,19 @@ impl NfsServerHandle {
         self.port
     }
 
-    /// Stop serving. The caller flushes buffered writes before this
-    /// (NFSManager.close: unmount, flushAll, stop).
+    /// Stop serving, and let the process exit.
+    ///
+    /// The caller flushes buffered writes before this (NFSManager.close:
+    /// unmount, flushAll, stop). Stopping ends *both* tasks: the idle
+    /// flusher used to loop forever, and since it holds a clone of the
+    /// flush callback, its threadsafe function kept Node's event loop
+    /// referenced for the process's lifetime -- a script that mounted and
+    /// closed cleanly still hung until it called process.exit() itself.
     #[napi]
     pub fn stop(&mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
+        // Fails only when both receivers are already gone, which is the
+        // state this asks for.
+        let _ = self.shutdown.send(true);
     }
 }
 
@@ -98,22 +107,35 @@ pub async fn start(
         .await
         .map_err(|e| Error::from_reason(format!("nfs bind failed: {e}")))?;
     let bound = listener.get_listen_port();
-    let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let mut serve_stop = rx.clone();
     tokio::spawn(async move {
         tokio::select! {
             _ = listener.handle_forever() => {},
-            _ = &mut rx => {},
+            _ = serve_stop.changed() => {},
         }
+        // The listener owns the vfs, which owns twelve of the thirteen
+        // threadsafe functions; ending the task drops them.
+        drop(listener);
     });
     let period = Duration::from_secs_f64(idle_seconds.max(0.5));
+    let mut flush_stop = rx;
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(period).await;
-            let _: std::result::Result<bridge::UnitReply, _> = call(&flusher, IdArgs { id: 0.0 }).await;
+            tokio::select! {
+                _ = tokio::time::sleep(period) => {
+                    let _: std::result::Result<bridge::UnitReply, _> =
+                        call(&flusher, IdArgs { id: 0.0 }).await;
+                }
+                _ = flush_stop.changed() => break,
+            }
         }
+        // The thirteenth: dropping it releases the last reference this
+        // extension holds on Node's event loop.
+        drop(flusher);
     });
     Ok(NfsServerHandle {
         port: bound,
-        shutdown: Some(tx),
+        shutdown: tx,
     })
 }

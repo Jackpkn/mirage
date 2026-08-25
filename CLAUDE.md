@@ -542,12 +542,15 @@ the adapter, where they are unit-testable without a mount.
   to carry `fileid`/`size`/`isDir`/`isSymlink`, which are not `Option`; a bare
   `{errno}` fails to deserialize and the client sees SERVERFAULT. The other
   reply shapes are all-`Option`, so `{errno}` alone is fine there.
-- **The TS addon does not release node's event loop on `stop()`.** The
-  idle-flush task holds its threadsafe-function callback for the process's
-  lifetime, so a script that mounts and closes still has to `process.exit()`.
-  Python is immune: it owns its runtime and `shutdown_timeout` aborts both
-  tasks. The fix is rust-side (select the flusher on a second shutdown signal);
-  until it lands, every TS script and example exits itself.
+- **`stop()` has to end the flusher, not just the listener.** Both background
+  tasks in the addon hold threadsafe functions, and a threadsafe function keeps
+  node's event loop referenced, so an idle flusher that loops forever means a
+  script which mounts and closes cleanly never exits. Both tasks now select on
+  one `watch` channel that `stop()` sends on and dropping the handle closes.
+  Python reaches the same place differently: it owns its tokio runtime and
+  `shutdown_timeout` aborts both tasks. `smoke.mjs` ends without
+  `process.exit()` and fails on a watchdog if the process is still alive ten
+  seconds after `stop()`, which is what pins this.
 - **Windows is refused at the guard**, not attempted: the client is Pro-only
   and `mount.exe` speaks another grammar. macOS needs no privileges for a
   loopback mount; linux needs them to run `mount`.

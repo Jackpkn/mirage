@@ -31,9 +31,9 @@
 //     serve it.
 //   * One server backs every prefix, so the second mount costs a kernel
 //     mount rather than a second server.
-//   * The run ends with process.exit(). The addon's idle-flush task holds
-//     its callback for the process's lifetime, so close() ends the mount
-//     but does not release the loop.
+//   * close() is the whole teardown: it unmounts every export, flushes
+//     what is still buffered, stops the server, and releases the event
+//     loop, so the process exits on its own.
 
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -97,11 +97,7 @@ async function main(): Promise<void> {
   }
 }
 
-main()
-  .then(() => {
-    process.exit(0)
-  })
-  .catch((err: unknown) => {
-    console.error(err)
-    process.exit(1)
-  })
+main().catch((err: unknown) => {
+  console.error(err)
+  process.exitCode = 1
+})
