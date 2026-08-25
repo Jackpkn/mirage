@@ -1133,6 +1133,19 @@ jobs:
           cargo build --release
           cp target/release/libmirage_nfs_node.dylib mirage_nfs_node.node
 
+      - name: Show what holds the nfs port
+        # The TypeScript battery failed here with EADDRINUSE on 20490
+        # while the Python one, which ran earlier in this same job, had
+        # already exited and cleaned its mounts -- and the same sequence
+        # does not reproduce on a developer Mac, where TIME_WAIT entries
+        # for that port are present and the next bind takes it anyway.
+        # So this names the holder rather than guessing at it again.
+        run: |
+          lsof -nP -iTCP:20490 || echo "lsof: nothing on 20490"
+          netstat -an | grep 20490 || echo "netstat: no sockets on 20490"
+          mount | grep -i nfs || echo "mount: no nfs mounts"
+          pgrep -fl 'nfs.py|mirage' || echo "pgrep: no battery process left"
+
       - name: Run the TypeScript NFS battery and check
         working-directory: integ
         env:
