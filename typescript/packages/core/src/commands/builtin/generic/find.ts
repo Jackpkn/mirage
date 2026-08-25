@@ -167,7 +167,7 @@ export async function linkResults(
     if (follow) {
       const target = await links.targetStat(path)
       if (target !== null) {
-        kind = target.type === FileType.DIRECTORY ? 'd' : 'f'
+        kind = printfKind(target)
         st = target
       }
     }
@@ -230,8 +230,9 @@ function startPointResults(
     if (mtimeMax !== null && ts > mtimeMax) return results
   }
   emitStartPath(results, rstripSlash(root.mountPath) || '/', startBasename(root.virtual), {
-    kind: 'f',
-    isEmpty: usesEmpty ? (start.size ?? 0) === 0 : null,
+    kind: printfKind(start),
+    isEmpty:
+      usesEmpty && printfKind(start) === 'f' ? (start.size ?? 0) === 0 : usesEmpty ? false : null,
     exists: true,
     tree,
     maxDepth: options.maxDepth ?? null,

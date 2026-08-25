@@ -269,7 +269,8 @@ export class MirageOSAccess {
         return vfs.isLink(path)
       case 'Path.is_file':
         return vfs.entryFor(path).then(
-          (e) => e !== null && !e.isDir,
+          (e) =>
+            e !== null && !e.isDir && (e.mode === undefined || (e.mode & 0o170000) === 0o100000),
           () => false,
         )
       case 'Path.exists':

@@ -1,6 +1,8 @@
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 
+from mirage.commands.builtin.utils.constants import CHAR_DEVICE_MAX_BYTES
+from mirage.commands.builtin.utils.limit import truncate_stream
 from mirage.commands.builtin.utils.operands import (normalized_read,
                                                     operands_io,
                                                     split_readable)
@@ -11,7 +13,7 @@ from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.cachable_iterator import CachableAsyncIterator
 from mirage.io.stream import async_chain, chain_cachables
 from mirage.io.types import ByteSource, IOResult, materialize
-from mirage.types import PathSpec, PolymorphicReadFn, StatFn
+from mirage.types import FileType, Limit, PathSpec, PolymorphicReadFn, StatFn
 from mirage.utils.stream import ensure_stream
 
 
@@ -90,27 +92,40 @@ async def cat_generic(
         readable, err = await split_readable(paths, stat, "cat")
         if not readable:
             return None, operands_io(err)
+        io = IOResult()
+
+        async def source_for(p: PathSpec) -> AsyncIterator[bytes]:
+            source = read(p)
+            if (await stat(p)).type is FileType.CHAR_DEVICE:
+                source = truncate_stream(
+                    source, io, Limit(max_bytes=CHAR_DEVICE_MAX_BYTES))
+            return source
+
         if len(readable) == 1:
             p = readable[0]
-            cachable = CachableAsyncIterator(read(p))
-            io = IOResult(reads={p.mount_path: cachable}, cache=[p.mount_path])
+            cachable = CachableAsyncIterator(await source_for(p))
+            io.reads[p.mount_path] = cachable
+            io.cache.append(p.mount_path)
             source: ByteSource = cachable
         elif local:
-            cachables = [CachableAsyncIterator(read(p)) for p in readable]
-            io = IOResult(reads={
+            cachables = [
+                CachableAsyncIterator(await source_for(p)) for p in readable
+            ]
+            io.reads.update({
                 p.mount_path: c
                 for p, c in zip(readable, cachables)
-            },
-                          cache=[p.mount_path for p in readable])
+            })
+            io.cache.extend(p.mount_path for p in readable)
             source = chain_cachables(*cachables)
         else:
             reads: dict[str, ByteSource] = {}
             parts: list[bytes] = []
             for p in readable:
-                data = await materialize(read(p))
+                data = await materialize(await source_for(p))
                 reads[p.mount_path] = data
                 parts.append(data)
-            io = IOResult(reads=reads, cache=list(reads))
+            io.reads.update(reads)
+            io.cache.extend(reads)
             source = async_chain(*parts)
         if err:
             io.stderr = err

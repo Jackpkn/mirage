@@ -161,6 +161,40 @@ async def apply_limit(
     return data, IOResult(stderr=notice)
 
 
+async def truncate_stream(
+    src: ByteSource,
+    io: IOResult,
+    limit: Limit,
+) -> AsyncIterator[bytes]:
+    """Lazily truncate a byte stream and attach the outcome to ``io``.
+
+    Unlike :func:`apply_limit`, this never gathers the stream. Sources that
+    may be endless use it before any VALUE barrier can materialize them.
+    """
+    max_bytes = limit.max_bytes
+    if max_bytes is None:
+        async for chunk in ensure_stream(src):
+            yield chunk
+        return
+
+    emitted = 0
+    async for chunk in ensure_stream(src):
+        remaining = max_bytes - emitted
+        if len(chunk) <= remaining:
+            yield chunk
+            emitted += len(chunk)
+            continue
+        if remaining > 0:
+            yield chunk[:remaining]
+        notice = _build_notice(limit)
+        existing = (await materialize(io.stderr)
+                    if io.stderr is not None else b"")
+        io.stderr = existing + notice
+        if limit.on_exceed is OnExceed.ERROR:
+            io.exit_code = 1
+        return
+
+
 async def guard_output(
     stdout: ByteSource | None,
     stderr: ByteSource | None,

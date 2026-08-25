@@ -41,10 +41,11 @@ function operandScope(ctx: CondContext, val: string | PathSpec): PathSpec {
 async function pathKind(
   ctx: CondContext,
   val: string | PathSpec,
-): Promise<['dir' | 'file' | null, FileStat | null]> {
+): Promise<['dir' | 'file' | 'char' | null, FileStat | null]> {
   const stat = await resolvePathStat(ctx.dispatch, operandScope(ctx, val))
   if (stat === null) return [null, null]
   if (stat.type === FileType.DIRECTORY) return ['dir', stat]
+  if (stat.type === FileType.CHAR_DEVICE) return ['char', stat]
   return ['file', stat]
 }
 
@@ -67,6 +68,7 @@ export async function applyUnary(
     if (op === '-e') return kind !== null
     if (op === '-f') return kind === 'file'
     if (op === '-d') return kind === 'dir'
+    if (op === '-c') return kind === 'char'
     if (op === '-s') {
       if (kind === 'dir') return true
       if (kind !== 'file' || stat === null) return false

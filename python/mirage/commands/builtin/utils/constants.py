@@ -21,12 +21,27 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
 
 EPOCH_LS_TIME = "Jan  1 00:00"
 
-TYPE_CHARS = {FileType.DIRECTORY: "d", FileType.SYMLINK: "l"}
+# A terminal `cat` of an endless character device must be bounded before
+# workspace materialization. Regular files keep the ordinary line-only cap.
+CHAR_DEVICE_MAX_BYTES = 8 << 20
+
+TYPE_CHARS = {
+    FileType.DIRECTORY: "d",
+    FileType.SYMLINK: "l",
+    FileType.CHAR_DEVICE: "c",
+    FileType.BLOCK_DEVICE: "b",
+    FileType.FIFO: "p",
+    FileType.SOCKET: "s",
+}
 
 # A symlink has no permission bits of its own on Linux: the mode is
 # always 0777 and access is decided by the target, so GNU always renders
-# lrwxrwxrwx.
-DEFAULT_MODES = {FileType.DIRECTORY: 0o755, FileType.SYMLINK: 0o777}
+# lrwxrwxrwx. A device carries 0666 the way the kernel creates null/zero.
+DEFAULT_MODES = {
+    FileType.DIRECTORY: 0o755,
+    FileType.SYMLINK: 0o777,
+    FileType.CHAR_DEVICE: 0o666,
+}
 
 NUMERIC_PREFIX = re.compile(
     r"^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?")

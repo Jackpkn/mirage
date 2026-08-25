@@ -31,12 +31,14 @@ STRING_UNARY = frozenset({"-n", "-z"})
 # `-v NAME` asks whether the variable (or the `NAME[sub]` element) is
 # set; it reads session state, not a path.
 VAR_UNARY = frozenset({"-v"})
-FILE_UNARY = frozenset({"-e", "-f", "-d", "-s", "-r", "-w", "-x", "-L", "-h"})
+FILE_UNARY = frozenset(
+    {"-e", "-f", "-d", "-c", "-s", "-r", "-w", "-x", "-L", "-h"})
 # Real GNU operators mirage cannot answer truthfully: the VFS has no
-# FIFO/socket/device node types, no uid/gid ownership or setuid bits,
-# and no controlling terminal. Failing loudly beats the silent-false
-# this module used to produce.
+# FIFO/socket/block-device node types, no uid/gid ownership or setuid
+# bits, and no controlling terminal. (Character devices ARE modelled, so
+# -c is supported above.) Failing loudly beats the silent-false this
+# module used to produce.
 UNSUPPORTED_UNARY = frozenset(
-    {"-p", "-S", "-b", "-c", "-g", "-k", "-u", "-O", "-G", "-N", "-t"})
+    {"-p", "-S", "-b", "-g", "-k", "-u", "-O", "-G", "-N", "-t"})
 BINARY_OPS = STRING_BINARY | NUMERIC_BINARY | FILE_PAIR_BINARY
 UNARY_OPS = STRING_UNARY | VAR_UNARY | FILE_UNARY | UNSUPPORTED_UNARY

@@ -1,4 +1,6 @@
-from mirage.commands.builtin.tail_helper import number_flag_error, parse_counts
+from mirage.commands.builtin.tail_helper import (number_flag_error,
+                                                 parse_byte_count,
+                                                 parse_counts)
 
 
 def test_bare_count_counts_back_from_the_end():
@@ -37,6 +39,12 @@ def test_both_flags_are_parsed_independently():
     counts = parse_counts("+2", "5")
     assert counts.from_line == 2
     assert counts.byte_count == 5
+
+
+def test_byte_counts_accept_gnu_size_suffixes():
+    assert parse_byte_count("2M") == 2 * 1024 * 1024
+    assert parse_byte_count("3kB") == 3000
+    assert parse_counts(None, "+2M").from_byte == 2 * 1024 * 1024
 
 
 class TestNumberFlagError:

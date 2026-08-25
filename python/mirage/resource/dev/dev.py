@@ -15,14 +15,13 @@
 from typing import TypeVar, overload
 
 from mirage.accessor.ram import RAMAccessor
-from mirage.commands.builtin.ram import COMMANDS
-from mirage.ops.ram import OPS as RAM_OPS
+from mirage.commands.builtin.dev import COMMANDS
+from mirage.ops.dev import OPS as DEV_OPS
 from mirage.resource.base import BaseResource
 from mirage.resource.ram.store import RAMStore
 from mirage.types import ResourceName
 
 _DEV_NAMES = frozenset({"null", "zero"})
-_ZERO_CHUNK_SIZE = 1 << 20
 _POP_MISSING = object()
 _T = TypeVar("_T")
 
@@ -50,6 +49,12 @@ class _DevFiles(dict[str, bytes]):
             if self._synthetic_active(name)
         ]
 
+    def device_of(self, key: str) -> str | None:
+        # The state-based authority on "is this an active char device":
+        # a tombstoned-then-recreated path is a real file, not a device.
+        name = key.strip("/")
+        return name if self._synthetic_active(name) else None
+
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
@@ -62,7 +67,7 @@ class _DevFiles(dict[str, bytes]):
             return dict.__getitem__(self, key)
         name = key.strip("/")
         if self._synthetic_active(name):
-            return b"" if name == "null" else b"\x00" * _ZERO_CHUNK_SIZE
+            return b""
         raise KeyError(key)
 
     def __setitem__(self, key: str, value: bytes) -> None:
@@ -128,8 +133,7 @@ class DevResource(BaseResource):
 
     accessor: RAMAccessor
     name: str = ResourceName.RAM
-    # /dev/null and /dev/zero are synthesized at fixed lengths, so the RAM
-    # stat path sizes them without a fetch.
+    # Device metadata is synthetic and needs no content fetch.
     SIZES_ALWAYS_KNOWN: bool = True
 
     def __init__(self) -> None:
@@ -138,5 +142,5 @@ class DevResource(BaseResource):
         self.accessor = RAMAccessor(self._store)
         for fn in COMMANDS:
             self.register(fn)
-        for ro in RAM_OPS:
+        for ro in DEV_OPS:
             self.register_op(ro)

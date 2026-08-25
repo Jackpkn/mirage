@@ -16,7 +16,7 @@ import { specOf } from '../../spec/builtins.ts'
 import { FlagView } from '../../spec/types.ts'
 import { operandStat } from '../utils/operands.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
-import { FileType, type FileStat, type PathSpec } from '../../../types.ts'
+import { DEVICE_NUMBERS_KEY, FileType, type FileStat, type PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { detectFileType, formatFileResult } from '../file_helper.ts'
 import { MIME_SYMLINK } from '../constants.ts'
@@ -76,6 +76,17 @@ export async function fileGeneric(
     const s = await operandStat(p, stat, opts.statPath, opts.ns?.mounts)
     if (s.type === FileType.DIRECTORY) {
       lines.push(formatFileResult(p.rawPath, FileType.DIRECTORY, brief, mime))
+      continue
+    }
+    if (s.type === FileType.CHAR_DEVICE) {
+      const raw = s.extra[DEVICE_NUMBERS_KEY]
+      const device = Array.isArray(raw) && raw.length === 2 ? raw : null
+      const description = mime
+        ? 'inode/chardevice'
+        : device !== null
+          ? `character special (${String(device[0])}/${String(device[1])})`
+          : 'character special'
+      lines.push(formatFileResult(p.rawPath, description, brief, false))
       continue
     }
     let header: Uint8Array

@@ -15,6 +15,7 @@
 import asyncio
 import errno
 from pathlib import PurePosixPath
+from stat import S_ISDIR, S_ISREG
 from typing import Any
 
 from mirage.runtime.errors import CrossMountError
@@ -138,6 +139,8 @@ class MirageOSAccess(OSAccess):
         self._insert_tree_dir(path)
 
     def path_exists(self, path: PurePosixPath) -> bool:
+        if self._vfs.stat(str(path)) is not None:
+            return True
         self._ensure_file(path)
         if super().path_exists(path):
             return True
@@ -145,10 +148,16 @@ class MirageOSAccess(OSAccess):
         return super().path_exists(path)
 
     def path_is_file(self, path: PurePosixPath) -> bool:
+        st = self._vfs.stat(str(path))
+        if st is not None:
+            return S_ISREG(st.mode)
         self._ensure_file(path)
         return super().path_is_file(path)
 
     def path_is_dir(self, path: PurePosixPath) -> bool:
+        st = self._vfs.stat(str(path))
+        if st is not None:
+            return S_ISDIR(st.mode)
         self._ensure_dir(path)
         return super().path_is_dir(path)
 

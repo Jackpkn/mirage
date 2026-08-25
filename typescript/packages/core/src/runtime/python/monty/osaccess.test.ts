@@ -362,6 +362,19 @@ describe('MirageOSAccess path operations', () => {
     expect(await access.handle('Path.exists', ['/ram/nope/deep'])).toBe(false)
   })
 
+  it('does not classify a character device as a regular file', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/dev/') return Promise.resolve(['/dev/null'])
+      if (op === 'stat' && path === '/dev/null') {
+        return Promise.resolve(new FileStat({ name: 'null', type: FileType.CHAR_DEVICE }))
+      }
+      return Promise.reject(Object.assign(new Error('gone'), { code: 'ENOENT' }))
+    })
+    const access = accessOn(dispatch, {}, ['/dev'])
+    expect(await access.handle('Path.exists', ['/dev/null'])).toBe(true)
+    expect(await access.handle('Path.is_file', ['/dev/null'])).toBe(false)
+  })
+
   // Monty's own tree holds no links, so declining this verb answered
   // False for a link the shell made.
   it('answers is_symlink from the parent listing mark', async () => {

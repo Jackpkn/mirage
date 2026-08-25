@@ -16,7 +16,13 @@ import { specOf } from '../../spec/builtins.ts'
 import { FlagView } from '../../spec/types.ts'
 import { operandStat } from '../utils/operands.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
-import { FileType, LINK_TARGET_KEY, type FileStat, type PathSpec } from '../../../types.ts'
+import {
+  DEVICE_NUMBERS_KEY,
+  FileType,
+  LINK_TARGET_KEY,
+  type FileStat,
+  type PathSpec,
+} from '../../../types.ts'
 import { isoToEpoch } from '../../../utils/dates.ts'
 import { fsErrorLine, isFsError } from '../../../utils/errors.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
@@ -30,6 +36,7 @@ const DEFAULT_OWNER = 'user'
 const TYPE_LABELS: Record<string, string> = {
   [FileType.DIRECTORY]: 'directory',
   [FileType.SYMLINK]: 'symbolic link',
+  [FileType.CHAR_DEVICE]: 'character special file',
   [FileType.TEXT]: 'regular file',
   [FileType.BINARY]: 'regular file',
   [FileType.JSON]: 'regular file',
@@ -45,12 +52,14 @@ function effectiveMode(s: FileStat): number {
   if (s.type === FileType.DIRECTORY) return 0o755
   // A symlink carries no permission bits of its own; GNU reports 0777.
   if (s.type === FileType.SYMLINK) return 0o777
+  if (s.type === FileType.CHAR_DEVICE) return 0o666
   return 0o644
 }
 
 function typeBits(s: FileStat): number {
   if (s.type === FileType.DIRECTORY) return 0o040000
   if (s.type === FileType.SYMLINK) return 0o120000
+  if (s.type === FileType.CHAR_DEVICE) return 0o020000
   return 0o100000
 }
 
@@ -180,11 +189,17 @@ function directiveValue(spec: string, s: FileStat, name: string): string {
   if (spec === 'w') return '-'
   if (spec === 'W') return '0'
   if (spec === 'B') return '512'
-  if (spec === 'r' || spec === 'R' || spec === 't' || spec === 'T') return '0'
-  // %Hr/%Lr are rdev major/minor (0, like %r); %Hd/%Ld are device
-  // major/minor, which a VFS has no truthful value for.
+  const device = s.extra[DEVICE_NUMBERS_KEY]
+  const numbers = Array.isArray(device) && device.length === 2 ? (device as [number, number]) : null
+  if (spec === 't') return numbers !== null ? numbers[0].toString(16) : '0'
+  if (spec === 'T') return numbers !== null ? numbers[1].toString(16) : '0'
+  if (spec === 'r' || spec === 'R') return '0'
   if (spec.length === 2 && (spec.startsWith('H') || spec.startsWith('L'))) {
-    return spec[1] === 'r' || spec[1] === 'R' ? '0' : '?'
+    if (spec[1] === 'r' || spec[1] === 'R') {
+      if (numbers === null) return '0'
+      return String(spec.startsWith('H') ? numbers[0] : numbers[1])
+    }
+    return '?'
   }
   return '?'
 }

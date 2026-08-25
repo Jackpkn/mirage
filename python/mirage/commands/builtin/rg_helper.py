@@ -128,6 +128,9 @@ async def rg_folder(
             results.extend(sub)
             continue
 
+        if s.type is not FileType.FILE:
+            continue
+
         if get_extension(entry) in BINARY_EXTENSIONS:
             continue
 
@@ -295,7 +298,7 @@ async def rg_full(
                 warnings,
                 no_filename=no_filename,
             ))
-        else:
+        elif s.type is FileType.FILE:
             if get_extension(entry) in BINARY_EXTENSIONS:
                 continue
             if not rg_matches_filter(entry, file_type, glob_pattern, hidden):

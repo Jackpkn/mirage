@@ -71,8 +71,10 @@ export function enotempty(path: string | { virtual: string }): FsError {
 
 // readlink on a path that exists but is not a symlink. Mirrors Python's
 // OSError(errno.EINVAL).
-export function einval(path: string | { virtual: string }): FsError {
-  return fsError(path, 'EINVAL')
+export function einval(path: string | { virtual: string }, message?: string): FsError {
+  const err = fsError(path, 'EINVAL')
+  if (message !== undefined) err.message = message
+  return err
 }
 
 // A rename whose two ends sit on different mounts. POSIX's answer for a
