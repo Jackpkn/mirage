@@ -33,27 +33,31 @@ import type {
 export interface Policy {
   preCommand?(ctx: CommandContext): Action | null | Promise<Action | null>
   /**
-   * Admit or refuse one VFS op at an op door. The doors are the
-   * dispatcher and the ops facade (`ws.fs`), which is also how FUSE,
-   * the runtime guests, `find -delete` and the warm cache arrive:
-   * shell redirects and the namespace-routed commands (touch/chmod/ln)
-   * clear this gate too. Backend I/O inside a mount command's handler
-   * (cat, grep -r, sed -i, rm) does not pass through here: such a
-   * line is admitted whole at preCommand, and per-path control on
-   * that tier belongs to the declarative permissions document, whose
-   * rules hold walks to per-entry checks. The hot path: fires per op
-   * (thousands under one recursive cascade or FUSE walk), so keep the
-   * hook cheap; expensive decisions belong at preCommand or
-   * precomputed into policy state.
+   * Admit or refuse one VFS op, at the op doors and on the command
+   * tier's backend I/O. The doors are the dispatcher and the ops
+   * facade (`ws.fs`), which is also how FUSE, the runtime guests,
+   * `find -delete` and the warm cache arrive; a mount command's
+   * handler (cat, grep -r, sed -i, rm) admits each content read,
+   * mutation and readdir through the same hook (`withPolicyGuard`),
+   * before its own warm cache. On that tier the op is named by
+   * adapter slot in its shared snake spelling (read_bytes,
+   * read_stream, rm_r, ...), so a policy portable across the tiers
+   * keys on `write` and `path`; stat/exists and native find/du
+   * enumeration stay unguarded as presence facts (mode-000 shape: a
+   * denied entry lists and stats, the read of it fails), and a native
+   * subtree op (rm_r, dir_copy) admits as the one op the backend
+   * performs. The hot path: fires per op (thousands under one
+   * recursive command), so keep the hook cheap; expensive decisions
+   * belong at preCommand or precomputed into policy state.
    */
   preOps?(ctx: OpsContext): Action | null | Promise<Action | null>
   /** Observe one completed VFS op; a Deny suppresses its result, a
    * Limit caps a byte-producing one. Narrower than preOps: the
-   * dispatcher and facade doors only, never the backend I/O inside a
-   * mount command's handler, and not `find -delete`, which admits
-   * each deletion through preOps and then routes into the command
-   * tier, so no per-op result reports here. The command tier's result
-   * plane is postExecute, which bounds the finished line's output. */
+   * dispatcher and facade doors only. The backend I/O inside a mount
+   * command's handler and each `find -delete` deletion admit through
+   * preOps and report no per-op result here; the command tier's
+   * result plane is postExecute, which bounds the finished line's
+   * output. */
   postOps?(ctx: OpsResultContext): Action | null | Promise<Action | null>
   /**
    * Bound one finished execute() line's output. A Limit returned here

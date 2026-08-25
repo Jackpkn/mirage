@@ -563,35 +563,62 @@ describe('the remaining session writers clear the same gate', () => {
   })
 })
 
-/** Seal one file's reads and one subtree's writes at the op doors. */
+/** Seal one file's reads and one subtree's writes wherever preOps fires. */
 class SealedPaths implements Policy {
   preOps(ctx: OpsContext): Action | null {
     if (!ctx.write && ctx.path.virtual === '/a/secret.txt') {
       return { kind: 'deny', reason: 'secret is sealed' }
     }
-    if (ctx.write && ctx.path.virtual.startsWith('/a/prod/')) {
+    // The subtree spelling covers the root too: a native tree op
+    // (rm_r) admits as one op on the root, per the preOps docstring.
+    if (ctx.write && (ctx.path.virtual === '/a/prod' || ctx.path.virtual.startsWith('/a/prod/'))) {
       return { kind: 'deny', reason: 'prod is read-only' }
     }
     return null
   }
 }
 
-describe('op hooks bind at the op doors, not the command tier', () => {
-  it('preOps refuses the doors while handler I/O passes', async () => {
+/** Record every op preOps is asked about; allow them all. */
+class OpRecorder implements Policy {
+  readonly asked: [string, string, boolean][] = []
+  preOps(ctx: OpsContext): Action | null {
+    this.asked.push([ctx.op, ctx.path.virtual, ctx.write])
+    return null
+  }
+}
+
+/** Record each op with the identity fields a scoped policy keys on. */
+class IdentityRecorder implements Policy {
+  readonly asked: [string, string, string, string][] = []
+  preOps(ctx: OpsContext): Action | null {
+    this.asked.push([ctx.op, ctx.path.virtual, ctx.prefix, ctx.sessionId ?? ''])
+    return null
+  }
+}
+
+async function makeSealedWs(policies: Policy[]): Promise<Workspace> {
+  // Seeded through the door (not the raw store) so the index knows the
+  // implicit /a/prod directory, then the policies join, mirroring the
+  // python twin's setup order.
+  const parser = await getTestParser()
+  const resource = new RAMResource()
+  resource.store.files.set('/secret.txt', ENC.encode('sealed\n'))
+  resource.store.files.set('/ok.txt', ENC.encode('has sealed word\n'))
+  const ws = new Workspace({ '/a': resource }, { mode: MountMode.WRITE, shellParser: parser })
+  open.push(ws)
+  await ws.execute('mkdir -p /a/prod')
+  await ws.fs.writeFile('/a/prod/keep.txt', ENC.encode('keep\n'))
+  for (const p of policies) ws.policies.add(p)
+  return ws
+}
+
+describe('op hooks bind at the op doors and the command tier', () => {
+  it('preOps refuses the doors and handler I/O alike', async () => {
     // The documented boundary (Policy.preOps): coded op hooks fire at
-    // the op doors, not for the backend I/O inside a mount command's
-    // handler. Both sides are pinned so a move of the boundary is
-    // loud; the command-tier half is the known gap the follow-up
-    // closes, at which point these assertions flip to refusals.
-    const parser = await getTestParser()
-    const resource = new RAMResource()
-    resource.store.files.set('/secret.txt', ENC.encode('sealed\n'))
-    resource.store.files.set('/prod/keep.txt', ENC.encode('keep\n'))
-    const ws = new Workspace(
-      { '/a': resource },
-      { mode: MountMode.WRITE, shellParser: parser, policies: [new SealedPaths()] },
-    )
-    open.push(ws)
+    // the op doors AND for the backend I/O inside a mount command's
+    // handler (withPolicyGuard). Both tiers are pinned so a move of
+    // the boundary is loud.
+    const ws = await makeSealedWs([new SealedPaths()])
 
     // The doors hold: the fs facade, and a dispatcher-routed redirect
     // write.
@@ -599,16 +626,101 @@ describe('op hooks bind at the op doors, not the command tier', () => {
     const redirect = await ws.execute('echo hi > /a/prod/new.txt')
     expect(redirect.exitCode).not.toBe(0)
 
-    // The command tier does not consult preOps: the handler calls the
-    // backend cores directly, so the read serves and the deletion
-    // lands.
+    // The command tier consults the same hooks: the read refuses in
+    // the command's own voice and the deletion never lands.
     const leak = await ws.execute('cat /a/secret.txt')
-    expect(leak.exitCode).toBe(0)
-    expect(stdoutStr(leak)).toBe('sealed\n')
+    expect(leak.exitCode).not.toBe(0)
+    expect(stdoutStr(leak)).toBe('')
+    expect(stderrStr(leak)).toContain('cat: /a/secret.txt: Permission denied')
     const removed = await ws.execute('rm /a/prod/keep.txt')
+    expect(removed.exitCode).not.toBe(0)
+    const kept = await ws.execute('cat /a/prod/keep.txt')
+    expect(kept.exitCode).toBe(0)
+    expect(stdoutStr(kept)).toBe('keep\n')
+  })
+
+  it('preOps holds walks and lazy readers', async () => {
+    // A walk is held per entry (GNU's unreadable-file shape: the other
+    // entries still serve, stderr names the refused one), and a reader
+    // the output pipeline drains after dispatch (head binds a lazy
+    // stream) still answers through the wrap-time capture.
+    const ws = await makeSealedWs([new SealedPaths()])
+    const walked = await ws.execute('grep -r sealed /a')
+    expect(walked.exitCode).toBe(2)
+    expect(stdoutStr(walked)).toContain('/a/ok.txt:has sealed word')
+    expect(stdoutStr(walked)).not.toContain('sealed\n')
+    expect(stderrStr(walked)).toContain('grep: /a/secret.txt: Permission denied')
+
+    const lazy = await ws.execute('head -c 3 /a/secret.txt')
+    expect(lazy.exitCode).not.toBe(0)
+    expect(stderrStr(lazy)).toContain('head: /a/secret.txt: Permission denied')
+    const fine = await ws.execute('head -c 3 /a/ok.txt')
+    expect(fine.exitCode).toBe(0)
+    expect(stdoutStr(fine)).toBe('has')
+  })
+
+  it('denied entries still list and stat', async () => {
+    // Presence facts stay unguarded on the command tier (mode-000
+    // shape): a read-denied entry lists and stats, the read of it is
+    // what fails.
+    const ws = await makeSealedWs([new SealedPaths()])
+    const listing = await ws.execute('ls -l /a')
+    expect(listing.exitCode).toBe(0)
+    expect(stdoutStr(listing)).toContain('secret.txt')
+    const found = await ws.execute('find /a -type f')
+    expect(found.exitCode).toBe(0)
+    expect(stdoutStr(found)).toContain('/a/secret.txt')
+  })
+
+  it('shell rm -r admits through preOps', async () => {
+    // The cascade asymmetry closed: an ops-door rmdir cascade always
+    // admitted per deletion while a shell rm -r admitted nothing. The
+    // shell tree removal now admits the op the backend performs, and
+    // the subtree write-deny refuses it outright.
+    const recorder = new OpRecorder()
+    const ws = await makeSealedWs([recorder])
+    const removed = await ws.execute('rm -r /a/prod')
+    expect(removed.exitCode).toBe(0)
+    expect(
+      recorder.asked.some(([op, path, write]) => write && path === '/a/prod' && op === 'rm_r'),
+    ).toBe(true)
+
+    const sealed = await makeSealedWs([new SealedPaths()])
+    const refused = await sealed.execute('rm -r /a/prod')
+    expect(refused.exitCode).not.toBe(0)
+    const survives = await sealed.execute('cat /a/prod/keep.txt')
+    expect(survives.exitCode).toBe(0)
+  })
+
+  it('find -delete admits each deletion exactly once', async () => {
+    // find's -delete admits the removal itself (in find's own refusal
+    // voice) and suspends the delegated rm's slots, so a counting or
+    // budget policy sees one deletion once, not twice.
+    const recorder = new OpRecorder()
+    const ws = await makeSealedWs([recorder])
+    const removed = await ws.execute('find /a/prod -name keep.txt -delete')
     expect(removed.exitCode).toBe(0)
     const gone = await ws.execute('cat /a/prod/keep.txt')
     expect(gone.exitCode).not.toBe(0)
+    const writes = recorder.asked.filter(([, path, write]) => path === '/a/prod/keep.txt' && write)
+    expect(writes).toEqual([['unlink', '/a/prod/keep.txt', true]])
+  })
+
+  it('preOps sees the session and prefix on lazy drains', async () => {
+    // OpsContext.prefix and .sessionId name the command's identity on
+    // the command tier exactly as at the op doors, including for a
+    // reader the pipeline drains after the gate scopes return (head
+    // binds a lazy stream); both ride the wrap-time capture.
+    const recorder = new IdentityRecorder()
+    const ws = await makeSealedWs([recorder])
+    expect((await ws.execute('cat /a/ok.txt')).exitCode).toBe(0)
+    expect((await ws.execute('head -c 3 /a/ok.txt')).exitCode).toBe(0)
+    const reads = recorder.asked.filter(([, path]) => path === '/a/ok.txt')
+    expect(reads.length).toBeGreaterThan(0)
+    for (const [, , prefix, sessionId] of reads) {
+      expect(prefix).toBe('/a')
+      expect(sessionId).toBe(ws.defaultSessionId)
+    }
   })
 })
 

@@ -14,7 +14,7 @@
 
 import { stripSlash } from '../../utils/slash.ts'
 import { type ByteSource, materialize } from '../../io/types.ts'
-import { getCurrentSession } from '../../context/session_context.ts'
+import { getCurrentSession, runWithSuspendedOpPolicies } from '../../context/session_context.ts'
 import { preOpsGate } from '../../policy/policies.ts'
 import { PathSpec } from '../../types.ts'
 import type { MountRegistry } from '../mount/registry.ts'
@@ -74,9 +74,11 @@ export async function applyFindActions(
         // -delete is find's own action, not an `rm` line, so no command
         // rule sees it; it is a removal all the same, so it clears the
         // op door a path rule guards (the same gate `ws.ops`, FUSE and a
-        // redirect clear), by the session the line runs under. -d so
-        // directories emptied by the deepest-first pass are removable,
-        // matching GNU -delete's rmdir behavior.
+        // redirect clear), by the session the line runs under, and a
+        // refusal reports in find's voice. The delegated rm's own slots
+        // are suspended for the call, so the deletion admits exactly
+        // once. -d so directories emptied by the deepest-first pass are
+        // removable, matching GNU -delete's rmdir behavior.
         await preOpsGate(
           registry.policies,
           'unlink',
@@ -85,7 +87,9 @@ export async function applyFindActions(
           mount.prefix,
           getCurrentSession()?.sessionId ?? '',
         )
-        const [, rmIo] = await mount.executeCmd('rm', [ps], [], { d: true }, { stdin: null, cwd })
+        const [, rmIo] = await runWithSuspendedOpPolicies(() =>
+          mount.executeCmd('rm', [ps], [], { d: true }, { stdin: null, cwd }),
+        )
         if (rmIo.exitCode !== 0) {
           const errBytes = await materialize(rmIo.stderr)
           if (errBytes.length > 0) errors.push(errBytes)
