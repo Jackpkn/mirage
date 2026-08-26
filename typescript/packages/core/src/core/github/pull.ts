@@ -101,6 +101,37 @@ export async function diffPull(
   return typeof value === 'string' ? value : ''
 }
 
+const STATUS_CONCLUSIONS = ['error', 'failure', 'success']
+
+function statusCheck(row: Record<string, unknown>): Record<string, unknown> {
+  const state = typeof row.state === 'string' ? row.state : ''
+  const done = STATUS_CONCLUSIONS.includes(state)
+  return {
+    name: row.context ?? '',
+    status: done ? 'completed' : state,
+    conclusion: done ? state : null,
+    details_url: row.target_url ?? '',
+    output: { summary: row.description ?? '' },
+    started_at: row.created_at ?? null,
+    completed_at: row.updated_at ?? null,
+  }
+}
+
+export async function commitStatuses(
+  transport: GitHubTransport,
+  ref: RepoRef,
+  sha: string,
+): Promise<Record<string, unknown>[]> {
+  const value = (await transport.get(`/repos/${ref.owner}/${ref.repo}/commits/${sha}/status`)) as {
+    statuses?: unknown
+  } | null
+  const rows = value?.statuses
+  if (!Array.isArray(rows)) return []
+  return rows.filter(
+    (row): row is Record<string, unknown> => typeof row === 'object' && row !== null,
+  )
+}
+
 export async function pullChecks(
   transport: GitHubTransport,
   ref: RepoRef,
@@ -110,8 +141,11 @@ export async function pullChecks(
   const pull = (await getPull(transport, ref, number)) as { head?: { sha?: unknown } }
   const sha = pull.head?.sha
   if (typeof sha !== 'string') return []
-  return githubPages(transport, `/repos/${ref.owner}/${ref.repo}/commits/${sha}/check-runs`, {
-    limit,
-    key: 'check_runs',
-  })
+  const runs = await githubPages(
+    transport,
+    `/repos/${ref.owner}/${ref.repo}/commits/${sha}/check-runs`,
+    { limit, key: 'check_runs' },
+  )
+  const statuses = await commitStatuses(transport, ref, sha)
+  return [...runs, ...statuses.map(statusCheck)]
 }

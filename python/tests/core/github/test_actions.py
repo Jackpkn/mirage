@@ -15,7 +15,8 @@
 import pytest
 
 from mirage.core.github.actions import (dispatch_workflow, get_workflow,
-                                        list_runs, list_workflows, rerun)
+                                        list_runs, list_workflows, rerun,
+                                        resolve_workflow)
 from mirage.core.github.config import GhConfig
 from mirage.core.github.repo import RepoRef
 
@@ -38,6 +39,86 @@ async def test_list_runs_can_scope_to_a_workflow(monkeypatch):
     assert calls == [("/repos/o/r/actions/workflows/ci%23nightly.yml/runs", {
         "status": "success"
     }, 5, "workflow_runs")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selector", ["101", "ci.yml", "ci.yaml"])
+async def test_resolve_workflow_passes_ids_and_filenames_through(
+        monkeypatch, selector):
+
+    async def workflows(config, ref, limit):
+        raise AssertionError("an id or filename needs no lookup")
+
+    monkeypatch.setitem(resolve_workflow.__globals__, "list_workflows",
+                        workflows)
+
+    assert await resolve_workflow(GhConfig(token="t"), RepoRef("o", "r"),
+                                  selector) == selector
+
+
+@pytest.mark.asyncio
+async def test_resolve_workflow_matches_a_display_name_case_insensitively(
+        monkeypatch):
+    calls = []
+
+    async def workflows(config, ref, limit):
+        calls.append(limit)
+        return [{"id": 102, "name": "Archive"}, {"id": 101, "name": "CI"}]
+
+    monkeypatch.setitem(resolve_workflow.__globals__, "list_workflows",
+                        workflows)
+
+    assert await resolve_workflow(GhConfig(token="t"), RepoRef("o", "r"),
+                                  "ci") == "101"
+    assert calls == [100]
+
+
+@pytest.mark.asyncio
+async def test_resolve_workflow_rejects_an_unknown_display_name(monkeypatch):
+
+    async def workflows(config, ref, limit):
+        return [{"id": 101, "name": "CI"}]
+
+    monkeypatch.setitem(resolve_workflow.__globals__, "list_workflows",
+                        workflows)
+
+    with pytest.raises(ValueError,
+                       match="could not find any workflows named Nightly"):
+        await resolve_workflow(GhConfig(token="t"), RepoRef("o", "r"),
+                               "Nightly")
+
+
+@pytest.mark.asyncio
+async def test_workflow_verbs_resolve_a_display_name_once(monkeypatch):
+    calls = []
+
+    async def workflows(config, ref, limit):
+        return [{"id": 101, "name": "CI"}]
+
+    async def request(token, method, path, body=None, *, base_url=None):
+        calls.append((method, path))
+        return {}
+
+    async def pages(config, path, *, params, limit, key):
+        calls.append(("GET", path))
+        return []
+
+    monkeypatch.setitem(resolve_workflow.__globals__, "list_workflows",
+                        workflows)
+    monkeypatch.setitem(get_workflow.__globals__, "github_request", request)
+    monkeypatch.setitem(list_runs.__globals__, "github_pages", pages)
+    config = GhConfig(token="t")
+    ref = RepoRef("o", "r")
+
+    await get_workflow(config, ref, "CI")
+    await dispatch_workflow(config, ref, "CI", {"ref": "main"})
+    await list_runs(config, ref, {}, 5, "CI")
+
+    assert calls == [
+        ("GET", "/repos/o/r/actions/workflows/101"),
+        ("POST", "/repos/o/r/actions/workflows/101/dispatches"),
+        ("GET", "/repos/o/r/actions/workflows/101/runs"),
+    ]
 
 
 @pytest.mark.asyncio

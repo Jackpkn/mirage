@@ -22,9 +22,26 @@ from mirage.core.github.paginate import github_pages
 from mirage.core.github.repo import RepoRef
 from mirage.types import JsonValue
 
+WORKFLOW_FILES = (".yml", ".yaml")
+WORKFLOW_LOOKUP = 100
+
 
 def _actions(ref: RepoRef, tail: str) -> str:
     return f"/repos/{ref.owner}/{ref.repo}/actions/{tail}"
+
+
+async def resolve_workflow(config: GhConfig, ref: RepoRef,
+                           workflow: str) -> str:
+    if workflow.isdigit() or workflow.endswith(WORKFLOW_FILES):
+        return workflow
+    rows = await list_workflows(config, ref, WORKFLOW_LOOKUP)
+    wanted = workflow.casefold()
+    match = next(
+        (row for row in rows if str(row.get("name", "")).casefold() == wanted),
+        None)
+    if match is None:
+        raise ValueError(f"could not find any workflows named {workflow}")
+    return str(match.get("id", ""))
 
 
 async def list_runs(config: GhConfig,
@@ -32,8 +49,11 @@ async def list_runs(config: GhConfig,
                     params: dict[str, str],
                     limit: int,
                     workflow: str | None = None) -> list[dict[str, Any]]:
-    tail = (f"workflows/{quote(workflow, safe='')}/runs"
-            if workflow else "runs")
+    if workflow is None:
+        tail = "runs"
+    else:
+        selector = await resolve_workflow(config, ref, workflow)
+        tail = f"workflows/{quote(selector, safe='')}/runs"
     return await github_pages(config,
                               _actions(ref, tail),
                               params=params,
@@ -91,19 +111,21 @@ async def list_workflows(
 
 async def get_workflow(config: GhConfig, ref: RepoRef,
                        workflow: str) -> JsonValue:
+    selector = await resolve_workflow(config, ref, workflow)
     return await github_request(config.token,
                                 "GET",
                                 _actions(
                                     ref,
-                                    f"workflows/{quote(workflow, safe='')}"),
+                                    f"workflows/{quote(selector, safe='')}"),
                                 base_url=config.base_url)
 
 
 async def dispatch_workflow(config: GhConfig, ref: RepoRef, workflow: str,
                             body: dict[str, JsonValue]) -> JsonValue:
+    selector = await resolve_workflow(config, ref, workflow)
     return await github_request(
         config.token,
         "POST",
-        _actions(ref, f"workflows/{quote(workflow, safe='')}/dispatches"),
+        _actions(ref, f"workflows/{quote(selector, safe='')}/dispatches"),
         body,
         base_url=config.base_url)

@@ -427,6 +427,45 @@ class FakeRepo:
             "path": ".github/workflows/ci.yml",
             "state": "active",
         }]
+        self.checks: list[dict] = [{
+            "id": 301,
+            "name": "test",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:01:00Z",
+            "details_url": "https://example.test/check/301",
+            "output": {
+                "summary": "All checks passed"
+            },
+            "app": {
+                "name": "GitHub Actions"
+            },
+        }, {
+            "id": 302,
+            "name": "flaky",
+            "status": "completed",
+            "conclusion": "cancelled",
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:02:00Z",
+            "details_url": "https://example.test/check/302",
+            "output": {
+                "summary": "Cancelled by a newer run"
+            },
+            "app": {
+                "name": "GitHub Actions"
+            },
+        }]
+        # Commit Status contexts, which a non-Actions CI provider publishes
+        # instead of Check Runs. `gh pr checks` merges both.
+        self.statuses: list[dict] = [{
+            "context": "ci/legacy",
+            "state": "success",
+            "target_url": "https://example.test/status/legacy",
+            "description": "Legacy status passed",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:01:30Z",
+        }]
         self.runs: list[dict] = [{
             "id":
             201,
@@ -1647,24 +1686,30 @@ class GitHubServer:
     async def check_runs(self, request: web.Request) -> web.Response:
         if not self._authed(request):
             return _error(401, "Requires authentication")
-        if self._lookup(request) is None:
+        repo = self._lookup(request)
+        if repo is None:
             return _error(404, "Not Found")
-        rows = [{
-            "id": 301,
-            "name": "test",
-            "status": "completed",
-            "conclusion": "success",
-            "started_at": "2026-01-01T00:00:00Z",
-            "completed_at": "2026-01-01T00:01:00Z",
-            "details_url": "https://example.test/check/301",
-            "output": {
-                "summary": "All checks passed"
-            },
-            "app": {
-                "name": "GitHub Actions"
-            },
-        }]
-        return _paged(request, rows, "check_runs")
+        return _paged(request, repo.checks, "check_runs")
+
+    async def commit_status(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        states = {str(row.get("state") or "") for row in repo.statuses}
+        if states & {"error", "failure"}:
+            state = "failure"
+        elif not repo.statuses or "pending" in states:
+            state = "pending"
+        else:
+            state = "success"
+        return web.json_response({
+            "state": state,
+            "sha": request.match_info["sha"],
+            "total_count": len(repo.statuses),
+            "statuses": repo.statuses,
+        })
 
     async def list_releases(self, request: web.Request) -> web.Response:
         if not self._authed(request):
@@ -2188,6 +2233,9 @@ def _add_routes(app: web.Application, server: "GitHubServer",
     app.router.add_get(
         f"{prefix}/repos/{{owner}}/{{repo}}/commits/{{sha}}/check-runs",
         server.check_runs)
+    app.router.add_get(
+        f"{prefix}/repos/{{owner}}/{{repo}}/commits/{{sha}}/status",
+        server.commit_status)
     app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/commits/{{ref:.+}}",
                        server.commit)
     # Both spellings of the repository root: GitHub serves `/contents` as

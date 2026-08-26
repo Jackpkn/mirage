@@ -69,6 +69,17 @@ const CHECK_FIELDS = [
   'workflow',
 ] as const
 
+const BUCKETS: Record<string, string> = {
+  success: 'pass',
+  neutral: 'skipping',
+  skipped: 'skipping',
+  action_required: 'fail',
+  error: 'fail',
+  failure: 'fail',
+  timed_out: 'fail',
+  cancelled: 'cancel',
+}
+
 function pull(value: unknown): Record<string, unknown> {
   const row = camel(value)
   const result = row !== null && typeof row === 'object' ? (row as Record<string, unknown>) : {}
@@ -228,13 +239,7 @@ function check(value: Record<string, unknown>): Record<string, unknown> {
   row.description = output?.summary ?? ''
   const state = textValue(row.conclusion ?? row.status)
   row.state = state
-  row.bucket = ['success', 'neutral', 'skipped'].includes(state)
-    ? state === 'success'
-      ? 'pass'
-      : 'skipping'
-    : ['queued', 'in_progress', 'pending', 'requested', 'waiting'].includes(state)
-      ? 'pending'
-      : 'fail'
+  row.bucket = BUCKETS[state] ?? 'pending'
   const app = row.app as { name?: unknown } | undefined
   row.workflow = app?.name ?? ''
   return row

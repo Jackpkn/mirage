@@ -21,6 +21,8 @@ from mirage.core.github.paginate import github_pages
 from mirage.core.github.repo import RepoRef
 from mirage.types import JsonValue
 
+STATUS_CONCLUSIONS = ("error", "failure", "success")
+
 
 def _path(ref: RepoRef, tail: str = "") -> str:
     return f"/repos/{ref.owner}/{ref.repo}/pulls{tail}"
@@ -101,6 +103,35 @@ async def diff_pull(config: GhConfig, ref: RepoRef, number: int) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _status_check(row: dict[str, Any]) -> dict[str, Any]:
+    state = str(row.get("state") or "")
+    done = state in STATUS_CONCLUSIONS
+    return {
+        "name": row.get("context") or "",
+        "status": "completed" if done else state,
+        "conclusion": state if done else None,
+        "details_url": row.get("target_url") or "",
+        "output": {
+            "summary": row.get("description") or ""
+        },
+        "started_at": row.get("created_at"),
+        "completed_at": row.get("updated_at"),
+    }
+
+
+async def commit_statuses(config: GhConfig, ref: RepoRef,
+                          sha: str) -> list[dict[str, Any]]:
+    value = await github_request(
+        config.token,
+        "GET",
+        f"/repos/{ref.owner}/{ref.repo}/commits/{sha}/status",
+        base_url=config.base_url)
+    rows = value.get("statuses") if isinstance(value, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
 async def pull_checks(config: GhConfig,
                       ref: RepoRef,
                       number: int,
@@ -111,4 +142,6 @@ async def pull_checks(config: GhConfig,
     if not isinstance(sha, str):
         return []
     path = f"/repos/{ref.owner}/{ref.repo}/commits/{sha}/check-runs"
-    return await github_pages(config, path, limit=limit, key="check_runs")
+    runs = await github_pages(config, path, limit=limit, key="check_runs")
+    statuses = await commit_statuses(config, ref, sha)
+    return runs + [_status_check(row) for row in statuses]

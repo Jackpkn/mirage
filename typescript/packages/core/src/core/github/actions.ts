@@ -16,18 +16,41 @@ import type { GitHubTransport } from './client.ts'
 import { githubPages } from './paginate.ts'
 import type { RepoRef } from './repo.ts'
 
+const WORKFLOW_LOOKUP = 100
+
 function actions(ref: RepoRef, tail: string): string {
   return `/repos/${ref.owner}/${ref.repo}/actions/${tail}`
 }
 
-export function listRuns(
+export async function resolveWorkflow(
+  transport: GitHubTransport,
+  ref: RepoRef,
+  workflow: string,
+): Promise<string> {
+  if (/^\d+$/.test(workflow) || workflow.endsWith('.yml') || workflow.endsWith('.yaml')) {
+    return workflow
+  }
+  const rows = await listWorkflows(transport, ref, WORKFLOW_LOOKUP)
+  const wanted = workflow.toLowerCase()
+  const match = rows.find(
+    (row) => (typeof row.name === 'string' ? row.name.toLowerCase() : '') === wanted,
+  )
+  if (match === undefined) throw new Error(`could not find any workflows named ${workflow}`)
+  const id = match.id
+  return typeof id === 'number' || typeof id === 'string' ? String(id) : ''
+}
+
+export async function listRuns(
   transport: GitHubTransport,
   ref: RepoRef,
   params: Record<string, string>,
   limit: number,
   workflow?: string,
 ): Promise<Record<string, unknown>[]> {
-  const tail = workflow === undefined ? 'runs' : `workflows/${encodeURIComponent(workflow)}/runs`
+  const tail =
+    workflow === undefined
+      ? 'runs'
+      : `workflows/${encodeURIComponent(await resolveWorkflow(transport, ref, workflow))}/runs`
   return githubPages(transport, actions(ref, tail), { params, limit, key: 'workflow_runs' })
 }
 
@@ -69,23 +92,25 @@ export function listWorkflows(
   })
 }
 
-export function getWorkflow(
+export async function getWorkflow(
   transport: GitHubTransport,
   ref: RepoRef,
   workflow: string,
 ): Promise<unknown> {
-  return transport.get(actions(ref, `workflows/${encodeURIComponent(workflow)}`))
+  const selector = await resolveWorkflow(transport, ref, workflow)
+  return transport.get(actions(ref, `workflows/${encodeURIComponent(selector)}`))
 }
 
-export function dispatchWorkflow(
+export async function dispatchWorkflow(
   transport: GitHubTransport,
   ref: RepoRef,
   workflow: string,
   body: Record<string, unknown>,
 ): Promise<unknown> {
+  const selector = await resolveWorkflow(transport, ref, workflow)
   return transport.request(
     'POST',
-    actions(ref, `workflows/${encodeURIComponent(workflow)}/dispatches`),
+    actions(ref, `workflows/${encodeURIComponent(selector)}/dispatches`),
     body,
   )
 }

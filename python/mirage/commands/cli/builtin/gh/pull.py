@@ -34,6 +34,16 @@ PR_FIELDS = ("additions", "author", "baseRefName", "body", "changedFiles",
              "title", "updatedAt", "url")
 CHECK_FIELDS = ("bucket", "completedAt", "description", "event", "link",
                 "name", "startedAt", "state", "workflow")
+BUCKETS = {
+    "success": "pass",
+    "neutral": "skipping",
+    "skipped": "skipping",
+    "action_required": "fail",
+    "error": "fail",
+    "failure": "fail",
+    "timed_out": "fail",
+    "cancelled": "cancel",
+}
 
 
 def _pull(value: JsonValue) -> dict[str, Any]:
@@ -202,12 +212,7 @@ def _check(value: dict[str, Any]) -> dict[str, Any]:
     conclusion = str(result.get("conclusion") or "")
     state = conclusion or str(result.get("status") or "")
     result["state"] = state
-    if state in {"success", "neutral", "skipped"}:
-        result["bucket"] = "pass" if state == "success" else "skipping"
-    elif state in {"queued", "in_progress", "pending", "requested", "waiting"}:
-        result["bucket"] = "pending"
-    else:
-        result["bucket"] = "fail"
+    result["bucket"] = BUCKETS.get(state, "pending")
     app = result.get("app")
     result["workflow"] = app.get("name", "") if isinstance(app, dict) else ""
     return result

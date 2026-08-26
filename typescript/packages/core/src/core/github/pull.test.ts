@@ -14,7 +14,101 @@
 
 import { describe, expect, it } from 'vitest'
 import type { GitHubTransport } from './client.ts'
-import { commentPull, listPulls } from './pull.ts'
+import { commentPull, commitStatuses, listPulls, pullChecks } from './pull.ts'
+
+describe('pullChecks', () => {
+  function transportFor(
+    checkRuns: unknown[],
+    statuses: unknown[],
+    seen: string[] = [],
+  ): GitHubTransport {
+    return {
+      get: (path) => {
+        seen.push(path)
+        if (path.endsWith('/check-runs')) return Promise.resolve({ check_runs: checkRuns })
+        if (path.endsWith('/status')) return Promise.resolve({ state: 'success', statuses })
+        return Promise.resolve({ head: { sha: 'abc' } })
+      },
+      request: () => Promise.reject(new Error('unexpected request')),
+    }
+  }
+
+  it('follows the head sha', async () => {
+    const seen: string[] = []
+
+    const rows = await pullChecks(
+      transportFor([{ name: 'test' }], [], seen),
+      {
+        owner: 'o',
+        repo: 'r',
+      },
+      3,
+    )
+
+    expect(rows).toEqual([{ name: 'test' }])
+    expect(seen).toContain('/repos/o/r/commits/abc/check-runs')
+  })
+
+  it('merges commit status contexts', async () => {
+    const rows = await pullChecks(
+      transportFor(
+        [],
+        [
+          {
+            context: 'ci/legacy',
+            state: 'failure',
+            target_url: 'https://ci.test/1',
+            description: 'boom',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:01:00Z',
+          },
+          { context: 'ci/slow', state: 'pending' },
+        ],
+      ),
+      { owner: 'o', repo: 'r' },
+      3,
+    )
+
+    expect(rows).toEqual([
+      {
+        name: 'ci/legacy',
+        status: 'completed',
+        conclusion: 'failure',
+        details_url: 'https://ci.test/1',
+        output: { summary: 'boom' },
+        started_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:01:00Z',
+      },
+      {
+        name: 'ci/slow',
+        status: 'pending',
+        conclusion: null,
+        details_url: '',
+        output: { summary: '' },
+        started_at: null,
+        completed_at: null,
+      },
+    ])
+  })
+})
+
+describe('commitStatuses', () => {
+  it('reads the combined endpoint and drops non-objects', async () => {
+    const seen: string[] = []
+    const transport: GitHubTransport = {
+      get: (path) => {
+        seen.push(path)
+        return Promise.resolve({ state: 'success', statuses: [{ context: 'ci' }, 'junk'] })
+      },
+      request: () => Promise.reject(new Error('unexpected request')),
+    }
+
+    expect(await commitStatuses(transport, { owner: 'o', repo: 'r' }, 'abc')).toEqual([
+      { context: 'ci' },
+    ])
+    expect(seen).toEqual(['/repos/o/r/commits/abc/status'])
+  })
+})
 
 describe('commentPull', () => {
   it('preflights the pull request number', async () => {

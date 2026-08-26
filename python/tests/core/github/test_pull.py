@@ -15,7 +15,8 @@
 import pytest
 
 from mirage.core.github.config import GhConfig
-from mirage.core.github.pull import comment_pull, list_pulls, pull_checks
+from mirage.core.github.pull import (comment_pull, commit_statuses, list_pulls,
+                                     pull_checks)
 from mirage.core.github.repo import RepoRef
 
 
@@ -30,13 +31,85 @@ async def test_pull_checks_follow_the_head_sha(monkeypatch):
                                       "check_runs")
         return [{"name": "test"}]
 
+    async def statuses(config, ref, sha):
+        assert sha == "abc"
+        return []
+
     monkeypatch.setitem(pull_checks.__globals__, "get_pull", get_pull)
     monkeypatch.setitem(pull_checks.__globals__, "github_pages", pages)
+    monkeypatch.setitem(pull_checks.__globals__, "commit_statuses", statuses)
 
     assert await pull_checks(GhConfig(token="t"), RepoRef("o", "r"), 3) == [{
         "name":
         "test"
     }]
+
+
+@pytest.mark.asyncio
+async def test_pull_checks_merge_commit_status_contexts(monkeypatch):
+
+    async def get_pull(config, ref, number):
+        return {"head": {"sha": "abc"}}
+
+    async def pages(config, path, *, limit, key):
+        return []
+
+    async def statuses(config, ref, sha):
+        return [{
+            "context": "ci/legacy",
+            "state": "failure",
+            "target_url": "https://ci.test/1",
+            "description": "boom",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:01:00Z",
+        }, {
+            "context": "ci/slow",
+            "state": "pending",
+        }]
+
+    monkeypatch.setitem(pull_checks.__globals__, "get_pull", get_pull)
+    monkeypatch.setitem(pull_checks.__globals__, "github_pages", pages)
+    monkeypatch.setitem(pull_checks.__globals__, "commit_statuses", statuses)
+
+    rows = await pull_checks(GhConfig(token="t"), RepoRef("o", "r"), 3)
+
+    assert rows == [{
+        "name": "ci/legacy",
+        "status": "completed",
+        "conclusion": "failure",
+        "details_url": "https://ci.test/1",
+        "output": {
+            "summary": "boom"
+        },
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:01:00Z",
+    }, {
+        "name": "ci/slow",
+        "status": "pending",
+        "conclusion": None,
+        "details_url": "",
+        "output": {
+            "summary": ""
+        },
+        "started_at": None,
+        "completed_at": None,
+    }]
+
+
+@pytest.mark.asyncio
+async def test_commit_statuses_read_the_combined_endpoint(monkeypatch):
+    calls = []
+
+    async def request(token, method, path, *args, **kwargs):
+        calls.append((method, path))
+        return {"state": "success", "statuses": [{"context": "ci"}, "junk"]}
+
+    monkeypatch.setitem(commit_statuses.__globals__, "github_request", request)
+
+    rows = await commit_statuses(GhConfig(token="t"), RepoRef("o", "r"), "abc")
+
+    assert calls == [("GET", "/repos/o/r/commits/abc/status")]
+    assert rows == [{"context": "ci"}]
 
 
 @pytest.mark.asyncio

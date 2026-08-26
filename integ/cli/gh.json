@@ -727,6 +727,32 @@
         "stdout": "[\"attached\",\"closed\"]\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "gh_pr_checks_merge_statuses_and_bucket_cancellations",
+      "seq": 569057,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh pr checks 5 --json name,bucket --jq '.[1:]'",
+      "expect": {
+        "exit": 0,
+        "stdout": "[{\"name\":\"flaky\",\"bucket\":\"cancel\"},{\"name\":\"ci/legacy\",\"bucket\":\"pass\"}]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gh_workflow_view_resolves_a_display_name",
+      "seq": 569058,
+      "targets": [
+        "cli-gh"
+      ],
+      "command": "gh workflow view CI; gh workflow view Nightly",
+      "expect": {
+        "exit": 1,
+        "stdout": "CI - active\nID: 101\nFile: .github/workflows/ci.yml\n",
+        "stderr": "gh workflow view: could not find any workflows named Nightly\n"
+      }
     }
   ]
 }
