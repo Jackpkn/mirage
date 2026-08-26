@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { advertiseHost } from './bind.ts'
+import { advertiseHost, authorityHost } from './bind.ts'
 import type { Announce } from './types.ts'
 
 export const ANNOUNCE_SUFFIX = '_URL'
@@ -23,7 +23,7 @@ export const ANNOUNCE_RE = /^[A-Z0-9_]+_URL=/
 
 export function announceFor(service: string, port: number): Announce {
   const token = `${service.toUpperCase().replace(/-/g, '_')}${ANNOUNCE_SUFFIX}`
-  return { token, url: `http://${advertiseHost()}:${String(port)}` }
+  return { token, url: `http://${authorityHost(advertiseHost())}:${String(port)}` }
 }
 
 export function emit(a: Announce): void {

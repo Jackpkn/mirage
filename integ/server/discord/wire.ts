@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { advertiseHost } from '../kit/typescript/bind.ts'
+import { advertiseHost, authorityHost } from '../kit/typescript/bind.ts'
 import { DEFAULT_RUN, DEFAULT_TENANT, RUN_QUERY, TENANT_QUERY } from '../kit/typescript/tenant.ts'
 import type { JsonValue, Reply } from '../kit/typescript/types.ts'
 
@@ -113,7 +113,7 @@ export function requireBody(body: Buffer): void {
 // spawned one produce the same string.
 export function baseOf(url: URL): string {
   const port = url.port === '' ? '' : `:${url.port}`
-  return `http://${advertiseHost()}${port}`
+  return `http://${authorityHost(advertiseHost())}${port}`
 }
 
 // The CDN route carries no Authorization header and therefore no other way to

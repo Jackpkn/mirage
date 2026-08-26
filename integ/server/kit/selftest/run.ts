@@ -45,11 +45,11 @@ interface Fake {
   stderr: () => string
 }
 
-async function launch(): Promise<Fake> {
+async function launch(env: Record<string, string> = {}): Promise<Fake> {
   const child = spawn(
     join(INTEG, 'node_modules', '.bin', 'tsx'),
     [join(HERE, 'main.ts'), '--port', '0'],
-    { cwd: INTEG, stdio: ['ignore', 'pipe', 'pipe'] },
+    { cwd: INTEG, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } },
   )
   let err = ''
   child.stderr.setEncoding('utf8')
@@ -282,7 +282,41 @@ async function main(): Promise<void> {
       'crd_new_5',
     ])
 
-    process.stdout.write('\n10. /reset refuses what it cannot interpret\n')
+    // A read must WAIT for a pending write on the same run. two-phase writes
+    // its row as `phase-1`, sleeps, then updates it to `phase-2`, so a read
+    // landing in the gap is NAMED stale rather than merely early. 300ms of gap
+    // against a 60ms head start is not a coin flip. The read does not JOIN the
+    // queue, which is what keeps this from costing writes any concurrency.
+    const slow = call(fake, '/boards/brd_2/two-phase?ms=300', { method: 'POST', run: 'e' })
+    await new Promise((r) => setTimeout(r, 60))
+    const during = await call(fake, '/boards/brd_2/cards', { run: 'e' })
+    await slow
+    const seen = (during.json as { cards: { title: string }[] }).cards.map((c) => c.title)
+    check(
+      'a read issued mid-write never observes phase-1',
+      !seen.includes('phase-1'),
+      JSON.stringify(seen),
+    )
+    check('and it does observe the completed phase-2', seen.includes('phase-2'))
+
+    process.stdout.write('\n10. an IPv6 bind announces a parseable authority\n')
+    const v6 = await launch({ MIRAGE_BIND_HOST: '::1' })
+    try {
+      check('IPv6 literal is bracketed', v6.endpoint.startsWith('http://[::1]:'), v6.endpoint)
+      let parsed = ''
+      try {
+        parsed = new URL(v6.endpoint).href
+      } catch {
+        parsed = ''
+      }
+      check('and new URL() accepts it', parsed !== '', parsed === '' ? 'rejected' : parsed)
+      const reachable = await call(v6, '/boards')
+      check('and the announced authority is dialable', reachable.status === 200)
+    } finally {
+      v6.child.kill()
+    }
+
+    process.stdout.write('\n11. /reset refuses what it cannot interpret\n')
     const badField = await call(fake, '/reset', {
       method: 'POST',
       body: { run: 'f', workspace: 'ws_1' },

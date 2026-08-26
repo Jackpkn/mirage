@@ -41,3 +41,15 @@ export function advertiseHost(): string {
   const bound = bindHost()
   return WILDCARDS.has(bound) ? DEFAULT_ADVERTISE_HOST : bound
 }
+
+// A host goes into a URL through here, never by bare interpolation. An IPv6
+// literal has to be bracketed inside an authority or the colons run into the
+// port: `http://::1:8080` is not a URL and `new URL()` rejects it, so an
+// announce line the runners parse, and discord's attachment links, both became
+// unusable the moment anyone bound to ::1. `::` needs no case of its own (it
+// is a wildcard and never advertised), but `::1` is an ordinary loopback bind
+// and does. node's listen() wants the BARE form, so this is for URLs only.
+export function authorityHost(host: string): string {
+  if (host.startsWith('[')) return host
+  return host.includes(':') ? `[${host}]` : host
+}

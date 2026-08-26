@@ -158,6 +158,37 @@ async function retitleCard(ctx: Ctx<C>): Promise<Reply> {
   return { status: 200, body: cardJson(row) }
 }
 
+// A write with a deliberate gap between its two mutations, so a read racing it
+// has a window wide enough to observe deterministically. Every migrated fake
+// has this shape naturally (several awaited Prisma calls), but their gaps are
+// microseconds and a test built on one is a coin flip. `?ms=` makes the window
+// an input instead. The card is created as `phase-1` and updated to `phase-2`,
+// so a read that lands in the gap is not merely stale, it is NAMED stale.
+async function twoPhaseCard(ctx: Ctx<C>): Promise<Reply> {
+  const ms = Number(ctx.query.get('ms') ?? '0')
+  const id = ctx.minter.mint('crd')
+  const boardId = ctx.params.board ?? ''
+  const seq = await ctx.db.card.count({
+    where: { ...tenantWhere(ctx.tenant, config.tenantKind), boardId },
+  })
+  await ctx.db.card.create({
+    data: {
+      tenant: ctx.tenant,
+      id,
+      boardId,
+      title: 'phase-1',
+      seq,
+      createdAt: ctx.clock.nowIso(),
+    },
+  })
+  await new Promise((r) => setTimeout(r, Number.isFinite(ms) ? ms : 0))
+  const row = await ctx.db.card.update({
+    where: idWhere<Prisma.CardWhereUniqueInput>(ctx.tenant, id, config.tenantKind),
+    data: { title: 'phase-2' },
+  })
+  return { status: 201, body: cardJson(row) }
+}
+
 export const selftestFake: Fake<C> = {
   config,
   client: PrismaClient,
@@ -170,5 +201,6 @@ export const selftestFake: Fake<C> = {
     route('GET', '/cards/:card', getCard),
     route('POST', '/boards/:board/cards', createCard, { write: true }),
     route('PUT', '/cards/:card', retitleCard, { write: true }),
+    route('POST', '/boards/:board/two-phase', twoPhaseCard, { write: true }),
   ],
 }

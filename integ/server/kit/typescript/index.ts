@@ -15,7 +15,13 @@
 export { ANNOUNCE_RE, ANNOUNCE_SUFFIX, announceFor, emit } from './announce.ts'
 export { makePool, makeState } from './base.ts'
 export type { Fake, Runtime, RunState } from './base.ts'
-export { DEFAULT_ADVERTISE_HOST, DEFAULT_BIND_HOST, advertiseHost, bindHost } from './bind.ts'
+export {
+  DEFAULT_ADVERTISE_HOST,
+  DEFAULT_BIND_HOST,
+  advertiseHost,
+  authorityHost,
+  bindHost,
+} from './bind.ts'
 export { Clock, TICK_MS } from './clock.ts'
 export { parseConfig } from './config.ts'
 export type { KitConfig } from './config.ts'

@@ -113,8 +113,6 @@ export class Router<C> {
   // every tenant in it. Keying finer than the state it protects is not a
   // smaller lock, it is a missing one -- two tenants then minted from one
   // counter concurrently and their ids interleaved non-deterministically.
-  // Reads stay concurrent, and a read arriving after a pending write is what
-  // makes its answer a consistent one.
   enqueue<T>(run: string, work: () => Promise<T> | T): Promise<T> {
     const prior = this.queues.get(run) ?? Promise.resolve()
     const next = prior.then(work)
@@ -125,9 +123,19 @@ export class Router<C> {
     return next
   }
 
+  // A read WAITS for the writes already queued on its run, but does not JOIN
+  // the queue. Both halves matter. Waiting, because every migrated write
+  // handler spans several awaited Prisma calls and the rows are inconsistent
+  // in between: a read that started immediately answered from the middle of
+  // one (probed: a transfer handler observed with 50 of 100 units in flight).
+  // Not joining, because a read is a predecessor for nothing -- two reads
+  // behind the same write still run concurrently, and the next write does not
+  // queue behind them.
   run(spec: KitRoute<C>, ctx: Ctx<C>): Promise<Reply> {
-    if (!spec.write) return Promise.resolve(spec.handler(ctx))
-    return this.enqueue(ctx.run, () => spec.handler(ctx))
+    if (spec.write) return this.enqueue(ctx.run, () => spec.handler(ctx))
+    const pending = this.queues.get(ctx.run)
+    if (pending === undefined) return Promise.resolve(spec.handler(ctx))
+    return pending.then(() => spec.handler(ctx))
   }
 
   async drain(): Promise<void> {
