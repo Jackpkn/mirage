@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import errno
 import os
 import posixpath
@@ -68,6 +69,10 @@ class MirageNFS:
         self._config = config or NFSConfig()
         self._ids = IdTable()
         self._writes = WriteBuffer()
+        # One lock per file that has been written; dropped with the
+        # buffer it guards, so the table tracks live files rather than
+        # every id ever minted.
+        self._flush_locks: dict[int, asyncio.Lock] = {}
         self._root = self._ids.alloc(ROOT_PATH)
 
     def root_dir(self) -> int:
@@ -200,6 +205,7 @@ class MirageNFS:
             # removed at all.
             if fileid is not None:
                 self._writes.drop(fileid)
+                self._flush_locks.pop(fileid, None)
             await self._ops.unlink(path)
             if fileid is not None:
                 self._ids.invalidate(fileid)
@@ -207,6 +213,7 @@ class MirageNFS:
         stat = await self._ops.stat(path)
         if fileid is not None:
             self._writes.drop(fileid)
+            self._flush_locks.pop(fileid, None)
         if stat.type == FileType.DIRECTORY:
             await self._ops.rmdir(path)
         else:
@@ -403,15 +410,50 @@ class MirageNFS:
             path = self._ids.resolve(fileid)
         except StaleHandleError:
             self._writes.drop(fileid)
+            self._flush_locks.pop(fileid, None)
             return
         await self._flush_one(fileid, path)
 
+    def _flush_lock(self, fileid: int) -> asyncio.Lock:
+        """The lock serializing one file's flushes.
+
+        Kept here rather than on ``WriteBuffer``: the state holders are
+        await-free by design, and a lock inside one would not help
+        anyway -- what has to be atomic spans a read, a take and a
+        write, which only the caller can bracket.
+
+        Args:
+            fileid (int): the file whose flushes to serialize.
+
+        Returns:
+            asyncio.Lock: the lock for that file.
+        """
+        lock = self._flush_locks.get(fileid)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._flush_locks[fileid] = lock
+        return lock
+
     async def _flush_one(self, fileid: int, path: str) -> None:
-        base = await self._read_base(path)
-        pending = self._writes.take(fileid)
-        if not pending:
-            return
-        await self._ops.write(path, WriteBuffer.merge(base, pending))
+        """Store one file's buffered writes, one flush at a time.
+
+        Read, take and write are one critical section. Without it two
+        flushes of the same file -- an idle timer against a size
+        trigger, or either against teardown -- each read the same stored
+        base and take different batches, and whichever store lands last
+        drops the other batch. The client was told those bytes were
+        durable.
+
+        Args:
+            fileid (int): the file to flush.
+            path (str): its path, resolved by the caller.
+        """
+        async with self._flush_lock(fileid):
+            base = await self._read_base(path)
+            pending = self._writes.take(fileid)
+            if not pending:
+                return
+            await self._ops.write(path, WriteBuffer.merge(base, pending))
 
     async def _read_base(self, path: str) -> bytes:
         try:

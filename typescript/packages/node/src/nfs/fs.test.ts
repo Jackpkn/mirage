@@ -328,4 +328,45 @@ describe('readdir', () => {
     const attrs = await fs.getattr(await fs.lookup(root, 'a.txt'))
     expect(attrs.mtimeEpoch).toBeUndefined()
   })
+
+  it('does not lose an acknowledged write when flushes overlap', async () => {
+    // The losing interleaving is specific: the first flush must already
+    // have taken its batch and be parked in the store when the second
+    // reads the base, so both merge onto the same bytes and the later
+    // store drops the earlier batch. Waiting for the store to be
+    // entered is what makes that deterministic rather than a timing
+    // guess -- an earlier version of this test let the second write land
+    // before the first take, which collapses both batches into one
+    // store and passes whether the bug is present or not.
+    const fileid = await fs.lookup(root, 'a.txt')
+    let release: () => void = () => undefined
+    let entered: () => void = () => undefined
+    const gate = new Promise<void>((go) => {
+      release = go
+    })
+    const firstStoreStarted = new Promise<void>((go) => {
+      entered = go
+    })
+    const realWrite = ws.fs.writeFile.bind(ws.fs)
+    let held = false
+    ws.fs.writeFile = async (path: string, data: Uint8Array) => {
+      if (!held) {
+        held = true
+        entered()
+        await gate
+      }
+      return realWrite(path, data)
+    }
+
+    await fs.write(fileid, 0, Buffer.from('AAAAA'))
+    const first = fs.flush(fileid)
+    await firstStoreStarted
+    await fs.write(fileid, 5, Buffer.from('BBBBB'))
+    const second = fs.flush(fileid)
+    release()
+    await Promise.all([first, second])
+    ws.fs.writeFile = realWrite
+
+    expect(await stored('/a.txt')).toBe('AAAAABBBBB')
+  })
 })

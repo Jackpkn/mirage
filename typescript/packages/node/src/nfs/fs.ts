@@ -59,6 +59,9 @@ export class MirageNFS {
   private readonly config: NFSConfig
   private readonly ids = new IdTable()
   private readonly writes = new WriteBuffer()
+  // One chain per file that has been written, cleared with the buffer it
+  // guards, so the map tracks live files rather than every id minted.
+  private readonly flushChains = new Map<number, Promise<void>>()
   private readonly root: number
 
   constructor(ops: Ops, config: NFSConfig = new NFSConfig()) {
@@ -138,13 +141,13 @@ export class MirageNFS {
     const path = joinPath(this.ids.resolve(dirid), name)
     const fileid = this.ids.idFor(path)
     if (this.linkTarget(path) !== null) {
-      if (fileid !== undefined) this.writes.drop(fileid)
+      if (fileid !== undefined) this.dropBuffered(fileid)
       await this.ops.unlink(path)
       if (fileid !== undefined) this.ids.invalidate(fileid)
       return
     }
     const stat = await this.ops.stat(path)
-    if (fileid !== undefined) this.writes.drop(fileid)
+    if (fileid !== undefined) this.dropBuffered(fileid)
     if (stat.type === FileType.DIRECTORY) {
       await this.ops.rmdir(path)
     } else {
@@ -287,12 +290,45 @@ export class MirageNFS {
     } catch (err) {
       if (!(err instanceof StaleHandleError)) throw err
       this.writes.drop(fileid)
+      this.flushChains.delete(fileid)
       return
     }
     await this.flushOne(fileid, path)
   }
 
+  /**
+   * Store one file's buffered writes, one flush at a time.
+   *
+   * Read, take and store are one critical section. Without it two
+   * flushes of the same file -- an idle timer against a size trigger,
+   * or either against teardown -- each read the same stored base and
+   * take different batches, and whichever store settles last drops the
+   * other batch. The client was told those bytes were durable.
+   *
+   * Serialized by chaining rather than a lock, which JavaScript has no
+   * need of: the chain is the queue, and a failed flush does not strand
+   * the ones behind it.
+   */
+  /** Forget a file's pending writes and the chain that serialized them. */
+  private dropBuffered(fileid: number): void {
+    this.writes.drop(fileid)
+    this.flushChains.delete(fileid)
+  }
+
   private async flushOne(fileid: number, path: string): Promise<void> {
+    const previous = this.flushChains.get(fileid) ?? Promise.resolve()
+    const mine = previous.catch(() => undefined).then(() => this.storeOne(fileid, path))
+    this.flushChains.set(fileid, mine)
+    try {
+      await mine
+    } finally {
+      // Only the tail clears itself: an earlier link finishing must not
+      // drop a chain a later flush is still queued behind.
+      if (this.flushChains.get(fileid) === mine) this.flushChains.delete(fileid)
+    }
+  }
+
+  private async storeOne(fileid: number, path: string): Promise<void> {
     const base = await this.readBase(path)
     const pending = this.writes.take(fileid)
     if (pending.length === 0) return

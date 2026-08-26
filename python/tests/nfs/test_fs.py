@@ -461,3 +461,40 @@ def test_attrs_report_zero_when_the_row_has_no_time():
     ops.stamp = None
     attrs = run(fs.getattr(run(fs.lookup(fs.root_dir(), "a.txt"))))
     assert attrs.mtime_epoch == 0.0
+
+
+def test_overlapping_flushes_do_not_lose_an_acknowledged_write():
+    # The losing interleaving is specific: the first flush must already
+    # have taken its batch and be parked in the store when the second
+    # reads the base, so both merge onto the same bytes and the later
+    # store drops the earlier batch. Waiting for the store to be entered
+    # is what makes that deterministic rather than a timing guess.
+    fs, ops = make()
+    fileid = run(fs.lookup(fs.root_dir(), "a.txt"))
+    real_write = ops.write
+
+    async def scenario() -> bytes:
+        gate = asyncio.Event()
+        entered = asyncio.Event()
+        held = False
+
+        async def slow_write(path: str, data: bytes) -> None:
+            nonlocal held
+            if not held:
+                held = True
+                entered.set()
+                await gate.wait()
+            await real_write(path, data)
+
+        ops.write = slow_write
+        await fs.write(fileid, 0, b"AAAAA")
+        first = asyncio.create_task(fs.flush(fileid))
+        await entered.wait()
+        await fs.write(fileid, 5, b"BBBBB")
+        second = asyncio.create_task(fs.flush(fileid))
+        gate.set()
+        await asyncio.gather(first, second)
+        ops.write = real_write
+        return ops.files["/a.txt"]
+
+    assert run(scenario()) == b"AAAAABBBBB"
