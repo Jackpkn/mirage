@@ -27,9 +27,11 @@
       ]
     },
     "discord": {
-      "python": [],
+      "python": [
+        "DISCORD_URL"
+      ],
       "typescript": [
-        "DISCORD_ENDPOINT"
+        "DISCORD_URL"
       ]
     },
     "dropbox": {
@@ -99,9 +101,11 @@
       ]
     },
     "linear": {
-      "python": [],
+      "python": [
+        "LINEAR_URL"
+      ],
       "typescript": [
-        "LINEAR_ENDPOINT"
+        "LINEAR_URL"
       ]
     },
     "mem0": {
@@ -188,10 +192,10 @@
     },
     "trello": {
       "python": [
-        "TRELLO_ENDPOINT"
+        "TRELLO_URL"
       ],
       "typescript": [
-        "TRELLO_ENDPOINT"
+        "TRELLO_URL"
       ]
     }
   },

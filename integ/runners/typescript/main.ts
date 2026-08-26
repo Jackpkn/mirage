@@ -88,9 +88,7 @@ async function runTarget(
   const PROFILE_OPENERS = ['ram', 'disk', 'email']
   const declaresProfiles = target.profiles !== undefined || target.profile !== undefined
   if (declaresProfiles && !PROFILE_OPENERS.includes(target.mounts[0].resource)) {
-    throw new Error(
-      `target ${target.id}: profiles ride ${PROFILE_OPENERS.join(', ')} mounts`,
-    )
+    throw new Error(`target ${target.id}: profiles ride ${PROFILE_OPENERS.join(', ')} mounts`)
   }
   const { ws, cleanup } = await ADAPTERS[target.mounts[0].resource](target)
   try {
@@ -163,8 +161,7 @@ async function runTarget(
     (c) => c.targets.includes(target.id) && c.consistency !== undefined && c.scenario !== undefined,
   )
   for (const c of scenarios) {
-    const policy =
-      c.consistency === 'always' ? ConsistencyPolicy.ALWAYS : ConsistencyPolicy.LAZY
+    const policy = c.consistency === 'always' ? ConsistencyPolicy.ALWAYS : ConsistencyPolicy.LAZY
     const opened = await openConsistency(target, policy)
     if (opened === null) {
       // Loud on purpose: an adapter that cannot build a shadow workspace used
@@ -202,9 +199,7 @@ async function main(): Promise<void> {
   // target with no facet belongs to "core", which the shared battery runs.
   let ids: string[]
   if (facet !== undefined) {
-    ids = [...manifest.entries()]
-      .filter(([, t]) => (t.facet ?? 'core') === facet)
-      .map(([id]) => id)
+    ids = [...manifest.entries()].filter(([, t]) => (t.facet ?? 'core') === facet).map(([id]) => id)
     if (ids.length === 0) {
       process.stderr.write(`no targets in facet '${facet}'\n`)
       process.exit(2)

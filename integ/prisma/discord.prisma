@@ -1,0 +1,119 @@
+// Schema for the discord fake (integ/server/discord/). Two things about the
+// fixture shape drive it. First, fixtures/discord/v1.json nests `messages`
+// under the GUILD, keyed by channel id, and nests `members` as a list whose
+// rows the fake hands back verbatim; neither shape is a relation the generic
+// seeder can walk, so both arrive as staging JSON columns on DiscordGuild and
+// afterSeed materializes them. Second, a message needs TWO ordering keys:
+// `seq` is insertion order, which is what the positional window (the last N
+// messages) reads, and `idNum` is the snowflake as a number, which is what the
+// after/before cursors compare and what the newest-first response sorts on.
+// They are not the same order: a posted message's snowflake is derived from a
+// base BELOW every fixture id, so it lands last by seq and first-from-the-end
+// by idNum.
+//
+// Attachments live in two disjoint places, exactly as the python fake did: the
+// per-message wire list (DiscordMessage.attachmentsJson, urls still carrying
+// the {base} placeholder) and the CDN blob store (DiscordBlob), which the
+// /attachments route reads without any Authorization header.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/discord"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model DiscordBot {
+  tenant   String
+  id       String
+  seq      Int
+  username String
+
+  @@id([tenant, id])
+}
+
+model DiscordGuild {
+  tenant   String
+  id       String
+  seq      Int
+  idNum    BigInt           @default(0)
+  name     String
+  channels DiscordChannel[]
+  members  String?
+  messages String?
+
+  @@id([tenant, id])
+}
+
+model DiscordChannel {
+  tenant        String
+  id            String
+  guildId       String
+  seq           Int
+  name          String
+  type          Int
+  topic         String?
+  position      Int
+  lastMessageId String?
+  guild         DiscordGuild @relation(fields: [tenant, guildId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, guildId])
+}
+
+model DiscordMember {
+  pk          Int     @id @default(autoincrement())
+  tenant      String
+  guildId     String
+  seq         Int
+  userId      String
+  userIdNum   BigInt
+  username    String
+  nick        String?
+  payloadJson String
+
+  @@index([tenant, guildId])
+  @@index([tenant, userId])
+}
+
+model DiscordMessage {
+  tenant          String
+  id              String
+  seq             Int
+  idNum           BigInt
+  channelId       String
+  guildId         String
+  content         String
+  timestamp       String
+  editedTimestamp String?
+  authorJson      String
+  attachmentsJson String
+  pollJson        String?
+
+  @@id([tenant, id])
+  @@index([tenant, channelId])
+}
+
+model DiscordBlob {
+  tenant String
+  id     String
+  seq    Int
+  body   Bytes
+
+  @@id([tenant, id])
+}
+
+model DiscordReaction {
+  pk        Int    @id @default(autoincrement())
+  tenant    String
+  seq       Int
+  channelId String
+  messageId String
+  emoji     String
+
+  @@index([tenant, messageId])
+}

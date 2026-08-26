@@ -140,9 +140,7 @@ export interface Case {
   _source?: string
 }
 
-export type ScenarioStep =
-  | { mutate: { path: string; content: string } }
-  | { command: string }
+export type ScenarioStep = { mutate: { path: string; content: string } } | { command: string }
 
 export interface ProvisionInfo {
   networkRead: number | string
@@ -177,7 +175,12 @@ export interface HarnessStat {
 
 export interface ExecWorkspace {
   execute(cmd: string, opts?: { stdin?: Uint8Array; sessionId?: string }): Promise<ExecResult>
-  dispatch(opName: string, path: string, args?: readonly unknown[], kwargs?: Record<string, unknown>): Promise<unknown>
+  dispatch(
+    opName: string,
+    path: string,
+    args?: readonly unknown[],
+    kwargs?: Record<string, unknown>,
+  ): Promise<unknown>
   cache: { clear(): Promise<void> }
   mounts(): readonly { resource: { index?: { clear(): Promise<void> } } }[]
   createSession(
@@ -273,7 +276,9 @@ export function loadCases(root: string): Case[] {
     const dir = join(root, name)
     let files: string[]
     try {
-      files = walkFiles(dir).filter((f) => f.endsWith('.json')).sort()
+      files = walkFiles(dir)
+        .filter((f) => f.endsWith('.json'))
+        .sort()
     } catch {
       continue
     }
@@ -537,9 +542,7 @@ const ANSWERS = new Map<string, readonly [Outcome, Scope]>([
 async function answerDecisions(ws: ExecWorkspace, answer: string): Promise<void> {
   const pair = ANSWERS.get(answer)
   if (pair === undefined) {
-    throw new Error(
-      `case answer must be one of ${[...ANSWERS.keys()].join(', ')}, got ${answer}`,
-    )
+    throw new Error(`case answer must be one of ${[...ANSWERS.keys()].join(', ')}, got ${answer}`)
   }
   const [outcome, scope] = pair
   for (const record of ws.decisions.pending()) {
@@ -576,10 +579,7 @@ export function ruleReasons(doc: unknown): string[] {
  * runs. The first refusal wins, because that is the one the run reports:
  * a line is refused by its first refusing command.
  */
-async function predictedRefusal(
-  ws: ExecWorkspace,
-  c: Case,
-): Promise<[number, string] | null> {
+async function predictedRefusal(ws: ExecWorkspace, c: Case): Promise<[number, string] | null> {
   const said = await ws.explain(c.command, c.session ?? '')
   for (const expl of said) {
     if (expl.exitCode !== 0) return [expl.exitCode, expl.stderr]
@@ -710,9 +710,7 @@ export function compare(
   if (err.replace(/\n+$/, '') !== c.expect.stderr.replace(/\n+$/, ''))
     diffs.push(`stderr: expected ${JSON.stringify(c.expect.stderr)}, got ${JSON.stringify(err)}`)
   if (c.check !== undefined && checkOut !== c.expect.check)
-    diffs.push(
-      `check: expected ${JSON.stringify(c.expect.check)}, got ${JSON.stringify(checkOut)}`,
-    )
+    diffs.push(`check: expected ${JSON.stringify(c.expect.check)}, got ${JSON.stringify(checkOut)}`)
   const bounds = c.expect.elapsed
   if (bounds !== undefined && (elapsed < bounds.min || elapsed > bounds.max))
     diffs.push(

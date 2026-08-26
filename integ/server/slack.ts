@@ -589,7 +589,9 @@ async function handle(
 
   if (path === '/api/conversations.list') {
     const types = (q.get('types') ?? '').split(',').filter((t) => t !== '')
-    const kinds = types.map((t) => (t === 'public_channel' || t === 'private_channel' ? 'channel' : t))
+    const kinds = types.map((t) =>
+      t === 'public_channel' || t === 'private_channel' ? 'channel' : t,
+    )
     const where: Record<string, unknown> = { kind: { in: kinds.length > 0 ? kinds : ['channel'] } }
     if (q.get('exclude_archived') === 'true') where.isArchived = false
     const rows = (await db.channel.findMany({ where, orderBy: { id: 'asc' } })) as ChannelRow[]
@@ -650,7 +652,9 @@ async function handle(
   }
 
   if (path === '/api/users.info') {
-    const user = (await db.user.findUnique({ where: { id: q.get('user') ?? '' } })) as UserRow | null
+    const user = (await db.user.findUnique({
+      where: { id: q.get('user') ?? '' },
+    })) as UserRow | null
     if (user === null) return { status: 200, json: { ok: false, error: 'user_not_found' } }
     return { status: 200, json: { ok: true, user: userJson(user) } }
   }
@@ -667,7 +671,11 @@ async function handle(
     const userName = new Map(users.map((u) => [u.id, u.name]))
     const byId = new Map(channels.map((c) => [c.id, c]))
     const channelDisplay = (ch: ChannelRow): string =>
-      ch.name !== '' ? ch.name : ch.dmUserId !== null ? (userName.get(ch.dmUserId) ?? ch.dmUserId) : ch.id
+      ch.name !== ''
+        ? ch.name
+        : ch.dmUserId !== null
+          ? (userName.get(ch.dmUserId) ?? ch.dmUserId)
+          : ch.id
     let scopedChannelId: string | undefined
     if (parsed.channelName !== undefined) {
       scopedChannelId = channels.find((c) => c.name === parsed.channelName)?.id
@@ -813,7 +821,8 @@ export async function startServer(port: number): Promise<http.Server> {
 const isMain = process.argv[1] !== undefined && process.argv[1].endsWith('slack.ts')
 if (isMain) {
   const portArg = process.argv.indexOf('--port')
-  const port = portArg !== -1 ? Number.parseInt(process.argv[portArg + 1] as string, 10) : DEFAULT_PORT
+  const port =
+    portArg !== -1 ? Number.parseInt(process.argv[portArg + 1] as string, 10) : DEFAULT_PORT
   void startServer(port).then(() => {
     console.log(`SLACK_URL=http://127.0.0.1:${String(port)}`)
   })

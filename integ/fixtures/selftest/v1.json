@@ -1,0 +1,19 @@
+{
+  "boards": [
+    {
+      "id": "brd_1",
+      "name": "Roadmap",
+      "owner": { "id": "own_1", "name": "Ada Lovelace" },
+      "cards": [
+        { "id": "crd_z", "title": "zebra" },
+        { "id": "crd_a", "title": "apple" },
+        { "id": "crd_m", "title": "mango" }
+      ]
+    },
+    {
+      "id": "brd_2",
+      "name": "Archive",
+      "cards": []
+    }
+  ]
+}

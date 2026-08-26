@@ -784,7 +784,7 @@ jobs:
       # out-of-process; the other five in-process fakes need nothing.
       - name: Start the fake Google Workspace server
         run: |
-          cd integ && nohup pnpm exec tsx server/gws_server.ts --port 19999 \
+          cd integ && nohup pnpm exec tsx server/gws/main.ts --port 19999 \
             > /tmp/gws.log 2>&1 &
           for i in $(seq 1 30); do
             grep -q "GWS_URL=" /tmp/gws.log && break
@@ -1337,20 +1337,30 @@ jobs:
           name: integ-typescript-dist
           path: typescript/packages
 
+      # Every kit fake imports a generated Prisma client out of integ/generated/,
+      # which is gitignored, so all of them have to exist before any fake in
+      # this job starts. One step rather than one per fake: letting a fake rely
+      # on an earlier fake's step to have generated its client couples the two
+      # through an `if:` guard that nothing states.
+      - name: Generate integ Prisma clients
+        working-directory: integ
+        run: pnpm run prisma:clients
+
       - name: Start fake Trello and Linear APIs
         if: matrix.facet == 'project'
+        working-directory: integ
         env:
           INTEG_DB_URL: file:/tmp/mirage-trello-ci.db
         run: |
-          (cd integ && ./node_modules/.bin/prisma generate --schema prisma/schema.prisma)
-          (cd integ && nohup ./node_modules/.bin/tsx server/trello.ts --port 5095 > /tmp/trello.log 2>&1 &)
-          nohup ./python/.venv/bin/python integ/server/linear_server.py --port 5094 > /tmp/linear.log 2>&1 &
+          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
+          nohup ./node_modules/.bin/tsx server/trello/main.ts --port 5095 > /tmp/trello.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/linear/main.ts --port 5094 > /tmp/linear.log 2>&1 &
           for f in trello linear; do
-            for i in $(seq 1 30); do grep -q "ENDPOINT=" /tmp/$f.log && break; sleep 1; done
+            for i in $(seq 1 30); do grep -q "_URL=" /tmp/$f.log && break; sleep 1; done
             cat /tmp/$f.log
           done
-          echo "TRELLO_ENDPOINT=http://127.0.0.1:5095" >> "$GITHUB_ENV"
-          echo "LINEAR_ENDPOINT=http://127.0.0.1:5094/graphql" >> "$GITHUB_ENV"
+          echo "TRELLO_URL=http://127.0.0.1:5095" >> "$GITHUB_ENV"
+          echo "LINEAR_URL=http://127.0.0.1:5094" >> "$GITHUB_ENV"
 
       # The cli facet drives the builtin CLIs (himalaya, gws, slack, discord,
       # ntn, linear) end to end against the same mocks the email, chat and
@@ -1362,7 +1372,7 @@ jobs:
             -p 3025:3025 -p 3143:3143 -p 8080:8080 \
             -e GREENMAIL_OPTS="-Dgreenmail.setup.test.all -Dgreenmail.users=integ:secret@example.com -Dgreenmail.users.login=email -Dgreenmail.hostname=0.0.0.0" \
             greenmail/standalone:2.1.3
-          cd integ && nohup pnpm exec tsx server/gws_server.ts --port 19999 > /tmp/gws.log 2>&1 &
+          cd integ && nohup pnpm exec tsx server/gws/main.ts --port 19999 > /tmp/gws.log 2>&1 &
           for i in $(seq 1 30); do grep -q "GWS_URL=" /tmp/gws.log && break; sleep 1; done
           cat /tmp/gws.log
           for i in $(seq 1 30); do
@@ -1386,11 +1396,12 @@ jobs:
 
       - name: Start fake Discord API
         if: matrix.facet == 'chat' || matrix.facet == 'cli'
+        working-directory: integ
         run: |
-          nohup ./python/.venv/bin/python integ/server/discord_server.py --port 5099 > /tmp/discord.log 2>&1 &
-          for i in $(seq 1 30); do grep -q "DISCORD_ENDPOINT=" /tmp/discord.log && break; sleep 1; done
+          nohup ./node_modules/.bin/tsx server/discord/main.ts --port 5090 > /tmp/discord.log 2>&1 &
+          for i in $(seq 1 30); do grep -q "DISCORD_URL=" /tmp/discord.log && break; sleep 1; done
           cat /tmp/discord.log
-          echo "DISCORD_ENDPOINT=http://127.0.0.1:5099" >> "$GITHUB_ENV"
+          echo "DISCORD_URL=http://127.0.0.1:5090" >> "$GITHUB_ENV"
 
       - name: Start fake GitHub API
         if: matrix.facet == 'cli'
@@ -1410,11 +1421,11 @@ jobs:
         env:
           INTEG_DB_URL: file:/tmp/mirage-notion-ci.db
         run: |
-          nohup ./python/.venv/bin/python integ/server/linear_server.py --port 5094 > /tmp/linear.log 2>&1 &
-          for i in $(seq 1 30); do grep -q "ENDPOINT=" /tmp/linear.log && break; sleep 1; done
-          cat /tmp/linear.log
-          echo "LINEAR_ENDPOINT=http://127.0.0.1:5094/graphql" >> "$GITHUB_ENV"
           cd integ
+          nohup ./node_modules/.bin/tsx server/linear/main.ts --port 5094 > /tmp/linear.log 2>&1 &
+          for i in $(seq 1 30); do grep -q "LINEAR_URL=" /tmp/linear.log && break; sleep 1; done
+          cat /tmp/linear.log
+          echo "LINEAR_URL=http://127.0.0.1:5094" >> "$GITHUB_ENV"
           ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
           nohup ./node_modules/.bin/tsx server/notion_server.ts --port 5091 > /tmp/notion.log 2>&1 &
           for i in $(seq 1 30); do grep -q "NOTION_URL=" /tmp/notion.log && break; sleep 1; done

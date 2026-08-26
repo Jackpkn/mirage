@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "server/kit/**/*.ts",
+    "server/discord/**/*.ts",
+    "server/linear/**/*.ts",
+    "server/trello/**/*.ts",
+    "server/gws/**/*.ts"
+  ]
+}

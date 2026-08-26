@@ -295,12 +295,24 @@ importers:
         specifier: ^1.16.0
         version: 1.17.0
     devDependencies:
+      '@eslint/js':
+        specifier: ^9.39.4
+        version: 9.39.4
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
       '@types/ssh2':
         specifier: ^1.15.0
         version: 1.15.5
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-prettier:
+        specifier: ^10.1.8
+        version: 10.1.8(eslint@9.39.4(jiti@2.7.0))
+      prettier:
+        specifier: ^3.8.2
+        version: 3.8.3
       prisma:
         specifier: ^6.19.3
         version: 6.19.3(typescript@6.0.3)
@@ -310,6 +322,9 @@ importers:
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.58.2(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
     optionalDependencies:
       '@zkochan/fuse-native':
         specifier: ^0.1.0
@@ -4271,6 +4286,7 @@ packages:
   eslint@9.39.4:
     resolution: {integrity: sha512-XoMjdBOwe/esVgEvLmNsD3IRHkm7fbKIUGvrleloJXUZgDHig2IPWNniv+GwjyJXzuNqVjlr5+4yVUZjycJwfQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -11106,7 +11122,7 @@ snapshots:
       '@humanfs/node': 0.16.8
       '@humanwhocodes/module-importer': 1.0.1
       '@humanwhocodes/retry': 0.4.3
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.9
       ajv: 6.14.0
       chalk: 4.1.2
       cross-spawn: 7.0.6
