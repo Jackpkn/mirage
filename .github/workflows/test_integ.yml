@@ -493,6 +493,16 @@ jobs:
       - name: Assert the integ runner gates (strict exit, services, case ids)
         run: ./python/.venv/bin/python integ/runners/tools/gate_selftest.py --require-ts
 
+      # The same argument one level down. gate_selftest asserts the runner
+      # fails when it tests nothing; this asserts the kit the fakes are built
+      # on still keeps its promises, none of which the battery can reach: no
+      # corpus case sends a run or tenant header, and the runner awaits one
+      # case at a time, so run isolation, tenant isolation and the write queue
+      # are unreachable there by construction rather than by omission.
+      - name: Assert the mock-server kit (run/tenant isolation, seeder, queue)
+        working-directory: integ
+        run: pnpm run selftest
+
       - name: Run declarative battery (typescript hosts)
         working-directory: integ
         run: pnpm exec tsx runners/typescript/main.ts --facet core --strict --allow-skip chroma,lancedb,nextcloud,notion,postgres,qdrant
