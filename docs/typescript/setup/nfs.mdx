@@ -60,9 +60,10 @@ process with them.
 | `await ws.removeNfsMount(prefix)` | Unmount one prefix; the server stays up for the others. |
 | `await ws.close()` | Unmount everything, flush buffered writes, stop the server, in that order. |
 
-One server backs every prefix of a workspace, so a second mount costs a
+One server backs every *unscoped* prefix of a workspace, so a second mount costs a
 kernel mount rather than a second server. `config` is therefore honored by
-the mount that *starts* the server and ignored afterwards.
+the mount that *starts* the server and ignored afterwards. A session-scoped
+mount is the exception and gets its own server; see below.
 
 ```ts
 import { NFSConfig } from '@struktoai/mirage-node'

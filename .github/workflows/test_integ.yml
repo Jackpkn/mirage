@@ -1056,7 +1056,7 @@ jobs:
     runs-on: macos-15
     # In the gate. This is the only job in the repo that runs cargo, and
     # it builds both NFS extensions from source: the whole backend is
-    # unverified without it. Both batteries print the same 27 keys and
+    # unverified without it. Both batteries print the same 32 keys and
     # check_json.py accepts them against integ/nfs/truth_nfs.json, on a
     # developer Mac and on a hosted runner alike -- a loopback NFS mount
     # needs no privileges on either.
