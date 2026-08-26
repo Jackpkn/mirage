@@ -85,6 +85,15 @@ jobs:
         working-directory: python
         run: uv pip install .
 
+      - name: Cache the mypy incremental store
+        uses: actions/cache@v6
+        with:
+          path: python/.mypy_cache
+          key: mypy-${{ runner.os }}-py3.12-${{ hashFiles('python/uv.lock') }}-${{ hashFiles('python/mirage/**/*.py') }}
+          restore-keys: |
+            mypy-${{ runner.os }}-py3.12-${{ hashFiles('python/uv.lock') }}-
+            mypy-${{ runner.os }}-py3.12-
+
       - name: Type check (mypy)
         working-directory: python
         run: uv run mypy mirage
