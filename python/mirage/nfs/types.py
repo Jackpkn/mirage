@@ -30,7 +30,11 @@ class NFSAttrs:
         is_symlink (bool): whether the entry is a symbolic link.
         mode (int | None): permission bits when the namespace holds an
             overlay for them, else None for the server's default.
-        modified (str | None): ISO-8601 modification stamp, when known.
+        mtime_epoch (float): modification time in seconds since the
+            epoch, which is the shape ``nfstime3`` needs. Zero means
+            unknown, and a client reads that as 1970 -- so a backend
+            that knows the time must put it here, not in a prettier
+            field the wire layer cannot read.
     """
 
     fileid: int
@@ -38,7 +42,7 @@ class NFSAttrs:
     is_dir: bool
     is_symlink: bool
     mode: int | None = None
-    modified: str | None = None
+    mtime_epoch: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

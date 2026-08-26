@@ -47,6 +47,11 @@ class FakeOps:
 
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {"/a.txt": b"hello"}
+        # A real facade dates its rows, and a fake that does not is how
+        # an adapter shipped every file to clients as 1970 with a green
+        # unit suite. None here means "this backend cannot date a file",
+        # which is a case worth covering too.
+        self.stamp: str | None = "2026-01-02T03:04:05+00:00"
         self.dirs: set[str] = {"/", "/sub"}
         self.link_table: dict[str, str] = {}
         self.mount_roots: set[str] = set()
@@ -70,11 +75,14 @@ class FakeOps:
         self.calls.append(("stat", path))
         path = self._follow(path)
         if path in self.dirs or path in self.mount_roots:
-            return FileStat(name=path, type=FileType.DIRECTORY)
+            return FileStat(name=path,
+                            type=FileType.DIRECTORY,
+                            modified=self.stamp)
         if path in self.files:
             return FileStat(name=path,
                             type=FileType.FILE,
-                            size=len(self.files[path]))
+                            size=len(self.files[path]),
+                            modified=self.stamp)
         raise FileNotFoundError(path)
 
     async def read(self, path: str, offset: int = 0, size=None, raw=False):
@@ -435,3 +443,21 @@ def test_set_size_delegates_to_setattr():
     assert ops.files["/a.txt"] == b"hel"
     attr = run(fs.set_size(fileid, None))
     assert attr.size == 3
+
+
+def test_attrs_carry_a_real_mtime():
+    # vfs.rs reads mtime_epoch and nothing else; an adapter that fills a
+    # prettier field instead dates every file 1970 on the client, which
+    # is what shipped before this test existed.
+    fs, ops = make()
+    attrs = run(fs.getattr(run(fs.lookup(fs.root_dir(), "a.txt"))))
+    assert attrs.mtime_epoch > 1_000_000_000
+
+
+def test_attrs_report_zero_when_the_row_has_no_time():
+    # Honest rather than fabricated: a backend that cannot date a file
+    # leaves the client reading 1970 instead of a plausible lie.
+    fs, ops = make()
+    ops.stamp = None
+    attrs = run(fs.getattr(run(fs.lookup(fs.root_dir(), "a.txt"))))
+    assert attrs.mtime_epoch == 0.0

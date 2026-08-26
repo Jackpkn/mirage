@@ -24,11 +24,29 @@ from mirage.nfs.types import DirEntry, NFSAttrs, SetAttrs
 from mirage.nfs.writebuf import WriteBuffer
 from mirage.ops import Ops
 from mirage.types import FileStat, FileType
+from mirage.utils.stat_view import mtime_ns
 
 
 def _join(parent: str, name: str) -> str:
     return posixpath.join(parent,
                           name) if parent != ROOT_PATH else ROOT_PATH + name
+
+
+def _epoch(stat: FileStat) -> float:
+    """Modification time in seconds since the epoch, or 0 when unknown.
+
+    The wire needs an ``nfstime3``, and a backend that cannot date a
+    file leaves the client reading 1970 -- which is honest, and is why
+    this is one conversion rather than a fabricated "now".
+
+    Args:
+        stat (FileStat): the row to read the time from.
+
+    Returns:
+        float: seconds since the epoch, 0.0 when the row has no time.
+    """
+    stamp = mtime_ns(stat)
+    return 0.0 if stamp is None else stamp / 1_000_000_000
 
 
 class MirageNFS:
@@ -449,4 +467,4 @@ class MirageNFS:
                         is_dir=is_dir,
                         is_symlink=stat.type == FileType.SYMLINK,
                         mode=stat.mode,
-                        modified=stat.modified)
+                        mtime_epoch=_epoch(stat))

@@ -16,6 +16,7 @@ import { posix } from 'node:path'
 
 import type { Ops } from '@struktoai/mirage-core/ops/ops'
 import { FileType } from '@struktoai/mirage-core/types'
+import { mtimeMs } from '@struktoai/mirage-core/utils/stat_view'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import { sortedByCodePoints } from '@struktoai/mirage-core/utils/sort'
 
@@ -349,6 +350,11 @@ export class MirageNFS {
       isSymlink: stat.type === FileType.SYMLINK,
     }
     if (stat.mode !== null) out.mode = stat.mode
+    // The wire needs an nfstime3 and vfs.rs reads exactly this field; a
+    // row with no time leaves it unset, and the client reads 1970, which
+    // is honest where a fabricated "now" would not be.
+    const ms = mtimeMs(stat)
+    if (ms !== null) out.mtimeEpoch = ms / 1000
     return out
   }
 }

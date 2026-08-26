@@ -200,6 +200,15 @@ async function runBattery(result: Result): Promise<void> {
     );
     result.mkdir_mv_ok = code === 0;
 
+    // The wire carries an nfstime3, and an adapter that fills none
+    // leaves every file dated 1970 -- which reads as a broken mount to
+    // rsync, make, and any incremental copy. BSD stat spells it -f %m
+    // and GNU -c %Y.
+    let stamp: string;
+    [code, stamp] = await sh("stat", "-f", "%m", `${whole}/a.txt`);
+    if (code !== 0) [code, stamp] = await sh("stat", "-c", "%Y", `${whole}/a.txt`);
+    result.mtime_after_2001 = Number(stamp) > 1_000_000_000;
+
     try {
       await track(manager, ws, "/dev", whole);
       result.collision_rejected = false;

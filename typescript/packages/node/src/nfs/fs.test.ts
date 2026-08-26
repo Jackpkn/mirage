@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
-import { MountMode } from '@struktoai/mirage-core/types'
+import { FileStat, MountMode } from '@struktoai/mirage-core/types'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { Workspace } from '../workspace.ts'
@@ -307,5 +307,25 @@ describe('readdir', () => {
     const first = await fs.readdir(root, 0, 2)
     const rest = await fs.readdir(root, first.at(-1)?.cookie ?? 0)
     expect([...first, ...rest].map((entry) => entry.name)).toEqual(all)
+  })
+
+  it('carries a real mtime on the wire shape', async () => {
+    // vfs.rs reads mtimeEpoch and nothing else; an adapter that leaves
+    // it unset dates every file 1970 on the client, which is what
+    // shipped before this test existed.
+    const attrs = await fs.getattr(await fs.lookup(root, 'a.txt'))
+    expect(attrs.mtimeEpoch).toBeGreaterThan(1_000_000_000)
+  })
+
+  it('leaves the mtime unset when the row has no time', async () => {
+    // Honest rather than fabricated: a backend that cannot date a file
+    // leaves the client reading 1970 instead of a plausible lie.
+    const real = ws.fs.stat.bind(ws.fs)
+    ws.fs.stat = async (path: string) => {
+      const row = await real(path)
+      return new FileStat({ name: row.name, type: row.type, size: row.size })
+    }
+    const attrs = await fs.getattr(await fs.lookup(root, 'a.txt'))
+    expect(attrs.mtimeEpoch).toBeUndefined()
   })
 })
