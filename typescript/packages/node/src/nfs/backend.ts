@@ -17,7 +17,7 @@ import { createServer } from 'node:net'
 import { MountBackend } from '@struktoai/mirage-core/types'
 import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 
-import { requireKernelBackend, resolveBackend, unsizedMounts } from '../fuse/backend.ts'
+import { requireKernelBackend, resolveBackend, unsizedMounts } from '../mount/backend.ts'
 import type { NFSConfig } from './config.ts'
 
 /**

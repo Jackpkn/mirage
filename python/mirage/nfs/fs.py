@@ -17,7 +17,7 @@ import errno
 import os
 import posixpath
 
-from mirage.fuse.platform.macos import is_macos_metadata
+from mirage.mount.platform.macos import is_macos_metadata
 from mirage.nfs.config import NFSConfig
 from mirage.nfs.errors import StaleHandleError
 from mirage.nfs.ids import ROOT_PATH, IdTable

@@ -23,8 +23,8 @@ from typing import Any, Coroutine
 
 from mirage.bridge.sync import run_async_from_sync
 from mirage.context import reset_current_session, set_current_session
-from mirage.fuse.errors import NO_XATTR
-from mirage.fuse.platform.macos import is_macos_metadata
+from mirage.mount.errors import NO_XATTR
+from mirage.mount.platform.macos import is_macos_metadata
 from mirage.ops import Ops
 from mirage.runtime.handles import FileTable, merge_writes
 from mirage.types import FileStat, FileType
@@ -57,7 +57,7 @@ class MountCore:
     The division of labour: this class decides *what* the filesystem
     contains, an adapter decides *how* to say it to a particular kernel
     interface. Adapters translate the exceptions raised here into their own
-    error codes with ``mirage.fuse.errors.classify_error``.
+    error codes with ``mirage.mount.errors.classify_error``.
 
     Args:
         ops (Ops): the workspace op facade every filesystem call routes to.

@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { requireKernelBackend, resolveBackend, unsizedMounts } from '../mount/backend.ts'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountBackend, MountMode } from '@struktoai/mirage-core/types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -23,9 +24,6 @@ import {
   checkWrites,
   FSKIT_MOUNT_ROOT,
   prepareBackend,
-  requireKernelBackend,
-  resolveBackend,
-  unsizedMounts,
   writableMounts,
 } from './backend.ts'
 

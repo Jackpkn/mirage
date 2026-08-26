@@ -23,8 +23,8 @@ import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { DIR_MODE, FILE_MODE, mtimeMs } from '@struktoai/mirage-core/utils/stat_view'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
-import { errnoError } from './errors.ts'
-import { isMacosMetadata } from './platform/macos.ts'
+import { errnoError } from '../mount/errors.ts'
+import { isMacosMetadata } from '../mount/platform/macos.ts'
 
 export interface FuseAttr {
   mtime: Date

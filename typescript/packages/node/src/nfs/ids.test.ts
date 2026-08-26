@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { EINVAL } from '../fuse/errors.ts'
+import { EINVAL } from '../mount/errors.ts'
 import { RenameIntoSelfError, StaleHandleError } from './errors.ts'
 import { IdTable, ROOT_PATH } from './ids.ts'
 

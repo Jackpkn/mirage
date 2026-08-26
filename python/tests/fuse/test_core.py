@@ -150,7 +150,7 @@ async def test_xattrs_round_trip(seeded):
 
 @pytest.mark.asyncio
 async def test_getxattr_missing_raises_no_xattr(seeded):
-    from mirage.fuse.errors import NO_XATTR
+    from mirage.mount.errors import NO_XATTR
 
     with pytest.raises(OSError) as exc:
         seeded.getxattr("/a.txt", "user.absent")

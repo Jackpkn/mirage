@@ -17,7 +17,7 @@ import type { OpRecord } from '@struktoai/mirage-core/observe/record'
 import type { Ops } from '@struktoai/mirage-core/ops/ops'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import { type FuseAttr, MountCore } from './core.ts'
-import { classifyError } from './errors.ts'
+import { classifyErrno } from '../mount/errors.ts'
 
 export type { FuseAttr }
 
@@ -42,6 +42,15 @@ export interface MirageFSOptions {
  * negative errno codes. All filesystem semantics live in MountCore, so a
  * non-FUSE adapter can reuse them unchanged. Mirrors Python's `MirageFS`.
  */
+/**
+ * The mount core's errno, negated the way `@zkochan/fuse-native`
+ * callbacks report failure. One line and one caller, so it lives beside
+ * that caller rather than in a module of its own.
+ */
+function classifyError(err: unknown): number {
+  return -classifyErrno(err)
+}
+
 export class MirageFS {
   readonly core: MountCore
 

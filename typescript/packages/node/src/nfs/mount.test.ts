@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { getCurrentSession } from '@struktoai/mirage-core/context/session_context'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import { describe, expect, it } from 'vitest'
-import { EINVAL, ENOENT } from '../fuse/errors.ts'
+import { EINVAL, ENOENT } from '../mount/errors.ts'
 import { ESTALE_WIRE, RenameIntoSelfError, StaleHandleError } from './errors.ts'
 import {
   ADDON_ENV,

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { classifyErrno, EINVAL } from '../fuse/errors.ts'
+import { classifyErrno, EINVAL } from '../mount/errors.ts'
 
 /** Base for conditions the NFS adapter reports to the server layer. */
 export class NFSError extends Error {}

@@ -63,16 +63,14 @@ export { RedisFileCacheStore, type RedisFileCacheOptions } from './cache/file/re
 export { FuseManager } from './workspace/fuse.ts'
 export { MirageFS, type MirageFSOptions, type FuseAttr } from './fuse/fs.ts'
 export { MountCore, type MountCoreOptions } from './fuse/core.ts'
-export { classifyErrno, classifyError } from './fuse/errors.ts'
+export { classifyErrno } from './mount/errors.ts'
+export { requireKernelBackend, resolveBackend, unsizedMounts } from './mount/backend.ts'
 export {
   checkMountpoint,
   checkPlatform,
   checkSizes,
   FSKIT_MOUNT_ROOT,
   prepareBackend,
-  requireKernelBackend,
-  resolveBackend,
-  unsizedMounts,
 } from './fuse/backend.ts'
 export {
   mount as fuseMount,
@@ -80,7 +78,7 @@ export {
   type FuseHandle,
   type MountOptions as FuseMountOptions,
 } from './fuse/mount.ts'
-export { isMacosMetadata } from './fuse/platform/macos.ts'
+export { isMacosMetadata } from './mount/platform/macos.ts'
 export { NFSManager, type NFSManagerOptions } from './workspace/nfs.ts'
 export { MirageNFS } from './nfs/fs.ts'
 export { NFSConfig, type NFSConfigInit } from './nfs/config.ts'

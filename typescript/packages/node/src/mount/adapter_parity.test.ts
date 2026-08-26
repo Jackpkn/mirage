@@ -16,9 +16,9 @@ import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { FileStat, FileType, MountMode } from '@struktoai/mirage-core/types'
 import { describe, expect, it } from 'vitest'
 import { MountCore } from '../fuse/core.ts'
-import { classifyErrno } from '../fuse/errors.ts'
+import { classifyErrno } from './errors.ts'
 import { Workspace } from '../workspace.ts'
-import { MirageNFS } from './fs.ts'
+import { MirageNFS } from '../nfs/fs.ts'
 
 const HELLO = 'hello world'
 // No handle: both cores treat an unknown fd as "apply directly", which

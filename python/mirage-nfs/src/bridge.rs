@@ -89,7 +89,7 @@ impl Delegate {
 ///
 /// `StaleHandleError` answers STALE directly -- staleness is not a
 /// POSIX condition and carries no errno. Everything else goes through
-/// ``mirage.fuse.errors.classify_error``, the same shared table the
+/// ``mirage.mount.errors.classify_error``, the same shared table the
 /// FUSE adapter uses, so a mirage exception is named once in one
 /// place: it classifies typed exceptions (FileNotFoundError and kin)
 /// as well as errno-carrying OSErrors. Anything it cannot name is a
@@ -99,7 +99,7 @@ fn to_status(py: Python<'_>, err: PyErr) -> nfsstat3 {
     if matches!(name.as_deref(), Ok("StaleHandleError")) {
         return nfsstat3::NFS3ERR_STALE;
     }
-    let classified: Option<i32> = PyModule::import(py, "mirage.fuse.errors")
+    let classified: Option<i32> = PyModule::import(py, "mirage.mount.errors")
         .and_then(|m| m.call_method1("classify_error", (err.value(py),)))
         .and_then(|v| v.extract::<i32>())
         .ok();

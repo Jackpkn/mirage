@@ -16,7 +16,7 @@ import logging
 import socket
 import sys
 
-from mirage.fuse.backend import require_kernel_backend, resolve_backend
+from mirage.mount.backend import require_kernel_backend, resolve_backend
 from mirage.nfs.config import NFSConfig
 from mirage.ops import Ops
 from mirage.types import MountBackend
