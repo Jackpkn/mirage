@@ -43,7 +43,12 @@ async function main(): Promise<void> {
   const { server, port } = await startMockServer()
   const { server: mcpServer, port: mcpPort } = await startMockMcpServer()
   const restWs = new Workspace(
-    { [MOUNT]: new NotionResource({ apiKey: 'integ-test', baseUrl: `http://127.0.0.1:${String(port)}/v1` }) },
+    {
+      [MOUNT]: new NotionResource({
+        apiKey: 'integ-test',
+        baseUrl: `http://127.0.0.1:${String(port)}/v1`,
+      }),
+    },
     { mode: MountMode.READ },
   )
   const authProvider = new MemoryOAuthClientProvider({
@@ -76,7 +81,8 @@ async function main(): Promise<void> {
       }
     }
     const n = String(all.length)
-    if (mismatches === 0) process.stderr.write(`notion mcp parity: ${n}/${n} cases byte-identical\n`)
+    if (mismatches === 0)
+      process.stderr.write(`notion mcp parity: ${n}/${n} cases byte-identical\n`)
   } finally {
     await restWs.close()
     await mcpWs.close()

@@ -1,0 +1,52 @@
+// Schema for the kit selftest fake (integ/server/kit/selftest/). It exists to
+// exercise the kit's generic seeder and tenant mechanism, not to imitate any
+// vendor: a root model, a nested list child, a nested single-object child, and
+// a scalar-only leaf shape. Every model carries the tenant column in its @@id
+// and a seq column, which is what the seeder injects.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/selftest"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model Board {
+  tenant String
+  id    String
+  name  String
+  seq   Int
+  cards Card[]
+  owner Owner?
+
+  @@id([tenant, id])
+}
+
+model Card {
+  tenant   String
+  id      String
+  boardId   String
+  title     String
+  seq       Int
+  createdAt String?
+  board     Board  @relation(fields: [tenant, boardId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, boardId])
+}
+
+model Owner {
+  tenant   String
+  id      String
+  boardId String
+  name    String
+  seq     Int
+  board   Board  @relation(fields: [tenant, boardId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@unique([tenant, boardId])
+}

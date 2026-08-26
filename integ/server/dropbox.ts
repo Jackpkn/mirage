@@ -13,12 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { createHash } from 'node:crypto'
-import {
-  createServer,
-  type IncomingMessage,
-  type Server,
-  type ServerResponse,
-} from 'node:http'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 // The interface the fake listens on. Loopback is right on a developer's
 // machine and wrong inside a container: a server on the container's own
@@ -109,7 +104,10 @@ function wholeWordHit(query: string, text: string): boolean {
 class Account {
   readonly folders = new Set<string>()
   readonly files = new Map<string, StoredFile>()
-  readonly searchCursors = new Map<string, { matches: SearchMatchJson[]; start: number; limit: number }>()
+  readonly searchCursors = new Map<
+    string,
+    { matches: SearchMatchJson[]; start: number; limit: number }
+  >()
   readonly listCursors = new Map<string, DropboxEntryJson[]>()
 
   // Drop every write since startup. The fields are readonly collections,
@@ -168,7 +166,9 @@ class Account {
     if (path !== '' && !this.folders.has(path)) return null
     const prefix = `${path}/`
     const under = (candidate: string): boolean =>
-      recursive ? candidate.startsWith(prefix) : candidate.slice(0, candidate.lastIndexOf('/')) === path
+      recursive
+        ? candidate.startsWith(prefix)
+        : candidate.slice(0, candidate.lastIndexOf('/')) === path
     const out: DropboxEntryJson[] = []
     for (const folder of this.folders) {
       if (under(folder)) out.push(this.entryFor(folder) as DropboxEntryJson)
@@ -227,12 +227,18 @@ class Account {
     for (const path of [...this.folders, ...this.files.keys()].sort()) {
       const lower = path.toLowerCase()
       if (scopeLower !== '' && lower !== scopeLower && !lower.startsWith(prefix)) continue
-      const nameHit = path.slice(path.lastIndexOf('/') + 1).toLowerCase().includes(q)
+      const nameHit = path
+        .slice(path.lastIndexOf('/') + 1)
+        .toLowerCase()
+        .includes(q)
       const stored = this.files.get(path)
       const contentHit =
-        !filenameOnly && stored !== undefined && wholeWordHit(q, DEC.decode(stored.data).toLowerCase())
+        !filenameOnly &&
+        stored !== undefined &&
+        wholeWordHit(q, DEC.decode(stored.data).toLowerCase())
       if (!nameHit && !contentHit) continue
-      const tag = nameHit && contentHit ? 'filename_and_content' : nameHit ? 'filename' : 'file_content'
+      const tag =
+        nameHit && contentHit ? 'filename_and_content' : nameHit ? 'filename' : 'file_content'
       out.push({
         match_type: { '.tag': tag },
         metadata: { '.tag': 'metadata', metadata: this.entryFor(path) as DropboxEntryJson },
@@ -412,11 +418,7 @@ function handle(
       return
     }
     const options = parsed.options ?? {}
-    const matches = account.searchMatches(
-      query,
-      options.path ?? '',
-      options.filename_only === true,
-    )
+    const matches = account.searchMatches(query, options.path ?? '', options.filename_only === true)
     if (matches === null) {
       jsonError(res, 'path/not_found/...')
       return

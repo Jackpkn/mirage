@@ -1,5 +1,11 @@
-import { installFakeNavigator, makeMockRoot } from '../../../typescript/packages/browser/src/test-utils.ts'
-import { OPFSResource, Workspace as BrowserWorkspace } from '../../../typescript/packages/browser/src/index.ts'
+import {
+  installFakeNavigator,
+  makeMockRoot,
+} from '../../../typescript/packages/browser/src/test-utils.ts'
+import {
+  OPFSResource,
+  Workspace as BrowserWorkspace,
+} from '../../../typescript/packages/browser/src/index.ts'
 import { MountMode } from '../../../typescript/packages/core/src/index.ts'
 import { OPFS_IO } from '../../../typescript/packages/browser/src/commands/builtin/opfs/io.ts'
 

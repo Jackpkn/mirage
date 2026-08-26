@@ -25,6 +25,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3'
 import { OPFSResource, Workspace as BrowserWorkspace } from '@struktoai/mirage-browser'
+import type { ConsistencyPolicy } from '@struktoai/mirage-node'
 import {
   AliyunResource,
   BackblazeResource,
@@ -65,7 +66,6 @@ import {
   Mem0Resource,
   MongoDBResource,
   NotionResource,
-  ConsistencyPolicy,
   MountMode,
   NextcloudResource,
   OCIResource,
@@ -91,10 +91,7 @@ import {
   Workspace,
   type ConsoleFactory,
 } from '@struktoai/mirage-node'
-import {
-  parseSessionProfile,
-  type SessionProfile,
-} from '@struktoai/mirage-core/policy/profile'
+import { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
 import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/types'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
@@ -102,7 +99,10 @@ import { ChromaClient } from 'chromadb'
 import { ImapFlow } from 'imapflow'
 import { Double, MongoClient } from 'mongodb'
 import pg from 'pg'
-import { installFakeNavigator, makeMockRoot } from '../../../typescript/packages/browser/src/test-utils.ts'
+import {
+  installFakeNavigator,
+  makeMockRoot,
+} from '../../../typescript/packages/browser/src/test-utils.ts'
 import { startFakeDropbox, type FakeDropbox } from '../../server/dropbox.ts'
 import { integRoot, walkFiles } from './harness.ts'
 import type { ExecWorkspace, Mount, Target } from './harness.ts'
@@ -183,7 +183,10 @@ function runId(): string {
  * all, where every other one needs its mock service to hand over both the tree
  * and the credentials pointing at itself.
  */
-function installLocalClis(ws: { registerCli: (name: string, spec: unknown) => void }, target: Target): void {
+function installLocalClis(
+  ws: { registerCli: (name: string, spec: unknown) => void },
+  target: Target,
+): void {
   if (target.clis?.includes('git') === true) ws.registerCli('git', GIT)
 }
 
@@ -377,7 +380,11 @@ async function openDatabricksVolume(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
-function objectStorageResource(name: string, bucket: string, keyPrefix: string | undefined): S3Resource {
+function objectStorageResource(
+  name: string,
+  bucket: string,
+  keyPrefix: string | undefined,
+): S3Resource {
   if (S3_ENDPOINT === undefined) throw new Error('s3 target requires S3_ENDPOINT')
   const common = {
     bucket,
@@ -1020,7 +1027,10 @@ async function seedChroma(host: string, port: number, collectionName: string): P
     }
   }
   const client = new ChromaClient({ host, port })
-  const collection = await client.createCollection({ name: collectionName, embeddingFunction: null })
+  const collection = await client.createCollection({
+    name: collectionName,
+    embeddingFunction: null,
+  })
   await collection.add({ ids, documents, metadatas, embeddings })
 }
 
@@ -1577,10 +1587,7 @@ async function openGitHub(target: Target): Promise<Open> {
     const reset = await fetch(`${base}/reset`, { method: 'POST' })
     if (!reset.ok) throw new Error(`github /reset failed: ${String(reset.status)}`)
   }
-  const mounts: Record<
-    string,
-    GitHubResource | RAMResource | [GitHubResource, MountMode]
-  > = {}
+  const mounts: Record<string, GitHubResource | RAMResource | [GitHubResource, MountMode]> = {}
   for (const m of target.mounts) {
     if (m.resource === 'ram') {
       mounts[m.path] = new RAMResource()
@@ -1623,8 +1630,8 @@ async function openDify(target: Target): Promise<Open> {
 }
 
 async function openTrello(target: Target): Promise<Open> {
-  const endpoint = process.env.TRELLO_ENDPOINT
-  if (!endpoint) throw new Error('trello target requires TRELLO_ENDPOINT')
+  const endpoint = process.env.TRELLO_URL
+  if (!endpoint) throw new Error('trello target requires TRELLO_URL')
   // The server outlives a single run here, so cards and comments the write
   // cases create have to be rolled back to the fixture before they run
   // again -- and before the other host's run, which shares this server.
@@ -1647,8 +1654,8 @@ async function openTrello(target: Target): Promise<Open> {
 }
 
 async function openDiscord(target: Target): Promise<Open> {
-  const endpoint = process.env.DISCORD_ENDPOINT
-  if (!endpoint) throw new Error('discord target requires DISCORD_ENDPOINT')
+  const endpoint = process.env.DISCORD_URL
+  if (!endpoint) throw new Error('discord target requires DISCORD_URL')
   // The server outlives a single run here, so posted messages have to be
   // rolled back to the fixture before the write cases run again.
   const reset = await fetch(`${endpoint}/reset`, { method: 'POST' })
@@ -1675,12 +1682,17 @@ async function openDiscord(target: Target): Promise<Open> {
 }
 
 async function openLinear(target: Target): Promise<Open> {
-  const endpoint = process.env.LINEAR_ENDPOINT
-  if (!endpoint) throw new Error('linear target requires LINEAR_ENDPOINT')
+  const endpoint = process.env.LINEAR_URL
+  if (!endpoint) throw new Error('linear target requires LINEAR_URL')
   // The server outlives a single run here, so mutations from the CLI
   // write cases have to be rolled back to the fixture before the read
   // goldens run again.
-  const resetUrl = `${endpoint.replace(/\/graphql$/, '')}/reset`
+  // LINEAR_URL is an ORIGIN, like every other service's variable. The graphql
+  // path is this service's, not the variable's, so it is appended at the two
+  // call sites that speak graphql and never at /reset.
+  const origin = endpoint.replace(/\/$/, '')
+  const graphql = `${origin}/graphql`
+  const resetUrl = `${origin}/reset`
   const reset = await fetch(resetUrl, { method: 'POST' })
   if (!reset.ok) throw new Error(`linear /reset failed: ${String(reset.status)}`)
   const mounts: Record<string, LinearResource | RAMResource> = {}
@@ -1691,12 +1703,12 @@ async function openLinear(target: Target): Promise<Open> {
     }
     mounts[m.path] = new LinearResource({
       apiKey: 'integ-key',
-      baseUrl: endpoint,
+      baseUrl: graphql,
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
   if (target.clis?.includes('linear') === true) {
-    ws.registerCli('linear', LINEAR, { api_key: 'integ-key', base_url: endpoint })
+    ws.registerCli('linear', LINEAR, { api_key: 'integ-key', base_url: graphql })
   }
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
@@ -1806,10 +1818,7 @@ async function openArgError(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
-export const ADAPTERS: Record<
-  string,
-  (target: Target, options?: OpenOptions) => Promise<Open>
-> = {
+export const ADAPTERS: Record<string, (target: Target, options?: OpenOptions) => Promise<Open>> = {
   ram: openRam,
   disk: openDisk,
   redis: openRedis,

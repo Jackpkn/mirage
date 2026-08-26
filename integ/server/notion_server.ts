@@ -50,10 +50,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js'
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { PrismaClient } from '@prisma/client'
 
 // The interface the fake listens on. Loopback is right on a developer's
@@ -405,7 +402,9 @@ function selectOption(column: Json, kind: string, value: Json): Json {
 function normalizeValue(column: Json, kind: string, value: unknown): unknown {
   if (kind === 'title' || kind === 'rich_text') return normalizeRichText(value)
   if (kind === 'select' || kind === 'status') {
-    return value === null || value === undefined ? null : selectOption(column, kind, asObject(value))
+    return value === null || value === undefined
+      ? null
+      : selectOption(column, kind, asObject(value))
   }
   if (kind === 'multi_select') {
     if (!Array.isArray(value)) return []
@@ -754,7 +753,10 @@ function markdownToBlocks(markdown: string): Json[] {
         fence = []
         lang = line.slice(3).trim()
       } else {
-        blocks.push({ type: 'code', code: { rich_text: [plainRich(fence.join('\n'))], language: lang || 'plain text' } })
+        blocks.push({
+          type: 'code',
+          code: { rich_text: [plainRich(fence.join('\n'))], language: lang || 'plain text' },
+        })
         fence = null
       }
       continue
@@ -778,7 +780,10 @@ function markdownToBlocks(markdown: string): Json[] {
     if (todo !== null) {
       blocks.push({
         type: 'to_do',
-        to_do: { rich_text: [plainRich(todo[2] ?? '')], checked: (todo[1] ?? ' ').toLowerCase() === 'x' },
+        to_do: {
+          rich_text: [plainRich(todo[2] ?? '')],
+          checked: (todo[1] ?? ' ').toLowerCase() === 'x',
+        },
       })
       continue
     }
@@ -1334,7 +1339,13 @@ async function deleteBlock(db: PrismaClient, workspaceId: string, id: string): P
   // answers as a block, which is what "including page blocks" means.
   const body =
     block === null
-      ? { object: 'block', id, type: 'child_page', has_children: false, child_page: { title: (page as PageRow).titleText } }
+      ? {
+          object: 'block',
+          id,
+          type: 'child_page',
+          has_children: false,
+          child_page: { title: (page as PageRow).titleText },
+        }
       : blockJson(block)
   return { status: 200, json: { ...body, archived: true, in_trash: true } }
 }
@@ -1598,7 +1609,12 @@ async function handle(
     return updatePage(db, ws, parts[2] ?? '', body)
   }
 
-  if (method === 'PATCH' && parts.length === 4 && parts[1] === 'blocks' && parts[3] === 'children') {
+  if (
+    method === 'PATCH' &&
+    parts.length === 4 &&
+    parts[1] === 'blocks' &&
+    parts[3] === 'children'
+  ) {
     return appendChildren(db, ws, fx, parts[2] ?? '', body)
   }
 

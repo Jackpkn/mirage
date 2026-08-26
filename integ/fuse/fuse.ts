@@ -12,10 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { rmSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from 'node:fs'
+import { readFile, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   FileStat,
   FileType,
@@ -29,42 +29,42 @@ import {
   type OpsContext,
   type OpsResultContext,
   type Policy,
-} from "@struktoai/mirage-node";
+} from '@struktoai/mirage-node'
 
 // Size-unknown probe: a stat wrapper simulates API-backed resources (Linear,
 // Slack, Trello, ...) whose byte size is unknown until the content is
 // fetched. Over FUSE such files must stat as 0 until first open and read
 // fully afterwards (see the CLAUDE.md FUSE section).
-const API_CONTENT = '{"messages": 2}\n';
+const API_CONTENT = '{"messages": 2}\n'
 
 async function runSizelessProbe(
   result: Record<string, string | number | boolean | null>,
 ): Promise<void> {
-  const enc = new TextEncoder();
-  const api = new RAMResource();
-  api.store.dirs.add("/");
-  api.store.files.set("/api.json", enc.encode(API_CONTENT));
+  const enc = new TextEncoder()
+  const api = new RAMResource()
+  api.store.dirs.add('/')
+  api.store.files.set('/api.json', enc.encode(API_CONTENT))
   const ws = new Workspace({
-    "/api": new Mount(api, { mode: MountMode.READ }),
-  });
-  const realStat = ws.fs.stat.bind(ws.fs);
+    '/api': new Mount(api, { mode: MountMode.READ }),
+  })
+  const realStat = ws.fs.stat.bind(ws.fs)
   ws.fs.stat = async (path) => {
-    const s = await realStat(path);
-    if (s.type === FileType.DIRECTORY) return s;
-    return new FileStat({ name: s.name, type: s.type, size: null });
-  };
-  const handle = await fuseMount(ws);
-  const apiFile = join(handle.mountpoint, "api", "api.json");
+    const s = await realStat(path)
+    if (s.type === FileType.DIRECTORY) return s
+    return new FileStat({ name: s.name, type: s.type, size: null })
+  }
+  const handle = await fuseMount(ws)
+  const apiFile = join(handle.mountpoint, 'api', 'api.json')
   try {
     // Windows cannot query attributes without opening a handle, so
     // hydrate-on-open runs and even the pre-open stat sees the real size.
-    const pre = (await stat(apiFile)).size;
-    const expectedPre = process.platform === "win32" ? API_CONTENT.length : 0;
-    result.api_stat_preopen_ok = pre === expectedPre;
-    result.api_cat = (await readFile(apiFile, "utf8")).trim();
-    result.api_size_postread = (await stat(apiFile)).size;
+    const pre = (await stat(apiFile)).size
+    const expectedPre = process.platform === 'win32' ? API_CONTENT.length : 0
+    result.api_stat_preopen_ok = pre === expectedPre
+    result.api_cat = (await readFile(apiFile, 'utf8')).trim()
+    result.api_size_postread = (await stat(apiFile)).size
   } finally {
-    await handle.unmount();
+    await handle.unmount()
   }
 }
 
@@ -73,54 +73,54 @@ async function runSizelessProbe(
 // EACCES to ordinary file APIs, while unguarded reads pass.
 class SealReadsPolicy implements Policy {
   preOps(ctx: OpsContext): Action | null {
-    if (!ctx.write && ctx.path.virtual.endsWith(".sealed")) {
-      return { kind: "deny", reason: "sealed" };
+    if (!ctx.write && ctx.path.virtual.endsWith('.sealed')) {
+      return { kind: 'deny', reason: 'sealed' }
     }
-    return null;
+    return null
   }
 }
 
 class RedactReadsPolicy implements Policy {
   postOps(ctx: OpsResultContext): Action | null {
-    const data = ctx.result instanceof Uint8Array ? new TextDecoder().decode(ctx.result) : null;
-    if (ctx.op === "read" && data !== null && data.includes("TOPSECRET")) {
-      return { kind: "deny", reason: "redacted" };
+    const data = ctx.result instanceof Uint8Array ? new TextDecoder().decode(ctx.result) : null
+    if (ctx.op === 'read' && data !== null && data.includes('TOPSECRET')) {
+      return { kind: 'deny', reason: 'redacted' }
     }
-    return null;
+    return null
   }
 }
 
 async function runPolicyProbe(
   result: Record<string, string | number | boolean | null>,
 ): Promise<void> {
-  const enc = new TextEncoder();
-  const res = new RAMResource();
-  res.store.dirs.add("/");
-  res.store.files.set("/clean.txt", enc.encode("hello\n"));
-  res.store.files.set("/secret.txt", enc.encode("TOPSECRET plans\n"));
-  res.store.files.set("/x.sealed", enc.encode("nope\n"));
+  const enc = new TextEncoder()
+  const res = new RAMResource()
+  res.store.dirs.add('/')
+  res.store.files.set('/clean.txt', enc.encode('hello\n'))
+  res.store.files.set('/secret.txt', enc.encode('TOPSECRET plans\n'))
+  res.store.files.set('/x.sealed', enc.encode('nope\n'))
   const ws = new Workspace(
-    { "/guarded": new Mount(res, { mode: MountMode.READ, backend: MountBackend.FUSE }) },
+    { '/guarded': new Mount(res, { mode: MountMode.READ, backend: MountBackend.FUSE }) },
     { policies: [new SealReadsPolicy(), new RedactReadsPolicy()] },
-  );
+  )
   try {
-    await ws.fuseReady();
-    const mp = ws.fuseMountpoints["/guarded"];
-    result.policy_clean_read = (await readFile(`${mp}/clean.txt`, "utf8")).trim();
+    await ws.fuseReady()
+    const mp = ws.fuseMountpoints['/guarded']
+    result.policy_clean_read = (await readFile(`${mp}/clean.txt`, 'utf8')).trim()
     try {
-      await readFile(`${mp}/x.sealed`);
-      result.policy_sealed_eacces = false;
+      await readFile(`${mp}/x.sealed`)
+      result.policy_sealed_eacces = false
     } catch (err) {
-      result.policy_sealed_eacces = (err as { code?: string }).code === "EACCES";
+      result.policy_sealed_eacces = (err as { code?: string }).code === 'EACCES'
     }
     try {
-      await readFile(`${mp}/secret.txt`);
-      result.policy_redact_eacces = false;
+      await readFile(`${mp}/secret.txt`)
+      result.policy_redact_eacces = false
     } catch (err) {
-      result.policy_redact_eacces = (err as { code?: string }).code === "EACCES";
+      result.policy_redact_eacces = (err as { code?: string }).code === 'EACCES'
     }
   } finally {
-    await ws.close();
+    await ws.close()
   }
 }
 
@@ -129,69 +129,69 @@ async function runPolicyProbe(
 // mounts' napi callbacks run on the single Node event loop, so a *sync* read
 // would block the loop that has to service the callback and deadlock.
 async function main(): Promise<void> {
-  const result: Record<string, string | number | boolean | null> = {};
-  const enc = new TextEncoder();
-  const data = new RAMResource();
-  data.store.dirs.add("/");
-  data.store.files.set("/a.txt", enc.encode("alpha\n"));
-  const logs = new RAMResource();
-  logs.store.dirs.add("/");
-  logs.store.files.set("/b.txt", enc.encode("beta\n"));
+  const result: Record<string, string | number | boolean | null> = {}
+  const enc = new TextEncoder()
+  const data = new RAMResource()
+  data.store.dirs.add('/')
+  data.store.files.set('/a.txt', enc.encode('alpha\n'))
+  const logs = new RAMResource()
+  logs.store.dirs.add('/')
+  logs.store.files.set('/b.txt', enc.encode('beta\n'))
 
   // Non-existent pinned path: the mount must create it (mirrors the CLI flow).
-  const pinned = join(tmpdir(), `mirage-fuse-data-${String(process.pid)}`);
-  rmSync(pinned, { recursive: true, force: true });
+  const pinned = join(tmpdir(), `mirage-fuse-data-${String(process.pid)}`)
+  rmSync(pinned, { recursive: true, force: true })
   // Mount through the public per-mount Mount spec (what examples/users write):
   // /data pins its mountpoint and overrides the workspace default to WRITE;
   // /logs gets a generated mountpoint and inherits the default READ.
   const ws = new Workspace({
-    "/data": new Mount(data, {
+    '/data': new Mount(data, {
       mode: MountMode.WRITE,
       backend: MountBackend.FUSE,
       mountpoint: pinned,
     }),
-    "/logs": new Mount(logs, { backend: MountBackend.FUSE }),
-  });
+    '/logs': new Mount(logs, { backend: MountBackend.FUSE }),
+  })
   try {
-    await ws.fuseReady();
-    const dataMp = ws.fuseMountpoints["/data"];
-    const logsMp = ws.fuseMountpoints["/logs"];
+    await ws.fuseReady()
+    const dataMp = ws.fuseMountpoints['/data']
+    const logsMp = ws.fuseMountpoints['/logs']
 
-    result.data_cat_a = (await readFile(`${dataMp}/a.txt`, "utf8")).trim();
-    result.logs_cat_b = (await readFile(`${logsMp}/b.txt`, "utf8")).trim();
-    result.logs_size_b = (await stat(`${logsMp}/b.txt`)).size;
-    result.data_pinned = dataMp === pinned;
-    result.distinct_mounts = dataMp !== logsMp;
+    result.data_cat_a = (await readFile(`${dataMp}/a.txt`, 'utf8')).trim()
+    result.logs_cat_b = (await readFile(`${logsMp}/b.txt`, 'utf8')).trim()
+    result.logs_size_b = (await stat(`${logsMp}/b.txt`)).size
+    result.data_pinned = dataMp === pinned
+    result.distinct_mounts = dataMp !== logsMp
 
-    const [, , dataMode] = await ws.resolve("/data");
-    const [, , logsMode] = await ws.resolve("/logs");
-    result.data_mode_is_write = dataMode === MountMode.WRITE;
-    result.logs_mode_is_read = logsMode === MountMode.READ;
+    const [, , dataMode] = await ws.resolve('/data')
+    const [, , logsMode] = await ws.resolve('/logs')
+    result.data_mode_is_write = dataMode === MountMode.WRITE
+    result.logs_mode_is_read = logsMode === MountMode.READ
 
-    let singular = false;
+    let singular = false
     try {
-      void ws.fuseMountpoint;
+      void ws.fuseMountpoint
     } catch {
-      singular = true;
+      singular = true
     }
-    result.singular_raises_multi = singular;
+    result.singular_raises_multi = singular
 
-    let collision = false;
+    let collision = false
     try {
-      await ws.addFuseMount("/collide", pinned);
+      await ws.addFuseMount('/collide', pinned)
     } catch {
-      collision = true;
+      collision = true
     }
-    result.collision_rejected = collision;
+    result.collision_rejected = collision
   } finally {
-    await ws.close();
+    await ws.close()
   }
-  await runSizelessProbe(result);
-  await runPolicyProbe(result);
-  process.stdout.write(JSON.stringify(result) + "\n");
+  await runSizelessProbe(result)
+  await runPolicyProbe(result)
+  process.stdout.write(JSON.stringify(result) + '\n')
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(String(err) + "\n");
-  process.exit(1);
-});
+  process.stderr.write(String(err) + '\n')
+  process.exit(1)
+})

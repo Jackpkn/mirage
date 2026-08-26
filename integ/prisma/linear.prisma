@@ -1,0 +1,238 @@
+// Schema for the linear fake (integ/server/linear/). It replaces the 38
+// in-memory containers of the old linear_server.py: eight of those were
+// per-team index lists that a foreign key plus an ordered read gives for
+// free, and twelve more were the by-id dictionaries that a primary key is.
+//
+// Three shapes here are load-bearing and were verified against the live fake
+// before they were written down.
+//
+// 1. Every cross-entity REFERENCE an issue, comment, project or document
+//    carries (stateId, projectId, cycleId, assigneeId, creatorId, userId,
+//    leadId) is a bare String column with no relation. The live fake stores
+//    whatever id a mutation hands it, checks nothing, and renders null when
+//    the lookup misses, so a dangling reference is legal behaviour and not a
+//    bug to be closed. relationMode = "prisma" means the database holds no
+//    foreign keys at all, and leaving these unrelated means Prisma cannot
+//    reject one either.
+// 2. The reference targets are GLOBAL by id, not per team. states, labels,
+//    users, projects and cycles all lived in one dict keyed by id, so an
+//    issue on one team may point at another team's state and render it. The
+//    teamId column on those models says who LISTS the row, never who may
+//    reference it, and no read narrows a reference lookup to one team.
+// 3. IssueLabel is a link table with a surrogate pk, because the live
+//    labelIds list is a list: the same label id twice renders the label
+//    twice. A composite @@id([issueId, labelId]) would refuse that second
+//    row, and relationMode does not relax a composite primary key.
+//
+// Issue.description, Comment.body and Document.content are nullable with a ""
+// default, which is not the same thing as a non-null column. The live seeder
+// reads them as .get(key, ""), so a MISSING fixture key becomes "" while an
+// explicit null stays null, and issueUpdate/commentUpdate can set an existing
+// one back to null. Prisma applies a default only when the create omits the
+// field, which is exactly that rule.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/linear"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model Team {
+  tenant      String
+  id          String
+  key         String
+  name        String?
+  description String?
+  timezone    String?
+  updatedAt   String?
+  seq         Int
+  states      WorkflowState[]
+  labels      Label[]
+  members     User[]
+  projects    Project[]
+  cycles      Cycle[]
+  issues      Issue[]
+  documents   Document[]
+
+  @@id([tenant, id])
+  @@index([tenant, key])
+}
+
+model WorkflowState {
+  tenant String
+  id     String
+  teamId String
+  name   String?
+  type   String?
+  seq    Int
+  team   Team    @relation(fields: [tenant, teamId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, teamId])
+}
+
+model Label {
+  tenant String
+  id     String
+  teamId String
+  name   String?
+  color  String?
+  seq    Int
+  team   Team    @relation(fields: [tenant, teamId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, teamId])
+}
+
+model User {
+  tenant      String
+  id          String
+  teamId      String
+  name        String?
+  displayName String?
+  email       String?
+  active      Boolean?
+  admin       Boolean?
+  url         String?
+  updatedAt   String?
+  seq         Int
+  team        Team     @relation(fields: [tenant, teamId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, teamId])
+  @@index([tenant, email])
+}
+
+model Project {
+  tenant      String
+  id          String
+  teamId      String
+  name        String?
+  description String?
+  statusType  String?
+  url         String?
+  updatedAt   String?
+  leadId      String?
+  seq         Int
+  team        Team    @relation(fields: [tenant, teamId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, teamId])
+}
+
+model Cycle {
+  tenant    String
+  id        String
+  teamId    String
+  name      String?
+  number    Int?
+  startsAt  String?
+  endsAt    String?
+  updatedAt String?
+  url       String?
+  seq       Int
+  team      Team    @relation(fields: [tenant, teamId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, teamId])
+}
+
+model Document {
+  tenant    String
+  id        String
+  teamId    String
+  title     String?
+  content   String? @default("")
+  url       String?
+  createdAt String?
+  updatedAt String?
+  projectId String?
+  creatorId String?
+  seq       Int
+  team      Team    @relation(fields: [tenant, teamId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, teamId])
+}
+
+model Issue {
+  tenant      String
+  id          String
+  teamId      String
+  identifier  String?
+  // Derived from the identifier's trailing digits by afterSeed, because the
+  // fixture states no number and the live seeder derived it the same way.
+  // issueCreate numbers a new issue COALESCE(MAX(number), 0) + 1 over the
+  // team, which is why a team with no issues at all still starts at 1.
+  number      Int       @default(0)
+  title       String?
+  description String?   @default("")
+  priority    Int?
+  url         String?
+  createdAt   String?
+  updatedAt   String?
+  stateId     String?
+  projectId   String?
+  cycleId     String?
+  assigneeId  String?
+  creatorId   String?
+  // Seed inbox only. The fixture states labels as a list of ids on the issue,
+  // which is a scalar as far as the generic seeder is concerned; afterSeed
+  // expands it into IssueLabel rows and nulls it, so the link table stays the
+  // one source of truth and no read consults this column.
+  labelIds    String?
+  // The verbatim inbox. The live fake was a dict, so a mutation that handed it
+  // `title: 5` or `priority: 1.5` stored that value and rendered it back
+  // unchanged; a typed column cannot hold either (String? reads 5 as null and
+  // Int? truncates 1.5 to 1). Any supplied value whose type the column cannot
+  // carry is JSON-encoded into this map under its field name, the column is
+  // set to null, and every read prefers the map. An all-conforming issue
+  // leaves it null, which is every issue the client can produce.
+  raw         String?
+  // The GLOBAL insertion ordinal, not the per-team one the seeder stamps.
+  // afterSeed renumbers it across teams in fixture order and issueCreate takes
+  // MAX + 1 over the tenant, because the live fake kept one insertion-ordered
+  // issues_by_id dict: a new issue is last GLOBALLY, not last within its team,
+  // and IssueSearch pages in that order. A per-team seq puts a new PLAT issue
+  // ahead of the WEB ones and `first: 3` then returns a different SET of rows.
+  seq         Int
+  team        Team      @relation(fields: [tenant, teamId], references: [tenant, id])
+  comments    Comment[]
+
+  @@id([tenant, id])
+  @@index([tenant, teamId])
+}
+
+model Comment {
+  tenant    String
+  id        String
+  issueId   String
+  body      String? @default("")
+  // Same verbatim inbox as Issue.raw, for the one field commentCreate and
+  // commentUpdate store without looking at it.
+  raw       String?
+  url       String?
+  createdAt String?
+  updatedAt String?
+  userId    String?
+  seq       Int
+  issue     Issue   @relation(fields: [tenant, issueId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, issueId])
+}
+
+model IssueLabel {
+  pk      Int    @id @default(autoincrement())
+  tenant  String
+  issueId String
+  labelId String
+  seq     Int
+
+  @@index([tenant, issueId])
+}

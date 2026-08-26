@@ -369,16 +369,6 @@ def _load_databricks_server() -> ModuleType:
         "databricks_server.py")
 
 
-def _load_discord_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "discord_server.py")
-
-
-def _load_linear_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "linear_server.py")
-
-
 async def _admin_exec(ws: Workspace, command: str) -> None:
     result = await ws.execute(command)
     if result.exit_code:
@@ -495,7 +485,7 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 class GwsService:
     """Points gdrive mounts at the fake Google Workspace server.
 
-    The server is external (integ/server/gws_server.ts) and shared across runs;
+    The server is external (integ/server/gws/) and shared across runs;
     /reset gives each run a clean, deterministic state. Each mount is scoped
     to a per-mount folder via GoogleConfig.folder_id, the s3 key_prefix
     analog, so the three mounts never see each other.
@@ -1170,12 +1160,12 @@ class DifyService:
 class TrelloService:
     """Points trello mounts at the shared fake Trello REST API server.
 
-    The server (integ/server/trello.ts) is external, Prisma-backed, and
+    The server (integ/server/trello/) is external, Prisma-backed, and
     shared across both hosts; /reset re-seeds it to the fixture, so the
     write cases see the same state on every run and on either host.
 
     Args:
-        base (str): TRELLO_ENDPOINT origin.
+        base (str): TRELLO_URL origin.
     """
 
     def __init__(self, base: str) -> None:
@@ -1183,7 +1173,7 @@ class TrelloService:
 
     @classmethod
     async def create(cls) -> "TrelloService":
-        base = os.environ["TRELLO_ENDPOINT"].rstrip("/")
+        base = os.environ["TRELLO_URL"].rstrip("/")
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{base}/reset") as resp:
                 resp.raise_for_status()
@@ -1200,23 +1190,28 @@ class TrelloService:
 
 
 class DiscordService:
-    """Points discord mounts at the fake discord.com/api server.
+    """Points discord mounts at the shared fake discord.com/api server.
 
-    The server (integ/server/discord_server.py) mirrors the documented
-    shapes: newest-first message pages, after/limit pagination, and a CDN
-    route that serves attachment bytes without the bot token.
+    The server (integ/server/discord/) is external and shared across both
+    hosts, so /reset re-seeds it to the fixture before this run's cases.
+    It mirrors the documented shapes: newest-first message pages,
+    after/limit pagination, and a CDN route that serves attachment bytes
+    without the bot token.
+
+    Args:
+        base (str): DISCORD_URL origin.
     """
 
-    def __init__(self, state, runner, base: str) -> None:
-        self.state = state
-        self.runner = runner
+    def __init__(self, base: str) -> None:
         self.base = base
 
     @classmethod
     async def create(cls) -> "DiscordService":
-        module = _load_discord_server()
-        state, _server, runner = await module.start_fake_discord()
-        return cls(state, runner, state.base)
+        base = os.environ["DISCORD_URL"].rstrip("/")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{base}/reset") as resp:
+                resp.raise_for_status()
+        return cls(base)
 
     def resource(self, mount: dict) -> DiscordResource:
         return DiscordResource(
@@ -1232,36 +1227,46 @@ class DiscordService:
         }
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        return None
 
 
 class LinearService:
+    """Points linear mounts at the shared fake Linear GraphQL server.
 
-    def __init__(self, state, runner, base: str) -> None:
-        self.state = state
-        self.runner = runner
+    LINEAR_URL is an origin like every other service's variable, so the
+    graphql path is appended here rather than carried in the env var; only
+    /reset is reached on the bare origin.
+
+    Args:
+        base (str): LINEAR_URL origin.
+    """
+
+    def __init__(self, base: str) -> None:
         self.base = base
+        self.graphql = f"{base}/graphql"
 
     @classmethod
     async def create(cls) -> "LinearService":
-        module = _load_linear_server()
-        state, _server, runner = await module.start_fake_linear()
-        return cls(state, runner, state.base)
+        base = os.environ["LINEAR_URL"].rstrip("/")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{base}/reset") as resp:
+                resp.raise_for_status()
+        return cls(base)
 
     def resource(self, mount: dict) -> LinearResource:
         return LinearResource(
-            LinearConfig(api_key="integ-key", base_url=self.base))
+            LinearConfig(api_key="integ-key", base_url=self.graphql))
 
     def cli_installs(self) -> dict[str, tuple[CLISpec, dict[str, object]]]:
         return {
             "linear": (cli_spec_for("linear"), {
                 "api_key": "integ-key",
-                "base_url": self.base,
+                "base_url": self.graphql,
             }),
         }
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        return None
 
 
 def _clear_sharepoint_caches() -> None:

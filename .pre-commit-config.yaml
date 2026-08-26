@@ -156,6 +156,24 @@ repos:
         language: system
         files: ^typescript/.*\.(ts|tsx|js|mjs|cjs|json)$
         pass_filenames: false
+      - id: integ-prettier
+        name: Prettier (integ)
+        entry: integ/scripts/precommit-run.sh prettier --write
+        language: system
+        files: ^integ/.*\.(ts|mts|js|mjs|cjs)$
+        pass_filenames: true
+      - id: integ-eslint
+        name: ESLint (integ)
+        entry: integ/scripts/precommit-run.sh eslint --fix --no-warn-ignored
+        language: system
+        files: ^integ/.*\.(ts|mts|js|mjs|cjs)$
+        pass_filenames: true
+      - id: integ-typecheck
+        name: Type check (integ mock servers)
+        entry: bash -c 'cd integ && pnpm exec tsc -p tsconfig.check.json'
+        language: system
+        files: ^integ/(server/(kit|discord|linear|trello|gws)/.*\.ts|tsconfig(\.check)?\.json)$
+        pass_filenames: false
       - id: py-mypy
         name: Type check (mypy)
         entry: bash -c 'cd python && uv run mypy'
