@@ -17,7 +17,8 @@ import pytest_asyncio
 from aiohttp import web
 
 from mirage.core.github.client import (GitHubApiError, github_headers,
-                                       github_request, github_url)
+                                       github_request, github_request_response,
+                                       github_url)
 from mirage.core.github.config import GitHubConfig
 
 
@@ -74,10 +75,12 @@ async def _echo(request: web.Request) -> web.Response:
         "query": dict(request.query),
         "body": await request.text(),
         "content_type": request.headers.get("Content-Type"),
+        "accept": request.headers.get("Accept"),
     })
     return web.Response(status=REPLY["status"],
                         text=REPLY["body"],
-                        content_type="application/json")
+                        content_type="application/json",
+                        headers={"X-Page": "next"})
 
 
 @pytest_asyncio.fixture()
@@ -126,6 +129,13 @@ async def test_request_sends_no_body_when_there_is_nothing_to_send(base_url):
     assert SEEN[0]["content_type"] is None
 
 
+@pytest.mark.asyncio
+async def test_request_sends_an_explicit_json_null(base_url):
+    await github_request("t", "POST", "/repos/o/r", None, base_url=base_url)
+    assert SEEN[0]["body"] == "null"
+    assert "application/json" in (SEEN[0]["content_type"] or "")
+
+
 # The path arrives from a command line and is used verbatim: a brace in it
 # is a brace, never a format placeholder that eats the segment it sits in.
 @pytest.mark.asyncio
@@ -142,6 +152,20 @@ async def test_request_decodes_an_empty_response_to_none(base_url):
     REPLY.update({"status": 204, "body": ""})
     assert await github_request("t", "DELETE", "/repos/o/r",
                                 base_url=base_url) is None
+
+
+@pytest.mark.asyncio
+async def test_request_response_retains_metadata_and_overrides_headers(
+        base_url):
+    response = await github_request_response("t",
+                                             "GET",
+                                             "/repos/o/r",
+                                             base_url=base_url,
+                                             headers={"accept": "text/plain"})
+    assert SEEN[0]["accept"] == "text/plain"
+    assert response.status == 200
+    assert response.data == {"ok": True}
+    assert response.headers["x-page"] == "next"
 
 
 @pytest.mark.asyncio

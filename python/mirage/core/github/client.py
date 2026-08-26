@@ -13,15 +13,22 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 from pydantic import SecretStr
 
-from mirage.core.api.client import api_request, status_error
+from mirage.core.api.client import ApiResponse, api_request, status_error
 from mirage.core.github.constants import API_BASE, API_VERSION
 from mirage.resource.secrets import reveal_secret
 from mirage.types import JsonValue
+
+
+class _NoBody:
+    pass
+
+
+_NO_BODY = _NoBody()
 
 
 def github_headers(token: SecretStr) -> dict[str, str]:
@@ -67,10 +74,11 @@ async def github_get(token: SecretStr,
 async def github_request(token: SecretStr,
                          method: str,
                          path: str,
-                         body: "JsonValue | None" = None,
+                         body: "JsonValue | _NoBody" = _NO_BODY,
                          params: dict[str, str] | None = None,
                          *,
-                         base_url: str | None = None) -> "JsonValue":
+                         base_url: str | None = None,
+                         headers: dict[str, str] | None = None) -> "JsonValue":
     """One arbitrary API call, the shape `gh api` needs.
 
     A GET carries its fields in the query string and every other method in
@@ -83,7 +91,8 @@ async def github_request(token: SecretStr,
         token (SecretStr): the API token.
         method (str): the HTTP method.
         path (str): the endpoint path, leading slash included.
-        body (JsonValue | None): the JSON body, None to send none.
+        body (JsonValue | _NoBody): the JSON body; omitted sends none, while
+            an explicit None sends JSON null.
         params (dict[str, str] | None): query parameters.
         base_url (str | None): API base, defaulting to github.com's.
 
@@ -93,14 +102,45 @@ async def github_request(token: SecretStr,
     Raises:
         GitHubApiError: the call answered with a non-2xx status.
     """
+    response = await github_request_response(token,
+                                             method,
+                                             path,
+                                             body,
+                                             params,
+                                             base_url=base_url,
+                                             headers=headers)
+    return cast(JsonValue, response.data)
+
+
+async def github_request_response(
+        token: SecretStr,
+        method: str,
+        path: str,
+        body: "JsonValue | _NoBody" = _NO_BODY,
+        params: dict[str, str] | None = None,
+        *,
+        base_url: str | None = None,
+        headers: dict[str, str] | None = None) -> ApiResponse:
+    """One GitHub call retaining status and headers for CLI pagination."""
     url = (base_url or API_BASE) + path
-    data: JsonValue = await api_request(method.upper(),
-                                        url,
-                                        error_of=_error_of,
-                                        headers=github_headers(token),
-                                        params=params,
-                                        json_body=body)
-    return data
+    merged = github_headers(token)
+    for key, value in (headers or {}).items():
+        prior = next((name for name in merged if name.lower() == key.lower()),
+                     None)
+        if prior is not None:
+            merged.pop(prior)
+        merged[key] = value
+    present = body is not _NO_BODY
+    response: ApiResponse = await api_request(
+        method.upper(),
+        url,
+        error_of=_error_of,
+        headers=merged,
+        params=params,
+        json_body=None if not present else cast(JsonValue, body),
+        json_body_present=present,
+        read="response")
+    return response
 
 
 def _error_of(resp: aiohttp.ClientResponse, text: str) -> Exception:
