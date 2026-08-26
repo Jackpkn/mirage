@@ -119,7 +119,10 @@ jobs:
           for path in "${redis_serial[@]}"; do
             ignore_args+=("--ignore=$path")
           done
-          uv run pytest -n 4 --dist loadscope "${ignore_args[@]}"
+          # worksteal, not loadscope: measured as sibling jobs at one commit,
+          # 403s against 468s. loadscope pins a module to one worker, so a
+          # heavy module leaves the others idle; worksteal rebalances.
+          uv run pytest -n 4 --dist worksteal "${ignore_args[@]}"
           uv run pytest "${redis_serial[@]}"
 
       # Each truth file owns the command it was captured against, so this
@@ -142,22 +145,35 @@ jobs:
           variant() {
             python3 integ/check_example.py "$1" --variant "$2" || bad=1
           }
-          run integ/truth/python/ram.json
-          run integ/truth/python/ram_vfs.json
+          # Each check is its own process against its own workspace, so the
+          # ones backed by ram/disk are independent and run concurrently.
+          # xargs exits 123 when any invocation failed, which is what marks
+          # the step bad; every check still runs because -I{} keeps them
+          # one per invocation.
+          independent=(
+            integ/truth/python/ram.json
+            integ/truth/python/ram_vfs.json
+            integ/truth/python/ram_python.json
+            integ/truth/python/disk.json
+            integ/truth/python/disk_vfs.json
+            integ/truth/watch_delta.json
+            integ/truth/permissions.json
+            integ/truth/python/custom_command.json
+            integ/truth/custom_resource.json
+            integ/truth/python/filetype.json
+            integ/truth/version_branching.json
+          )
+          printf '%s\n' "${independent[@]}" \
+            | xargs -P 4 -I{} python3 integ/check_example.py {} --variant python \
+            || bad=1
           variant integ/truth/python/ram_vfs.json python_utf8_off
-          run integ/truth/python/ram_python.json
-          run integ/truth/python/disk.json
-          run integ/truth/python/disk_vfs.json
-          run integ/truth/watch_delta.json
-          run integ/truth/permissions.json
-          run integ/truth/python/custom_command.json
-          run integ/truth/custom_resource.json
-          run integ/truth/python/filetype.json
+
+          # These four share one redis server, so they stay serial: running
+          # them together would have them racing on the same keyspace.
           run integ/truth/python/redis.json
           run integ/truth/python/redis_index.json
           run integ/truth/python/redis_cache.json
           run integ/truth/python/redis_vfs.json
-          run integ/truth/version_branching.json
           exit $bad
 
       - name: Sync Python dependencies for camel
