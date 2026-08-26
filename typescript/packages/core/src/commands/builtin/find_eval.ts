@@ -24,7 +24,7 @@ export interface FindEntry {
   name: string
   // 'l' is a namespace symlink: GNU find without -L reports the link
   // itself and never walks through it, so it is never 'f' or 'd'.
-  kind: 'f' | 'd' | 'l'
+  kind: 'f' | 'd' | 'l' | 'c'
   depth: number
   isEmpty?: boolean | null
 }
@@ -126,7 +126,7 @@ export function startBasename(virtual: string): string {
 }
 
 export interface EmitStartPathOptions {
-  kind: 'f' | 'd'
+  kind: FindEntry['kind']
   isEmpty?: boolean | null
   exists: boolean
   tree: PredNode
@@ -280,10 +280,16 @@ const STAT_DIRECTIVES = new Set(['s', 'y', 'Y', 'm', 'M', 'T'])
 // translator uses (utils/stat_view.ts); links are 777 the way ls draws
 // them. A reported mode (chmod overlay, a backend that knows) supplies
 // the permission bits; the kind always fixes the type bits.
-const KIND_MODE: Record<PrintfKind, number> = { d: DIR_MODE, l: 0o120777, f: FILE_MODE }
+const KIND_MODE: Record<PrintfKind, number> = {
+  d: DIR_MODE,
+  l: 0o120777,
+  c: 0o020666,
+  f: FILE_MODE,
+}
 const KIND_TYPE: Record<PrintfKind, FileType> = {
   d: FileType.DIRECTORY,
   l: FileType.SYMLINK,
+  c: FileType.CHAR_DEVICE,
   f: FileType.TEXT,
 }
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -380,7 +386,7 @@ function timeDirective(letter: string, ts: number): string | null {
   }
 }
 
-export type PrintfKind = 'f' | 'd' | 'l'
+export type PrintfKind = 'f' | 'd' | 'l' | 'c'
 
 export interface PrintfStatFacts {
   size: number
@@ -395,7 +401,10 @@ export interface PrintfStatFacts {
 }
 
 export function printfKind(st: FileStat): PrintfKind {
-  return st.type === FileType.DIRECTORY ? 'd' : st.type === FileType.SYMLINK ? 'l' : 'f'
+  if (st.type === FileType.DIRECTORY) return 'd'
+  if (st.type === FileType.SYMLINK) return 'l'
+  if (st.type === FileType.CHAR_DEVICE) return 'c'
+  return 'f'
 }
 
 function modeBits(st: PrintfStatFacts | null, kind: PrintfKind): number {

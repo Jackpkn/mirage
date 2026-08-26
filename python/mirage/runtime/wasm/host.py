@@ -16,6 +16,7 @@ import functools
 import posixpath
 import time
 from dataclasses import dataclass
+from stat import S_ISCHR
 from typing import Any, Callable, Literal
 
 # yapf: disable
@@ -67,6 +68,8 @@ def _filetype(st: VFSStat) -> int:
     """
     if st.is_link:
         return FT_SYMLINK
+    if S_ISCHR(st.mode):
+        return FT_CHR
     return FT_DIR if st.is_dir else FT_REG
 
 

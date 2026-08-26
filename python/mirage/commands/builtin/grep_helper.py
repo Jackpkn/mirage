@@ -820,6 +820,10 @@ async def grep_recursive(
                 filters,
             ))
             continue
+        if s.type is not FileType.FILE:
+            # Recursive grep follows filesystem entries, but only regular
+            # files are search candidates. Devices must not be whole-read.
+            continue
         if not file_admitted(entry, filters):
             continue
         if not filters.text and get_extension(entry) in BINARY_EXTENSIONS:

@@ -15,7 +15,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { preloadInto } from './preload.ts'
 import { RuntimeVFS } from '../../vfs.ts'
-import { FileStat, FileType } from '../../../types.ts'
+import { DEVICE_NUMBERS_KEY, FileStat, FileType } from '../../../types.ts'
+import { CHAR_MODE } from '../../../utils/stat_view.ts'
 import type { BridgeDispatchFn } from '../../types.ts'
 import { PrefixResolver } from '../../resolver.ts'
 import { MirageFsSeed } from './seed.ts'
@@ -91,6 +92,26 @@ describe('preloadInto', () => {
     const bbin = fs._files.get('/ram/b.bin')
     if (bbin === undefined) throw new Error('unreachable')
     expect(Array.from(bbin)).toEqual([1, 2, 3])
+  })
+
+  it('seeds a character device without trying to whole-read it', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/dev/') return Promise.resolve(['/dev/zero'])
+      if (op === 'stat' && path === '/dev/zero') {
+        return Promise.resolve(
+          new FileStat({
+            name: 'zero',
+            type: FileType.CHAR_DEVICE,
+            extra: { [DEVICE_NUMBERS_KEY]: [1, 5] },
+          }),
+        )
+      }
+      return Promise.reject(new Error(`unexpected ${op} ${path}`))
+    })
+    const seed = new MirageFsSeed()
+    await preloadInto(seed, new RuntimeVFS(dispatch), '/dev/')
+    expect(seed.devices.get('/dev/zero')).toEqual({ mode: CHAR_MODE, rdev: 0x105 })
+    expect(dispatch.mock.calls.every(([op]) => op !== 'read')).toBe(true)
   })
 
   // The row already carries both (the door stats every entry it does not

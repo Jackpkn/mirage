@@ -387,6 +387,7 @@ export type ResourceName = (typeof ResourceName)[keyof typeof ResourceName]
 export const FileType = Object.freeze({
   DIRECTORY: 'directory',
   SYMLINK: 'symlink',
+  CHAR_DEVICE: 'char_device',
   TEXT: 'text',
   BINARY: 'binary',
   JSON: 'json',
@@ -405,6 +406,9 @@ export type FileType = (typeof FileType)[keyof typeof FileType]
 // typed. A link has no backend inode, so this is the only place the
 // target travels with the stat row.
 export const LINK_TARGET_KEY = 'link_target'
+
+// FileStat.extra key holding a synthetic device's logical [major, minor].
+export const DEVICE_NUMBERS_KEY = 'device_numbers'
 
 /**
  * The metadata fields a `setattr` writes, all optional.

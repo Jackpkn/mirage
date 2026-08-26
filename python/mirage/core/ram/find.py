@@ -58,10 +58,26 @@ async def find(
         *store.files, *(k for k in store.dirs if k != "/")
     ]) if empty else set()
 
+    device_of = getattr(store.files, "device_of", None)
+
+    def kind_of(key: str) -> str:
+        if device_of is not None and device_of(key) is not None:
+            return "c"
+        return "f"
+
+    def empty_of(key: str, kind: str) -> bool:
+        # GNU -empty matches only regular files (size 0) and empty dirs;
+        # a device is never empty-eligible.
+        if kind == "f":
+            return len(store.files[key]) == 0
+        if kind == "d":
+            return key not in nonempty
+        return False
+
     candidates: list[tuple[str, str]] = []
     if type != "d":
         for key in store.files:
-            candidates.append((key, "f"))
+            candidates.append((key, kind_of(key)))
     if type != "f":
         for key in store.dirs:
             candidates.append((key, "d"))
@@ -76,8 +92,7 @@ async def find(
         if key == p:
             root_kind = kind
             if empty:
-                root_is_empty = (len(store.files[key])
-                                 == 0) if kind == "f" else key not in nonempty
+                root_is_empty = empty_of(key, kind)
             if kind == "f":
                 root_size = len(store.files[key])
             continue
@@ -92,8 +107,7 @@ async def find(
 
         is_empty: bool | None = None
         if empty:
-            is_empty = (len(store.files[key])
-                        == 0) if kind == "f" else key not in nonempty
+            is_empty = empty_of(key, kind)
         entry = FindEntry(key=key,
                           name=key.rsplit("/", 1)[-1],
                           kind=kind,

@@ -31,9 +31,12 @@ export const MONTHS = [
 
 export const EPOCH_LS_TIME = 'Jan  1 00:00'
 
+export const CHAR_DEVICE_MAX_BYTES = 8 << 20
+
 export const TYPE_CHARS: Partial<Record<FileType, string>> = {
   [FileType.DIRECTORY]: 'd',
   [FileType.SYMLINK]: 'l',
+  [FileType.CHAR_DEVICE]: 'c',
 }
 
 // A symlink has no permission bits of its own on Linux: the mode is
@@ -42,6 +45,7 @@ export const TYPE_CHARS: Partial<Record<FileType, string>> = {
 export const DEFAULT_MODES: Partial<Record<FileType, number>> = {
   [FileType.DIRECTORY]: 0o755,
   [FileType.SYMLINK]: 0o777,
+  [FileType.CHAR_DEVICE]: 0o666,
 }
 
 export const NUMERIC_PREFIX = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/

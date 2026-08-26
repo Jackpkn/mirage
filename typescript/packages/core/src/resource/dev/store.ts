@@ -16,7 +16,6 @@ import { stripSlash } from '../../utils/slash.ts'
 import type { RAMAttrs } from '../ram/store.ts'
 
 const DEV_NAMES = new Set(['null', 'zero'])
-const ZERO_CHUNK_SIZE = 1 << 20
 
 function strip(key: string): string {
   return stripSlash(key)
@@ -34,8 +33,15 @@ export class DevFiles extends Map<string, Uint8Array> {
     return DEV_NAMES.has(name) && !this.tombstones.has(name) && !super.has('/' + name)
   }
 
-  private syntheticBytes(name: string): Uint8Array {
-    return name === 'null' ? new Uint8Array(0) : new Uint8Array(ZERO_CHUNK_SIZE)
+  private syntheticBytes(_name: string): Uint8Array {
+    // Content is served by the device reader. Store iteration stays finite
+    // and size-neutral so generic metadata operations never allocate zeros.
+    return new Uint8Array(0)
+  }
+
+  deviceOf(key: string): string | null {
+    const name = strip(key)
+    return this.syntheticActive(name) ? name : null
   }
 
   override has(key: string): boolean {

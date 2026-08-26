@@ -240,6 +240,8 @@ export async function grepGeneric(
             false,
           )
           for (const r of respellRaw(res, p.virtual, p.rawPath)) allResults.push(r)
+        } else if (s.type === FileType.CHAR_DEVICE) {
+          continue
         } else if (!fileAdmitted(p.virtual, f.filters)) {
           continue
         } else {
@@ -283,6 +285,7 @@ export async function grepGeneric(
           multiWarnings.push(`${name}: ${p.rawPath}: Is a directory`)
           continue
         }
+        if (s.type === FileType.CHAR_DEVICE) continue
         if (!fileAdmitted(p.virtual, f.filters)) continue
         const data = splitLinesNoTrailing(DEC.decode(await materialize(stream(p))))
         const hits = grepLines(p.rawPath, data, pat, f)

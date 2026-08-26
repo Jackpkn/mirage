@@ -19,13 +19,14 @@ import pytest
 pytest.importorskip("wasmtime")
 
 from mirage.runtime.wasm.abi import (  # noqa: E402  # isort: skip
-    FST_ATIM, FST_ATIM_NOW, FST_MTIM, FST_MTIM_NOW, FT_DIR, FT_REG, FT_SYMLINK)
+    FST_ATIM, FST_ATIM_NOW, FST_MTIM, FST_MTIM_NOW, FT_CHR, FT_DIR, FT_REG,
+    FT_SYMLINK)
 from mirage.runtime.wasm.host import (  # noqa: E402  # isort: skip
     WasiFs, _filetype, _spec, _stamp)
 from mirage.runtime.types import VFSStat  # noqa: E402
 
 from mirage.utils.stat_view import (  # noqa: E402  # isort: skip
-    DIR_MODE, FILE_MODE, LINK_MODE)
+    CHAR_MODE, DIR_MODE, FILE_MODE, LINK_MODE)
 
 # End-to-end host-function behavior (path_open buffering, fd table,
 # errno answers inside a real guest) is covered by the live wasi and
@@ -58,6 +59,8 @@ def test_filetype_reads_the_kind_link_first():
                              mtime_ns=0)) == FT_DIR
     assert _filetype(VFSStat(size=1, is_dir=False, mode=FILE_MODE,
                              mtime_ns=0)) == FT_REG
+    assert _filetype(VFSStat(size=0, is_dir=False, mode=CHAR_MODE,
+                             mtime_ns=0)) == FT_CHR
 
 
 def test_stamp_omits_a_field_no_flag_selected():

@@ -108,6 +108,11 @@ class ContentType(str, Enum):
 # target travels with the stat row.
 LINK_TARGET_KEY = "link_target"
 
+# FileStat.extra key holding a device node's logical [major, minor]. A
+# character or block device has no size; its identity is these numbers,
+# which stat, ls -l, file and tar render in place of a byte length.
+DEVICE_NUMBERS_KEY = "device_numbers"
+
 
 class FileStat(BaseModel):
     model_config = ConfigDict(frozen=True)

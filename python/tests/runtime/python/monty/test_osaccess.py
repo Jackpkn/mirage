@@ -30,12 +30,14 @@ class FakeDispatch:
                  supports_append: bool = True,
                  links: dict[str, str] | None = None,
                  stat_mode: int | None = None,
-                 stat_modified: str | None = None) -> None:
+                 stat_modified: str | None = None,
+                 devices: set[str] | None = None) -> None:
         self.files = files
         self.supports_append = supports_append
         self.links = dict(links or {})
         self.stat_mode = stat_mode
         self.stat_modified = stat_modified
+        self.devices = set(devices or ())
         self.writes: list[tuple[str, bytes]] = []
         self.appends: list[tuple[str, bytes]] = []
         self.created: list[str] = []
@@ -48,10 +50,15 @@ class FakeDispatch:
     async def __call__(self, op, path, **kwargs):
         virtual = path.virtual
         if op == "read":
+            if virtual in self.devices:
+                raise ValueError(
+                    "cannot read an endless device without a size")
             if virtual not in self.files:
                 raise FileNotFoundError(virtual)
             return self.files[virtual], None
         if op == "stat":
+            if virtual in self.devices:
+                return FileStat(name=virtual, type=FileType.CHAR_DEVICE), None
             if virtual in self.files:
                 return FileStat(name=virtual,
                                 size=len(self.files[virtual]),
@@ -64,7 +71,7 @@ class FakeDispatch:
             # Full virtual paths, the door's own shape.
             prefix = virtual.rstrip("/") + "/"
             names = set()
-            for p in self.files:
+            for p in [*self.files, *self.devices]:
                 if p.startswith(prefix):
                     names.add(prefix + p[len(prefix):].split("/")[0])
             if not names and virtual.rstrip("/") not in ("", "/"):
@@ -168,6 +175,19 @@ def test_monty_stat_reports_an_unknown_stamp_as_epoch_zero():
                     "print(int(Path('/s3/a.txt').stat().st_mtime))")))
     assert result.exit_code == 0
     assert result.stdout == b"0\n"
+
+
+def test_monty_reports_a_character_device_without_reading_it():
+    dispatch = FakeDispatch({}, devices={"/dev/zero"})
+    runtime = MontyRuntime()
+    runtime.attach(dispatch, PrefixResolver(lambda: []))
+    result = asyncio.run(
+        runtime.run(
+            RunArgs(code="from pathlib import Path\n"
+                    "p = Path('/dev/zero')\n"
+                    "print(p.exists(), p.is_file(), oct(p.stat().st_mode))")))
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == b"True False 0o20666\n"
 
 
 def test_monty_missing_virtual_file():

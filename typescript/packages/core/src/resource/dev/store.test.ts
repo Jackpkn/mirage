@@ -32,12 +32,11 @@ describe('DevFiles', () => {
     expect(v?.byteLength).toBe(0)
   })
 
-  it('returns 1 MiB of zeros for /zero', () => {
+  it('uses empty placeholders for active devices', () => {
     const f = new DevFiles()
     const v = f.get('/zero')
     expect(v).toBeInstanceOf(Uint8Array)
-    expect(v?.byteLength).toBe(1 << 20)
-    expect(v?.every((b) => b === 0)).toBe(true)
+    expect(v?.byteLength).toBe(0)
   })
 
   it('returns undefined for unknown keys', () => {
@@ -49,7 +48,7 @@ describe('DevFiles', () => {
     const f = new DevFiles()
     f.set('/null', new TextEncoder().encode('overwrite'))
     expect(f.get('/null')?.byteLength).toBe(0)
-    expect(f.get('/zero')?.byteLength).toBe(1 << 20)
+    expect(f.get('/zero')?.byteLength).toBe(0)
   })
 
   it('delete tombstones a synthetic device', () => {
@@ -60,6 +59,15 @@ describe('DevFiles', () => {
     expect([...f.keys()]).toEqual(['/zero'])
     expect(f.size).toBe(1)
     expect(f.delete('/null')).toBe(false)
+  })
+
+  it('derives device kind from active synthetic state', () => {
+    const f = new DevFiles()
+    expect(f.deviceOf('/null')).toBe('null')
+    f.delete('/null')
+    expect(f.deviceOf('/null')).toBeNull()
+    f.set('/null', new Uint8Array([1]))
+    expect(f.deviceOf('/null')).toBeNull()
   })
 
   it('set after delete stores real bytes (rm-then-redirect recreation)', () => {

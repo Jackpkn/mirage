@@ -191,12 +191,12 @@ async def main() -> None:
     result = await ws.execute("wc -c /dev/null")
     print(await result.stdout_str())
 
-    print("=== wc -c /dev/zero ===")
-    result = await ws.execute("wc -c /dev/zero")
+    print("=== head -c 2M /dev/zero | wc -c ===")
+    result = await ws.execute("head -c 2M /dev/zero | wc -c")
     print(await result.stdout_str())
 
-    print("=== md5 /dev/zero ===")
-    result = await ws.execute("md5 /dev/zero")
+    print("=== stat -c '%F %t %T' /dev/null ===")
+    result = await ws.execute("stat -c '%F %t %T' /dev/null")
     print(await result.stdout_str())
 
     print("=== head -c 8 /dev/zero | xxd ===")

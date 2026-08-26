@@ -131,6 +131,10 @@ def exdev(path: str | PathSpec) -> OSError:
     return OSError(errno.EXDEV, "Invalid cross-device link", _virtual_of(path))
 
 
+def einval(path: str | PathSpec, message: str = "Invalid argument") -> OSError:
+    return OSError(errno.EINVAL, message, _virtual_of(path))
+
+
 def eloop(path: str | PathSpec) -> OSError:
     return OSError(errno.ELOOP, "Too many levels of symbolic links",
                    _virtual_of(path))

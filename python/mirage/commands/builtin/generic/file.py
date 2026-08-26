@@ -11,7 +11,8 @@ from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView, MountView, StatPath
-from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec, StatFn
+from mirage.types import (DEVICE_NUMBERS_KEY, LINK_TARGET_KEY, FileStat,
+                          FileType, PathSpec, StatFn)
 from mirage.utils.path import CycleError
 
 _logger = logging.getLogger(__name__)
@@ -91,6 +92,13 @@ async def file_cmd(
         if s.type == FileType.DIRECTORY:
             lines.append(
                 format_file_result(p.raw_path, FileType.DIRECTORY, b, i))
+            continue
+        if s.type == FileType.CHAR_DEVICE:
+            dev = s.extra.get(DEVICE_NUMBERS_KEY) if s.extra else None
+            desc = ("inode/chardevice" if i else
+                    (f"character special ({dev[0]}/{dev[1]})"
+                     if dev else "character special"))
+            lines.append(format_file_result(p.raw_path, desc, b, False))
             continue
         try:
             header = (await read_bytes(p))[:512]

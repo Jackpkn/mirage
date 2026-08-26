@@ -129,10 +129,10 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "wc -c /dev/zero",
+      "command": "head -c 2M /dev/zero | wc -c",
       "expect": {
         "exit": 0,
-        "stdout": "1048576 /dev/zero\n",
+        "stdout": "2097152\n",
         "stderr": ""
       }
     },
@@ -163,10 +163,10 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "md5 /dev/zero",
+      "command": "head -c 1M /dev/zero | md5",
       "expect": {
         "exit": 0,
-        "stdout": "b6d81b360a5672d80c27430f39153e2c  /dev/zero\n",
+        "stdout": "b6d81b360a5672d80c27430f39153e2c  -\n",
         "stderr": ""
       }
     },
@@ -239,7 +239,7 @@
       }
     },
     {
-      "id": "dev_null_is_a_file_not_a_dir",
+      "id": "dev_null_is_a_character_device",
       "seq": 970007,
       "targets": [
         "ram",
@@ -265,10 +265,10 @@
         "gdrive-folder",
         "box"
       ],
-      "command": "test -f /dev/null && echo file",
+      "command": "test -c /dev/null && echo character",
       "expect": {
         "exit": 0,
-        "stdout": "file\n",
+        "stdout": "character\n",
         "stderr": ""
       }
     }

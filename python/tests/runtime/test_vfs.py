@@ -25,9 +25,9 @@ from mirage.runtime.errors import CrossMountError
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.types import VFSEntry, VFSStat
 from mirage.runtime.vfs import RuntimeVFS
-from mirage.types import ContentType, FileStat, FileType
+from mirage.types import DEVICE_NUMBERS_KEY, ContentType, FileStat, FileType
 from mirage.utils.errors import OperationNotSupportedError
-from mirage.utils.stat_view import DIR_MODE, FILE_MODE, LINK_MODE
+from mirage.utils.stat_view import CHAR_MODE, DIR_MODE, FILE_MODE, LINK_MODE
 from mirage.workspace.session import Session
 
 
@@ -244,6 +244,23 @@ def test_stat_reports_an_unknown_stamp_as_epoch_zero():
                          FileStat(name="a.txt", size=1, type=FileType.FILE)
                      })
     assert vfs.stat("/data/a.txt").mtime_ns == 0
+
+
+def test_stat_projects_character_type_bits_and_logical_device_numbers():
+    vfs = ListingVFS(
+        listing=[],
+        stats={
+            "/dev/zero":
+            FileStat(name="zero",
+                     type=FileType.CHAR_DEVICE,
+                     extra={DEVICE_NUMBERS_KEY: [1, 5]}),
+        },
+    )
+    assert vfs.stat("/dev/zero") == VFSStat(size=0,
+                                            is_dir=False,
+                                            mode=CHAR_MODE,
+                                            mtime_ns=0,
+                                            rdev=0x105)
 
 
 def test_stat_nofollow_asks_the_door_for_the_link_row():

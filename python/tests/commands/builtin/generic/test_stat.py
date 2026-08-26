@@ -6,8 +6,8 @@ from mirage.commands.builtin.generic.stat import stat
 from mirage.io.types import materialize
 from mirage.ops.types import LinkView
 from mirage.resource.ram import RAMResource
-from mirage.types import (LINK_TARGET_KEY, ContentType, FileStat, FileType,
-                          MountMode, PathSpec)
+from mirage.types import (DEVICE_NUMBERS_KEY, LINK_TARGET_KEY, ContentType,
+                          FileStat, FileType, MountMode, PathSpec)
 from mirage.workspace import Workspace
 
 _MTIME = "2026-01-02T15:30:45Z"
@@ -222,8 +222,14 @@ async def test_birth_and_epoch_of_unknown_time():
 async def test_structural_constants():
     fs = _fs()
     assert await _render("%B", fs) == "512"
-    # No character/block special files exist -> device type is 0, truthfully.
+    # A regular file has no device identity.
     assert await _render("%r %R %t %T", fs) == "0 0 0 0"
+
+
+@pytest.mark.asyncio
+async def test_character_device_number_directives():
+    fs = _fs(type=FileType.CHAR_DEVICE, extra={DEVICE_NUMBERS_KEY: (1, 3)})
+    assert await _render("%r %R %t %T %Hr %Lr", fs) == "259 103 1 3 1 3"
 
 
 @pytest.mark.asyncio
