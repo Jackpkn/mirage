@@ -119,9 +119,12 @@ jobs:
           for path in "${redis_serial[@]}"; do
             ignore_args+=("--ignore=$path")
           done
-          # worksteal, not loadscope: measured as sibling jobs at one commit,
-          # 403s against 468s. loadscope pins a module to one worker, so a
-          # heavy module leaves the others idle; worksteal rebalances.
+          # worksteal, not loadscope. Measured as sibling jobs at one commit,
+          # n=4 each: worksteal 398s median with a 13s spread, loadscope 420s
+          # with a 91s spread. loadscope pins a module to one worker, so a
+          # heavy module leaves the others idle and the run time depends on
+          # which worker drew it; worksteal rebalances, which is why its tail
+          # is 58s better even though the medians are close.
           uv run pytest -n 4 --dist worksteal "${ignore_args[@]}"
           uv run pytest "${redis_serial[@]}"
 
@@ -146,10 +149,9 @@ jobs:
             python3 integ/check_example.py "$1" --variant "$2" || bad=1
           }
           # Each check is its own process against its own workspace, so the
-          # ones backed by ram/disk are independent and run concurrently.
-          # xargs exits 123 when any invocation failed, which is what marks
-          # the step bad; every check still runs because -I{} keeps them
-          # one per invocation.
+          # ram/disk-backed ones are independent and run concurrently. xargs
+          # exits 123 when any invocation failed, which is what marks the step
+          # bad; -I{} keeps one check per invocation so all of them still run.
           independent=(
             integ/truth/python/ram.json
             integ/truth/python/ram_vfs.json
