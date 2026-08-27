@@ -52,6 +52,11 @@ model GraphFile {
   // string, which is why it is a GraphDir row rather than a special case.
   path     String
   content  Bytes
+  // Denormalised byte length, so a folder's aggregate size is one SUM in
+  // SQLite instead of loading every blob in the drive to add up their lengths.
+  // It cannot drift: `content` is only ever set by writeFile, which sets this
+  // beside it, and the move/copy paths carry the whole row across.
+  size     Int
   // The vendor's cTag moves only with CONTENT and its eTag moves with any
   // metadata change too, and a client uses the difference to tell a rename
   // from a rewrite. Two columns, because collapsing them loses that.

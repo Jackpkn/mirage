@@ -165,12 +165,19 @@ export async function writeFile(
   })
   return ctx.db.graphFile.upsert({
     where: fileKey(ctx.tenant, drive, p),
-    update: { content: body as Uint8Array<ArrayBuffer>, ctag: tag, etag: tag, modified: stamp },
+    update: {
+      content: body as Uint8Array<ArrayBuffer>,
+      size: body.length,
+      ctag: tag,
+      etag: tag,
+      modified: stamp,
+    },
     create: {
       tenant: ctx.tenant,
       drive,
       path: p,
       content: body as Uint8Array<ArrayBuffer>,
+      size: body.length,
       ctag: tag,
       etag: tag,
       modified: stamp,
@@ -187,11 +194,20 @@ export async function childNames(
 ): Promise<string[]> {
   const d = norm(dir)
   const names = new Set<string>()
-  const files = await db.graphFile.findMany({ where: { tenant, drive } })
+  // `select` matters more than it looks: without it Prisma reads every column,
+  // so listing a directory deserialized every file BODY in the drive just to
+  // look at path strings, once per folder rendered.
+  const files = await db.graphFile.findMany({
+    where: { tenant, drive },
+    select: { path: true },
+  })
   for (const f of files) {
     if (dirName(f.path) === d) names.add(baseName(f.path))
   }
-  const dirs = await db.graphDir.findMany({ where: { tenant, drive } })
+  const dirs = await db.graphDir.findMany({
+    where: { tenant, drive },
+    select: { path: true },
+  })
   for (const row of dirs) {
     if (row.path !== '' && dirName(row.path) === d) names.add(baseName(row.path))
   }
@@ -205,11 +221,12 @@ export async function folderSize(
   dir: string,
 ): Promise<number> {
   const d = norm(dir)
-  const prefix = d === '' ? '' : `${d}/`
-  const files = await db.graphFile.findMany({ where: { tenant, drive } })
-  return files
-    .filter((f) => d === '' || f.path === d || f.path.startsWith(prefix))
-    .reduce((n, f) => n + f.content.length, 0)
+  const scope =
+    d === ''
+      ? { tenant, drive }
+      : { tenant, drive, OR: [{ path: d }, { path: { startsWith: `${d}/` } }] }
+  const agg = await db.graphFile.aggregate({ where: scope, _sum: { size: true } })
+  return agg._sum.size ?? 0
 }
 
 export async function removeAt(ctx: Ctx0, drive: string, path: string): Promise<boolean> {
