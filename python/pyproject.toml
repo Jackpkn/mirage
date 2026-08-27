@@ -269,12 +269,6 @@ dev = [
     "lz4>=4.4.5",
 ]
 
-[tool.flake8]
-exclude = ["mirage/commands/remote/grpc/proto/command_pb2.py", "mirage/commands/remote/grpc/proto/command_pb2_grpc.py"]
-per-file-ignores = [
-    "python/mirage/resource/*/prompt.py:E501",
-]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --import-mode=importlib"
