@@ -103,7 +103,19 @@
         "has_provision": false,
         "has_write": false
       },
-      "hf_hub": {
+      "hf_datasets": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": false,
+        "has_write": false
+      },
+      "hf_models": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": false,
+        "has_write": false
+      },
+      "hf_spaces": {
         "filetypes": [],
         "has_aggregate": false,
         "has_provision": false,
@@ -240,7 +252,9 @@
       "gsheets",
       "gslides",
       "hf_buckets",
-      "hf_hub",
+      "hf_datasets",
+      "hf_models",
+      "hf_spaces",
       "jaeger",
       "lancedb",
       "langfuse",

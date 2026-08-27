@@ -18,7 +18,6 @@ from typing import Any, Generic, TypeVar
 from mirage.accessor.hf_hub import HfHubAccessor
 from mirage.commands.builtin.hf_hub import COMMANDS as HF_COMMANDS
 from mirage.commands.builtin.hf_hub.io import IO as HF_IO
-from mirage.core.hf_hub.constants import INDEX_TTL
 from mirage.core.hf_hub.create import create
 from mirage.core.hf_hub.exists import exists
 from mirage.core.hf_hub.mkdir import mkdir
@@ -76,8 +75,10 @@ class HfHubResource(BaseResource, Generic[A]):
     SIZES_ALWAYS_KNOWN: bool = True
     # The index is not a cache in front of a listing, it IS the listing:
     # one recursive fetch seeds it whole. A long TTL therefore spares the
-    # Hub a full re-walk rather than risking a stale row.
-    index_ttl: float = INDEX_TTL
+    # Hub a full re-walk rather than risking a stale row. Written as a
+    # literal, the way every other resource writes it: the spec dump reads
+    # this off the source, and an imported name reads as unresolvable.
+    index_ttl: float = 86_400
     _ops: dict[str, Any] = _OPS
     SUPPORTS_SNAPSHOT: bool = True
 

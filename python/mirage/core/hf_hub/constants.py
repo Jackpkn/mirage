@@ -78,9 +78,6 @@ DEFAULT_CHUNK_SIZE = 1024 * 1024
 # at the same 256.
 COMMIT_CHUNK = 256
 
-# What a commit says when the caller had nothing to say. The Hub requires
-# a non-empty summary, and a write reaching the backend through `cp` or a
-# redirect has no message of its own to offer.
 # Upstream's own default for `hf download --max-workers`. The bound is
 # what matters: the Hub rate-limits its resolvers at 3000 per 300s, so a
 # repository of many small files must not fan out without one.
@@ -94,9 +91,7 @@ REPO_ID_SEPARATOR = "--"
 # upstream-style variadic --include line from a real filename operand.
 GLOB_CHARS = ("*", "?", "[")
 
+# What a commit says when the caller had nothing to say. The Hub requires
+# a non-empty summary, and a write reaching the backend through `cp` or a
+# redirect has no message of its own to offer.
 DEFAULT_COMMIT_MESSAGE = "Update from mirage"
-
-# How long a seeded listing stays live. The index holds the whole tree
-# rather than a cache in front of it, so this is how often the Hub is
-# re-walked, not how stale one row may get.
-INDEX_TTL = 86_400

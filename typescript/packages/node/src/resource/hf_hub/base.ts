@@ -23,7 +23,7 @@ import { mountKey, mountPrefixOf } from '@struktoai/mirage-core/utils/key_prefix
 import type { DeltaHook } from '@struktoai/mirage-core/watch/index'
 import type { HfHubAccessor } from '../../accessor/hf_hub.ts'
 import { HF_HUB_COMMANDS } from '../../commands/builtin/hf_hub/index.ts'
-import { INDEX_TTL, SCOPE_ERROR } from '../../core/hf_hub/constants.ts'
+import { SCOPE_ERROR } from '../../core/hf_hub/constants.ts'
 import { create as createCore } from '../../core/hf_hub/create.ts'
 import { exists as existsCore } from '../../core/hf_hub/exists.ts'
 import { mkdir as mkdirCore } from '../../core/hf_hub/mkdir.ts'
@@ -68,7 +68,7 @@ export abstract class HfHubResource extends BaseResource implements Resource {
   // The index is not a cache in front of a listing, it IS the listing: one
   // recursive fetch seeds it whole. A long TTL therefore spares the Hub a
   // full re-walk rather than risking a stale row.
-  override readonly indexTtl: number = INDEX_TTL
+  override readonly indexTtl: number = 86_400
   readonly opsMap: Record<string, unknown> = {
     read_bytes: readCore,
     readdir: readdirCore,

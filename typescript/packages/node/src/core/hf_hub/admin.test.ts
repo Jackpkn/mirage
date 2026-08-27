@@ -15,11 +15,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRepo, createTag, deleteRepo, deleteTag, splitRepoId } from './admin.ts'
 import * as client from './client.ts'
-import { HfConfigSchema } from './config.ts'
+import type { HfConfig } from './config.ts'
+import { API_BASE } from './constants.ts'
 
-// Built through the schema rather than by hand, so `endpoint` gets the same
-// default the real path gets; a literal missing it is a config no caller has.
-const CONFIG = HfConfigSchema.parse({ token: 't' })
+const CONFIG: HfConfig = { token: 't', endpoint: API_BASE }
 
 describe('splitRepoId', () => {
   it('takes the two halves apart', () => {

@@ -165,6 +165,8 @@ export { HfSpacesResource, type HfSpacesResourceState } from './resource/hf_spac
 export { HF_SPACES_PROMPT } from './resource/hf_spaces/prompt.ts'
 export { HF_COMMANDS } from './commands/builtin/hf/index.ts'
 export { HF_OPS } from './ops/hf/index.ts'
+export { HF_HUB_COMMANDS } from './commands/builtin/hf_hub/index.ts'
+export { HF_HUB_OPS } from './ops/hf_hub/index.ts'
 export { MinIOResource, type MinIOResourceState } from './resource/minio/minio.ts'
 export {
   redactMinIOConfig,
