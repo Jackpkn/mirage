@@ -106,7 +106,6 @@ import {
 import { integRoot, walkFiles } from './harness.ts'
 import type { ExecWorkspace, Mount, Target } from './harness.ts'
 import { start as startKitFake } from '../../server/kit/typescript/index.ts'
-import { mem0Fake } from '../../server/mem0/fake.ts'
 import { startPythonServer } from './server_process.ts'
 
 export interface Open {
@@ -1260,6 +1259,12 @@ async function openPostgres(target: Target): Promise<Open> {
 // process, so it starts in-process on an ephemeral port. That is one fewer
 // interpreter hop than spawning it, and `close` disposes the SQLite pool too.
 async function openMem0(target: Target): Promise<Open> {
+  // Imported here rather than at the top of the file, because this module is
+  // loaded for every target and a kit fake's module reaches its generated
+  // Prisma client at import time. A static import would make `--target
+  // nextcloud` fail on a job that has no reason to generate the mem0 client.
+  // Any future in-process fake belongs behind the same lazy import.
+  const { mem0Fake } = await import('../../server/mem0/fake.ts')
   const server = await startKitFake(mem0Fake)
   const mounts: Record<string, Mem0Resource> = {}
   for (const mount of target.mounts) {
