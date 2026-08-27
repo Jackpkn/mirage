@@ -658,7 +658,7 @@ class CommandIO:
     # Kwargs vary per backend (mode/times/owner); loose like TS's any.
     set_attrs: OperationFn | None = None
     # Child names the namespace owes a directory (nested mount roots and
-    # symlinks). Stamped per invocation from opts.child_mounts by the
+    # symlinks). Stamped per invocation from opts.ns.child_mounts by the
     # factory, because it is session-scoped state and the adapter itself
     # is built once per backend.
     glob_children: ChildMounts | None = None
