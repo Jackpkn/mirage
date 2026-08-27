@@ -21,7 +21,8 @@ from typing import Any
 from mirage.accessor.hf_hub import HfHubAccessor
 from mirage.cache.index import (NULL_INDEX, IndexCacheStore, IndexEntry,
                                 LookupStatus)
-from mirage.core.hf_hub.client import HfHubError, api_url, hub_get_response
+from mirage.core.hf_hub.client import (HfHubError, api_url, hub_get_response,
+                                       rev_segment)
 from mirage.core.hf_hub.constants import (MAX_TREE_PAGES, TREE_PAGE_SIZE,
                                           TREE_PAGE_SIZE_EXPANDED)
 from mirage.core.hf_hub.tree_entry import TreeEntry
@@ -110,7 +111,7 @@ def tree_url(accessor: HfHubAccessor) -> str:
     Returns:
         str: the absolute URL.
     """
-    suffix = f"/tree/{accessor.revision}"
+    suffix = f"/tree/{rev_segment(accessor.revision)}"
     # The prefix is normalized with a trailing slash, which the tree
     # endpoint reads as a path segment of its own.
     stem = accessor.key_prefix.strip("/")
@@ -148,6 +149,25 @@ def collect(rows: Any, prefix: str, into: dict[str, TreeEntry]) -> None:
         rel = kp.strip(prefix, entry.path) if prefix else entry.path
         if rel:
             into[rel] = entry
+
+
+def truncated(repo_id: str) -> HfHubError:
+    """The refusal for a listing the page ceiling cut short.
+
+    Raised rather than returned because this listing is not a cache in
+    front of the Hub, it is seeded as the mount's whole index: a partial
+    one reads as a complete one, so every file past the ceiling becomes
+    a confident false absence and `hf download` silently omits it. An
+    error the caller can see is the lesser failure.
+
+    Args:
+        repo_id (str): the repository being walked.
+
+    Returns:
+        HfHubError: carrying the ceiling in its message.
+    """
+    return HfHubError(f"hf: {repo_id}: listing exceeds {MAX_TREE_PAGES} pages",
+                      0)
 
 
 async def walk_pages(
@@ -236,8 +256,7 @@ async def fetch_tree(accessor: HfHubAccessor) -> dict[str, TreeEntry]:
             return result
         if expand:
             if await walk_pages(accessor, left, None, result):
-                log.warning("hf tree walk for %s hit the page ceiling",
-                            accessor.repo_id)
+                raise truncated(accessor.repo_id)
             return result
         # Too big to expand. The bare walk restarts from the first page
         # rather than continuing from this cursor, because the cursor
@@ -245,8 +264,7 @@ async def fetch_tree(accessor: HfHubAccessor) -> dict[str, TreeEntry]:
         # page size.
         result = {}
     if await walk_pages(accessor, url, page_params(False), result):
-        log.warning("hf tree walk for %s hit the page ceiling",
-                    accessor.repo_id)
+        raise truncated(accessor.repo_id)
     return result
 
 

@@ -19,7 +19,7 @@ from typing import Any
 
 from mirage.accessor.hf_hub import HfHubAccessor
 from mirage.core.hf_hub.client import (HfHubError, api_url, hub_post,
-                                       hub_post_ndjson)
+                                       hub_post_ndjson, rev_segment)
 from mirage.core.hf_hub.constants import (COMMIT_CHUNK, DEFAULT_COMMIT_MESSAGE,
                                           PREUPLOAD_SAMPLE_BYTES)
 from mirage.types import JsonValue
@@ -67,7 +67,7 @@ def commit_url(accessor: HfHubAccessor, revision: str | None = None) -> str:
     """
     rev = revision or accessor.revision
     return api_url(accessor.endpoint, accessor.repo_type, accessor.repo_id,
-                   f"/commit/{rev}")
+                   f"/commit/{rev_segment(rev)}")
 
 
 async def upload_modes(
@@ -94,7 +94,7 @@ async def upload_modes(
         return {}
     rev = revision or accessor.revision
     url = api_url(accessor.endpoint, accessor.repo_type, accessor.repo_id,
-                  f"/preupload/{rev}")
+                  f"/preupload/{rev_segment(rev)}")
     modes: dict[str, str] = {}
     for start in range(0, len(additions), COMMIT_CHUNK):
         chunk = additions[start:start + COMMIT_CHUNK]

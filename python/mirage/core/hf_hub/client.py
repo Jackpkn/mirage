@@ -80,6 +80,24 @@ def hub_headers(token: SecretStr | None) -> dict[str, str]:
     return headers
 
 
+def rev_segment(revision: str) -> str:
+    """One revision, encoded as a single URL path segment.
+
+    A git ref may hold a slash (`feature/foo`, `refs/pr/1`), and every
+    Hub route reads the segment after the verb as the whole revision, so
+    an unencoded one splits: `/tree/feature/foo` names revision
+    `feature` and subtree `foo`. huggingface_hub encodes it the same way
+    (`quote(revision, safe="")`).
+
+    Args:
+        revision (str): branch, tag or commit.
+
+    Returns:
+        str: the revision as one encoded segment.
+    """
+    return quote(revision, safe="")
+
+
 def api_url(endpoint: str, repo_type: str, repo_id: str, suffix: str) -> str:
     """The /api URL for one repository-scoped endpoint.
 
@@ -140,7 +158,7 @@ def resolve_url(endpoint: str, repo_type: str, repo_id: str, revision: str,
     base = f"{endpoint.rstrip('/')}/"
     if segment:
         base += f"{segment}/"
-    return (f"{base}{repo_id}/resolve/{quote(revision, safe='')}/"
+    return (f"{base}{repo_id}/resolve/{rev_segment(revision)}/"
             f"{quote(path.lstrip('/'))}")
 
 

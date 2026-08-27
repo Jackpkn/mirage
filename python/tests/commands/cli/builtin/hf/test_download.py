@@ -12,17 +12,19 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from mirage.commands.cli.builtin.hf.download import (download_cmd,
+from mirage.commands.cli.builtin.hf.download import (download_cmd, ensure_dir,
                                                      refuse_variadic, selected)
 from mirage.commands.errors import UsageError
 from mirage.core.hf_hub.client import HfHubError
 from mirage.core.hf_hub.repo import Absence
 from mirage.core.hf_hub.tree import parse_entry
 from mirage.io.types import materialize
+from mirage.types import FileStat, FileType
 from tests.commands.cli.builtin.hf.conftest import inv
 from tests.core.hf_hub.conftest import dir_row, file_row
 
@@ -227,3 +229,32 @@ async def test_download_fetches_with_a_bounded_pool(mock_tree, mock_bytes,
             doors=record))
     assert "/work/out/a.txt" in tree
     assert "/work/out/sub/b.json" in tree
+
+
+@pytest.mark.asyncio
+async def test_ensure_dir_tolerates_a_parent_another_worker_just_made():
+    """A parallel download fans out over files that share parents, so two
+    workers can read the same parent as missing and then both create it.
+    The loser's EEXIST must not fail the whole gather."""
+    dirs: set[str] = set()
+
+    async def dispatch(op, spec, **kwargs):
+        path = spec.virtual
+        if op == "stat":
+            # Yield here, so the second walk probes before the first has
+            # created anything. Without it the two run to completion in
+            # turn and the race the fix exists for never happens.
+            await asyncio.sleep(0)
+            if path in dirs:
+                return FileStat(name=path, type=FileType.DIRECTORY), None
+            raise FileNotFoundError(path)
+        if op == "mkdir":
+            if path in dirs:
+                raise FileExistsError(path)
+            dirs.add(path)
+            return None, None
+        raise AssertionError(f"unexpected op {op}")
+
+    await asyncio.gather(ensure_dir(dispatch, "/work/out"),
+                         ensure_dir(dispatch, "/work/out"))
+    assert dirs == {"/work", "/work/out"}

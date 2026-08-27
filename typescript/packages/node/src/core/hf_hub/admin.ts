@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { HfHubError, hubGet, hubPost, hubRequest, repoUrl } from './client.ts'
+import { HfHubError, hubGet, hubPost, hubRequest, repoUrl, revSegment } from './client.ts'
 import { hfEndpoint, type HfConfig } from './config.ts'
 import { API_SEGMENTS, DEFAULT_REVISION, HTTP_CONFLICT } from './constants.ts'
 
@@ -103,7 +103,11 @@ export async function createTag(
 ): Promise<void> {
   const body: Record<string, unknown> = { tag }
   if (message !== undefined) body.message = message
-  await hubPost(config.token, repoApiUrl(config, repoType, repoId, `/tag/${revision}`), body)
+  await hubPost(
+    config.token,
+    repoApiUrl(config, repoType, repoId, `/tag/${revSegment(revision)}`),
+    body,
+  )
 }
 
 /** Remove a tag from a repository. */
@@ -116,7 +120,7 @@ export async function deleteTag(
   await hubRequest(
     config.token,
     'DELETE',
-    repoApiUrl(config, repoType, repoId, `/tag/${tag}`),
+    repoApiUrl(config, repoType, repoId, `/tag/${revSegment(tag)}`),
     null,
   )
 }

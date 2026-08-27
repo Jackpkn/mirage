@@ -76,7 +76,7 @@ export function selected(
  * a per-backend capability: the ops factory only wires `parents: true` for
  * backends that declare it, so a plain `mkdir` of `a/b` fails on the rest.
  */
-async function ensureDir(dispatch: DispatchFn, path: string): Promise<void> {
+export async function ensureDir(dispatch: DispatchFn, path: string): Promise<void> {
   const missing: string[] = []
   let current = path.replace(/\/+$/, '')
   while (current !== '' && current !== '/') {
@@ -90,7 +90,16 @@ async function ensureDir(dispatch: DispatchFn, path: string): Promise<void> {
     }
   }
   for (const target of missing.reverse()) {
-    await dispatch('mkdir', PathSpec.fromStrPath(target))
+    try {
+      await dispatch('mkdir', PathSpec.fromStrPath(target))
+    } catch (err) {
+      // A parallel download fans out over files that share parents, so two
+      // workers can read the same parent as missing and then both create
+      // it. EEXIST here says the directory is present, which is what the
+      // caller asked for; rethrowing would fail the whole Promise.all over
+      // a race that already succeeded.
+      if ((err as { code?: unknown }).code !== 'EEXIST') throw err
+    }
   }
 }
 

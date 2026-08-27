@@ -92,6 +92,12 @@ describe('treeUrl', () => {
     expect(prefixed.keyPrefix).toBe('sub/dir/')
     expect(treeUrl(prefixed)).toContain('/tree/main/sub/dir')
   })
+
+  it('encodes a revision holding a slash', () => {
+    // Unencoded, `feature/foo` names revision `feature` and subtree `foo`,
+    // so the mount reads the wrong location or appears empty.
+    expect(treeUrl(accessor({ revision: 'feature/foo' }))).toContain('/tree/feature%2Ffoo')
+  })
 })
 
 describe('collect', () => {
@@ -201,5 +207,18 @@ describe('indexRows', () => {
     const { entries } = indexRows(tree, '')
     expect(entries.get('/d')?.size).toBeNull()
     expect(entries.get('/d')?.resourceType).toBe('folder')
+  })
+})
+
+describe('fetchTree page ceiling', () => {
+  it('refuses a listing it could not finish', async () => {
+    // The listing is seeded as the mount's whole index, so a partial one
+    // reads as complete and every file past the ceiling becomes a
+    // confident false absence.
+    const spy = vi
+      .spyOn(client, 'hubGetResponse')
+      .mockResolvedValue(page([fileRow('a.txt')], 'https://h/next'))
+    await expect(fetchTree(accessor())).rejects.toThrow(/listing exceeds/)
+    spy.mockRestore()
   })
 })

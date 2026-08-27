@@ -36,6 +36,12 @@ describe('commitUrl', () => {
     expect(commitUrl(accessor())).toContain('/api/models/acme/widget/commit/main')
     expect(commitUrl(accessor(), 'dev')).toContain('/commit/dev')
   })
+
+  it('encodes a revision holding a slash', () => {
+    // Unencoded, `feature/foo` names revision `feature` and a subtree, so
+    // the commit lands somewhere else or not at all.
+    expect(commitUrl(accessor(), 'feature/foo')).toContain('/commit/feature%2Ffoo')
+  })
 })
 
 describe('payload', () => {

@@ -77,6 +77,23 @@ export function apiUrl(endpoint: string, repoType: string, repoId: string, suffi
  * A model sits at the origin root and the other two kinds sit under a
  * plural segment, the same split `resolveUrl` walks.
  */
+/**
+ * One revision, encoded as a single URL path segment.
+ *
+ * A git ref may hold a slash (`feature/foo`, `refs/pr/1`), and every Hub
+ * route reads the segment after the verb as the whole revision, so an
+ * unencoded one splits: `/tree/feature/foo` names revision `feature` and
+ * subtree `foo`. The extra replace is what makes this identical to
+ * python's `quote(revision, safe="")`, which encodes the four characters
+ * `encodeURIComponent` leaves alone.
+ */
+export function revSegment(revision: string): string {
+  return encodeURIComponent(revision).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+}
+
 export function repoUrl(endpoint: string, repoType: string, repoId: string): string {
   const segment = RESOLVE_SEGMENTS[repoType] ?? ''
   const base = `${endpoint.replace(/\/+$/, '')}/${segment === '' ? '' : `${segment}/`}`
@@ -97,7 +114,7 @@ export function resolveUrl(
     .split('/')
     .map((part) => encodeURIComponent(part))
     .join('/')
-  return `${base}${repoId}/resolve/${encodeURIComponent(revision)}/${encoded}`
+  return `${base}${repoId}/resolve/${revSegment(revision)}/${encoded}`
 }
 
 /**

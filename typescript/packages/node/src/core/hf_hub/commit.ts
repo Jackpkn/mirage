@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { HfHubAccessor } from '../../accessor/hf_hub.ts'
-import { apiUrl, hubPost, hubPostNdjson } from './client.ts'
+import { apiUrl, hubPost, hubPostNdjson, revSegment } from './client.ts'
 import { COMMIT_CHUNK, DEFAULT_COMMIT_MESSAGE, PREUPLOAD_SAMPLE_BYTES } from './constants.ts'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 
@@ -51,7 +51,7 @@ function b64(data: Uint8Array): string {
 /** The commit endpoint for one revision. */
 export function commitUrl(accessor: HfHubAccessor, revision?: string): string {
   const rev = revision ?? accessor.revision
-  return apiUrl(accessor.endpoint, accessor.repoType, accessor.repoId, `/commit/${rev}`)
+  return apiUrl(accessor.endpoint, accessor.repoType, accessor.repoId, `/commit/${revSegment(rev)}`)
 }
 
 /**
@@ -70,7 +70,12 @@ export async function uploadModes(
   const modes = new Map<string, string>()
   if (additions.length === 0) return modes
   const rev = revision ?? accessor.revision
-  const url = apiUrl(accessor.endpoint, accessor.repoType, accessor.repoId, `/preupload/${rev}`)
+  const url = apiUrl(
+    accessor.endpoint,
+    accessor.repoType,
+    accessor.repoId,
+    `/preupload/${revSegment(rev)}`,
+  )
   for (let start = 0; start < additions.length; start += COMMIT_CHUNK) {
     const chunk = additions.slice(start, start + COMMIT_CHUNK)
     const body = {

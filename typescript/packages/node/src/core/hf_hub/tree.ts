@@ -17,7 +17,7 @@ import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { LookupStatus } from '@struktoai/mirage-core/cache/index/config'
 import * as kp from '@struktoai/mirage-core/utils/key_prefix'
 import type { HfHubAccessor, RowTables } from '../../accessor/hf_hub.ts'
-import { HfHubError, apiUrl, hubGetResponse } from './client.ts'
+import { HfHubError, apiUrl, hubGetResponse, revSegment } from './client.ts'
 import { MAX_TREE_PAGES, TREE_PAGE_SIZE, TREE_PAGE_SIZE_EXPANDED } from './constants.ts'
 import type { TreeEntry } from './tree_entry.ts'
 import { isDirEntry } from './tree_entry.ts'
@@ -78,7 +78,7 @@ export function pageParams(expand: boolean): Record<string, string> {
 
 /** The tree endpoint for the mount's revision and key prefix. */
 export function treeUrl(accessor: HfHubAccessor): string {
-  let suffix = `/tree/${accessor.revision}`
+  let suffix = `/tree/${revSegment(accessor.revision)}`
   // The prefix is normalized with a trailing slash, which the tree endpoint
   // reads as a path segment of its own.
   const stem = accessor.keyPrefix.replace(/^\/+|\/+$/g, '')
@@ -105,6 +105,19 @@ export function collect(rows: unknown, prefix: string, into: Map<string, TreeEnt
 }
 
 /** Follow the cursor from one page to the last, folding as it goes. */
+/**
+ * The refusal for a listing the page ceiling cut short.
+ *
+ * Thrown rather than returned because this listing is not a cache in front
+ * of the Hub, it is seeded as the mount's whole index: a partial one reads
+ * as a complete one, so every file past the ceiling becomes a confident
+ * false absence and `hf download` silently omits it. An error the caller
+ * can see is the lesser failure.
+ */
+export function truncated(repoId: string): HfHubError {
+  return new HfHubError(`hf: ${repoId}: listing exceeds ${String(MAX_TREE_PAGES)} pages`, 0)
+}
+
 export async function walkPages(
   accessor: HfHubAccessor,
   url: string,
@@ -156,7 +169,9 @@ export async function fetchTree(accessor: HfHubAccessor): Promise<Map<string, Tr
     const left = await walkPages(accessor, url, pageParams(true), result, 1)
     if (left === '') return result
     if (expand === true) {
-      await walkPages(accessor, left, undefined, result)
+      if ((await walkPages(accessor, left, undefined, result)) !== '') {
+        throw truncated(accessor.repoId)
+      }
       return result
     }
     // Too big to expand. The bare walk restarts from the first page rather
@@ -164,7 +179,9 @@ export async function fetchTree(accessor: HfHubAccessor): Promise<Map<string, Tr
     // expanded query and its rows carry a different page size.
     result = new Map<string, TreeEntry>()
   }
-  await walkPages(accessor, url, pageParams(false), result)
+  if ((await walkPages(accessor, url, pageParams(false), result)) !== '') {
+    throw truncated(accessor.repoId)
+  }
   return result
 }
 

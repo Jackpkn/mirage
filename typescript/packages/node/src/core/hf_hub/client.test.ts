@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { HfHubError, apiUrl, errorOf, hubHeaders, resolveUrl } from './client.ts'
+import { HfHubError, apiUrl, errorOf, hubHeaders, resolveUrl, revSegment } from './client.ts'
 
 describe('hubHeaders', () => {
   it('omits Authorization without a token', () => {
@@ -75,5 +75,23 @@ describe('errorOf', () => {
     const err = errorOf(new Response('boom', { status: 500 }), '  boom  ')
     expect(err.message).toBe('boom')
     expect((err as HfHubError).status).toBe(500)
+  })
+})
+
+describe('revSegment', () => {
+  it('encodes a slash', () => {
+    // A git ref may hold one, and every Hub route reads the segment after
+    // the verb as the whole revision, so an unencoded one splits.
+    expect(revSegment('feature/foo')).toBe('feature%2Ffoo')
+    expect(revSegment('refs/pr/1')).toBe('refs%2Fpr%2F1')
+  })
+
+  it('leaves an ordinary ref alone', () => {
+    expect(revSegment('main')).toBe('main')
+    expect(revSegment('v1.0.0-rc.1')).toBe('v1.0.0-rc.1')
+  })
+
+  it("encodes the four characters encodeURIComponent does not, as python's quote does", () => {
+    expect(revSegment("a!b'c(d)e*f")).toBe('a%21b%27c%28d%29e%2Af')
   })
 })

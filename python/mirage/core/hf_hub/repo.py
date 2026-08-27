@@ -14,10 +14,9 @@
 
 from enum import Enum
 from typing import Any
-from urllib.parse import quote
 
 from mirage.accessor.hf_hub import HfHubAccessor
-from mirage.core.hf_hub.client import HfHubError, api_url, hub_get
+from mirage.core.hf_hub.client import HfHubError, api_url, hub_get, rev_segment
 from mirage.types import JsonValue
 
 
@@ -27,21 +26,6 @@ class Absence(Enum):
     PRESENT = "present"
     REPO = "repo"
     REVISION = "revision"
-
-
-async def repo_info(accessor: HfHubAccessor) -> dict[str, Any]:
-    """The repository object: sha, lastModified, tags, gated, card data.
-
-    Args:
-        accessor (HfHubAccessor): the mount's accessor.
-
-    Returns:
-        dict[str, Any]: the decoded repo object, empty when the Hub
-        answered something that is not one.
-    """
-    url = api_url(accessor.endpoint, accessor.repo_type, accessor.repo_id, "")
-    data: JsonValue = await hub_get(accessor.token, url)
-    return data if isinstance(data, dict) else {}
 
 
 async def fetch_refs(accessor: HfHubAccessor) -> dict[str, Any]:
@@ -66,14 +50,23 @@ async def head_commit(accessor: HfHubAccessor) -> str:
     object answers it for a tag and a commit-pinned mount too, where
     /refs only enumerates branches.
 
+    Asked of the revision endpoint, not the bare one: the bare object's
+    `sha` is the default branch's whatever revision was requested, and
+    the cache is keyed by this sha. Reading the wrong one files a
+    `--revision dev` download under main's snapshot and points refs/dev
+    at it, so a later main download finds the snapshot already there and
+    serves dev's bytes.
+
     Args:
         accessor (HfHubAccessor): the mount's accessor.
 
     Returns:
         str: the commit sha, or "" when the Hub reported none.
     """
-    info = await repo_info(accessor)
-    sha = info.get("sha")
+    data: JsonValue = await hub_get(accessor.token, revision_url(accessor))
+    if not isinstance(data, dict):
+        return ""
+    sha = data.get("sha")
     return sha if isinstance(sha, str) else ""
 
 
@@ -120,4 +113,4 @@ def revision_url(accessor: HfHubAccessor) -> str:
         str: the absolute ``/api/<kind>s/<id>/revision/<rev>`` url.
     """
     return api_url(accessor.endpoint, accessor.repo_type, accessor.repo_id,
-                   f"/revision/{quote(accessor.revision, safe='')}")
+                   f"/revision/{rev_segment(accessor.revision)}")

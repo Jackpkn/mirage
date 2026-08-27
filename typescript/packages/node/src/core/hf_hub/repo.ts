@@ -13,14 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { HfHubAccessor } from '../../accessor/hf_hub.ts'
-import { apiUrl, HfHubError, hubGet } from './client.ts'
-
-/** The repository object: sha, lastModified, tags, gated, card data. */
-export async function repoInfo(accessor: HfHubAccessor): Promise<Record<string, unknown>> {
-  const url = apiUrl(accessor.endpoint, accessor.repoType, accessor.repoId, '')
-  const data = await hubGet(accessor.token, url)
-  return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {}
-}
+import { apiUrl, HfHubError, hubGet, revSegment } from './client.ts'
 
 /** The repository's branches, tags and conversion refs. */
 export async function fetchRefs(accessor: HfHubAccessor): Promise<Record<string, unknown>> {
@@ -35,10 +28,17 @@ export async function fetchRefs(accessor: HfHubAccessor): Promise<Record<string,
  * Read from the repo object rather than from /refs because the repo object
  * answers it for a tag and a commit-pinned mount too, where /refs only
  * enumerates branches.
+ *
+ * Asked of the revision endpoint, not the bare one: the bare object's `sha`
+ * is the default branch's whatever revision was requested, and the cache is
+ * keyed by this sha. Reading the wrong one files a `--revision dev` download
+ * under main's snapshot and points refs/dev at it, so a later main download
+ * finds the snapshot already there and serves dev's bytes.
  */
 export async function headCommit(accessor: HfHubAccessor): Promise<string> {
-  const info = await repoInfo(accessor)
-  const sha = info.sha
+  const data = await hubGet(accessor.token, revisionUrl(accessor))
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return ''
+  const sha = (data as Record<string, unknown>).sha
   return typeof sha === 'string' ? sha : ''
 }
 
@@ -55,7 +55,7 @@ export function revisionUrl(accessor: HfHubAccessor): string {
     accessor.endpoint,
     accessor.repoType,
     accessor.repoId,
-    `/revision/${encodeURIComponent(accessor.revision)}`,
+    `/revision/${revSegment(accessor.revision)}`,
   )
 }
 

@@ -15,7 +15,7 @@
 from typing import Any
 
 from mirage.core.hf_hub.client import (HfHubError, hub_get, hub_post,
-                                       hub_request, repo_url)
+                                       hub_request, repo_url, rev_segment)
 from mirage.core.hf_hub.config import HfConfig
 from mirage.core.hf_hub.constants import API_SEGMENTS, HTTP_CONFLICT
 from mirage.types import JsonValue
@@ -134,7 +134,8 @@ async def create_tag(config: HfConfig,
     body: dict[str, JsonValue] = {"tag": tag}
     if message is not None:
         body["message"] = message
-    url = repo_api_url(config, repo_type, repo_id, f"/tag/{revision}")
+    url = repo_api_url(config, repo_type, repo_id,
+                       f"/tag/{rev_segment(revision)}")
     await hub_post(config.token, url, body)
 
 
@@ -150,7 +151,7 @@ async def delete_tag(config: HfConfig,
         tag (str): the tag to remove.
         repo_type (str): "model", "dataset" or "space".
     """
-    url = repo_api_url(config, repo_type, repo_id, f"/tag/{tag}")
+    url = repo_api_url(config, repo_type, repo_id, f"/tag/{rev_segment(tag)}")
     await hub_request(config.token, "DELETE", url, None)
 
 

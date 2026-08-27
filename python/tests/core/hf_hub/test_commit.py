@@ -31,6 +31,13 @@ def test_commit_url_targets_the_mount_revision(accessor):
     assert commit_url(accessor, "dev").endswith("/commit/dev")
 
 
+def test_commit_url_encodes_a_revision_holding_a_slash(accessor):
+    """Unencoded, `feature/foo` names revision `feature` and a subtree,
+    so the commit lands somewhere else or not at all."""
+    assert commit_url(accessor,
+                      "feature/foo").endswith("/commit/feature%2Ffoo")
+
+
 def test_payload_puts_the_header_first():
     lines = _lines(payload([], [], [], "msg", "body"))
     assert lines[0] == {
@@ -152,3 +159,12 @@ async def test_a_delete_only_commit_skips_the_preupload_probe(
     mock_ndjson.return_value = {}
     await commit(accessor, deletions=["a.txt"])
     mock_post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.hf_hub.commit.hub_post")
+async def test_upload_modes_encodes_a_revision_holding_a_slash(
+        mock_post, accessor):
+    mock_post.return_value = {"files": []}
+    await upload_modes(accessor, [Addition("a.txt", b"x")], "feature/foo")
+    assert mock_post.await_args.args[1].endswith("/preupload/feature%2Ffoo")

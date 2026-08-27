@@ -18,7 +18,7 @@ import pytest
 from pydantic import SecretStr
 
 from mirage.core.hf_hub.client import (HfHubError, _error_of, api_url,
-                                       hub_headers, resolve_url)
+                                       hub_headers, resolve_url, rev_segment)
 
 
 def test_hub_headers_omit_authorization_without_a_token():
@@ -83,3 +83,15 @@ def test_error_of_falls_back_to_the_body():
     err = _error_of(resp, "  boom  ")
     assert str(err) == "boom"
     assert err.status == 500
+
+
+def test_rev_segment_encodes_a_slash():
+    """A git ref may hold a slash, and every Hub route reads the segment
+    after the verb as the whole revision, so an unencoded one splits."""
+    assert rev_segment("feature/foo") == "feature%2Ffoo"
+    assert rev_segment("refs/pr/1") == "refs%2Fpr%2F1"
+
+
+def test_rev_segment_leaves_an_ordinary_ref_alone():
+    assert rev_segment("main") == "main"
+    assert rev_segment("v1.0.0-rc.1") == "v1.0.0-rc.1"

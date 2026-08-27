@@ -16,13 +16,14 @@ from unittest.mock import patch
 
 import pytest
 
+from mirage.accessor.hf_hub import HfRepoConfig
 from mirage.cache.index import NULL_INDEX
 from mirage.cache.index.ram import RAMIndexCacheStore
 from mirage.core.hf_hub.client import HfHubError
 from mirage.core.hf_hub.tree import (collect, ensure_live_index, ensure_tree,
                                      fetch_tree, index_rows, next_cursor,
                                      parse_entry, refill_index, tree_url)
-from tests.core.hf_hub.conftest import dir_row, file_row, page
+from tests.core.hf_hub.conftest import FakeAccessor, dir_row, file_row, page
 
 
 def test_parse_entry_keeps_the_lfs_content_size_not_the_pointer():
@@ -251,3 +252,25 @@ async def test_ensure_tree_hydrates_an_empty_repo_exactly_once(
     await ensure_tree(accessor)
     await ensure_tree(accessor)
     assert mock_fetch.await_count == 1
+
+
+def test_tree_url_encodes_a_revision_holding_a_slash():
+    """A git ref may hold a slash, and the Hub reads the segment after
+    /tree as the whole revision: unencoded, `feature/foo` names revision
+    `feature` and subtree `foo`, so the mount reads the wrong place."""
+    acc = FakeAccessor(
+        HfRepoConfig(repo_id="acme/widget", revision="feature/foo"))
+    assert tree_url(acc).endswith("/tree/feature%2Ffoo")
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.hf_hub.tree.hub_get_response")
+async def test_fetch_tree_refuses_a_listing_it_could_not_finish(
+        mock_get, accessor):
+    """The listing is seeded as the mount's whole index, so a partial one
+    reads as complete and every file past the ceiling becomes a confident
+    false absence."""
+    mock_get.return_value = page([file_row("a.txt")],
+                                 next_url="https://h/next")
+    with pytest.raises(HfHubError, match="listing exceeds"):
+        await fetch_tree(accessor)

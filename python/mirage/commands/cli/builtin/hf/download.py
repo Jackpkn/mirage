@@ -95,7 +95,15 @@ async def ensure_dir(dispatch: DispatchFn, path: str) -> None:
             missing.append(current)
             current = posixpath.dirname(current)
     for target in reversed(missing):
-        await dispatch("mkdir", PathSpec.from_str_path(target))
+        try:
+            await dispatch("mkdir", PathSpec.from_str_path(target))
+        except FileExistsError:
+            # A parallel download fans out over files that share parents,
+            # so two workers can read the same parent as missing and then
+            # both create it. EEXIST here says the directory is present,
+            # which is what the caller asked for; raising would fail the
+            # whole gather over a race that already succeeded.
+            continue
 
 
 async def write_file(dispatch: DispatchFn, accessor: HfHubAccessor,

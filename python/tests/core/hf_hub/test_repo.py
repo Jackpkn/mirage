@@ -16,22 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from mirage.core.hf_hub.repo import fetch_refs, head_commit, repo_info
-
-
-@pytest.mark.asyncio
-@patch("mirage.core.hf_hub.repo.hub_get")
-async def test_repo_info_targets_the_typed_api_path(mock_get, accessor):
-    mock_get.return_value = {"sha": "abc"}
-    assert await repo_info(accessor) == {"sha": "abc"}
-    assert mock_get.await_args.args[1].endswith("/api/models/acme/widget")
-
-
-@pytest.mark.asyncio
-@patch("mirage.core.hf_hub.repo.hub_get")
-async def test_repo_info_of_a_non_object_is_empty(mock_get, accessor):
-    mock_get.return_value = []
-    assert await repo_info(accessor) == {}
+from mirage.core.hf_hub.repo import fetch_refs, head_commit
 
 
 @pytest.mark.asyncio
@@ -48,6 +33,26 @@ async def test_fetch_refs_reads_the_refs_endpoint(mock_get, accessor):
 async def test_head_commit_reads_the_repo_sha(mock_get, accessor):
     mock_get.return_value = {"sha": "deadbeef"}
     assert await head_commit(accessor) == "deadbeef"
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.hf_hub.repo.hub_get")
+async def test_head_commit_asks_the_revision_not_the_bare_repo(
+        mock_get, accessor):
+    """The bare repo object answers the default branch's sha whatever
+    revision was asked for, and the download cache is keyed by this sha,
+    so reading it there files a `--revision dev` fetch under main's
+    snapshot."""
+    mock_get.return_value = {"sha": "deadbeef"}
+    await head_commit(accessor)
+    assert mock_get.await_args.args[1].endswith("/revision/main")
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.hf_hub.repo.hub_get")
+async def test_head_commit_of_a_non_object_is_empty(mock_get, accessor):
+    mock_get.return_value = []
+    assert await head_commit(accessor) == ""
 
 
 @pytest.mark.asyncio

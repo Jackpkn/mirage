@@ -109,3 +109,18 @@ async def test_list_tags_reads_refs_because_there_is_no_tag_listing(mock_get):
 async def test_list_tags_of_an_untagged_repo_is_empty(mock_get):
     mock_get.return_value = {"branches": [{"name": "main"}], "tags": []}
     assert await list_tags(CONFIG, "a/b") == []
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.hf_hub.admin.hub_post")
+async def test_create_tag_encodes_a_revision_holding_a_slash(mock_post):
+    mock_post.return_value = {}
+    await create_tag(CONFIG, "a/b", "v1", "model", "feature/foo", None)
+    assert mock_post.await_args.args[1].endswith("/tag/feature%2Ffoo")
+
+
+@pytest.mark.asyncio
+@patch("mirage.core.hf_hub.admin.hub_request")
+async def test_delete_tag_encodes_a_tag_holding_a_slash(mock_request):
+    await delete_tag(CONFIG, "a/b", "release/v1")
+    assert mock_request.await_args.args[2].endswith("/tag/release%2Fv1")

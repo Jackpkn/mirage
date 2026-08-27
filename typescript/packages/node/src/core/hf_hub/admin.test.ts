@@ -85,3 +85,19 @@ describe('tags', () => {
     req.mockRestore()
   })
 })
+
+describe('revisions holding a slash', () => {
+  it('encodes the revision a tag is created on', async () => {
+    const post = vi.spyOn(client, 'hubPost').mockResolvedValue({})
+    await createTag(CONFIG, 'a/b', 'v1', 'model', 'feature/foo')
+    expect(String(post.mock.calls[0]?.[1])).toMatch(/\/tag\/feature%2Ffoo$/)
+    post.mockRestore()
+  })
+
+  it('encodes the tag being deleted', async () => {
+    const req = vi.spyOn(client, 'hubRequest').mockResolvedValue(undefined as never)
+    await deleteTag(CONFIG, 'a/b', 'release/v1')
+    expect(String(req.mock.calls[0]?.[2])).toMatch(/\/tag\/release%2Fv1$/)
+    req.mockRestore()
+  })
+})
