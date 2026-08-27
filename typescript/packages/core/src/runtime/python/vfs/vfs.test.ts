@@ -165,6 +165,42 @@ describe('MirageFs', () => {
     return `/m${String(counter)}/`
   }
 
+  // Emscripten's MEMFS makes /dev/stdin, /dev/stdout and /dev/stderr at
+  // startup, and pyodide's own capture reopens /dev/stderr when a run ends.
+  // Mounting mirage's /dev over MEMFS's used to hide them, and that reopen
+  // threw ENOENT out of a callback nobody catches: an unhandled rejection,
+  // which Node turns into a dead process.
+  it('keeps the standard stream devices when it takes over /dev', async () => {
+    await mountPrefix('/dev/')
+    const fs = py.FS as unknown as {
+      stat: (p: string) => { mode: number }
+      open: (p: string, flags: string) => unknown
+      readFile: (p: string) => Uint8Array
+      createDevice: (dir: string, name: string, i?: unknown, o?: unknown) => unknown
+      chmod: (p: string, m: number) => void
+    }
+    for (const name of ['stdin', 'stdout', 'stderr']) {
+      expect((fs.stat(`/dev/${name}`).mode & 0o170000) === 0o020000).toBe(true)
+    }
+    // The reopen itself, which is the call that used to throw.
+    expect(fs.open('/dev/stderr', 'w')).toBeTruthy()
+    // And they have to read as empty. A character device here answers with an
+    // endless run of zeroes unless told otherwise, which is /dev/zero's job; a
+    // stream doing the same would hang `open('/dev/stdin').read()` forever
+    // rather than reach EOF.
+    for (const name of ['stdin', 'stdout', 'stderr']) {
+      expect(fs.readFile(`/dev/${name}`).length).toBe(0)
+    }
+    // And nothing about a device reaches the journal. pyodide makes one at
+    // runtime (API.capture_stderr calls FS.createDevice) and chmods it right
+    // after; replaying either wrote a device path against the real mount,
+    // which is what failed during teardown.
+    fs.createDevice('/dev', 'probe_dev', undefined, () => true)
+    fs.chmod('/dev/probe_dev', 0o600)
+    const touched = journal.takeMutations().map((m) => m.path)
+    expect(touched.filter((path) => path.includes('probe_dev'))).toEqual([])
+  })
+
   it('serves a seeded file to the guest', async () => {
     const p = prefix()
     store.set(`${p}seed.txt`, enc.encode('ORIGINAL'))
