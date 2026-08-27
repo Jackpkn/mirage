@@ -170,11 +170,8 @@ runs:
     - name: Start fake Slack Web API (Prisma)
       working-directory: integ
       shell: bash
-      env:
-        INTEG_DB_URL: file:/tmp/mirage-slack-ci.db
       run: |
-        ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-        nohup ./node_modules/.bin/tsx server/slack.ts --port 5097 > /tmp/slacksrv.log 2>&1 &
+        nohup ./node_modules/.bin/tsx server/slack/main.ts --port 5097 > /tmp/slacksrv.log 2>&1 &
         for i in $(seq 1 30); do
           grep -q "SLACK_URL=" /tmp/slacksrv.log && break
           sleep 1
@@ -209,10 +206,7 @@ runs:
     - name: Start fake Trello API (Prisma)
       working-directory: integ
       shell: bash
-      env:
-        INTEG_DB_URL: file:/tmp/mirage-trello-ci.db
       run: |
-        ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
         nohup ./node_modules/.bin/tsx server/trello/main.ts --port 5095 > /tmp/trellosrv.log 2>&1 &
         for i in $(seq 1 30); do
           grep -q "TRELLO_URL=" /tmp/trellosrv.log && break

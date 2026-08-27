@@ -121,15 +121,17 @@ export class Router<C> {
     return null
   }
 
-  // Generalizes notion_server.ts's serialize(). One event loop answers every
+  // Generalizes the per-workspace serialize() the notion fake carried before
+  // it moved onto the kit. One event loop answers every
   // request, so two writes to the same rows interleave at any await: both
   // read, both write back, the later one silently drops the earlier change.
   //
   // The queue key is the RUN, not (run, tenant), because the run is what owns
-  // mutable state: one SQLite file, one clock and one minter, all shared by
-  // every tenant in it. Keying finer than the state it protects is not a
-  // smaller lock, it is a missing one -- two tenants then minted from one
-  // counter concurrently and their ids interleaved non-deterministically.
+  // the SQLite file every tenant in it writes through. The clock and the
+  // minter moved down to the tenant when /reset learned to scope itself, so
+  // this is now coarser than it strictly has to be, and deliberately: keying
+  // finer than the state it protects is not a smaller lock, it is a missing
+  // one, and one file is the state actually shared here.
   enqueue<T>(run: string, work: () => Promise<T> | T): Promise<T> {
     const prior = this.queues.get(run) ?? Promise.resolve()
     const next = prior.then(work)

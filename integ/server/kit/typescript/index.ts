@@ -13,8 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 export { ANNOUNCE_RE, ANNOUNCE_SUFFIX, announceFor, emit } from './announce.ts'
-export { makePool, makeState } from './base.ts'
-export type { Fake, Runtime, RunState } from './base.ts'
+export { RunState, makePool, makeState } from './base.ts'
+export type { Fake, Runtime, TenantState } from './base.ts'
 export {
   DEFAULT_ADVERTISE_HOST,
   DEFAULT_BIND_HOST,
@@ -22,6 +22,7 @@ export {
   authorityHost,
   bindHost,
 } from './bind.ts'
+export { clearTenants, deleteOrder, untenanted } from './clear.ts'
 export { Clock, TICK_MS } from './clock.ts'
 export { parseConfig } from './config.ts'
 export type { KitConfig } from './config.ts'
@@ -69,7 +70,7 @@ export {
   tenantWhere,
 } from './tenant.ts'
 export type { Headers } from './tenant.ts'
-export { SEQ_FIELD, delegateName, seedFixture } from './seed.ts'
+export { SEQ_FIELD, delegateFor, delegateName, seedFixture } from './seed.ts'
 export type { Dmmf, DmmfField, DmmfModel, SeedOptions } from './seed.ts'
 export { serve, start } from './serve.ts'
 export type { Started } from './serve.ts'

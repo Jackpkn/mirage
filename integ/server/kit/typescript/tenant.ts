@@ -70,11 +70,25 @@ export function resolveRun(headers: Headers, url: URL): string {
 // selected an unseeded tenant and every read 404'd, which is a worse answer
 // than the 401 the real vendor gives: trello and linear are partitioned by the
 // mount, not by the token, and neither has any use for it.
+// A vendor whose token carries an ACTOR TYPE in front of the install identity
+// needs the type stripped before the rest can name a tenant. Slack is the case:
+// one workspace is reached with `xoxb-<id>` for most methods and `xoxp-<id>`
+// for search.*, so using the raw bearer would split one workspace across two
+// tenants and every search would read an empty one. The pattern's first capture
+// group is the tenant; a token that does not match falls back to the default,
+// exactly as an illegal one does.
+export function tenantFromToken(token: string, pattern: string): string | undefined {
+  if (pattern === '') return token
+  const m = new RegExp(pattern).exec(token)
+  return m === null ? undefined : m[1]
+}
+
 export function resolveTenant(
   headers: Headers,
   url: URL,
   kind: TenantKind,
   fromBearer = false,
+  tokenPattern = '',
 ): string {
   if (kind === 'none') return DEFAULT_TENANT
   const named =
@@ -89,7 +103,9 @@ export function resolveTenant(
   // OUTSIDE the reset try/catch, so `Authorization: Bearer a/b` answered 500 on
   // every route of every pk-column fake, where the fakes it replaces answered
   // their own 401.
-  const token = bearer(headers)
+  const raw = bearer(headers)
+  if (raw === undefined) return DEFAULT_TENANT
+  const token = tenantFromToken(raw, tokenPattern)
   return token !== undefined && NAME_RE.test(token) ? token : DEFAULT_TENANT
 }
 

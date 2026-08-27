@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { clearTenants } from './clear.ts'
 import { ResetBodyError } from './errors.ts'
 import { loadFixture, DEFAULT_FIXTURE } from './fixture.ts'
 import { seedFixture } from './seed.ts'
@@ -71,17 +72,34 @@ export function parseResetBody(raw: JsonValue, fallbackTenants: string[]): Reset
   return out
 }
 
+// A reset is SCOPED whenever the tenant is a column, and that is what lets two
+// hosts share one server. Recreating the run file is correct for one caller and
+// destructive for two: both hosts land on run `default` (no adapter sends one),
+// so the second host's /reset unlinked the database the first was reading and
+// every later request on that run failed forever. With a tenant column the same
+// reset is expressible as a delete restricted to the named tenants, which
+// leaves the other host's rows, clock and counters untouched.
+//
+// A fake with no tenant column has nothing to restrict by, so it keeps
+// recreating the file. That is not a gap: `tenantKind: 'none'` means one world
+// per run, and recreating it IS the scoped reset for a single tenant.
 export async function applyReset<C extends MinimalClient>(
   fake: Fake<C>,
   pool: ClientPool<C>,
   state: (run: string) => RunState,
   req: ResetRequest,
 ): Promise<ResetResponse> {
-  const db = await pool.recreate(req.run)
-  const st = state(req.run)
-  st.clock.setEpoch(req.epoch)
-  st.minter.reset()
+  // The fixture is read BEFORE anything is destroyed. An unreadable name is a
+  // 400, and answering one after having already deleted the caller's rows
+  // leaves them with neither their data nor the seed they asked for. It did
+  // not matter when a reset recreated the whole file, because that file was
+  // gone either way; it matters now that a reset is a delete.
   const fixture = loadFixture(fake.config.service, req.fixture)
+  const scoped = fake.config.tenantKind !== 'none'
+  const db = scoped ? pool.client(req.run) : await pool.recreate(req.run)
+  if (scoped) await clearTenants(db, fake.dmmf, req.tenants)
+  const st = state(req.run)
+  for (const tenant of req.tenants) st.reset(tenant, req.epoch)
   const seeded: SeedReport[] = []
   for (const tenant of req.tenants) {
     const rows = await seedFixture(db, fixture, {
@@ -97,6 +115,7 @@ export async function applyReset<C extends MinimalClient>(
     ok: true,
     run: req.run,
     epoch: req.epoch ?? null,
+    scoped,
     tenants: req.tenants,
     seeded,
   }

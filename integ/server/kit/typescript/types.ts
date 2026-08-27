@@ -41,6 +41,11 @@ export interface ResetResponse {
   ok: boolean
   run: string
   epoch: string | null
+  // Whether the named tenants were cleared in place rather than the whole run
+  // file recreated. Reported because it is the difference between a server two
+  // hosts may share and one they may not, and a caller that cannot see which it
+  // got debugs the resulting cross-host flake blind.
+  scoped: boolean
   tenants: string[]
   seeded: SeedReport[]
 }

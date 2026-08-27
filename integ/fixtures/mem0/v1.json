@@ -1,0 +1,37 @@
+{
+  "memories": [
+    {
+      "id": "mem-alpha",
+      "userId": "integ-user",
+      "memory": "Quarterly planning happens on Tuesday.",
+      "metadataJson": {
+        "topic": "planning"
+      },
+      "createdAt": "2026-01-01T10:00:00Z",
+      "updatedAt": "2026-01-03T10:00:00Z",
+      "score": 0.97
+    },
+    {
+      "id": "mem-beta",
+      "userId": "integ-user",
+      "memory": "The user prefers dark mode.",
+      "metadataJson": {
+        "topic": "preferences"
+      },
+      "createdAt": "2026-01-02T10:00:00Z",
+      "updatedAt": "2026-01-02T10:00:00Z",
+      "score": 0.82
+    },
+    {
+      "id": "mem-gamma",
+      "userId": "integ-user",
+      "memory": "The next trip is to Seattle.",
+      "metadataJson": {
+        "topic": "travel"
+      },
+      "createdAt": "2026-01-03T10:00:00Z",
+      "updatedAt": "2026-01-04T10:00:00Z",
+      "score": 0.88
+    }
+  ]
+}
