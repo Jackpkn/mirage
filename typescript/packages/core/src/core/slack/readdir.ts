@@ -21,6 +21,7 @@ import { channelDirname, dmDirname, fileBlobName, userFilename } from './formatt
 import { fetchMessagesForDay, messagesToJsonl, type SlackMessage } from './history.ts'
 import { detectScope } from './scope.ts'
 import { listUsers, userJsonBytes } from './users.ts'
+import { globSpan, hasGlobSpan } from '../../utils/glob_walk.ts'
 
 export const VIRTUAL_ROOTS = ['channels', 'dms', 'users'] as const
 
@@ -56,19 +57,35 @@ export async function latestMessageTs(
   return Number.parseFloat(messages[0]?.ts ?? '0')
 }
 
-export function dateRange(latestTs: number, created: number, maxDays = 90): string[] {
+/**
+ * The channel's day directories, newest first.
+ *
+ * A day dir is real for any date the channel has existed for, so the bare
+ * listing is a window: the last `maxDays` up to the newest message. A glob
+ * names its own window instead, and then the cap does not apply, because the
+ * span is already bounded by what was typed.
+ */
+export function dateRange(
+  latestTs: number,
+  created: number,
+  maxDays = 90,
+  span: readonly [string, string] | null = null,
+): string[] {
   const endMs = Math.floor(latestTs * 1000)
   const startMs = Math.floor(created * 1000)
   const endDate = new Date(endMs)
   const startDate = new Date(startMs)
-  const endUtc = Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate())
+  let endUtc = Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate())
   let startUtc = Date.UTC(
     startDate.getUTCFullYear(),
     startDate.getUTCMonth(),
     startDate.getUTCDate(),
   )
   const dayMs = 86_400_000
-  if ((endUtc - startUtc) / dayMs > maxDays) {
+  if (span !== null) {
+    startUtc = Math.max(startUtc, Date.parse(`${span[0]}T00:00:00Z`))
+    endUtc = Math.min(endUtc, Date.parse(`${span[1]}T00:00:00Z`) - dayMs)
+  } else if ((endUtc - startUtc) / dayMs > maxDays) {
     startUtc = endUtc - (maxDays - 1) * dayMs
   }
   const dates: string[] = []
@@ -142,20 +159,21 @@ async function listUsersRoot(accessor: SlackAccessor, _match: ScopeMatch): Promi
 
 async function listChannelDays(
   accessor: SlackAccessor,
-  _match: ScopeMatch,
+  match: ScopeMatch,
   own: IndexEntry,
 ): Promise<Listed> {
   const created = Number.parseInt(own.remoteTime !== '' ? own.remoteTime : '0', 10)
+  const span = globSpan(match.pattern)
   const latestTs = await latestMessageTs(accessor, own.id)
   let dates: string[]
   if (latestTs !== null && created > 0) {
-    dates = dateRange(latestTs, created)
+    dates = dateRange(latestTs, created, 90, span)
   } else if (latestTs !== null) {
-    dates = dateRange(latestTs, Math.floor(latestTs))
+    dates = dateRange(latestTs, Math.floor(latestTs), 90, span)
   } else {
     dates = []
   }
-  return dates.map(
+  const entries = dates.map(
     (d) =>
       [
         d,
@@ -168,6 +186,7 @@ async function listChannelDays(
         }),
       ] as [string, IndexEntry],
   )
+  return { entries, seeds: {}, partial: span !== null }
 }
 
 /**
@@ -285,4 +304,5 @@ export const readdir = makeReaddir<SlackAccessor>(detectScope, {
   },
   parentEntryListers: { day: listDay },
   staticRoot: VIRTUAL_ROOTS,
+  patternKinds: { channel: hasGlobSpan },
 })

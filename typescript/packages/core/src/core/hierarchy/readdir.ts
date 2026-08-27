@@ -35,10 +35,18 @@ import { INVALID, ROOT, type DetectFn, type ScopeMatch } from './scope.ts'
  * so entering a seeded directory costs no second identical fetch. `seeds`
  * keys are paths relative to the listed directory (`files`,
  * `2026-01-05/Report__17`).
+ *
+ * `partial` says the entries are a filtered or truncated view rather than the
+ * directory's contents, so they must not be cached as the directory: a
+ * glob-scoped listing, or one the provider did not finish. The entries
+ * themselves are real either way, so the kit caches those and lets the next
+ * readdir re-list. `seeds` stay full listings of the children this fetch did
+ * report, so they are cached as directories as usual.
  */
 export interface DirListing {
   entries: [string, IndexEntry][]
   seeds: Readonly<Record<string, [string, IndexEntry][]>>
+  partial?: boolean
 }
 
 export type Listed = [string, IndexEntry][] | DirListing
@@ -56,6 +64,8 @@ export type Guard<A extends Accessor> = (
   match: ScopeMatch,
   virtual: string,
 ) => Promise<void>
+
+export type PatternTest = (pattern: string) => boolean
 
 function dropHidden(listed: [string, IndexEntry][]): [string, IndexEntry][] {
   return listed.filter(([name]) => !name.startsWith('.'))
@@ -101,8 +111,14 @@ function dropHidden(listed: [string, IndexEntry][]): [string, IndexEntry][] {
  * tables. `staticRoot` names fixed top-level entries, for backends whose
  * root never changes; it bypasses the index. `guards` are existence checks
  * that run before the index probe, so a vanished container is ENOENT even on
- * a warm cache. `leafError` is what listing a leaf raises; fixed hierarchies
- * historically answer ENOENT.
+ * a warm cache. `patternKinds` holds one entry per kind whose listing is a
+ * bounded window, the test for whether a glob is one its lister can move the
+ * window to (`hasGlobSpan` for a date-keyed listing). A glob that passes
+ * reaches the lister and the index is not read first, because a cached
+ * listing is that same window and would answer the glob with it; any other
+ * glob, and any other kind, keeps the cached listing and never sees a
+ * pattern. `leafError` is what listing
+ * a leaf raises; fixed hierarchies historically answer ENOENT.
  */
 export function makeReaddir<A extends Accessor>(
   detect: DetectFn,
@@ -112,10 +128,12 @@ export function makeReaddir<A extends Accessor>(
     parentEntryListers?: Readonly<Record<string, EntryLister<A>>>
     staticRoot?: readonly string[]
     guards?: Readonly<Record<string, Guard<A>>>
+    patternKinds?: Readonly<Record<string, PatternTest>>
     leafError?: 'enoent' | 'enotdir'
   },
 ): ReaddirFn<A> {
   const { listers, staticRoot, guards } = options
+  const patternKinds = options.patternKinds ?? {}
   const entryListers = options.entryListers ?? {}
   const parentEntryListers = options.parentEntryListers ?? {}
   const leafError = options.leafError ?? 'enoent'
@@ -142,8 +160,11 @@ export function makeReaddir<A extends Accessor>(
     const path = (pathSpec.pattern !== null ? pathSpec.dir : pathSpec).mountPath
     const key = stripSlash(path)
     const virtualKey = key !== '' ? `${prefix}/${key}` : prefix !== '' ? prefix : '/'
-    const match = detect(path)
-    if (match.kind === INVALID) throw enoent(pathSpec)
+    const detected = detect(path)
+    if (detected.kind === INVALID) throw enoent(pathSpec)
+    const pushable = patternKinds[detected.kind]
+    const globbed = pathSpec.pattern !== null && pushable?.(pathSpec.pattern) === true
+    const match = globbed ? { ...detected, pattern: pathSpec.pattern } : detected
     if (match.kind === ROOT && staticRoot !== undefined) {
       return staticRoot.map((d) => `${prefix}/${d}`)
     }
@@ -158,8 +179,10 @@ export function makeReaddir<A extends Accessor>(
     }
     const guard = guards?.[match.kind]
     if (guard !== undefined) await guard(accessor, match, virtual)
-    const listing = await store.listDir(virtualKey)
-    if (listing.entries !== undefined && listing.entries !== null) return listing.entries
+    if (!globbed) {
+      const listing = await store.listDir(virtualKey)
+      if (listing.entries !== undefined && listing.entries !== null) return listing.entries
+    }
     let listed: Listed
     if (entryLister !== undefined || parentLister !== undefined) {
       const proofKey =
@@ -181,8 +204,10 @@ export function makeReaddir<A extends Accessor>(
       // The resolve may have warmed this very listing: a parent's lister
       // can seed a child listing from the same fetch (DirListing.seeds),
       // so ask the index again before fetching.
-      const relisted = await store.listDir(virtualKey)
-      if (relisted.entries !== undefined && relisted.entries !== null) return relisted.entries
+      if (!globbed) {
+        const relisted = await store.listDir(virtualKey)
+        if (relisted.entries !== undefined && relisted.entries !== null) return relisted.entries
+      }
       const fetch = entryLister ?? parentLister
       if (fetch === undefined) throw enoent(pathSpec)
       listed = await fetch(accessor, match, own)
@@ -194,13 +219,19 @@ export function makeReaddir<A extends Accessor>(
       throw enoent(pathSpec)
     }
     let seeds: Readonly<Record<string, [string, IndexEntry][]>> = {}
+    let partial = false
     if (!Array.isArray(listed)) {
       seeds = listed.seeds
+      partial = listed.partial === true
       listed = listed.entries
     }
     const entries = dropHidden(listed)
-    await store.setDir(virtualKey, entries)
     const stem = rstripSlash(virtualKey)
+    if (partial) {
+      for (const [name, entry] of entries) await store.put(`${stem}/${name}`, entry)
+    } else {
+      await store.setDir(virtualKey, entries)
+    }
     for (const [rel, childEntries] of Object.entries(seeds)) {
       await store.setDir(`${stem}/${stripSlash(rel)}`, dropHidden(childEntries))
     }

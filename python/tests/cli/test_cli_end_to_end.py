@@ -398,3 +398,74 @@ def test_execute_limit_error_exits_1(daemon, tmp_path):
              "cat /f.txt",
              expect_exit=1)
     _run_cli(daemon["env"], "workspace", "delete", "sg-err")
+
+
+ASK_PROFILE_YAML = """\
+mounts:
+  /:
+    resource: ram
+    mode: WRITE
+profiles:
+  guarded:
+    commands:
+      ask:
+        - commands: [rm]
+          reason: removal needs sign-off
+"""
+
+
+def test_ask_allow_deny_round_trip(daemon, tmp_path):
+    cfg = _write_named(tmp_path, "asks.yaml", ASK_PROFILE_YAML)
+    _run_cli(daemon["env"], "workspace", "create", str(cfg), "--id", "asks-ws")
+    _run_cli(daemon["env"], "session", "create", "asks-ws", "--id", "agent_a",
+             "--profile", "guarded")
+    _run_cli(daemon["env"], "execute", "-w", "asks-ws", "-s", "agent_a", "-c",
+             "touch /f.txt /g.txt")
+
+    _run_cli(daemon["env"],
+             "execute",
+             "-w",
+             "asks-ws",
+             "-s",
+             "agent_a",
+             "-c",
+             "rm /f.txt",
+             expect_exit=126)
+    asks = _run_cli(daemon["env"], "workspace", "list-asks", "asks-ws")
+    assert len(asks) == 1
+    assert asks[0]["outcome"] is None
+    assert asks[0]["command"] == "rm"
+
+    allowed = _run_cli(daemon["env"], "workspace", "allow", "asks-ws",
+                       asks[0]["id"])
+    assert allowed["outcome"] == "allow"
+    assert allowed["scope"] == "once"
+    _run_cli(daemon["env"], "execute", "-w", "asks-ws", "-s", "agent_a", "-c",
+             "rm /f.txt")
+
+    _run_cli(daemon["env"],
+             "execute",
+             "-w",
+             "asks-ws",
+             "-s",
+             "agent_a",
+             "-c",
+             "rm /g.txt",
+             expect_exit=126)
+    asks = _run_cli(daemon["env"], "workspace", "list-asks", "asks-ws",
+                    "--session", "agent_a")
+    denied = _run_cli(daemon["env"], "workspace", "deny", "asks-ws",
+                      asks[0]["id"], "--note", "not now")
+    assert denied["outcome"] == "deny"
+    assert denied["note"] == "not now"
+    _run_cli(daemon["env"],
+             "execute",
+             "-w",
+             "asks-ws",
+             "-s",
+             "agent_a",
+             "-c",
+             "rm /g.txt",
+             expect_exit=126)
+    assert _run_cli(daemon["env"], "workspace", "list-asks", "asks-ws") == []
+    _run_cli(daemon["env"], "workspace", "delete", "asks-ws")

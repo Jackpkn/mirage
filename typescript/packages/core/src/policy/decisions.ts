@@ -15,6 +15,7 @@
 import { sha256Hex } from '../utils/hash.ts'
 import { Outcome } from './types.ts'
 import type {
+  Abandoned,
   Ask,
   CommandContext,
   CommandRule,
@@ -25,7 +26,63 @@ import type {
 } from './types.ts'
 import { Scope } from './types.ts'
 
-export type AskHandler = (record: Decision) => Promise<Decision | null>
+const ABANDONED: Abandoned = { kind: 'abandoned' }
+
+/**
+ * Tell the abandonment of a question from a host's answer.
+ *
+ * Structural, not by identity: a `Decision` carries no `kind`, so the
+ * field alone separates the two without depending on this module being
+ * the only place the sentinel is built.
+ *
+ * @param said what the wait produced.
+ * @returns true when the run went away mid-question.
+ */
+function isAbandoned(said: Decision | null | Abandoned): said is Abandoned {
+  return said !== null && 'kind' in said
+}
+
+/**
+ * A host's answer, or the abandonment of the question when the run
+ * waiting on it is killed first.
+ *
+ * The wait is taken as a thunk so a run already over never starts one:
+ * nothing should be put to a host on behalf of a line that no longer
+ * exists. An abandoned wait is not cancelled, because a promise cannot
+ * be; its value is dropped, and the rejection handler stays attached so
+ * a channel that falls over afterwards does not surface as an unhandled
+ * rejection.
+ *
+ * @param start begins the wait; called at most once.
+ * @param signal the run's abort signal; absent leaves the wait alone.
+ * @returns the answer, or ABANDONED once the run is gone.
+ */
+async function answered(
+  start: () => Promise<Decision | null>,
+  signal: AbortSignal | undefined,
+): Promise<Decision | null | Abandoned> {
+  if (signal === undefined) return start()
+  if (signal.aborted) return ABANDONED
+  const pending = start()
+  return new Promise<Decision | null | Abandoned>((resolve, reject) => {
+    const onAbort = (): void => {
+      resolve(ABANDONED)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    pending.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort)
+    })
+  })
+}
+
+/**
+ * A host that answers an Ask inside the line.
+ *
+ * `signal` is the run's, so a host that puts a question to a person can
+ * take its prompt down when the run it belongs to is killed. Ignoring it
+ * is safe: the ledger stops waiting on the handler either way.
+ */
+export type AskHandler = (record: Decision, signal?: AbortSignal) => Promise<Decision | null>
 
 /**
  * The id a record is named by: a digest of what was asked, so a retry
@@ -177,8 +234,19 @@ export class Decisions {
    * next, and a ONCE answer is only spent once the whole line is
    * answered: spending one while another is still waiting would make
    * the first question come back on every retry.
+   *
+   * @param ctx the classified command being admitted.
+   * @param ask the chain's Ask.
+   * @param signal the run's abort signal, so a question outlives
+   *   neither its run's deadline nor a caller's kill.
+   * @returns the refusal, the question left waiting, an Abandoned for a
+   *   run killed mid-question, or null to run.
    */
-  async resolve(ctx: CommandContext, ask: Ask): Promise<Deny | Pending | null> {
+  async resolve(
+    ctx: CommandContext,
+    ask: Ask,
+    signal?: AbortSignal,
+  ): Promise<Deny | Pending | Abandoned | null> {
     const rules = ask.rules ?? [askRule(ctx, ask)]
     const argv = [ctx.command, ...ctx.argv]
     const sessionId = ctx.sessionId ?? ''
@@ -196,7 +264,7 @@ export class Decisions {
     }
     for (const [rule, record] of answers) {
       if (record !== null) continue
-      const action = await this.raise(ctx, rule, argv)
+      const action = await this.raise(ctx, rule, argv, signal)
       if (action !== null) return action
     }
     await this.spend(sessionId, spent)
@@ -239,12 +307,32 @@ export class Decisions {
    *
    * A question already waiting is reused rather than duplicated, so a
    * retry keeps quoting one id.
+   *
+   * The host is given the run's signal and the wait is bounded by it,
+   * because a host that asks a person can take an unbounded amount of
+   * time and the executor's own cooperative abort checks cannot reach
+   * inside that wait: without this a killed or timed-out run would sit
+   * here until somebody answered.
+   *
+   * A run killed mid-question is reported as Abandoned and its record is
+   * left waiting, with whatever the host eventually says dropped rather
+   * than recorded: an ALLOW banked against a run that is already dead
+   * would leave a spent-once grant in the ledger for the next identical
+   * line to take, with nobody asked.
+   *
+   * @param ctx the classified command being admitted.
+   * @param rule the one rule of the line being asked about.
+   * @param argv the line, command name first.
+   * @param signal the run's abort signal.
+   * @returns the refusal, the question left waiting, an Abandoned for a
+   *   run killed mid-question, or null to run.
    */
   private async raise(
     ctx: CommandContext,
     rule: CommandRule,
     argv: readonly string[],
-  ): Promise<Deny | Pending | null> {
+    signal?: AbortSignal,
+  ): Promise<Deny | Pending | Abandoned | null> {
     let record = this.waiting(ctx, rule, argv)
     if (record === null) {
       record = {
@@ -264,13 +352,15 @@ export class Decisions {
       this.add(ctx.sessionId ?? '', record)
       await this.flush()
     }
-    if (this.onAsk === null) return { kind: 'pending', id: record.id, reason: rule.reason }
-    const answered = await this.onAsk(record)
-    if (answered?.outcome == null) {
+    const onAsk = this.onAsk
+    if (onAsk === null) return { kind: 'pending', id: record.id, reason: rule.reason }
+    const said = await answered(() => onAsk(record, signal), signal)
+    if (isAbandoned(said)) return said
+    if (said?.outcome == null) {
       return { kind: 'pending', id: record.id, reason: rule.reason }
     }
-    await this.answer(record.id, answered.outcome, answered.scope, answered.note)
-    if (answered.outcome === Outcome.DENY) {
+    await this.answer(record.id, said.outcome, said.scope, said.note)
+    if (said.outcome === Outcome.DENY) {
       return { kind: 'deny', reason: rule.reason, scope: 'command' }
     }
     return null

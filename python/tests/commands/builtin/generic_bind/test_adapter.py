@@ -12,14 +12,21 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import dataclasses
+import errno
+
 import pytest
 
+import mirage.commands.builtin.generic_bind.adapter as adapter
 from mirage.accessor.base import NOOPAccessor
+from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.generic_bind.adapter import (CommandIO, Operation,
                                                           dir_aware_stat,
-                                                          dir_aware_stream)
+                                                          dir_aware_stream,
+                                                          with_dir_guard)
 from mirage.commands.config import CommandOpts
 from mirage.ops.types import NamespaceView
+from mirage.policy import Action, Deny, OpsContext, Policy
 from mirage.types import ContentType, FileStat, FileType, PathSpec
 from mirage.utils.glob_walk import DEFAULT_MAX_GLOB_MATCHES
 
@@ -327,3 +334,570 @@ async def test_rule_guard_asks_the_bound_gate_and_leaves_stat_alone():
     assert ("read", "/data/locked/y") in calls
     assert ("rename", "/data/a", "/data/locked/y") not in calls
     assert ("rename", "/data/a", "/data/b") in calls
+
+
+class _SealedRead(Policy):
+    """Refuse reads of one path; record every op asked."""
+
+    def __init__(self, sealed: str) -> None:
+        self.sealed = sealed
+        self.asked: list[tuple[str, str, bool]] = []
+
+    async def pre_ops(self, ctx: OpsContext) -> Action | None:
+        self.asked.append((ctx.op, ctx.path.virtual, ctx.write))
+        if not ctx.write and ctx.path.virtual == self.sealed:
+            return Deny("sealed")
+        return None
+
+
+def _policy_probe_ops(calls: list[tuple[str, ...]]) -> CommandIO:
+    """A CommandIO whose slots record their calls; closures on `calls`."""
+
+    async def read_bytes(accessor, path, index=None):
+        calls.append(("read", path.virtual))
+        return b"x"
+
+    def read_stream(accessor, path, index=None):
+        return _probe_chunks(calls, path)
+
+    async def stat(accessor, path, index=None):
+        calls.append(("stat", path.virtual))
+        return FileStat(name="k",
+                        type=FileType.FILE,
+                        content=ContentType.TEXT,
+                        size=1)
+
+    async def readdir(accessor, path, index=None):
+        calls.append(("readdir", path.virtual))
+        return ["a"]
+
+    async def copy(accessor, src, dst):
+        calls.append(("copy", src.virtual, dst.virtual))
+
+    async def unlink(accessor, path, index=None):
+        calls.append(("unlink", path.virtual))
+
+    return CommandIO(readdir=readdir,
+                     read_bytes=read_bytes,
+                     read_stream=read_stream,
+                     stat=stat,
+                     is_mounted=lambda a: True,
+                     copy=copy,
+                     unlink=unlink)
+
+
+async def _probe_chunks(calls: list[tuple[str, ...]], path: PathSpec):
+    calls.append(("stream", path.virtual))
+    yield b"x"
+
+
+@pytest.mark.asyncio
+async def test_policy_guard_admits_slots_and_leaves_stat_alone():
+    from mirage.commands.builtin.generic_bind.adapter import with_policy_guard
+    from mirage.context import (reset_mount_gate, reset_op_policies,
+                                set_mount_gate, set_op_policies)
+    from mirage.policy.policies import Policies
+    from mirage.types import MountMode
+
+    calls: list[tuple[str, ...]] = []
+    raw = _policy_probe_ops(calls)
+    acc = NOOPAccessor()
+    # No binding: every slot runs as is, and no hook fires.
+    assert await with_policy_guard(raw).read_bytes(
+        acc, _spec("/data/secret")) == b"x"
+    calls.clear()
+
+    policy = _SealedRead("/data/secret")
+    ptoken = set_op_policies(Policies([policy]))
+    gtoken = set_mount_gate("/data", MountMode.WRITE)
+    try:
+        ops = with_policy_guard(raw)
+        with pytest.raises(PermissionError) as excinfo:
+            await ops.read_bytes(acc, _spec("/data/secret"))
+        assert excinfo.value.errno == errno.EACCES
+        assert ("read", "/data/secret") not in calls
+        # The stream gates before its first chunk.
+        with pytest.raises(PermissionError):
+            async for _ in ops.read_stream(acc, _spec("/data/secret")):
+                pass
+        assert ("stream", "/data/secret") not in calls
+        # stat is not a guarded slot: deny is present and refused.
+        assert (await ops.stat(acc, _spec("/data/secret"))).size == 1
+        # readdir asks about the directory it lists.
+        assert await ops.readdir(acc, _spec("/data/dir")) == ["a"]
+        # A copy's source is a read; its destination is a write.
+        await ops.copy(acc, _spec("/data/src"), _spec("/data/dst"))
+        # A write slot asks with write=True.
+        await ops.unlink(acc, _spec("/data/gone"))
+    finally:
+        reset_mount_gate(gtoken)
+        reset_op_policies(ptoken)
+    assert ("read_bytes", "/data/secret", False) in policy.asked
+    assert ("read_stream", "/data/secret", False) in policy.asked
+    assert ("readdir", "/data/dir", False) in policy.asked
+    assert ("copy", "/data/src", False) in policy.asked
+    assert ("copy", "/data/dst", True) in policy.asked
+    assert ("unlink", "/data/gone", True) in policy.asked
+    assert not any(op == "stat" for op, _, _ in policy.asked)
+
+
+@pytest.mark.asyncio
+async def test_policy_guard_wrap_time_capture_covers_late_drains():
+    # head/tail/wc bind lazy readers the pipeline drains after dispatch
+    # has reset the context; the guard captured at wrap time still
+    # answers (_live_policy_scope).
+    from mirage.commands.builtin.generic_bind.adapter import with_policy_guard
+    from mirage.context import (reset_mount_gate, reset_op_policies,
+                                set_mount_gate, set_op_policies)
+    from mirage.policy.policies import Policies
+    from mirage.types import MountMode
+
+    calls: list[tuple[str, ...]] = []
+    raw = _policy_probe_ops(calls)
+    acc = NOOPAccessor()
+    policy = _SealedRead("/data/secret")
+    ptoken = set_op_policies(Policies([policy]))
+    gtoken = set_mount_gate("/data", MountMode.WRITE)
+    try:
+        ops = with_policy_guard(raw)
+    finally:
+        reset_mount_gate(gtoken)
+        reset_op_policies(ptoken)
+    # Both the slot call and the drain happen outside the window now.
+    with pytest.raises(PermissionError):
+        async for _ in ops.read_stream(acc, _spec("/data/secret")):
+            pass
+    assert ("stream", "/data/secret") not in calls
+    with pytest.raises(PermissionError):
+        await ops.read_bytes(acc, _spec("/data/secret"))
+
+
+@pytest.mark.asyncio
+async def test_policy_guard_admits_before_a_warm_serve():
+    # The guard wraps outside the cache tier (`finish` in the factory),
+    # so a warm reader below it never answers a refused read.
+    from mirage.commands.builtin.generic_bind.adapter import with_policy_guard
+    from mirage.context import (reset_mount_gate, reset_op_policies,
+                                set_mount_gate, set_op_policies)
+    from mirage.policy.policies import Policies
+    from mirage.types import MountMode
+
+    calls: list[tuple[str, ...]] = []
+    warm = dataclasses.replace(_policy_probe_ops(calls), read_bytes=_warm_read)
+    acc = NOOPAccessor()
+    policy = _SealedRead("/data/secret")
+    ptoken = set_op_policies(Policies([policy]))
+    gtoken = set_mount_gate("/data", MountMode.WRITE)
+    try:
+        ops = with_policy_guard(warm)
+        with pytest.raises(PermissionError):
+            await ops.read_bytes(acc, _spec("/data/secret"))
+        assert await ops.read_bytes(acc, _spec("/data/open")) == b"warm"
+    finally:
+        reset_mount_gate(gtoken)
+        reset_op_policies(ptoken)
+
+
+async def _warm_read(accessor, path, index=None):
+    return b"warm"
+
+
+def _keyed_read_ops(implicit_dirs: set[str] | None = None,
+                    explicit_dirs: set[str] | None = None,
+                    files: dict[str, bytes] | None = None,
+                    read_error: type[BaseException] = FileNotFoundError,
+                    children: dict[str, list[str]] | None = None) -> CommandIO:
+    """A keyed backend: no directory objects, so a read of one misses.
+
+    Reads raise ``read_error`` for anything that is not a stored file,
+    which is what RAM/S3/Redis do for a directory (there is no key
+    there) and what an sftp read of a directory does with a non-OSError
+    (asyncssh SFTPFailure).
+    """
+    dirs = implicit_dirs or set()
+    typed = explicit_dirs or set()
+    stored = files or {}
+    owed = children or {}
+
+    async def stat(_accessor, path, _index):
+        if path.virtual in typed:
+            return FileStat(name=path.virtual, type=FileType.DIRECTORY)
+        if path.virtual in stored:
+            return FileStat(type=FileType.FILE,
+                            name=path.virtual,
+                            size=len(stored[path.virtual]))
+        raise FileNotFoundError(path.virtual)
+
+    async def readdir(_accessor, path, _index):
+        target = path.virtual.rstrip("/") or "/"
+        entries = [d for d in dirs if (d.rsplit("/", 1)[0] or "/") == target]
+        if path.virtual in dirs:
+            entries.append(path.virtual.rstrip("/") + "/child.txt")
+        return entries
+
+    async def read_bytes(_accessor, path, _index=None, **_kwargs):
+        if path.virtual in stored:
+            return stored[path.virtual]
+        raise read_error(path.virtual)
+
+    async def read_stream(_accessor, path, _index=None, **_kwargs):
+        if path.virtual in stored:
+            yield stored[path.virtual]
+            return
+        raise read_error(path.virtual)
+
+    async def read_range(_accessor, path, _index=None, **_kwargs):
+        if path.virtual in stored:
+            return stored[path.virtual]
+        raise read_error(path.virtual)
+
+    return CommandIO(
+        readdir=readdir,
+        read_bytes=read_bytes,
+        read_stream=read_stream,
+        read_range=read_range,
+        stat=stat,
+        is_mounted=lambda _a: True,
+        glob_children=(lambda p: owed.get(p, [])) if owed else None)
+
+
+async def _drain(stream) -> list[bytes]:
+    return [chunk async for chunk in stream]
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_refuses_an_explicit_directory_on_every_slot():
+    ops = with_dir_guard(_keyed_read_ops(explicit_dirs={"/sub"}))
+    path = PathSpec.from_str_path("/sub")
+    with pytest.raises(IsADirectoryError):
+        await ops.read_bytes(None, path)
+    with pytest.raises(IsADirectoryError):
+        await ops.read_range(None, path)
+    with pytest.raises(IsADirectoryError):
+        await _drain(ops.read_stream(None, path))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_refuses_an_implicit_keyed_directory():
+    ops = with_dir_guard(_keyed_read_ops(implicit_dirs={"/sub"}))
+    path = PathSpec.from_str_path("/sub")
+    with pytest.raises(IsADirectoryError):
+        await ops.read_bytes(None, path)
+    with pytest.raises(IsADirectoryError):
+        await _drain(ops.read_stream(None, path))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_refuses_a_namespace_only_directory():
+    # /a/b holds no key in this backend; it exists because a mount or a
+    # link sits under it, which only the namespace can see.
+    ops = with_dir_guard(_keyed_read_ops(children={"/a/b": ["inner"]}))
+    path = PathSpec.from_str_path("/a/b")
+    with pytest.raises(IsADirectoryError):
+        await ops.read_bytes(None, path)
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_refines_a_non_oserror_read_failure():
+    # An sftp read of a directory raises asyncssh's SFTPFailure, which is
+    # not an OSError, so the errno-only path cannot see it. The stat says
+    # directory, and that is what decides.
+    ops = with_dir_guard(
+        _keyed_read_ops(explicit_dirs={"/sub"}, read_error=RuntimeError))
+    with pytest.raises(IsADirectoryError):
+        await ops.read_bytes(None, PathSpec.from_str_path("/sub"))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_leaves_a_real_miss_alone():
+    ops = with_dir_guard(_keyed_read_ops())
+    path = PathSpec.from_str_path("/nope.txt")
+    with pytest.raises(FileNotFoundError):
+        await ops.read_bytes(None, path)
+    with pytest.raises(FileNotFoundError):
+        await _drain(ops.read_stream(None, path))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_reraises_an_unrelated_failure_untouched():
+    ops = with_dir_guard(_keyed_read_ops(read_error=PermissionError))
+    with pytest.raises(PermissionError):
+        await ops.read_bytes(None, PathSpec.from_str_path("/locked.txt"))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_leaves_a_successful_read_alone():
+    ops = with_dir_guard(_keyed_read_ops(files={"/f.txt": b"data"}))
+    path = PathSpec.from_str_path("/f.txt")
+    assert await ops.read_bytes(None, path) == b"data"
+    assert await _drain(ops.read_stream(None, path)) == [b"data"]
+    assert await ops.read_range(None, path) == b"data"
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_names_the_virtual_path_not_the_backend_one():
+    # A raw disk error names the host path; the refusal is built from the
+    # operand's own PathSpec so the mount's host root never leaks.
+    ops = with_dir_guard(
+        _keyed_read_ops(
+            explicit_dirs={"/mnt/sub"},
+            read_error=lambda _p: IsADirectoryError("/private/var/host/sub")))
+    with pytest.raises(IsADirectoryError) as caught:
+        await ops.read_bytes(None, PathSpec.from_str_path("/mnt/sub"))
+    assert str(caught.value) == "/mnt/sub"
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_probe_failure_keeps_the_reads_own_error():
+    # A probe that blows up is a negative probe. Surfacing it would swap
+    # the read's error for one from a call the user never made.
+    async def stat(_accessor, _path, _index):
+        raise RuntimeError("transport reset")
+
+    async def readdir(_accessor, _path, _index):
+        raise RuntimeError("transport reset")
+
+    async def read_bytes(_accessor, path, _index=None, **_kwargs):
+        raise PermissionError(path.virtual)
+
+    async def unused(*_args):
+        raise AssertionError("not used")
+
+    ops = with_dir_guard(
+        CommandIO(readdir=readdir,
+                  read_bytes=read_bytes,
+                  read_stream=unused,
+                  stat=stat,
+                  is_mounted=lambda _a: True))
+    with pytest.raises(PermissionError):
+        await ops.read_bytes(None, PathSpec.from_str_path("/locked.txt"))
+
+
+@pytest.mark.asyncio
+async def test_dir_guard_keeps_a_refusal_on_a_file_the_parent_lists():
+    # A rule guard refuses the read of a real file. Its parent's listing
+    # names it, so the implicit-directory probe would answer "directory"
+    # if it were consulted, and `grep -r` reported EISDIR where GNU
+    # reports the refusal. A stat that answered has already settled it.
+    async def stat(_accessor, path, _index):
+        return FileStat(type=FileType.FILE, name=path.virtual, size=1)
+
+    async def readdir(_accessor, path, _index):
+        return [path.virtual.rstrip("/") + "/a"]
+
+    async def read_bytes(_accessor, path, _index=None, **_kwargs):
+        raise PermissionError(path.virtual)
+
+    async def unused(*_args):
+        raise AssertionError("not used")
+
+    ops = with_dir_guard(
+        CommandIO(readdir=readdir,
+                  read_bytes=read_bytes,
+                  read_stream=unused,
+                  stat=stat,
+                  is_mounted=lambda _a: True))
+    with pytest.raises(PermissionError):
+        await ops.read_bytes(None, PathSpec.from_str_path("/asked/a"))
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_threads_the_index_to_the_fallback_listing(
+        monkeypatch):
+    # The remnant fallback lists the refused directory raw; on an
+    # indexed backend those listings only resolve through the
+    # invocation's index, so the wrapper must hand it on rather than
+    # falling back to NULL_INDEX — to the classification readdir and to
+    # every listing the shared cascade walk takes after it.
+    marker = IndexCacheStore()
+    seen: list[IndexCacheStore | None] = []
+    removed: list[tuple[str, str]] = []
+    files = {"/m/d/h"}
+
+    async def rmdir(_accessor, path, index=None):
+        if files:
+            raise OSError(errno.ENOTEMPTY, "not empty")
+        removed.append(("rmdir", path.virtual))
+
+    async def readdir(_accessor, _path, index=None):
+        seen.append(index)
+        return ["h"] if files else []
+
+    async def stat_fn(_accessor, path, index=None):
+        if path.virtual in files:
+            return FileStat(type=FileType.FILE, name=path.virtual)
+        raise FileNotFoundError(path.virtual)
+
+    async def unlink(_accessor, path):
+        files.discard(path.virtual)
+        removed.append(("unlink", path.virtual))
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    await adapter._guarded_rmdir(rmdir,
+                                 readdir,
+                                 stat_fn,
+                                 unlink,
+                                 None,
+                                 NOOPAccessor(),
+                                 spec,
+                                 index=marker)
+    assert seen == [marker, marker]
+    assert removed == [("unlink", "/m/d/h"), ("rmdir", "/m/d")]
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_answers_a_cascade_failure_with_the_refusal(
+        monkeypatch):
+    # A deletion the channel refuses (a mode-protected entry) must
+    # surface as the backend's own not-empty refusal, never as the
+    # cascade's error: the session was told the directory is empty, and
+    # the protected content stays.
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, path):
+        raise PermissionError(errno.EROFS, "Read-only file system",
+                              path.virtual)
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
+                                     NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_folds_a_non_oserror_cascade_failure(monkeypatch):
+    # An API backend's failure is not always an errno (box raises its
+    # own error type); a raw backend exception escaping the fold would
+    # reveal exactly what the refusal exists to hide.
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, _path):
+        raise RuntimeError("api exploded")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
+                                     NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_folds_a_failed_fallback_listing(monkeypatch):
+    # A backend that cannot list the remnants keeps the original
+    # refusal, whatever error type it failed with, exactly as the ops
+    # plane answers.
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        raise RuntimeError("api exploded")
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, _path):
+        raise AssertionError("never reached")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v == "/m/d")
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink, None,
+                                     NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+
+
+@pytest.mark.asyncio
+async def test_guarded_rmdir_counts_a_visible_mounted_child_as_content(
+        monkeypatch):
+    # The backend listing holds only hidden entries, but the namespace
+    # owes the directory a visible mounted child no backend can list.
+    # The children fact joins the emptiness judgment, so the refusal
+    # stays and the cascade never starts.
+    removed: list[str] = []
+
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, path):
+        removed.append(path.virtual)
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v in
+                        ("/m/d", "/m/d/m"))
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await adapter._guarded_rmdir(rmdir, readdir, stat_fn, unlink,
+                                     lambda _v: ["m"], NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+    assert removed == []
+
+
+@pytest.mark.asyncio
+async def test_hidden_guard_rmdir_reads_the_stamped_children(monkeypatch):
+    # The guard is applied over an adapter already stamped with the
+    # invocation's glob_children (the factory's per-invocation order),
+    # so a visible mounted child joins its emptiness judgment and the
+    # builder keeps calling ops.rmdir unchanged.
+    removed: list[str] = []
+
+    async def rmdir(_accessor, _path, index=None):
+        raise OSError(errno.ENOTEMPTY, "not empty")
+
+    async def readdir(_accessor, _path, index=None):
+        return ["h"]
+
+    async def stat_fn(_accessor, path, index=None):
+        return FileStat(type=FileType.FILE, name=path.virtual)
+
+    async def unlink(_accessor, path):
+        removed.append(path.virtual)
+
+    async def unused(*_args):
+        raise AssertionError("not used")
+
+    monkeypatch.setattr(adapter, "hidden_paths_intersect", lambda _v: True)
+    monkeypatch.setattr(adapter, "path_allowed", lambda v: v in
+                        ("/m/d", "/m/d/m"))
+    base = CommandIO(readdir=readdir,
+                     read_bytes=unused,
+                     read_stream=unused,
+                     stat=stat_fn,
+                     is_mounted=lambda _a: True,
+                     unlink=unlink,
+                     rmdir=rmdir,
+                     glob_children=lambda _v: ["m"])
+    ops = adapter.with_hidden_guard(base)
+    assert ops.rmdir is not None
+    spec = PathSpec(virtual="/m/d", directory="/m", resource_path="d")
+    with pytest.raises(OSError) as exc:
+        await ops.rmdir(NOOPAccessor(), spec)
+    assert exc.value.errno == errno.ENOTEMPTY
+    assert removed == []

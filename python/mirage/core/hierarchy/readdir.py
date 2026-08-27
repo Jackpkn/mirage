@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from mirage.cache.index import NULL_INDEX, IndexCacheStore, IndexEntry
@@ -43,16 +43,26 @@ class DirListing:
         seeds (Mapping[str, list[tuple[str, IndexEntry]]]): descendant
             listings the same fetch proved, keyed by path relative to
             the listed directory (``files``, ``2026-01-05/Report__17``).
+        partial (bool): the entries are a filtered or truncated view
+            rather than the directory's contents, so they must not be
+            cached as the directory: a glob-scoped listing, or one the
+            provider did not finish. The entries themselves are real
+            either way, so the kit caches those and lets the next
+            readdir re-list. ``seeds`` stay full listings of the
+            children this fetch did report, so they are cached as
+            directories as usual.
     """
     entries: list[tuple[str, IndexEntry]]
     seeds: Mapping[str, list[tuple[str,
                                    IndexEntry]]] = field(default_factory=dict)
+    partial: bool = False
 
 
 Listed = list[tuple[str, IndexEntry]] | DirListing
 Lister = Callable[[A, ScopeMatch], Awaitable["Listed | None"]]
 EntryLister = Callable[[A, ScopeMatch, IndexEntry], Awaitable[Listed]]
 Guard = Callable[[A, ScopeMatch, str], Awaitable[None]]
+PatternTest = Callable[[str], bool]
 
 
 def _drop_hidden(
@@ -69,6 +79,7 @@ def make_readdir(
     parent_entry_listers: Mapping[str, EntryLister[A]] | None = None,
     static_root: tuple[str, ...] | None = None,
     guards: Mapping[str, Guard[A]] | None = None,
+    pattern_kinds: Mapping[str, PatternTest] | None = None,
     leaf_error: Literal["enoent", "enotdir"] = "enoent",
 ) -> ReaddirFn[A]:
     """Build a hierarchy readdir: dispatch, guards, index, name joins.
@@ -120,10 +131,19 @@ def make_readdir(
         guards (Mapping[str, Guard]): existence checks that run before
             the index probe, so a vanished container is ENOENT even on a
             warm cache.
+        pattern_kinds (Mapping[str, PatternTest] | None): one entry per
+            kind whose listing is a bounded window, holding the test for
+            whether a glob is one its lister can move the window to
+            (``has_glob_span`` for a date-keyed listing). A glob that
+            passes reaches the lister and the index is not read first,
+            because a cached listing is that same window and would
+            answer the glob with it. Any other glob, and any other kind,
+            keeps the cached listing and never sees a pattern.
         leaf_error (Literal["enoent", "enotdir"]): what listing a leaf
             raises; fixed hierarchies historically answer ENOENT.
     """
 
+    globbed_kinds = pattern_kinds if pattern_kinds is not None else {}
     resolved = entry_listers if entry_listers is not None else {}
     parented = (parent_entry_listers
                 if parent_entry_listers is not None else {})
@@ -151,6 +171,11 @@ def make_readdir(
         match = detect(path)
         if match.kind == INVALID:
             raise enoent(virtual)
+        pushable = globbed_kinds.get(match.kind)
+        globbed = (path_spec.pattern is not None and pushable is not None
+                   and pushable(path_spec.pattern))
+        if globbed:
+            match = replace(match, pattern=path_spec.pattern)
         if match.kind == ROOT and static_root is not None:
             return [f"{prefix}/{d}" for d in static_root]
         lister = listers.get(match.kind)
@@ -164,9 +189,10 @@ def make_readdir(
         guard = guards.get(match.kind) if guards is not None else None
         if guard is not None:
             await guard(accessor, match, virtual)
-        listing = await index.list_dir(virtual_key)
-        if listing.entries is not None:
-            return listing.entries
+        if not globbed:
+            listing = await index.list_dir(virtual_key)
+            if listing.entries is not None:
+                return listing.entries
         if entry_lister is not None or parent_lister is not None:
             proof_key = virtual_key
             if parent_lister is not None:
@@ -181,9 +207,10 @@ def make_readdir(
             # The resolve may have warmed this very listing: a parent's
             # lister can seed a child listing from the same fetch
             # (DirListing.seeds), so ask the index again before fetching.
-            relisted = await index.list_dir(virtual_key)
-            if relisted.entries is not None:
-                return relisted.entries
+            if not globbed:
+                relisted = await index.list_dir(virtual_key)
+                if relisted.entries is not None:
+                    return relisted.entries
             if entry_lister is not None:
                 listed = await entry_lister(accessor, match, own)
             else:
@@ -196,12 +223,18 @@ def make_readdir(
                 raise enoent(virtual)
             listed = maybe
         seeds: Mapping[str, list[tuple[str, IndexEntry]]] = {}
+        partial = False
         if isinstance(listed, DirListing):
             seeds = listed.seeds
+            partial = listed.partial
             listed = listed.entries
         entries = _drop_hidden(listed)
-        await index.set_dir(virtual_key, entries)
         stem = virtual_key.rstrip("/")
+        if partial:
+            for name, entry in entries:
+                await index.put(f"{stem}/{name}", entry)
+        else:
+            await index.set_dir(virtual_key, entries)
         for rel, child_entries in seeds.items():
             await index.set_dir(f"{stem}/{rel.strip('/')}",
                                 _drop_hidden(child_entries))

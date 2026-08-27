@@ -20,10 +20,11 @@ import type { LanceRow } from './_driver.ts'
 import { PathSpec } from '../../types.ts'
 import { perAccessor } from '../hierarchy/bind.ts'
 import type { ReaddirFn } from '../hierarchy/probe.ts'
-import { makeReaddir, type Lister } from '../hierarchy/readdir.ts'
+import { makeReaddir, type DirListing, type Listed, type Lister } from '../hierarchy/readdir.ts'
 import { ROOT, type ScopeMatch } from '../hierarchy/scope.ts'
 import { renderCard } from './render.ts'
 import { detectFor, filtersOf, tableOf } from './scope.ts'
+import { globPrefix, globStemPrefix, hasGlobPrefix } from '../../utils/glob_walk.ts'
 
 const GROUP_TYPE = 'lancedb/group'
 
@@ -64,23 +65,41 @@ function rowEntries(rows: LanceRow[], config: LanceDBConfigResolved): [string, I
   return entries
 }
 
-async function children(
-  accessor: LanceDBAccessor,
-  table: string,
-  filters: Record<string, string>,
-): Promise<[string, IndexEntry][] | null> {
+/**
+ * The row-id prefix a leaf glob narrows the row query to.
+ *
+ * A leaf is named `<rowId>` plus whichever suffix the renderer gave it, and
+ * only the id half is a prefix the query can test.
+ */
+function rowPrefix(pattern: string | null, config: LanceDBConfigResolved): string {
+  const suffixes = ['.md']
+  if (config.blobColumn !== null && config.blobColumn !== '') suffixes.push(`.${config.blobExt}`)
+  return globStemPrefix(pattern, suffixes)
+}
+
+async function children(accessor: LanceDBAccessor, match: ScopeMatch): Promise<Listed | null> {
   const config = accessor.config
+  const table = tableOf(config, match)
+  const filters = filtersOf(config, match)
+  const pattern = match.pattern
   const tables = await accessor.driver.listTables()
   if (!tables.includes(table)) return null
   const depth = Object.keys(filters).length
   if (depth < config.groupBy.length) {
+    const groupPrefix = globPrefix(pattern)
     const names = await accessor.driver.distinct(
       table,
       config.groupBy[depth] ?? '',
       filters,
       config.maxRows,
+      groupPrefix,
     )
-    return names.map((name): [string, IndexEntry] => [name, dirEntry(name)])
+    const listing: DirListing = {
+      entries: names.map((name): [string, IndexEntry] => [name, dirEntry(name)]),
+      seeds: {},
+      partial: groupPrefix !== '',
+    }
+    return listing
   }
   // Select every column except the vector and blob ones (schema order, so
   // the projected rows render byte-identically to the full rows read()
@@ -89,28 +108,36 @@ async function children(
   const columns = (await accessor.driver.tableColumns(table)).filter(
     (c) => c !== config.vectorColumn && c !== config.blobColumn,
   )
-  const rows = await accessor.driver.rowsMatching(table, filters, columns, config.maxRows)
-  return rowEntries(rows, config)
+  const prefix = rowPrefix(pattern, config)
+  const rows = await accessor.driver.rowsMatching(
+    table,
+    filters,
+    columns,
+    config.maxRows,
+    config.idColumn,
+    prefix,
+  )
+  const listing: DirListing = {
+    entries: rowEntries(rows, config),
+    seeds: {},
+    partial: prefix !== '',
+  }
+  return listing
 }
 
-async function listRoot(
-  accessor: LanceDBAccessor,
-  _match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
+async function listRoot(accessor: LanceDBAccessor, match: ScopeMatch): Promise<Listed | null> {
   const config = accessor.config
   if (config.table === null) {
+    // Table names come from the catalog, not from a capped query, so a glob
+    // here has nothing to narrow.
     const tables = await accessor.driver.listTables()
     return tables.map((name): [string, IndexEntry] => [name, dirEntry(name)])
   }
-  return children(accessor, config.table, {})
+  return children(accessor, match)
 }
 
-async function listGroup(
-  accessor: LanceDBAccessor,
-  match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  const config = accessor.config
-  return children(accessor, tableOf(config, match), filtersOf(config, match))
+async function listGroup(accessor: LanceDBAccessor, match: ScopeMatch): Promise<Listed | null> {
+  return children(accessor, match)
 }
 
 const LISTERS: Record<string, Lister<LanceDBAccessor>> = {
@@ -118,8 +145,10 @@ const LISTERS: Record<string, Lister<LanceDBAccessor>> = {
   group: listGroup,
 }
 
+const PATTERN_KINDS = { [ROOT]: hasGlobPrefix, group: hasGlobPrefix }
+
 function buildReaddir(accessor: LanceDBAccessor): ReaddirFn<LanceDBAccessor> {
-  return makeReaddir(detectFor(accessor), { listers: LISTERS })
+  return makeReaddir(detectFor(accessor), { listers: LISTERS, patternKinds: PATTERN_KINDS })
 }
 
 export const readdirFor = perAccessor(buildReaddir)

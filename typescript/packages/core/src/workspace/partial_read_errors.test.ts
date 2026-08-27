@@ -124,7 +124,10 @@ describe('cross-mount partial output matches single-mount bytes', () => {
       const result = await ws.execute('sed s/1/X/ /a/n.txt /b/missing.txt')
       expect(result.stdoutText).toBe('X\n2\n')
       expect(result.stderrText).toBe('sed: /b/missing.txt: No such file or directory\n')
-      expect(result.exitCode).toBe(1)
+      // GNU sed exits 2 when it cannot open an operand, whichever mount it
+      // lives on. The cross-mount combiner used to flatten it to the
+      // fetch's own code, which made this disagree with single-mount.
+      expect(result.exitCode).toBe(2)
     } finally {
       await ws.close()
     }
@@ -136,7 +139,7 @@ describe('cross-mount partial output matches single-mount bytes', () => {
       const result = await ws.execute('sort /a/f.txt /b/missing.txt')
       expect(result.stdoutText).toBe('')
       expect(result.stderrText).toBe('sort: /b/missing.txt: No such file or directory\n')
-      expect(result.exitCode).toBe(1)
+      expect(result.exitCode).toBe(2)
     } finally {
       await ws.close()
     }
@@ -322,16 +325,21 @@ describe('rest of the read family keeps partial output past missing', () => {
   })
 
   it('sed keeps partial output past missing', async () => {
+    // GNU sed exits 2 when it cannot open an operand (sed 4.9); a
+    // directory, which it opens and then fails to read, is 4.
     const [out, err, code] = await runNumbered(['sed s/1/X/ /a/f.txt /a/missing.txt'])
     expect(out).toBe('X\n2\n')
     expect(err).toBe('sed: /a/missing.txt: No such file or directory\n')
-    expect(code).toBe(1)
+    expect(code).toBe(2)
   })
 
   it('sort still aborts on missing', async () => {
+    // GNU sort needs all input before emitting anything, so no partial
+    // output; it reports the operand and exits 2 (coreutils 9.7), which
+    // is sort's code for any failed read, not just a directory.
     const [out, err, code] = await runNumbered(['sort /a/f.txt /a/missing.txt'])
     expect(out).toBe('')
     expect(err).toBe('sort: /a/missing.txt: No such file or directory\n')
-    expect(code).toBe(1)
+    expect(code).toBe(2)
   })
 })

@@ -20,6 +20,39 @@
 #       runtimes:
 #         - { name: monty, captures: [python, python3] }
 #
+# A profile may also carry a permission document, which is what turns
+# mirage's allow/ask/deny into a policy for this bundle. Roles go under
+# `profiles`, and `profile` names the one a session gets by default:
+#
+#   - id: mirage
+#     config:
+#       profiles:
+#         agent:
+#           commands:
+#             allow: [cat, ls, grep, rm]
+#             ask:
+#               - { commands: [rm], reason: deletes are reviewed }
+#             deny:
+#               - { commands: [git push], reason: no publishing }
+#       profile: agent
+#
+# An `ask` rule is put to the human through dsh's own approval channel
+# (`ctx.approval`), so the prompt the agent triggers is the one dsh
+# already shows for its escalations. It quotes the line word by word as
+# a shell would read it back, so a name carrying a space or a newline
+# cannot pass itself off in the prompt as two operands or two lines.
+# `allowed-once` runs the line;
+# a rejection, a dismissal and an unanswerable ask all refuse it. With
+# no approval plugin composed the ask has nowhere to go, so it stays a
+# pending record the host answers through `ctx.mirage.decisions`
+# (`pending()`, then `answer(id, outcome, scope)`) — deliberately not a
+# refusal, since rewriting an `ask` rule as a `deny` would change what
+# the document says. A question never outlives the run that raised it:
+# the run's abort signal goes to the channel with the request and bounds
+# the ledger's wait, so a line still unanswered when its timeout expires
+# comes back as the kill, and a yes arriving after that is dropped
+# rather than banked for the next identical line.
+#
 # Two facts about how the mirage providers read the surrounding dsh
 # composition, neither of which needs a row here:
 #

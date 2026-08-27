@@ -1,0 +1,49 @@
+---
+title: SSH
+icon: /images/ssh-logo.svg
+description: Connect either Mirage SDK to a machine over SSH.
+---
+
+The machine only needs `sshd`. Details: [Python](/python/runtime/sandbox/ssh) ·
+[TypeScript](/typescript/runtime/sandbox/ssh).
+
+<Tabs>
+  <Tab title="Python SDK" icon="/images/python-logo.svg">
+    ```bash
+    pip install 'mirage-ai[ssh]'
+    ```
+
+    ```python
+    from mirage.runtime.sandbox.ssh import SSHRuntime
+
+    runtime = SSHRuntime(
+        captures=["python3"],
+        config={
+            "host": "mybox",
+            "username": "deploy",
+            "identity_file": "~/.ssh/id_ed25519",
+        },
+    )
+    ```
+
+  </Tab>
+  <Tab title="TypeScript SDK" icon="/images/typescript-logo.svg">
+    ```bash
+    pnpm add ssh2
+    ```
+
+    ```typescript
+    import { SSHRuntime } from '@struktoai/mirage-node'
+
+    const runtime = new SSHRuntime({
+      captures: ['python3'],
+      config: {
+        host: 'mybox',
+        username: 'deploy',
+        identityFile: '~/.ssh/id_ed25519',
+      },
+    })
+    ```
+
+  </Tab>
+</Tabs>

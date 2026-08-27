@@ -53,6 +53,7 @@ export {
   type OpsContext,
   type OpsResultContext,
   Outcome,
+  type Abandoned,
   type Pending,
   type Decision,
   type Ruling,

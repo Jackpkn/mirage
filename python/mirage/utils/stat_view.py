@@ -12,14 +12,15 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from stat import S_IFDIR, S_IFLNK, S_IFREG
+from stat import S_IFCHR, S_IFDIR, S_IFLNK, S_IFREG
 
-from mirage.types import FileStat, FileType
+from mirage.types import DEVICE_NUMBERS_KEY, FileStat, FileType
 from mirage.utils.dates import iso_timestamp
 
 # The one spelling of "a directory looks like drwxr-xr-x and a file
 # like -rw-r--r--" for every stat translator (FUSE attrs, guest
 # st_mode); mirrors utils/stat_view.ts.
+CHAR_MODE = S_IFCHR | 0o666
 DIR_MODE = S_IFDIR | 0o755
 FILE_MODE = S_IFREG | 0o644
 # A link is always lrwxrwxrwx: the bits on a symlink are not consulted
@@ -68,7 +69,10 @@ def posix_mode(st: FileStat) -> int:
     """
     if is_link(st):
         return LINK_MODE
-    base = DIR_MODE if is_dir(st) else FILE_MODE
+    if is_char_device(st):
+        base = CHAR_MODE
+    else:
+        base = DIR_MODE if is_dir(st) else FILE_MODE
     if st.mode is None:
         return base
     return (base & ~0o7777) | (st.mode & 0o7777)
@@ -90,6 +94,22 @@ def is_link(st: FileStat) -> bool:
         st (FileStat): the stat to inspect.
     """
     return st.type == FileType.SYMLINK
+
+
+def is_char_device(st: FileStat) -> bool:
+    """Whether a FileStat describes a character device."""
+    return st.type == FileType.CHAR_DEVICE
+
+
+def device_rdev(st: FileStat) -> int:
+    """Encode a character device's logical major:minor for guest stat."""
+    values = st.extra.get(DEVICE_NUMBERS_KEY)
+    if not isinstance(values, (list, tuple)) or len(values) != 2:
+        return 0
+    major, minor = values
+    if not isinstance(major, int) or not isinstance(minor, int):
+        return 0
+    return (major << 8) | minor
 
 
 def content_size(st: FileStat) -> int:

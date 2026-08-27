@@ -13,7 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { normalizeCounts, parseCounts, tailBytes, type TailCounts } from './tail_helper.ts'
+import {
+  normalizeCounts,
+  parseByteCount,
+  parseCounts,
+  tailBytes,
+  type TailCounts,
+} from './tail_helper.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
@@ -47,6 +53,12 @@ describe('normalizeCounts', () => {
 })
 
 describe('parseCounts', () => {
+  it('accepts GNU byte-count size suffixes', () => {
+    expect(parseByteCount('2M')).toBe(2 * 1024 * 1024)
+    expect(parseByteCount('3kB')).toBe(3000)
+    expect(parseCounts(null, '+2M').fromByte).toBe(2 * 1024 * 1024)
+  })
+
   it('sends a bare count to the count-back-from-the-end slot', () => {
     expect(parseCounts('3', null)).toEqual({
       lines: 3,

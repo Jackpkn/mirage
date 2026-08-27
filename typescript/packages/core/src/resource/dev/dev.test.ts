@@ -68,11 +68,9 @@ describe('DevResource', () => {
     expect(data.byteLength).toBe(0)
   })
 
-  it('reads /zero as 1 MiB of zeros', async () => {
+  it('refuses to materialize all of /zero', async () => {
     const { dev, registry } = setupOps()
-    const data = (await call(registry, 'read', dev, '/zero')) as Uint8Array
-    expect(data.byteLength).toBe(1 << 20)
-    expect(data.every((b) => b === 0)).toBe(true)
+    await expect(call(registry, 'read', dev, '/zero')).rejects.toMatchObject({ code: 'EINVAL' })
   })
 
   it('writes are silently discarded', async () => {
@@ -91,6 +89,93 @@ describe('DevResource', () => {
     const { dev, registry } = setupOps()
     const entries = (await call(registry, 'readdir', dev, '/')) as string[]
     expect(entries.sort()).toEqual(['/null', '/zero'])
+  })
+})
+
+describe('character device commands', () => {
+  it('serves ranged zero reads beyond the old finite buffer', async () => {
+    const ws = await makeWs()
+    const result = await ws.execute('head -c 2M /dev/zero | wc -c')
+    expect(result.stdoutText).toBe('2097152\n')
+    await ws.close()
+  })
+
+  it('bounds an unqualified cat without changing its successful status', async () => {
+    const ws = await makeWs()
+    const result = await ws.execute('cat /dev/zero')
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.byteLength).toBe(8 << 20)
+    expect(result.stdout.every((byte) => byte === 0)).toBe(true)
+    expect(result.stderrText).toContain('output truncated')
+    await ws.close()
+  })
+
+  it('bounds default head without buffering an endless unterminated line', async () => {
+    const ws = await makeWs()
+    const result = await ws.execute('head /dev/zero')
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.byteLength).toBe(8 << 20)
+    expect(result.stdout.every((byte) => byte === 0)).toBe(true)
+    expect(result.stderrText).toContain('output truncated')
+    await ws.close()
+  })
+
+  it('does not apply the device safeguard to adjacent regular files', async () => {
+    const ws = await makeWs()
+    const size = (8 << 20) + 1
+    await ws.fs.writeFile('/data/large.bin', new Uint8Array(size))
+    const result = await ws.execute('cat /dev/null /data/large.bin | wc -c')
+    expect(result.exitCode).toBe(0)
+    expect(result.stdoutText).toBe(`${String(size)}\n`)
+    expect(result.stderrText).not.toContain('output truncated')
+    await ws.close()
+  })
+
+  it('classifies and renders active synthetic devices', async () => {
+    const ws = await makeWs()
+    expect((await ws.execute('find /dev -type f')).stdoutText).toBe('')
+    expect((await ws.execute('find /dev -type c')).stdoutText).toBe('/dev/null\n/dev/zero\n')
+    expect((await ws.execute('find /dev -empty')).stdoutText).toBe('')
+    expect((await ws.execute("stat -c '%F %t %T' /dev/null")).stdoutText).toBe(
+      'character special file 1 3\n',
+    )
+    const longZero = (await ws.execute('ls -l /dev/zero')).stdoutText
+    expect(longZero).toMatch(/^crw-rw-rw-/)
+    expect(longZero).toContain('1, 5')
+    expect((await ws.execute('file /dev/zero')).stdoutText).toBe(
+      '/dev/zero: character special (1/5)\n',
+    )
+    expect((await ws.execute('du /dev/zero')).stdoutText).toBe('0\t/dev/zero\n')
+    expect((await ws.execute("find /dev/null -printf '%m %M\\n'")).stdoutText).toBe(
+      '666 crw-rw-rw-\n',
+    )
+    expect((await ws.execute("stat -c '%a %f' /dev/null")).stdoutText).toBe('666 21b6\n')
+    await ws.close()
+  })
+
+  it('answers regular-file and size predicates by kind', async () => {
+    const ws = await makeWs()
+    expect((await ws.execute('test -f /dev/null; echo $?')).stdoutText).toBe('1\n')
+    expect((await ws.execute('test -c /dev/null; echo $?')).stdoutText).toBe('0\n')
+    expect((await ws.execute('test -s /dev/zero; echo $?')).stdoutText).toBe('1\n')
+    await ws.close()
+  })
+
+  it('refuses commands that require a whole read of an endless device', async () => {
+    const ws = await makeWs()
+    const commands = [
+      'cp /dev/zero /data/out',
+      'source /dev/zero',
+      'md5 /dev/zero',
+      'grep needle /dev/zero',
+      'rg needle /dev/zero',
+    ]
+    for (const command of commands) {
+      const result = await ws.execute(command)
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderrText).toContain('cannot read an endless device without a size')
+    }
+    await ws.close()
   })
 })
 

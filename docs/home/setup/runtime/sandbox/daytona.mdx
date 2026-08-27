@@ -1,0 +1,36 @@
+---
+title: Daytona
+icon: /images/daytona-logo.svg
+description: Connect either Mirage SDK to an existing Daytona sandbox.
+---
+
+Create the sandbox, then connect by ID. Details: [Python](/python/runtime/sandbox/daytona) ·
+[TypeScript](/typescript/runtime/sandbox/daytona).
+
+<Tabs>
+  <Tab title="Python SDK" icon="/images/python-logo.svg">
+    ```bash
+    pip install 'mirage-ai[daytona]'
+    ```
+
+    ```python
+    from mirage.runtime.sandbox.daytona import DaytonaRuntime
+
+    runtime = DaytonaRuntime(captures=["python3"], config={"sandbox_id": "sandbox-id"})
+    ```
+  </Tab>
+  <Tab title="TypeScript SDK" icon="/images/typescript-logo.svg">
+    ```bash
+    pnpm add @daytonaio/sdk
+    ```
+
+    ```typescript
+    import { DaytonaRuntime } from '@struktoai/mirage-node'
+
+    const runtime = new DaytonaRuntime({
+      captures: ['python3'],
+      config: { sandboxId: 'sandbox-id' },
+    })
+    ```
+  </Tab>
+</Tabs>

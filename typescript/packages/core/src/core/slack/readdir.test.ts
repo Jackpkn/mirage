@@ -73,6 +73,31 @@ describe('dateRange', () => {
     const ts = Date.UTC(2024, 5, 15) / 1000
     expect(dateRange(ts, ts)).toEqual(['2024-06-15'])
   })
+
+  it('escapes the cap for a glob span older than the window', () => {
+    // A day dir is real for any date the channel has existed for, so a glob
+    // older than the 90-day window must still list its days.
+    const end = Date.UTC(2024, 0, 100) / 1000
+    const start = Date.UTC(2010, 0, 1) / 1000
+    const out = dateRange(end, start, 90, ['2010-03-01', '2010-04-01'])
+    expect(out).toHaveLength(31)
+    expect(out[0]).toBe('2010-03-31')
+    expect(out[30]).toBe('2010-03-01')
+  })
+
+  it('clips a glob span at both ends of the channel', () => {
+    const start = Date.UTC(2010, 2, 10) / 1000
+    const end = Date.UTC(2010, 2, 20) / 1000
+    const out = dateRange(end, start, 90, ['2010-03-01', '2010-04-01'])
+    expect(out[0]).toBe('2010-03-20')
+    expect(out[out.length - 1]).toBe('2010-03-10')
+  })
+
+  it('lists nothing for a glob span the channel never covered', () => {
+    const start = Date.UTC(2020, 0, 1) / 1000
+    const end = Date.UTC(2020, 0, 5) / 1000
+    expect(dateRange(end, start, 90, ['2010-03-01', '2010-04-01'])).toEqual([])
+  })
 })
 
 describe('latestMessageTs', () => {

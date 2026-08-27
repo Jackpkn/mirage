@@ -28,7 +28,7 @@ const STRING_UNARY = new Set(['-n', '-z'])
 // `-v NAME` asks whether the variable (or the `NAME[sub]` element) is
 // set; it reads session state, not a path.
 const VAR_UNARY = new Set(['-v'])
-export const FILE_UNARY = new Set(['-e', '-f', '-d', '-s', '-r', '-w', '-x', '-L', '-h'])
+export const FILE_UNARY = new Set(['-e', '-f', '-d', '-c', '-s', '-r', '-w', '-x', '-L', '-h'])
 // Real GNU operators mirage cannot answer truthfully: the VFS has no
 // FIFO/socket/device node types, no uid/gid ownership or setuid bits,
 // and no controlling terminal. Failing loudly beats the silent-false
@@ -37,7 +37,6 @@ export const UNSUPPORTED_UNARY = new Set([
   '-p',
   '-S',
   '-b',
-  '-c',
   '-g',
   '-k',
   '-u',

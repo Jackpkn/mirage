@@ -328,3 +328,56 @@ async def test_monty_cancelled_eval_session_releases_its_checkout(monkeypatch):
 
 def test_reach_is_vfs():
     assert MontyRuntime.reach == "vfs"
+
+
+def test_monty_scratch_paths_live_in_the_tree():
+    # A path under no mount is real scratch space once the guest makes
+    # its directory, served by monty's own in-memory tree; the TS
+    # runtime answers the same from its ScratchTree.
+    runtime = MontyRuntime()
+    result = asyncio.run(
+        runtime.run(
+            RunArgs(code="from pathlib import Path\n"
+                    "Path('/tmp').mkdir()\n"
+                    "open('/tmp/s.txt', 'w').write('scratch')\n"
+                    "print(open('/tmp/s.txt').read())\n"
+                    "print(Path('/nope').exists())")))
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == b"scratch\nFalse\n"
+
+
+def test_monty_scratch_write_without_directory_misses():
+    # The tree gives scratch space, not a pre-made /tmp: writing under
+    # a directory nobody created raises, as CPython would.
+    runtime = MontyRuntime()
+    result = asyncio.run(
+        runtime.run(RunArgs(code="open('/tmp/x.txt', 'w').write('hi')")))
+    assert result.exit_code == 1
+    assert b"FileNotFoundError" in result.stderr
+
+
+def test_monty_serves_the_host_clock():
+    # The binding's OSAccess defaults these to the host clock; the TS
+    # door answers with DateTime markers, and both hosts must agree a
+    # guest can read a naive local now and an aware UTC now.
+    runtime = MontyRuntime()
+    result = asyncio.run(
+        runtime.run(
+            RunArgs(code="from datetime import datetime, timezone\n"
+                    "print(datetime.now().tzinfo)\n"
+                    "print(datetime.now(timezone.utc).tzinfo)")))
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == b"None\nUTC\n"
+
+
+def test_monty_resolve_answers_a_lexical_str():
+    # No symlinks in the tree, so resolve() is absolute() against '/',
+    # and the answer is a str on both hosts.
+    runtime = MontyRuntime()
+    result = asyncio.run(
+        runtime.run(
+            RunArgs(code="from pathlib import Path\n"
+                    "r = Path('rel/x.txt').resolve()\n"
+                    "print(type(r).__name__, r)")))
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == b"str /rel/x.txt\n"

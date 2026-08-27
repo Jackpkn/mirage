@@ -40,9 +40,10 @@ def channel_dirname(c: dict[str, Any]) -> str:
 
 def member_filename(m: dict[str, Any]) -> str:
     user = m.get("user", {})
-    return (
-        f"{make_id_name(user.get('username', ''), user['id'], path_safe=True)}"
-        ".json")
+    return make_id_name(user.get("username", ""),
+                        user["id"],
+                        path_safe=True,
+                        suffix=".json")
 
 
 def snowflake_to_date(snowflake: str) -> str:

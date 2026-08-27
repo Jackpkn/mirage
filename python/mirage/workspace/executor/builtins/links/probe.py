@@ -34,7 +34,10 @@ async def resolve_path_stat(dispatch: DispatchFn,
     missing path with ``[]`` rather than raising, and cannot hold an
     empty directory anyway (one with no keys under it does not exist).
     Measured across every integ target: an implicit directory answers
-    here, a missing path does not.
+    here, a missing path does not. That holds only while a backend's
+    readdir refuses a path it cannot prove: postgres answered
+    ``tables``/``views`` under any first segment, and every absent
+    schema read as a directory here.
 
     Args:
         dispatch (DispatchFn): op dispatcher.

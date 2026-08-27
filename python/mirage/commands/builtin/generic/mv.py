@@ -293,6 +293,7 @@ async def mv(
     flags: MvFlags,
     backend_key: Callable[[PathSpec], str] | None = None,
     readdir: ReaddirFn | None = None,
+    guard: Callable[[PathSpec, PathSpec], None] | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     """Move sources to a destination, fanning out into a directory.
 
@@ -318,6 +319,12 @@ async def mv(
         readdir (ReaddirFn | None): Directory lister for backup version
             scans and the ``-T`` empty-directory probe; the primitive
             strategy's own lister is used when None.
+        guard (Callable | None): Judges one (source, target) pair before
+            the move touches anything, the backup included, raising to
+            refuse it; the adapter wires the hidden-reveal check here so
+            a refused move mutates nothing (no half-copy, no destination
+            renamed aside by ``-b``). Consulted only for a directory
+            source, since a file carries nothing below it to reveal.
 
     Returns:
         tuple[ByteSource | None, IOResult]: Verbose output and recorded
@@ -398,6 +405,16 @@ async def mv(
             if children:
                 errors.append(f"mv: cannot overwrite '{target.virtual}': "
                               "Directory not empty")
+                continue
+        # The reveal guard answers before the backup so a refused move
+        # cannot leave the destination renamed aside; only a directory
+        # source has anything below it to re-anchor, so a file passes.
+        if guard is not None and src_is_dir:
+            try:
+                guard(src, target)
+            except FS_ERRORS as exc:
+                errors.append(f"mv: cannot move '{src.virtual}' to "
+                              f"'{target.virtual}': {fs_strerror(exc)}")
                 continue
         backup, ok = await make_backup(policy, strategy, stat, readdir, target,
                                        writes, errors)

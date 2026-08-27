@@ -1,0 +1,123 @@
+// Schema for the Microsoft Graph fake (integ/server/onedrive/), which serves
+// BOTH the onedrive and the sharepoint targets: OneDrive for Business is
+// SharePoint underneath, and the difference on the wire is only which URL
+// shape addresses the drive (/me/drive and /sites/{id}/drive for the default
+// one, /drives/{id} for a named one). One fake, one schema, five targets.
+//
+// Graph addresses an item by PATH inside a drive, like Dropbox and unlike Box,
+// so `drive` + `path` is the key and there is no parent column.
+//
+// A FOLDER IS ITS OWN ROW (GraphDir), not something derived from the file
+// paths under it. An empty folder is a real thing a caller can create and then
+// list, and a derived folder set cannot represent one.
+//
+// `tenant` is one Graph tenant, read off the ordinary `Authorization: Bearer`
+// header the Graph client already sends on every call, so each run takes its
+// own and one shared server replaces the per-run SERVER PROCESS the TypeScript
+// runner used to spawn (a python one, from a TypeScript runner).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/onedrive"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+// A drive is DECLARED, not created by using it: which drives a site has is
+// deployment state, and an unknown one answering 404 is what the client is
+// written against. Real Graph has no endpoint that creates one, so the
+// declaration arrives on `PUT /drives/{key}`, the fake's one non-vendor route.
+// That replaces the MIRAGE_GRAPH_DRIVES env the old per-run server read at
+// launch, which a shared server cannot have: a drive belongs to one account
+// here, not to the process. The default drive is not in this table at all --
+// `/me/drive` has to resolve before anything has been declared, so `hasDrive`
+// answers for it directly.
+model GraphDrive {
+  tenant    String
+  key       String
+  isDefault Boolean @default(false)
+  seq       Int
+
+  @@id([tenant, key])
+}
+
+model GraphFile {
+  tenant   String
+  drive    String
+  // Normalised: no leading or trailing slash. The drive root is the empty
+  // string, which is why it is a GraphDir row rather than a special case.
+  path     String
+  content  Bytes
+  // Denormalised byte length, so a folder's aggregate size is one SUM in
+  // SQLite instead of loading every blob in the drive to add up their lengths.
+  // It cannot drift: `content` is only ever set by writeFile, which sets this
+  // beside it, and the move/copy paths carry the whole row across.
+  size     Int
+  // The vendor's cTag moves only with CONTENT and its eTag moves with any
+  // metadata change too, and a client uses the difference to tell a rename
+  // from a rewrite. Two columns, because collapsing them loses that.
+  ctag     String
+  etag     String
+  modified String
+  seq      Int
+
+  @@id([tenant, drive, path])
+}
+
+model GraphDir {
+  tenant String
+  drive  String
+  path   String
+  seq    Int
+
+  @@id([tenant, drive, path])
+}
+
+// Every write keeps the prior content as a version, which is what the vendor's
+// /versions endpoint lists and what a restore reads. Version ids follow the
+// vendor's own numbering ("1.0", "2.0", ...) and the timestamps are DISTINCT
+// (the vendor never ties them): a shared constant would make "which is
+// current" order-dependent and mask a stale-version bug.
+model GraphVersion {
+  tenant    String
+  drive     String
+  path      String
+  versionId String
+  modified  String
+  content   Bytes
+  seq       Int
+
+  @@id([tenant, drive, path, versionId])
+}
+
+// A resumable upload session. It holds the bytes received so far, so it is
+// state that has to survive between the chunk requests that build it.
+model GraphUpload {
+  tenant   String
+  token    String
+  drive    String
+  path     String
+  buffer   Bytes
+  // The vendor resolves a conflict on the FINAL chunk, not when the session
+  // opens, so the behavior is carried on the session.
+  behavior String
+  seq      Int
+
+  @@id([tenant, token])
+}
+
+// A long-running-operation monitor. `copy` answers 202 with a Location and the
+// caller polls it, so the outcome has to be readable after the request that
+// decided it has ended.
+model GraphMonitor {
+  tenant  String
+  token   String
+  payload String
+  seq     Int
+
+  @@id([tenant, token])
+}

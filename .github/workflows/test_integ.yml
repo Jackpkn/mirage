@@ -144,7 +144,7 @@ jobs:
         run: pnpm -r build
 
       - name: Upload TypeScript build outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integ-typescript-dist
           path: typescript/packages/*/dist
@@ -261,7 +261,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -327,13 +327,14 @@ jobs:
         working-directory: integ
         run: pnpm exec tsx cross_commands.ts
 
+      - name: Generate integ Prisma clients
+        working-directory: integ
+        run: pnpm run prisma:clients
+
       - name: Start fake Notion API (Prisma)
         working-directory: integ
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-notion-ci.db
         run: |
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-          nohup ./node_modules/.bin/tsx server/notion_server.ts --port 5091 > /tmp/notionsrv.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/notion/main.ts --port 5091 > /tmp/notionsrv.log 2>&1 &
           for i in $(seq 1 30); do grep -q "NOTION_URL=" /tmp/notionsrv.log && break; sleep 1; done
           cat /tmp/notionsrv.log
           echo "NOTION_URL=http://127.0.0.1:5091" >> "$GITHUB_ENV"
@@ -409,7 +410,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       EMAIL_HOST: localhost
       MONGODB_URI: mongodb://localhost:27017
-      QUICKJS_BUILD: v0.15.1
+      QUICKJS_BUILD: v0.16.2
       MIRAGE_QUICKJS_HOME: /tmp/quickjs
     steps:
       - uses: actions/checkout@v7
@@ -492,6 +493,16 @@ jobs:
       # turns an absent tsx into a failure rather than a silent half-run.
       - name: Assert the integ runner gates (strict exit, services, case ids)
         run: ./python/.venv/bin/python integ/runners/tools/gate_selftest.py --require-ts
+
+      # The same argument one level down. gate_selftest asserts the runner
+      # fails when it tests nothing; this asserts the kit the fakes are built
+      # on still keeps its promises, none of which the battery can reach: no
+      # corpus case sends a run or tenant header, and the runner awaits one
+      # case at a time, so run isolation, tenant isolation and the write queue
+      # are unreachable there by construction rather than by omission.
+      - name: Assert the mock-server kit (run/tenant isolation, seeder, queue)
+        working-directory: integ
+        run: pnpm run selftest
 
       - name: Run declarative battery (typescript hosts)
         working-directory: integ
@@ -613,7 +624,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -704,7 +715,7 @@ jobs:
 
       # The notion fake is a Node server shared by both hosts, so this
       # otherwise python-only job needs node to start it. No package build is
-      # required: notion_server.ts imports only node, prisma and the MCP sdk.
+      # required: the notion fake imports only node, prisma and the MCP sdk.
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
@@ -721,13 +732,18 @@ jobs:
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
+      # integ/generated/ is gitignored, so every kit fake this job starts
+      # (dropbox, box, onedrive) fails to import its client until this runs.
+      # The battery jobs get it from the integ-battery-setup action; this job
+      # does not use that action and has to ask for it itself.
+      - name: Generate integ Prisma clients
+        working-directory: integ
+        run: pnpm run prisma:clients
+
       - name: Start fake Notion API (Prisma)
         working-directory: integ
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-notion-ci.db
         run: |
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-          nohup ./node_modules/.bin/tsx server/notion_server.ts --port 5091 > /tmp/notionsrv.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/notion/main.ts --port 5091 > /tmp/notionsrv.log 2>&1 &
           for i in $(seq 1 30); do grep -q "NOTION_URL=" /tmp/notionsrv.log && break; sleep 1; done
           cat /tmp/notionsrv.log
           echo "NOTION_URL=http://127.0.0.1:5091" >> "$GITHUB_ENV"
@@ -754,9 +770,10 @@ jobs:
       - name: Run declarative battery on nextcloud
         run: ./python/.venv/bin/python integ/runners/python/main.py --target nextcloud --strict
 
-      # disk, ssh and dropbox need nothing (tempdir, in-process SFTP
-      # server, in-process fake); s3 and gridfs need a real service each,
-      # and skip when the env is absent rather than failing.
+      # disk and ssh need nothing (tempdir, in-process SFTP server);
+      # dropbox is an out-of-process fake started below; s3 and gridfs need a
+      # real service each, and skip when the env is absent rather than
+      # failing.
       - name: Start MinIO for the watch battery
         run: |
           docker run -d --name minio-watch -p 9000:9000 \
@@ -780,17 +797,65 @@ jobs:
             sleep 1
           done
 
-      # gdrive is the one watch target whose fake is TypeScript and
-      # out-of-process; the other five in-process fakes need nothing.
+      # gdrive, dropbox, box and onedrive are the watch targets whose fakes are
+      # TypeScript and out-of-process; the other two in-process fakes (github,
+      # ssh) need nothing. Every one of these backends SKIPS ITSELF when its
+      # URL is unset, so a server that is not started here costs coverage in
+      # silence rather than failing the job.
       - name: Start the fake Google Workspace server
         run: |
-          cd integ && nohup pnpm exec tsx server/gws_server.ts --port 19999 \
+          cd integ && nohup pnpm exec tsx server/gws/main.ts --port 19999 \
             > /tmp/gws.log 2>&1 &
           for i in $(seq 1 30); do
             grep -q "GWS_URL=" /tmp/gws.log && break
             sleep 1
           done
           cat /tmp/gws.log
+
+      - name: Start the fake Dropbox server
+        working-directory: integ
+        run: |
+          nohup pnpm exec tsx server/dropbox/main.ts --port 5088 \
+            > /tmp/dropbox-watch.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "DROPBOX_URL=" /tmp/dropbox-watch.log && break
+            sleep 1
+          done
+          cat /tmp/dropbox-watch.log
+          # Fail HERE, not 20 minutes later as a connection refused inside the
+          # battery: a server that died on startup still leaves this step green
+          # if the only thing it does is cat the log.
+          grep -q "DROPBOX_URL=" /tmp/dropbox-watch.log
+
+      - name: Start the fake Box server
+        working-directory: integ
+        run: |
+          nohup pnpm exec tsx server/box/main.ts --port 5096 \
+            > /tmp/box-watch.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "BOX_URL=" /tmp/box-watch.log && break
+            sleep 1
+          done
+          cat /tmp/box-watch.log
+          # Fail HERE, not 20 minutes later as a connection refused inside the
+          # battery: a server that died on startup still leaves this step green
+          # if the only thing it does is cat the log.
+          grep -q "BOX_URL=" /tmp/box-watch.log
+
+      - name: Start the fake Microsoft Graph server
+        working-directory: integ
+        run: |
+          nohup pnpm exec tsx server/onedrive/main.ts --port 5089 \
+            > /tmp/onedrive-watch.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "ONEDRIVE_URL=" /tmp/onedrive-watch.log && break
+            sleep 1
+          done
+          cat /tmp/onedrive-watch.log
+          # Fail HERE, not 20 minutes later as a connection refused inside the
+          # battery: a server that died on startup still leaves this step green
+          # if the only thing it does is cat the log.
+          grep -q "ONEDRIVE_URL=" /tmp/onedrive-watch.log
 
       - name: Run watch battery
         env:
@@ -804,6 +869,9 @@ jobs:
           AWS_SECRET_ACCESS_KEY: minio123
           MONGODB_URI: mongodb://localhost:27017
           GWS_URL: http://127.0.0.1:19999
+          DROPBOX_URL: http://127.0.0.1:5088
+          BOX_URL: http://127.0.0.1:5096
+          ONEDRIVE_URL: http://127.0.0.1:5089
         run: ./python/.venv/bin/python integ/watch/run.py
 
   integ-fuse:
@@ -855,7 +923,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -1060,8 +1128,8 @@ jobs:
       S3_ENDPOINT: http://localhost:9000
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio123
-      QUICKJS_BUILD: v0.15.1
-      WASI_BUILD: python-3.14.6-wasi_sdk-24
+      QUICKJS_BUILD: v0.16.2
+      WASI_BUILD: python-3.14.7-wasi_sdk-24
       MIRAGE_QUICKJS_HOME: /tmp/quickjs
       MIRAGE_WASI_HOME: /tmp/cpython-wasi
       MIRAGE_INTEG_DOCKER_CONTAINER: mirage-integ-runtime-box
@@ -1108,7 +1176,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -1142,7 +1210,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p /tmp/cpython-wasi
-          gh release download v3.14.6 -R brettcannon/cpython-wasi-build \
+          gh release download v3.14.7 -R brettcannon/cpython-wasi-build \
             -p "$WASI_BUILD.zip" -O /tmp/wasi-build.zip
           unzip -q /tmp/wasi-build.zip -d /tmp/cpython-wasi
 
@@ -1232,7 +1300,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
@@ -1332,25 +1400,32 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Download TypeScript build outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integ-typescript-dist
           path: typescript/packages
 
+      # Every kit fake imports a generated Prisma client out of integ/generated/,
+      # which is gitignored, so all of them have to exist before any fake in
+      # this job starts. One step rather than one per fake: letting a fake rely
+      # on an earlier fake's step to have generated its client couples the two
+      # through an `if:` guard that nothing states.
+      - name: Generate integ Prisma clients
+        working-directory: integ
+        run: pnpm run prisma:clients
+
       - name: Start fake Trello and Linear APIs
         if: matrix.facet == 'project'
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-trello-ci.db
+        working-directory: integ
         run: |
-          (cd integ && ./node_modules/.bin/prisma generate --schema prisma/schema.prisma)
-          (cd integ && nohup ./node_modules/.bin/tsx server/trello.ts --port 5095 > /tmp/trello.log 2>&1 &)
-          nohup ./python/.venv/bin/python integ/server/linear_server.py --port 5094 > /tmp/linear.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/trello/main.ts --port 5095 > /tmp/trello.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/linear/main.ts --port 5094 > /tmp/linear.log 2>&1 &
           for f in trello linear; do
-            for i in $(seq 1 30); do grep -q "ENDPOINT=" /tmp/$f.log && break; sleep 1; done
+            for i in $(seq 1 30); do grep -q "_URL=" /tmp/$f.log && break; sleep 1; done
             cat /tmp/$f.log
           done
-          echo "TRELLO_ENDPOINT=http://127.0.0.1:5095" >> "$GITHUB_ENV"
-          echo "LINEAR_ENDPOINT=http://127.0.0.1:5094/graphql" >> "$GITHUB_ENV"
+          echo "TRELLO_URL=http://127.0.0.1:5095" >> "$GITHUB_ENV"
+          echo "LINEAR_URL=http://127.0.0.1:5094" >> "$GITHUB_ENV"
 
       # The cli facet drives the builtin CLIs (himalaya, gws, slack, discord,
       # ntn, linear) end to end against the same mocks the email, chat and
@@ -1362,7 +1437,7 @@ jobs:
             -p 3025:3025 -p 3143:3143 -p 8080:8080 \
             -e GREENMAIL_OPTS="-Dgreenmail.setup.test.all -Dgreenmail.users=integ:secret@example.com -Dgreenmail.users.login=email -Dgreenmail.hostname=0.0.0.0" \
             greenmail/standalone:2.1.3
-          cd integ && nohup pnpm exec tsx server/gws_server.ts --port 19999 > /tmp/gws.log 2>&1 &
+          cd integ && nohup pnpm exec tsx server/gws/main.ts --port 19999 > /tmp/gws.log 2>&1 &
           for i in $(seq 1 30); do grep -q "GWS_URL=" /tmp/gws.log && break; sleep 1; done
           cat /tmp/gws.log
           for i in $(seq 1 30); do
@@ -1375,22 +1450,20 @@ jobs:
       - name: Start fake Slack Web API
         if: matrix.facet == 'chat' || matrix.facet == 'cli'
         working-directory: integ
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-slack-ci.db
         run: |
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-          nohup ./node_modules/.bin/tsx server/slack.ts --port 5097 > /tmp/slack.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/slack/main.ts --port 5097 > /tmp/slack.log 2>&1 &
           for i in $(seq 1 30); do grep -q "SLACK_URL=" /tmp/slack.log && break; sleep 1; done
           cat /tmp/slack.log
           echo "SLACK_URL=http://127.0.0.1:5097" >> "$GITHUB_ENV"
 
       - name: Start fake Discord API
         if: matrix.facet == 'chat' || matrix.facet == 'cli'
+        working-directory: integ
         run: |
-          nohup ./python/.venv/bin/python integ/server/discord_server.py --port 5099 > /tmp/discord.log 2>&1 &
-          for i in $(seq 1 30); do grep -q "DISCORD_ENDPOINT=" /tmp/discord.log && break; sleep 1; done
+          nohup ./node_modules/.bin/tsx server/discord/main.ts --port 5090 > /tmp/discord.log 2>&1 &
+          for i in $(seq 1 30); do grep -q "DISCORD_URL=" /tmp/discord.log && break; sleep 1; done
           cat /tmp/discord.log
-          echo "DISCORD_ENDPOINT=http://127.0.0.1:5099" >> "$GITHUB_ENV"
+          echo "DISCORD_URL=http://127.0.0.1:5090" >> "$GITHUB_ENV"
 
       - name: Start fake GitHub API
         if: matrix.facet == 'cli'
@@ -1407,16 +1480,13 @@ jobs:
       # runner under NOTION_ENABLED) and the fake Linear GraphQL server.
       - name: Start fake Linear API and the Notion mock
         if: matrix.facet == 'cli'
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-notion-ci.db
         run: |
-          nohup ./python/.venv/bin/python integ/server/linear_server.py --port 5094 > /tmp/linear.log 2>&1 &
-          for i in $(seq 1 30); do grep -q "ENDPOINT=" /tmp/linear.log && break; sleep 1; done
-          cat /tmp/linear.log
-          echo "LINEAR_ENDPOINT=http://127.0.0.1:5094/graphql" >> "$GITHUB_ENV"
           cd integ
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-          nohup ./node_modules/.bin/tsx server/notion_server.ts --port 5091 > /tmp/notion.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/linear/main.ts --port 5094 > /tmp/linear.log 2>&1 &
+          for i in $(seq 1 30); do grep -q "LINEAR_URL=" /tmp/linear.log && break; sleep 1; done
+          cat /tmp/linear.log
+          echo "LINEAR_URL=http://127.0.0.1:5094" >> "$GITHUB_ENV"
+          nohup ./node_modules/.bin/tsx server/notion/main.ts --port 5091 > /tmp/notion.log 2>&1 &
           for i in $(seq 1 30); do grep -q "NOTION_URL=" /tmp/notion.log && break; sleep 1; done
           cat /tmp/notion.log
           echo "NOTION_URL=http://127.0.0.1:5091" >> "$GITHUB_ENV"

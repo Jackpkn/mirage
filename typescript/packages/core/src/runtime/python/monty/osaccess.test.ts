@@ -22,6 +22,17 @@ import { PrefixResolver } from '../../resolver.ts'
 
 const NOT_HANDLED = Symbol('NOT_HANDLED')
 
+// Stands in for the binding's MontyFileHandle: the door only needs a
+// constructible class whose instances it can hand back from `open`.
+class FakeHandle {
+  constructor(
+    readonly path: string,
+    readonly mode: string,
+  ) {}
+}
+
+const BITS = { NOT_HANDLED, MontyFileHandle: FakeHandle }
+
 function accessOn(
   dispatch: BridgeDispatchFn,
   env: Record<string, string> = {},
@@ -29,7 +40,7 @@ function accessOn(
   links: string[] = [],
 ): MirageOSAccess {
   return new MirageOSAccess(
-    NOT_HANDLED,
+    BITS,
     env,
     new MontyVFS(
       new RuntimeVFS(
@@ -86,28 +97,234 @@ describe('MirageOSAccess environment', () => {
   })
 
   it('answers the environment doors even with no workspace attached', () => {
-    const access = new MirageOSAccess(NOT_HANDLED, { A: '1' }, null)
+    const access = new MirageOSAccess(BITS, { A: '1' }, null)
     expect(access.handle('os.getenv', ['A'])).toBe('1')
-    expect(access.handle('Path.read_text', ['/ram/x'])).toBe(NOT_HANDLED)
+    // A read now reaches the scratch tree, whose miss is a typed
+    // FileNotFoundError — the JS binding has no tree of its own, so
+    // declining raised PermissionError where python raised this.
+    expect(() => access.handle('Path.read_text', ['/tmp/x'])).toThrow('No such file or directory')
+  })
+})
+
+describe('MirageOSAccess scratch paths', () => {
+  it('serves a path outside every mount from the scratch tree, like python', async () => {
+    // The tree starts holding only '/', exactly like python's: a guest
+    // makes its scratch directories before writing under them.
+    const access = accessOn(noop)
+    await expect(Promise.resolve(access.handle('Path.exists', ['/tmp/x']))).resolves.toBe(false)
+    expect(() => access.handle('Path.write_text', ['/tmp/x', 'hi'])).toThrow(
+      'No such file or directory',
+    )
+    access.handle('Path.mkdir', ['/tmp'], {})
+    expect(access.handle('Path.write_text', ['/tmp/x', 'hi'])).toBe(2)
+    expect(access.handle('Path.read_text', ['/tmp/x'])).toBe('hi')
+    expect(access.handle('Path.exists', ['/tmp/x'])).toBe(true)
+    expect(access.handle('Path.is_file', ['/tmp/x'])).toBe(true)
+  })
+
+  it('write_text reports code points, the way python len counts', () => {
+    const access = accessOn(noop)
+    access.handle('Path.mkdir', ['/tmp'], {})
+    expect(access.handle('Path.write_text', ['/tmp/g.txt', '\u{1d11e}'])).toBe(1)
+  })
+
+  it('opens a scratch file and answers the handle follow-ups from the tree', () => {
+    const access = accessOn(noop)
+    access.handle('Path.mkdir', ['/tmp'], {})
+    const handle = access.handle('open', ['/tmp/log.txt', 'w']) as FakeHandle
+    expect(handle).toBeInstanceOf(FakeHandle)
+    expect(handle.mode).toBe('w')
+    expect(access.handle('Path.append_text', ['/tmp/log.txt', 'abc'])).toBe(3)
+    expect(access.handle('Path.read_text', ['/tmp/log.txt'])).toBe('abc')
+  })
+
+  it("open 'r' on a missing scratch file raises python's own FileNotFoundError", () => {
+    expect(() => accessOn(noop).handle('open', ['/tmp/nope', 'r'])).toThrow(
+      "[Errno 2] No such file or directory: '/tmp/nope'",
+    )
+  })
+
+  it('mkdir honors parents and exist_ok in the tree', () => {
+    const access = accessOn(noop)
+    expect(() => access.handle('Path.mkdir', ['/tmp/a/b'], {})).toThrow('No such file or directory')
+    expect(access.handle('Path.mkdir', ['/tmp/a/b'], { parents: true, exist_ok: false })).toBeNull()
+    expect(() => access.handle('Path.mkdir', ['/tmp/a/b'], {})).toThrow('File exists')
+    expect(access.handle('Path.mkdir', ['/tmp/a/b'], { parents: false, exist_ok: true })).toBeNull()
+  })
+
+  it('a rename crossing into a mount raises EXDEV, as a cross-filesystem move', () => {
+    const access = accessOn(noop)
+    access.handle('Path.mkdir', ['/tmp'], {})
+    access.handle('Path.write_text', ['/tmp/x', 'hi'])
+    expect(() => access.handle('Path.rename', ['/tmp/x', '/ram/y'])).toThrow(
+      '[Errno 18] Invalid cross-device link',
+    )
+  })
+
+  it('merges the workspace listing into a scratch iterdir, so / shows the mounts', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/') return Promise.resolve(['/ram/'])
+      return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
+    })
+    const access = accessOn(dispatch)
+    access.handle('Path.mkdir', ['/tmp'], {})
+    expect(await access.handle('Path.iterdir', ['/'])).toEqual(['/ram', '/tmp'])
+  })
+
+  it('answers is_symlink false for a scratch path, whose tree holds no links', async () => {
+    const access = accessOn(vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined)))
+    expect(await access.handle('Path.is_symlink', ['/tmp/l'])).toBe(false)
   })
 })
 
 describe('MirageOSAccess declining', () => {
-  it('declines a path outside every mount, so monty serves it from its own tree', () => {
-    expect(accessOn(noop).handle('Path.read_bytes', ['/tmp/x'])).toBe(NOT_HANDLED)
-  })
-
   it('declines an operation it does not implement', () => {
     expect(accessOn(noop).handle('Path.chmod', ['/ram/x'])).toBe(NOT_HANDLED)
   })
 
-  it('declines a rename whose destination is outside the workspace', () => {
-    // Declining beats half-applying: monty then moves it in its own tree.
-    expect(accessOn(noop).handle('Path.rename', ['/ram/x', '/tmp/y'])).toBe(NOT_HANDLED)
+  it('declines Path.stat, which the JS binding cannot carry to the guest', () => {
+    // Probed on 0.0.21: a stat answer arrives as a guest dict (or
+    // list), so st.st_size raises AttributeError; python's binding
+    // takes a real StatResult. Upstream gap, not a policy choice.
+    expect(accessOn(noop).handle('Path.stat', ['/ram/x'])).toBe(NOT_HANDLED)
+    expect(accessOn(noop).handle('Path.stat', ['/tmp/x'])).toBe(NOT_HANDLED)
+  })
+
+  it('a rename whose destination leaves the workspace raises EXDEV', () => {
+    // python routes it to the dispatcher, whose resolver answers
+    // CrossMountError; half-applying the move would lose the file.
+    expect(() => accessOn(noop).handle('Path.rename', ['/ram/x', '/tmp/y'])).toThrow(
+      '[Errno 18] Invalid cross-device link',
+    )
   })
 
   it('accepts a path object as well as a string', () => {
-    expect(accessOn(noop).handle('Path.mkdir', [{ path: '/ram/d' }])).not.toBe(NOT_HANDLED)
+    expect(accessOn(noop).handle('Path.mkdir', [{ path: '/ram/d' }], {})).not.toBe(NOT_HANDLED)
+  })
+})
+
+describe('MirageOSAccess clock and lexical doors', () => {
+  it('serves datetime.now from the host clock as a DateTime marker', () => {
+    const naive = accessOn(noop).handle('datetime.now', [null]) as Record<string, unknown>
+    expect(naive.__monty_type__).toBe('DateTime')
+    expect(naive.year).toBeGreaterThanOrEqual(2026)
+    expect(naive.offsetSeconds).toBeUndefined()
+  })
+
+  it('answers an aware datetime.now in the asked timezone', () => {
+    const marker = { __monty_type__: 'TimeZone', offsetSeconds: 0, name: 'UTC' }
+    const aware = accessOn(noop).handle('datetime.now', [marker]) as Record<string, unknown>
+    expect(aware.offsetSeconds).toBe(0)
+    expect(aware.timezoneName).toBe('UTC')
+  })
+
+  it('serves date.today as a Date marker', () => {
+    const today = accessOn(noop).handle('date.today', []) as Record<string, unknown>
+    expect(today.__monty_type__).toBe('Date')
+    expect(today.year).toBeGreaterThanOrEqual(2026)
+  })
+
+  it('resolves lexically for any path, a str like python answers', () => {
+    const access = accessOn(noop)
+    expect(access.handle('Path.resolve', ['rel/x.txt'])).toBe('/rel/x.txt')
+    expect(access.handle('Path.absolute', ['/abs/y.txt'])).toBe('/abs/y.txt')
+  })
+})
+
+describe('MirageOSAccess mounted open and append', () => {
+  function establishing(seed: string[]): {
+    dispatch: Mock<BridgeDispatchFn>
+    created: string[]
+    truncated: string[]
+    appended: Uint8Array[]
+  } {
+    const created: string[] = []
+    const truncated: string[] = []
+    const appended: Uint8Array[] = []
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path, bytes) => {
+      if (op === 'readdir') {
+        // Only the mount directory lists; probing a file path (the
+        // is-it-a-directory check) misses like a real mount.
+        if (path !== '/ram/') {
+          return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
+        }
+        return Promise.resolve(seed)
+      }
+      if (op === 'stat' && seed.includes(path)) {
+        return Promise.resolve(new FileStat({ name: path, size: 1, type: FileType.TEXT }))
+      }
+      if (op === 'read' && seed.includes(path)) {
+        return Promise.resolve(new TextEncoder().encode('base-'))
+      }
+      if (op === 'create') {
+        created.push(path)
+        return Promise.resolve(undefined)
+      }
+      if (op === 'truncate') {
+        truncated.push(path)
+        return Promise.resolve(undefined)
+      }
+      if (op === 'append') {
+        appended.push(bytes ?? new Uint8Array())
+        return Promise.resolve(undefined)
+      }
+      return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
+    })
+    return { dispatch, created, truncated, appended }
+  }
+
+  it("open 'w' truncates what exists and creates what does not, at open time", async () => {
+    const { dispatch, created, truncated } = establishing(['/ram/keep.txt'])
+    const access = accessOn(dispatch)
+    expect(await access.handle('open', ['/ram/keep.txt', 'w'])).toBeInstanceOf(FakeHandle)
+    expect(await access.handle('open', ['/ram/new.txt', 'w'])).toBeInstanceOf(FakeHandle)
+    expect(truncated).toEqual(['/ram/keep.txt'])
+    expect(created).toEqual(['/ram/new.txt'])
+  })
+
+  it("open 'a' creates only what is missing and establishes the append base", async () => {
+    const { dispatch, created, appended } = establishing(['/ram/log.txt'])
+    const access = accessOn(dispatch)
+    await access.handle('open', ['/ram/log.txt', 'a'])
+    expect(created).toEqual([])
+    await access.handle('Path.append_text', ['/ram/log.txt', 'x'])
+    await access.handle('Path.append_text', ['/ram/log.txt', 'y'])
+    // Deltas alone ride the append op; the running whole only backs
+    // the no-append-op write fallback.
+    expect(appended.map((b) => new TextDecoder().decode(b))).toEqual(['x', 'y'])
+  })
+
+  it("open 'r' establishes nothing and misses loudly", async () => {
+    const { dispatch, created, truncated } = establishing(['/ram/a.txt'])
+    const access = accessOn(dispatch)
+    await access.handle('open', ['/ram/a.txt', 'r'])
+    expect(created).toEqual([])
+    expect(truncated).toEqual([])
+    await expect(Promise.resolve(access.handle('open', ['/ram/missing.txt', 'r']))).rejects.toThrow(
+      '[Errno 2] No such file or directory',
+    )
+  })
+
+  it('mkdir forwards parents to the bridge and answers exist_ok locally', async () => {
+    const calls: [string, unknown][] = []
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path, _bytes, _dst, attrs) => {
+      if (op === 'mkdir') {
+        calls.push([path, attrs])
+        return Promise.resolve(undefined)
+      }
+      return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
+    })
+    const access = accessOn(dispatch)
+    await access.handle('Path.mkdir', ['/ram/x/y'], { parents: true, exist_ok: false })
+    expect(calls).toEqual([['/ram/x/y', { parents: true }]])
+  })
+
+  it('mkdir on an existing file raises FileExistsError even under exist_ok', async () => {
+    const dispatch = listing(['/ram/a.txt'])
+    const access = accessOn(dispatch)
+    await expect(
+      Promise.resolve(access.handle('Path.mkdir', ['/ram/a.txt'], { exist_ok: true })),
+    ).rejects.toThrow('[Errno 17] File exists')
   })
 })
 
@@ -145,6 +362,19 @@ describe('MirageOSAccess path operations', () => {
     expect(await access.handle('Path.exists', ['/ram/nope/deep'])).toBe(false)
   })
 
+  it('does not classify a character device as a regular file', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'readdir' && path === '/dev/') return Promise.resolve(['/dev/null'])
+      if (op === 'stat' && path === '/dev/null') {
+        return Promise.resolve(new FileStat({ name: 'null', type: FileType.CHAR_DEVICE }))
+      }
+      return Promise.reject(Object.assign(new Error('gone'), { code: 'ENOENT' }))
+    })
+    const access = accessOn(dispatch, {}, ['/dev'])
+    expect(await access.handle('Path.exists', ['/dev/null'])).toBe(true)
+    expect(await access.handle('Path.is_file', ['/dev/null'])).toBe(false)
+  })
+
   // Monty's own tree holds no links, so declining this verb answered
   // False for a link the shell made.
   it('answers is_symlink from the parent listing mark', async () => {
@@ -152,12 +382,5 @@ describe('MirageOSAccess path operations', () => {
     const access = accessOn(dispatch, {}, ['/ram'], ['l'])
     expect(await access.handle('Path.is_symlink', ['/ram/d/l'])).toBe(true)
     expect(await access.handle('Path.is_symlink', ['/ram/d/f'])).toBe(false)
-  })
-
-  // A path under no mount reaches monty's own tree, links included.
-  it('declines is_symlink outside every mount', () => {
-    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
-    const access = accessOn(dispatch)
-    expect(access.handle('Path.is_symlink', ['/tmp/l'])).toBe(NOT_HANDLED)
   })
 })

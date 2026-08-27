@@ -19,8 +19,10 @@ import { isoTimestamp } from './dates.ts'
 // like -rw-r--r--" for every stat translator (FUSE attrs, guest
 // st_mode); mirrors mirage/utils/stat_view.py.
 const S_IFDIR = 0o040000
+const S_IFCHR = 0o020000
 const S_IFREG = 0o100000
 const S_IFLNK = 0o120000
+export const CHAR_MODE = S_IFCHR | 0o666
 export const DIR_MODE = S_IFDIR | 0o755
 export const FILE_MODE = S_IFREG | 0o644
 // A link is always lrwxrwxrwx: the bits on a symlink are not consulted
@@ -55,6 +57,24 @@ export function isLink(st: FileStat): boolean {
   return st.type === FileType.SYMLINK
 }
 
+/** Whether a FileStat describes a character device. */
+export function isCharDevice(st: FileStat): boolean {
+  return st.type === FileType.CHAR_DEVICE
+}
+
+/** Encode a character device's logical major:minor for guest stat. */
+export function deviceRdev(st: FileStat): number {
+  const values = st.extra.device_numbers
+  if (
+    !Array.isArray(values) ||
+    values.length !== 2 ||
+    !values.every((value) => Number.isInteger(value))
+  ) {
+    return 0
+  }
+  return (Number(values[0]) << 8) | Number(values[1])
+}
+
 /**
  * The st_mode a stat consumer should report for one FileStat.
  *
@@ -72,7 +92,7 @@ export function isLink(st: FileStat): boolean {
  */
 export function posixMode(st: FileStat): number {
   if (isLink(st)) return LINK_MODE
-  const base = isDir(st) ? DIR_MODE : FILE_MODE
+  const base = isCharDevice(st) ? CHAR_MODE : isDir(st) ? DIR_MODE : FILE_MODE
   if (st.mode === null) return base
   return (base & ~0o7777) | (st.mode & 0o7777)
 }

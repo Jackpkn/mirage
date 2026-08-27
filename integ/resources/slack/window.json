@@ -1,0 +1,56 @@
+{
+  "cases": [
+    {
+      "id": "slack_window_glob_reaches_a_day_before_the_window",
+      "seq": 520400,
+      "targets": [
+        "slack"
+      ],
+      "command": "ls -d /slack/channels/general__C1/2025-11-05*",
+      "expect": {
+        "exit": 0,
+        "stdout": "/slack/channels/general__C1/2025-11-05\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "slack_window_glob_is_clipped_at_channel_creation",
+      "seq": 520401,
+      "targets": [
+        "slack"
+      ],
+      "command": "ls -d /slack/channels/general__C1/2025-11-* | wc -l",
+      "expect": {
+        "exit": 0,
+        "stdout": "28\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "slack_window_glob_does_not_become_the_channel_listing",
+      "seq": 520402,
+      "targets": [
+        "slack"
+      ],
+      "command": "ls -d /slack/channels/general__C1/2025-11-* > /dev/null && ls /slack/channels/general__C1 | head -1",
+      "expect": {
+        "exit": 0,
+        "stdout": "2025-12-14\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "slack_window_glob_reads_a_day_the_window_omits",
+      "seq": 520403,
+      "targets": [
+        "slack"
+      ],
+      "command": "cat /slack/channels/general__C1/2025-11-06*/chat.jsonl | jq -r .text | head -2",
+      "expect": {
+        "exit": 0,
+        "stdout": "welcome Liam to the team, say hi\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

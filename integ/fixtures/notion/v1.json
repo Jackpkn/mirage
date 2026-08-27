@@ -1,20 +1,33 @@
 {
-  "defaults": {
-    "created_time": "2026-01-01T00:00:00.000Z",
-    "last_edited_time": "2026-01-02T00:00:00.000Z",
-    "created_by": "user-1",
-    "last_edited_by": "user-2",
-    "url_base": "https://notion.example/"
+  "meta": {
+    "workspaceName": "integ-test",
+    "workspaceId": "e0000000-0000-4000-8000-000000000002",
+    "botId": "e0000000-0000-4000-8000-000000000001",
+    "botName": "mirage-integ",
+    "maxUploadSize": 5242880,
+    "urlBase": "https://notion.example/",
+    "createdTime": "2026-01-01T00:00:00.000Z",
+    "lastEditedTime": "2026-01-02T00:00:00.000Z",
+    "createdBy": "user-1",
+    "lastEditedBy": "user-2"
   },
   "databases": [
     {
       "id": "eeee1111-2222-3333-4444-555566667777",
-      "title": "Tasks",
-      "parent": {
-        "type": "workspace"
-      },
-      "is_inline": false,
-      "properties": {
+      "parentType": "workspace",
+      "parentId": null,
+      "titleText": "Tasks",
+      "titleJson": [
+        {
+          "type": "text",
+          "plain_text": "Tasks",
+          "text": {
+            "content": "Tasks"
+          }
+        }
+      ],
+      "descriptionJson": null,
+      "propertiesJson": {
         "Name": {
           "id": "title",
           "name": "Name",
@@ -91,40 +104,114 @@
           "type": "rich_text",
           "rich_text": {}
         }
-      }
+      },
+      "isInline": false,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2",
+      "url": "https://notion.example/eeee1111222233334444555566667777",
+      "position": 0
     }
   ],
   "pages": [
     {
       "id": "aaaa1111-2222-3333-4444-555566667777",
-      "title": "Project Roadmap",
-      "parent": {
-        "type": "workspace"
-      }
+      "parentType": "workspace",
+      "parentId": null,
+      "titleText": "Project Roadmap",
+      "propertiesJson": {
+        "title": {
+          "id": "title",
+          "type": "title",
+          "title": [
+            {
+              "type": "text",
+              "plain_text": "Project Roadmap",
+              "text": {
+                "content": "Project Roadmap"
+              }
+            }
+          ]
+        }
+      },
+      "iconJson": null,
+      "coverJson": null,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2",
+      "url": "https://notion.example/aaaa1111222233334444555566667777",
+      "position": 0
     },
     {
       "id": "bbbb2222-3333-4444-5555-666677778888",
-      "title": "Notes",
-      "parent": {
-        "type": "workspace"
-      }
+      "parentType": "workspace",
+      "parentId": null,
+      "titleText": "Notes",
+      "propertiesJson": {
+        "title": {
+          "id": "title",
+          "type": "title",
+          "title": [
+            {
+              "type": "text",
+              "plain_text": "Notes",
+              "text": {
+                "content": "Notes"
+              }
+            }
+          ]
+        }
+      },
+      "iconJson": null,
+      "coverJson": null,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2",
+      "url": "https://notion.example/bbbb2222333344445555666677778888",
+      "position": 1
     },
     {
       "id": "cccc1111-2222-3333-4444-555566667777",
-      "title": "Q1 Goals",
-      "parent": {
-        "type": "page_id",
-        "id": "aaaa1111-2222-3333-4444-555566667777"
-      }
+      "parentType": "page_id",
+      "parentId": "aaaa1111-2222-3333-4444-555566667777",
+      "titleText": "Q1 Goals",
+      "propertiesJson": {
+        "title": {
+          "id": "title",
+          "type": "title",
+          "title": [
+            {
+              "type": "text",
+              "plain_text": "Q1 Goals",
+              "text": {
+                "content": "Q1 Goals"
+              }
+            }
+          ]
+        }
+      },
+      "iconJson": null,
+      "coverJson": null,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2",
+      "url": "https://notion.example/cccc1111222233334444555566667777",
+      "position": 2
     },
     {
       "id": "ffff1111-2222-3333-4444-555566667777",
-      "title": "Write spec",
-      "parent": {
-        "type": "database_id",
-        "id": "eeee1111-2222-3333-4444-555566667777"
-      },
-      "properties": {
+      "parentType": "database_id",
+      "parentId": "eeee1111-2222-3333-4444-555566667777",
+      "titleText": "Write spec",
+      "propertiesJson": {
         "Name": {
           "id": "title",
           "type": "title",
@@ -200,16 +287,23 @@
             }
           ]
         }
-      }
+      },
+      "iconJson": null,
+      "coverJson": null,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2",
+      "url": "https://notion.example/ffff1111222233334444555566667777",
+      "position": 3
     },
     {
       "id": "ffff2222-3333-4444-5555-666677778888",
-      "title": "Ship beta",
-      "parent": {
-        "type": "database_id",
-        "id": "eeee1111-2222-3333-4444-555566667777"
-      },
-      "properties": {
+      "parentType": "database_id",
+      "parentId": "eeee1111-2222-3333-4444-555566667777",
+      "titleText": "Ship beta",
+      "propertiesJson": {
         "Name": {
           "id": "title",
           "type": "title",
@@ -258,15 +352,25 @@
           "type": "rich_text",
           "rich_text": []
         }
-      }
+      },
+      "iconJson": null,
+      "coverJson": null,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2",
+      "url": "https://notion.example/ffff2222333344445555666677778888",
+      "position": 4
     }
   ],
   "blocks": [
     {
       "id": "b-a1",
-      "parent": "aaaa1111-2222-3333-4444-555566667777",
+      "parentId": "aaaa1111-2222-3333-4444-555566667777",
+      "position": 0,
       "type": "heading_1",
-      "payload": {
+      "payloadJson": {
         "rich_text": [
           {
             "type": "text",
@@ -277,13 +381,20 @@
             }
           }
         ]
-      }
+      },
+      "hasChildren": false,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     },
     {
       "id": "b-a2",
-      "parent": "aaaa1111-2222-3333-4444-555566667777",
+      "parentId": "aaaa1111-2222-3333-4444-555566667777",
+      "position": 1,
       "type": "paragraph",
-      "payload": {
+      "payloadJson": {
         "rich_text": [
           {
             "type": "text",
@@ -312,13 +423,20 @@
             }
           }
         ]
-      }
+      },
+      "hasChildren": false,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     },
     {
       "id": "dddd2222-3333-4444-5555-666677778888",
-      "parent": "aaaa1111-2222-3333-4444-555566667777",
+      "parentId": "aaaa1111-2222-3333-4444-555566667777",
+      "position": 2,
       "type": "bulleted_list_item",
-      "payload": {
+      "payloadJson": {
         "rich_text": [
           {
             "type": "text",
@@ -330,13 +448,19 @@
           }
         ]
       },
-      "has_children": true
+      "hasChildren": true,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     },
     {
       "id": "b-a4",
-      "parent": "aaaa1111-2222-3333-4444-555566667777",
+      "parentId": "aaaa1111-2222-3333-4444-555566667777",
+      "position": 3,
       "type": "code",
-      "payload": {
+      "payloadJson": {
         "rich_text": [
           {
             "type": "text",
@@ -348,22 +472,35 @@
           }
         ],
         "language": "python"
-      }
+      },
+      "hasChildren": false,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     },
     {
       "id": "cccc1111-2222-3333-4444-555566667777",
-      "parent": "aaaa1111-2222-3333-4444-555566667777",
+      "parentId": "aaaa1111-2222-3333-4444-555566667777",
+      "position": 4,
       "type": "child_page",
-      "payload": {
+      "payloadJson": {
         "title": "Q1 Goals"
       },
-      "has_children": true
+      "hasChildren": true,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     },
     {
       "id": "b-b1",
-      "parent": "bbbb2222-3333-4444-5555-666677778888",
+      "parentId": "bbbb2222-3333-4444-5555-666677778888",
+      "position": 0,
       "type": "paragraph",
-      "payload": {
+      "payloadJson": {
         "rich_text": [
           {
             "type": "text",
@@ -374,13 +511,20 @@
             }
           }
         ]
-      }
+      },
+      "hasChildren": false,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     },
     {
       "id": "b-b2",
-      "parent": "bbbb2222-3333-4444-5555-666677778888",
+      "parentId": "bbbb2222-3333-4444-5555-666677778888",
+      "position": 1,
       "type": "to_do",
-      "payload": {
+      "payloadJson": {
         "rich_text": [
           {
             "type": "text",
@@ -392,13 +536,20 @@
           }
         ],
         "checked": true
-      }
+      },
+      "hasChildren": false,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     },
     {
       "id": "b-c1",
-      "parent": "cccc1111-2222-3333-4444-555566667777",
+      "parentId": "cccc1111-2222-3333-4444-555566667777",
+      "position": 0,
       "type": "paragraph",
-      "payload": {
+      "payloadJson": {
         "rich_text": [
           {
             "type": "text",
@@ -409,13 +560,20 @@
             }
           }
         ]
-      }
+      },
+      "hasChildren": false,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     },
     {
       "id": "b-d1",
-      "parent": "dddd2222-3333-4444-5555-666677778888",
+      "parentId": "dddd2222-3333-4444-5555-666677778888",
+      "position": 0,
       "type": "bulleted_list_item",
-      "payload": {
+      "payloadJson": {
         "rich_text": [
           {
             "type": "text",
@@ -426,7 +584,13 @@
             }
           }
         ]
-      }
+      },
+      "hasChildren": false,
+      "inTrash": false,
+      "createdTime": "2026-01-01T00:00:00.000Z",
+      "lastEditedTime": "2026-01-02T00:00:00.000Z",
+      "createdBy": "user-1",
+      "lastEditedBy": "user-2"
     }
   ],
   "comments": []

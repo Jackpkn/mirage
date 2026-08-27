@@ -15,11 +15,13 @@
 import { CachableAsyncIterator } from '../../../io/cachable_iterator.ts'
 import { asyncChain } from '../../../io/stream.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
-import type { FileStat, PathSpec } from '../../../types.ts'
+import { FileType, Limit, type FileStat, type PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { splitReadable } from '../utils/operands.ts'
 import { resolveSource } from '../utils/stream.ts'
 import type { FlagValue } from '../../spec/types.ts'
+import { CHAR_DEVICE_MAX_BYTES } from '../utils/constants.ts'
+import { truncateStream } from '../utils/limit.ts'
 
 const ENC = new TextEncoder()
 const NL = 0x0a
@@ -147,8 +149,18 @@ export async function catGeneric(
     const reads: Record<string, ByteSource> = {}
     const cacheKeys: string[] = []
     const outputs: AsyncIterable<Uint8Array>[] = []
+    const io = new IOResult({
+      reads,
+      cache: cacheKeys,
+      exitCode: err === '' ? 0 : 1,
+      stderr: errBytes,
+    })
     for (const p of readable) {
-      const cachable = new CachableAsyncIterator(stream(p))
+      let source: ByteSource = stream(p)
+      if ((await stat(p)).type === FileType.CHAR_DEVICE) {
+        source = truncateStream(source, io, new Limit({ maxBytes: CHAR_DEVICE_MAX_BYTES }))
+      }
+      const cachable = new CachableAsyncIterator(source)
       reads[p.mountPath] = cachable
       cacheKeys.push(p.mountPath)
       outputs.push(cachable)
@@ -156,10 +168,7 @@ export async function catGeneric(
     const merged = outputs.length === 1 ? outputs[0] : asyncChain(...outputs)
     if (merged === undefined) throw new Error('cat: missing readable stream')
     const out: ByteSource = wantsDisplay ? displayLines(merged, display) : merged
-    return [
-      out,
-      new IOResult({ reads, cache: cacheKeys, exitCode: err === '' ? 0 : 1, stderr: errBytes }),
-    ]
+    return [out, io]
   }
   try {
     const source = resolveSource(opts.stdin, 'cat: missing operand')

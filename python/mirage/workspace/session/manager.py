@@ -17,7 +17,8 @@ import copy
 from collections.abc import Mapping
 
 from mirage.policy.profile import CompiledProfile
-from mirage.policy.types import AdmissionRules, Decision, ProfileScript
+from mirage.policy.types import (AdmissionRules, Decision, HideReason,
+                                 ProfileScript)
 from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
 from mirage.workspace.session.ram import RAMSessionStore
@@ -116,6 +117,24 @@ class SessionManager:
             return (self._default_profile.script
                     if self._default_profile is not None else None)
         return session.script
+
+    def hide_reasons_of(self, session_id: str) -> tuple[HideReason, ...]:
+        """The operator's hide reasons for one session's profile.
+
+        The default profile's for an id this manager does not know, the
+        same fallback ``commands_of`` makes and for the same reason.
+        Host-side only: nothing on the command surface renders these,
+        because a reason on a nonexistent path would confirm the path
+        exists.
+
+        Args:
+            session_id (str): the session, empty when none is bound.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return (self._default_profile.hide_reasons
+                    if self._default_profile is not None else ())
+        return session.hide_reasons
 
     def decision_sessions(self) -> tuple[str, ...]:
         """Every session id holding ledger records
@@ -223,7 +242,9 @@ class SessionManager:
                     # restarted daemon unrestricted and let the next
                     # flush erase them from the store.
                     default.hidden_paths = stored.hidden_paths
+                    default.shown_paths = stored.shown_paths
                     default.hidden_vars = stored.hidden_vars
+                    default.hide_reasons = stored.hide_reasons
                     default.commands = stored.commands
                     default.script = stored.script
                     # The host's standing answers are session state

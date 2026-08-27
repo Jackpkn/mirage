@@ -17,14 +17,27 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlencode
 
 from aiohttp import web
 
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
+
 # Deliberate divergences from api.github.com, mirroring how
-# integ/server/dropbox.ts documents its Gmail-search shortcuts:
+# integ/server/dropbox/ documents its Gmail-search shortcuts:
 #
 #   - Code search is token-indexed, not substring. Real GitHub tokenises on
 #     non-word characters, so `octo` never matches `octocat`. The fake keeps an
@@ -333,6 +346,36 @@ def _error(status: int, message: str) -> web.Response:
         status=status)
 
 
+def _paged(request: web.Request,
+           items: list[dict],
+           key: str | None = None) -> web.Response:
+    """Return one GitHub REST page and advertise the next one with Link."""
+    try:
+        page = max(1, int(request.query.get("page", "1")))
+        per_page = max(1, min(100, int(request.query.get("per_page", "30"))))
+    except ValueError:
+        return _error(422, "Validation Failed")
+    start = (page - 1) * per_page
+    batch = items[start:start + per_page]
+    headers = {}
+    if start + per_page < len(items):
+        query = dict(request.query)
+        query.update({"page": str(page + 1), "per_page": str(per_page)})
+        base = f"{request.scheme}://{request.host}{request.path}"
+        headers["Link"] = f'<{base}?{urlencode(query)}>; rel="next"'
+    payload: object = {key: batch} if key else batch
+    return web.json_response(payload, headers=headers)
+
+
+def _next_number(repo: "FakeRepo") -> int:
+    rows = [*repo.issues, *repo.pulls]
+    return max((int(row["number"]) for row in rows), default=0) + 1
+
+
+def _by_number(rows: list[dict], number: int) -> dict | None:
+    return next((row for row in rows if row["number"] == number), None)
+
+
 class FakeRepo:
     """One in-memory repository: a flat path -> bytes map plus its index.
 
@@ -370,6 +413,91 @@ class FakeRepo:
         # visible to the next read, so both live here rather than being
         # accepted and dropped.
         self.issues: list[dict] = []
+        self.pulls: list[dict] = []
+        self.releases: list[dict] = []
+        self.comments: list[dict] = []
+        self.workflows: list[dict] = [{
+            "id": 102,
+            "name": "Archive",
+            "path": ".github/workflows/archive.yml",
+            "state": "disabled_manually",
+        }, {
+            "id": 101,
+            "name": "CI",
+            "path": ".github/workflows/ci.yml",
+            "state": "active",
+        }]
+        self.checks: list[dict] = [{
+            "id": 301,
+            "name": "test",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:01:00Z",
+            "details_url": "https://example.test/check/301",
+            "output": {
+                "summary": "All checks passed"
+            },
+            "app": {
+                "name": "GitHub Actions"
+            },
+        }, {
+            "id": 302,
+            "name": "flaky",
+            "status": "completed",
+            "conclusion": "cancelled",
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:02:00Z",
+            "details_url": "https://example.test/check/302",
+            "output": {
+                "summary": "Cancelled by a newer run"
+            },
+            "app": {
+                "name": "GitHub Actions"
+            },
+        }]
+        # Commit Status contexts, which a non-Actions CI provider publishes
+        # instead of Check Runs. `gh pr checks` merges both.
+        self.statuses: list[dict] = [{
+            "context": "ci/legacy",
+            "state": "success",
+            "target_url": "https://example.test/status/legacy",
+            "description": "Legacy status passed",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:01:30Z",
+        }]
+        self.runs: list[dict] = [{
+            "id":
+            201,
+            "name":
+            "CI",
+            "display_title":
+            "Initial checks",
+            "workflow_id":
+            101,
+            "run_number":
+            1,
+            "run_attempt":
+            1,
+            "event":
+            "push",
+            "head_branch":
+            default_branch,
+            "head_sha":
+            _commit_sha("initial-run"),
+            "status":
+            "completed",
+            "conclusion":
+            "success",
+            "created_at":
+            "2026-01-01T00:00:00Z",
+            "updated_at":
+            "2026-01-01T00:01:00Z",
+            "run_started_at":
+            "2026-01-01T00:00:05Z",
+            "html_url":
+            f"https://github.com/{owner}/{name}/actions/runs/201",
+        }]
         # Staged trees, and which one each commit points at. A multi-file
         # write builds a tree, commits it and then moves the branch, and
         # only that last step is allowed to change what a read returns.
@@ -630,14 +758,7 @@ class GitHubServer:
         repo = self._lookup(request)
         if repo is None:
             return _error(404, "Not Found")
-        return web.json_response({
-            "name": repo.name,
-            "full_name": repo.full_name,
-            "default_branch": repo.default_branch,
-            "owner": {
-                "login": repo.owner
-            },
-        })
+        return web.json_response(_repo_json(repo))
 
     async def user(self, request: web.Request) -> web.Response:
         """Who the token belongs to, which every write path resolves first.
@@ -654,6 +775,18 @@ class GitHubServer:
             "login": self.state.login,
             "name": self.state.login,
             "type": "User",
+        })
+
+    async def account(self, request: web.Request) -> web.Response:
+        """Resolve whether a named owner is the user or an organization."""
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        owner = request.match_info["owner"]
+        return web.json_response({
+            "login":
+            owner,
+            "type":
+            "User" if owner == self.state.login else "Organization",
         })
 
     async def root(self, request: web.Request) -> web.Response:
@@ -705,7 +838,7 @@ class GitHubServer:
             _repo_json(repo) for name, repo in sorted(self.state.repos.items())
             if repo.owner == owner
         ]
-        return web.json_response(items)
+        return _paged(request, items)
 
     async def create_repo(self, request: web.Request) -> web.Response:
         """Create a repository under the authenticated user.
@@ -726,10 +859,22 @@ class GitHubServer:
         name = str(body.get("name") or "").strip()
         if not name:
             return _error(422, "Repository creation failed.")
-        key = f"{self.state.login}/{name}"
+        owner = request.match_info.get("owner", self.state.login)
+        key = f"{owner}/{name}"
         if key in self.state.repos:
             return _error(422, "Repository creation failed.")
-        repo = self.state.repo(self.state.login, name)
+        repo = self.state.repo(owner, name)
+        repo.meta.update({
+            "description": body.get("description"),
+            "homepage": body.get("homepage"),
+            "private": bool(body.get("private")),
+            "visibility": "private" if body.get("private") else "public",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "pushed_at": "2026-01-01T00:00:00Z",
+        })
+        if body.get("auto_init"):
+            repo.seed_path("README.md", f"# {name}\n".encode())
         return web.json_response(_repo_json(repo), status=201)
 
     async def update_repo(self, request: web.Request) -> web.Response:
@@ -1307,7 +1452,23 @@ class GitHubServer:
             issue for issue in reversed(repo.issues)
             if wanted == "all" or issue["state"] == wanted
         ]
-        return web.json_response(issues)
+        creator = request.query.get("creator")
+        assignee = request.query.get("assignee")
+        labels = set(filter(None, request.query.get("labels", "").split(",")))
+        if creator:
+            issues = [i for i in issues if i["user"]["login"] == creator]
+        if assignee:
+            issues = [
+                i for i in issues
+                if any(a["login"] == assignee for a in i["assignees"])
+            ]
+        if labels:
+            issues = [
+                i for i in issues
+                if labels.issubset({label["name"]
+                                    for label in i["labels"]})
+            ]
+        return _paged(request, issues)
 
     async def create_issue(self, request: web.Request) -> web.Response:
         """File an issue.
@@ -1331,24 +1492,401 @@ class GitHubServer:
         labels = body.get("labels") or []
         issue = {
             "number":
-            len(repo.issues) + 1,
+            _next_number(repo),
             "title":
             title,
             "body":
             body.get("body") or "",
             "state":
             "open",
+            "created_at":
+            "2026-01-01T00:00:00Z",
+            "updated_at":
+            "2026-01-01T00:00:00Z",
             "user": {
                 "login": self.state.login
             },
+            "assignees": [{
+                "login": str(name)
+            } for name in body.get("assignees") or []],
             "labels": [{
                 "name": str(name)
             } for name in labels],
-            "html_url": (f"{self.state.base}/{repo.full_name}"
-                         f"/issues/{len(repo.issues) + 1}"),
+            "html_url": (f"https://github.com/{repo.full_name}"
+                         f"/issues/{_next_number(repo)}"),
         }
         repo.issues.append(issue)
         return web.json_response(issue, status=201)
+
+    async def get_issue(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        number = int(request.match_info["number"])
+        issue = None if repo is None else _by_number(repo.issues, number)
+        if issue is None and repo is not None:
+            pull = _by_number(repo.pulls, number)
+            if pull is not None:
+                issue = {**pull, "pull_request": {"url": request.path}}
+        if issue is None:
+            return _error(404, "Not Found")
+        return web.json_response(issue)
+
+    async def edit_issue(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        number = int(request.match_info["number"])
+        issue = None if repo is None else _by_number(repo.issues, number)
+        if issue is None:
+            return _error(404, "Not Found")
+        body = await _json_body(request)
+        for name in ("title", "body", "state"):
+            if name in body:
+                issue[name] = body[name]
+        if "labels" in body:
+            issue["labels"] = [{"name": str(v)} for v in body["labels"]]
+        if "assignees" in body:
+            issue["assignees"] = [{"login": str(v)} for v in body["assignees"]]
+        issue["updated_at"] = "2026-01-01T00:02:00Z"
+        return web.json_response(issue)
+
+    async def create_comment(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        number = int(request.match_info["number"])
+        if repo is None or (_by_number(repo.issues, number) is None
+                            and _by_number(repo.pulls, number) is None):
+            return _error(404, "Not Found")
+        body = await _json_body(request)
+        comment = {
+            "id":
+            len(repo.comments) + 1,
+            "body":
+            body.get("body") or "",
+            "user": {
+                "login": self.state.login
+            },
+            "html_url": (f"https://github.com/{repo.full_name}/issues/"
+                         f"{number}#issuecomment-{len(repo.comments) + 1}"),
+        }
+        repo.comments.append(comment)
+        return web.json_response(comment, status=201)
+
+    async def list_pulls(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        wanted = request.query.get("state", "open")
+        pulls = [
+            pull for pull in reversed(repo.pulls)
+            if wanted == "all" or pull["state"] == wanted
+        ]
+        for field in ("base", "head"):
+            value = request.query.get(field)
+            if value:
+                pulls = [pull for pull in pulls if pull[field]["ref"] == value]
+        return _paged(request, pulls)
+
+    async def create_pull(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        body = await _json_body(request)
+        if not all(body.get(name) for name in ("title", "head", "base")):
+            return _error(422, "Validation Failed")
+        number = _next_number(repo)
+        head = str(body["head"])
+        pull = {
+            "number": number,
+            "title": body["title"],
+            "body": body.get("body") or "",
+            "state": "open",
+            "draft": bool(body.get("draft")),
+            "user": {
+                "login": self.state.login
+            },
+            "labels": [],
+            "base": {
+                "ref": body["base"]
+            },
+            "head": {
+                "ref": head,
+                "sha": _commit_sha(head)
+            },
+            "mergeable": True,
+            "additions": 1,
+            "deletions": 0,
+            "changed_files": 1,
+            "merged_at": None,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "html_url": f"https://github.com/{repo.full_name}/pull/{number}",
+        }
+        repo.pulls.append(pull)
+        return web.json_response(pull, status=201)
+
+    async def get_pull(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        number = int(request.match_info["number"])
+        pull = None if repo is None else _by_number(repo.pulls, number)
+        if pull is None:
+            return _error(404, "Not Found")
+        if "diff" in request.headers.get("Accept", ""):
+            return web.Response(text=("diff --git a/README.md b/README.md\n"
+                                      "--- a/README.md\n+++ b/README.md\n"
+                                      "@@ -1 +1,2 @@\n # repo-v1\n+change\n"),
+                                content_type="text/plain")
+        return web.json_response(pull)
+
+    async def edit_pull(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        number = int(request.match_info["number"])
+        pull = None if repo is None else _by_number(repo.pulls, number)
+        if pull is None:
+            return _error(404, "Not Found")
+        body = await _json_body(request)
+        for name in ("title", "body", "state"):
+            if name in body:
+                pull[name] = body[name]
+        if "base" in body:
+            pull["base"] = {"ref": body["base"]}
+        pull["updated_at"] = "2026-01-01T00:02:00Z"
+        return web.json_response(pull)
+
+    async def merge_pull(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        number = int(request.match_info["number"])
+        pull = None if repo is None else _by_number(repo.pulls, number)
+        if pull is None:
+            return _error(404, "Not Found")
+        body = await _json_body(request)
+        expected = body.get("sha")
+        if expected and expected != pull["head"]["sha"]:
+            return _error(409, "Head branch was modified")
+        pull["state"] = "closed"
+        pull["merged_at"] = "2026-01-01T00:03:00Z"
+        return web.json_response({
+            "sha": _commit_sha("merge"),
+            "merged": True,
+            "message": "Pull Request successfully merged"
+        })
+
+    async def check_runs(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        return _paged(request, repo.checks, "check_runs")
+
+    async def commit_status(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        states = {str(row.get("state") or "") for row in repo.statuses}
+        if states & {"error", "failure"}:
+            state = "failure"
+        elif not repo.statuses or "pending" in states:
+            state = "pending"
+        else:
+            state = "success"
+        return web.json_response({
+            "state": state,
+            "sha": request.match_info["sha"],
+            "total_count": len(repo.statuses),
+            "statuses": repo.statuses,
+        })
+
+    async def list_releases(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        return _paged(request, list(reversed(repo.releases)))
+
+    async def create_release(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        body = await _json_body(request)
+        tag = str(body.get("tag_name") or "").strip()
+        if not tag:
+            return _error(422, "Validation Failed")
+        if any(row["tag_name"] == tag for row in repo.releases):
+            return _error(422, "Validation Failed")
+        release = {
+            "id": len(repo.releases) + 1,
+            "tag_name": tag,
+            "target_commitish": body.get("target_commitish")
+            or repo.default_branch,
+            "name": body.get("name") or tag,
+            "body": body.get("body") or "",
+            "draft": bool(body.get("draft")),
+            "prerelease": bool(body.get("prerelease")),
+            "created_at": "2026-01-01T00:00:00Z",
+            "published_at": "2026-01-01T00:00:00Z",
+            "html_url":
+            f"https://github.com/{repo.full_name}/releases/tag/{tag}",
+        }
+        repo.releases.append(release)
+        return web.json_response(release, status=201)
+
+    async def get_release(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        tag = request.match_info["tag"]
+        release = None if repo is None else next(
+            (row for row in repo.releases if row["tag_name"] == tag), None)
+        return (_error(404, "Not Found")
+                if release is None else web.json_response(release))
+
+    async def get_latest_release(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        release = None if repo is None else next(
+            (row for row in reversed(repo.releases)
+             if not row["draft"] and not row["prerelease"]), None)
+        return (_error(404, "Not Found")
+                if release is None else web.json_response(release))
+
+    def _workflow(self, repo: FakeRepo, value: str) -> dict | None:
+        return next(
+            (row for row in repo.workflows
+             if value in {str(row["id"]), row["name"],
+                          Path(row["path"]).name}), None)
+
+    async def list_workflows(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        return _paged(request, repo.workflows, "workflows")
+
+    async def get_workflow(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        workflow = (None if repo is None else self._workflow(
+            repo, request.match_info["workflow"]))
+        return (_error(404, "Not Found")
+                if workflow is None else web.json_response(workflow))
+
+    async def dispatch_workflow(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        workflow = (None if repo is None else self._workflow(
+            repo, request.match_info["workflow"]))
+        if repo is None or workflow is None:
+            return _error(404, "Not Found")
+        body = await _json_body(request)
+        if not body.get("ref"):
+            return _error(422, "No ref found")
+        run_id = 201 + len(repo.runs)
+        repo.runs.insert(
+            0, {
+                "id":
+                run_id,
+                "name":
+                workflow["name"],
+                "display_title":
+                f'{workflow["name"]} dispatch',
+                "workflow_id":
+                workflow["id"],
+                "run_number":
+                len(repo.runs) + 1,
+                "run_attempt":
+                1,
+                "event":
+                "workflow_dispatch",
+                "head_branch":
+                body["ref"],
+                "head_sha":
+                _commit_sha(str(body["ref"])),
+                "status":
+                "queued",
+                "conclusion":
+                None,
+                "created_at":
+                "2026-01-01T00:04:00Z",
+                "updated_at":
+                "2026-01-01T00:04:00Z",
+                "run_started_at":
+                None,
+                "html_url":
+                f"https://github.com/{repo.full_name}/actions/runs/{run_id}",
+            })
+        return web.Response(status=204)
+
+    async def list_runs(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        if repo is None:
+            return _error(404, "Not Found")
+        rows = repo.runs
+        workflow = request.match_info.get("workflow")
+        if workflow:
+            found = self._workflow(repo, workflow)
+            rows = [] if found is None else [
+                row for row in rows if row["workflow_id"] == found["id"]
+            ]
+        filters = {
+            "branch": "head_branch",
+            "head_sha": "head_sha",
+            "event": "event",
+            "status": "status"
+        }
+        for query, field in filters.items():
+            value = request.query.get(query)
+            if value:
+                rows = [row for row in rows if row[field] == value]
+        return _paged(request, rows, "workflow_runs")
+
+    async def get_run(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        run_id = int(request.match_info["run_id"])
+        run = None if repo is None else next(
+            (row for row in repo.runs if row["id"] == run_id), None)
+        return (_error(404, "Not Found")
+                if run is None else web.json_response(run))
+
+    async def rerun(self, request: web.Request) -> web.Response:
+        if not self._authed(request):
+            return _error(401, "Requires authentication")
+        repo = self._lookup(request)
+        run_id = int(request.match_info.get("run_id", "0"))
+        run = None if repo is None else next(
+            (row for row in repo.runs if row["id"] == run_id), None)
+        if run is None and "job_id" not in request.match_info:
+            return _error(404, "Not Found")
+        if run is not None:
+            run["run_attempt"] += 1
+            run["status"] = "queued"
+            run["conclusion"] = None
+        return web.Response(status=201)
 
     async def compare(self, request: web.Request) -> web.Response:
         """Files changed between two refs.
@@ -1429,19 +1967,45 @@ class GitHubServer:
         return web.Response(body=data, content_type=content_type.split(";")[0])
 
     async def reset(self, request: web.Request) -> web.Response:
-        """Rebuild the seeded state, dropping every write since startup.
+        """Drop every write since startup, and optionally re-seed.
 
-        The write battery runs once per host against one shared process, so
-        without this the second host reads the first host's writes and the
-        two disagree over state rather than over behaviour.
+        An empty body restores the seed this fake is currently holding --
+        the command line's, until a reset replaces it. That is what the
+        write battery needs: it runs once per host against one shared
+        process, so without a reset the second host reads the first host's
+        writes and the two disagree over state rather than over behaviour.
+
+        A body replaces the seed, which is what a harness moving between
+        scenarios needs. This fake is the one whose launch state is not
+        empty -- its fixtures are git trees named on the command line -- so
+        "put back what the process started with" hands back the *previous*
+        scenario's repositories. Passing the next scenario's spec here is
+        the difference between resetting the fake and restarting it.
+
+        The new spec is kept, so a later empty reset replays *it* rather
+        than the command line: seed once when the scenario changes, then
+        reset freely within it.
 
         Args:
-            request (web.Request): the incoming request.
+            request (web.Request): the incoming request; an optional JSON
+                body of `{"repo": [...], "metadata": [...],
+                "commits": [...]}`, spelled as the command line spells
+                them.
 
         Returns:
             web.Response: 200 once the seed is back.
         """
-        del request
+        body = await request.json() if request.can_read_body else {}
+        if not isinstance(body, dict):
+            return web.json_response(
+                {"error": "reset body must be an "
+                 "object"}, status=400)
+        if body:
+            self.state.seed = (
+                list(body.get("repo") or []),
+                list(body.get("metadata") or []),
+                list(body.get("commits") or []),
+            )
         self.state.repos.clear()
         self.state.login = DEFAULT_LOGIN
         seed_state(self.state, *self.state.seed)
@@ -1644,9 +2208,12 @@ def _add_routes(app: web.Application, server: "GitHubServer",
     # Write and listing routes. Ordered before the tree routes only for
     # readability; aiohttp matches on the full pattern, not on order.
     app.router.add_get(f"{prefix}/user", server.user)
+    app.router.add_get(f"{prefix}/users/{{owner}}", server.account)
     app.router.add_get(f"{prefix}/" if prefix else "/", server.root)
     app.router.add_get(f"{prefix}/user/repos", server.list_repos)
     app.router.add_post(f"{prefix}/user/repos", server.create_repo)
+    app.router.add_post(f"{prefix}/orgs/{{owner}}/repos", server.create_repo)
+    app.router.add_get(f"{prefix}/orgs/{{owner}}/repos", server.list_repos)
     app.router.add_get(f"{prefix}/users/{{owner}}/repos", server.list_repos)
     app.router.add_patch(f"{prefix}/repos/{{owner}}/{{repo}}",
                          server.update_repo)
@@ -1663,6 +2230,12 @@ def _add_routes(app: web.Application, server: "GitHubServer",
         server.branch)
     app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/commits",
                        server.commits)
+    app.router.add_get(
+        f"{prefix}/repos/{{owner}}/{{repo}}/commits/{{sha}}/check-runs",
+        server.check_runs)
+    app.router.add_get(
+        f"{prefix}/repos/{{owner}}/{{repo}}/commits/{{sha}}/status",
+        server.commit_status)
     app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/commits/{{ref:.+}}",
                        server.commit)
     # Both spellings of the repository root: GitHub serves `/contents` as
@@ -1682,6 +2255,48 @@ def _add_routes(app: web.Application, server: "GitHubServer",
                        server.list_issues)
     app.router.add_post(f"{prefix}/repos/{{owner}}/{{repo}}/issues",
                         server.create_issue)
+    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/issues/{{number}}",
+                       server.get_issue)
+    app.router.add_patch(
+        f"{prefix}/repos/{{owner}}/{{repo}}/issues/{{number}}",
+        server.edit_issue)
+    app.router.add_post(
+        f"{prefix}/repos/{{owner}}/{{repo}}/issues/{{number}}/comments",
+        server.create_comment)
+    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/pulls",
+                       server.list_pulls)
+    app.router.add_post(f"{prefix}/repos/{{owner}}/{{repo}}/pulls",
+                        server.create_pull)
+    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/pulls/{{number}}",
+                       server.get_pull)
+    app.router.add_patch(f"{prefix}/repos/{{owner}}/{{repo}}/pulls/{{number}}",
+                         server.edit_pull)
+    app.router.add_put(
+        f"{prefix}/repos/{{owner}}/{{repo}}/pulls/{{number}}/merge",
+        server.merge_pull)
+    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/releases",
+                       server.list_releases)
+    app.router.add_post(f"{prefix}/repos/{{owner}}/{{repo}}/releases",
+                        server.create_release)
+    app.router.add_get(f"{prefix}/repos/{{owner}}/{{repo}}/releases/latest",
+                       server.get_latest_release)
+    app.router.add_get(
+        f"{prefix}/repos/{{owner}}/{{repo}}/releases/tags/{{tag}}",
+        server.get_release)
+    actions = f"{prefix}/repos/{{owner}}/{{repo}}/actions"
+    app.router.add_get(f"{actions}/workflows", server.list_workflows)
+    app.router.add_get(f"{actions}/workflows/{{workflow}}",
+                       server.get_workflow)
+    app.router.add_post(f"{actions}/workflows/{{workflow}}/dispatches",
+                        server.dispatch_workflow)
+    app.router.add_get(f"{actions}/workflows/{{workflow}}/runs",
+                       server.list_runs)
+    app.router.add_get(f"{actions}/runs", server.list_runs)
+    app.router.add_get(f"{actions}/runs/{{run_id}}", server.get_run)
+    app.router.add_post(f"{actions}/runs/{{run_id}}/rerun", server.rerun)
+    app.router.add_post(f"{actions}/runs/{{run_id}}/rerun-failed-jobs",
+                        server.rerun)
+    app.router.add_post(f"{actions}/jobs/{{job_id}}/rerun", server.rerun)
     app.router.add_get(
         f"{prefix}/repos/{{owner}}/{{repo}}/compare/{{basehead}}",
         server.compare)
@@ -1747,7 +2362,7 @@ async def start_fake_github(
     server = GitHubServer(state)
     runner = web.AppRunner(build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, BIND_HOST, 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     state.base = f"http://127.0.0.1:{port}"
@@ -1907,7 +2522,7 @@ async def _serve(port: int, repos: list[str], metadata: list[str],
     server = GitHubServer(state)
     runner = web.AppRunner(build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, BIND_HOST, port)
     await site.start()
     state.base = f"http://127.0.0.1:{port}"
     print(f"GITHUB_ENDPOINT={state.base}", flush=True)

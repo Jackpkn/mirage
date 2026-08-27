@@ -23,6 +23,7 @@ import {
   splitSuffixId,
   workspaceDirname,
 } from './pathing.ts'
+import { NAME_MAX_BYTES, byteLength } from '../../utils/sanitize.ts'
 
 describe('sanitizeName', () => {
   it('replaces unsafe chars and collapses underscores', () => {
@@ -78,5 +79,28 @@ describe('dirnames and filenames', () => {
   })
   it('builds label filename from color when name missing', () => {
     expect(labelFilename({ id: 'L2', color: 'red' })).toBe('red__L2.json')
+  })
+})
+
+const CJK = '会議の記録'.repeat(40)
+const HEX24 = '5f2a9b1c3d4e5f6a7b8c9d0e'
+
+describe('trello names fit NAME_MAX', () => {
+  // These composed `<label>__<id>` by hand, so the 100-character cap in
+  // sanitizeName let a CJK name render 326-331 bytes against a 255-byte
+  // NAME_MAX. They route through fitIdName now.
+  const cases: [string, (v: string, i: string) => string, string][] = [
+    ['workspaceDirname', (v, i) => workspaceDirname({ displayName: v, id: i }), ''],
+    ['boardDirname', (v, i) => boardDirname({ name: v, id: i }), ''],
+    ['listDirname', (v, i) => listDirname({ name: v, id: i }), ''],
+    ['cardDirname', (v, i) => cardDirname({ name: v, id: i }), ''],
+    ['memberFilename', (v, i) => memberFilename({ fullName: v, id: i }), '.json'],
+    ['labelFilename', (v, i) => labelFilename({ name: v, id: i }), '.json'],
+  ]
+  it.each(cases)('%s fits and still addresses the id', (_name, build, suffix) => {
+    const name = build(CJK, HEX24)
+    expect(byteLength(name)).toBeLessThanOrEqual(NAME_MAX_BYTES)
+    expect(name).not.toContain('\uFFFD')
+    expect(splitSuffixId(name, suffix)[1]).toBe(HEX24)
   })
 })

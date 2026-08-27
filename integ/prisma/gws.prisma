@@ -1,0 +1,431 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+// PROPOSAL ONLY. Nothing pushes or generates this yet: the gws fake still
+// keeps its state in GwsState (integ/server/gws/store/state.ts). It is
+// checked in so the storage pass starts from a reviewed schema rather than
+// from a blank file, and it is kept validating (`prisma validate`) so it
+// cannot rot.
+//
+// Five rules the live fake's behaviour forces on this schema, each of which a
+// naive translation gets wrong:
+//
+//  1. Meta is a singleton per (run file, tenant) and CANNOT be
+//     `id Int @id @default(1)`. Prisma compiles an Int @id with a scalar
+//     default on SQLite to INTEGER PRIMARY KEY AUTOINCREMENT, which ignores
+//     the default and hands out 1, 2, 3 -- so the "singleton" grows a second
+//     row. It is keyed by tenant alone instead.
+//  2. DriveParent must NOT cascade. deleteTree today removes a folder and
+//     every child reachable from it, but a child with a second parent
+//     outside the doomed subtree SURVIVES with its other parent. A cascade
+//     from Drive would delete the edge and the row.
+//  3. addParents with an id no file has is accepted today (the edge is
+//     stored and files.list simply never matches it). relationMode = "prisma"
+//     is what keeps that a stored edge rather than a foreign-key 500.
+//  4. Repeat addParents is NOT deduplicated today: `parents.push(...)` can
+//     hold the same id twice and fmtFile echoes it twice. So DriveParent
+//     carries a surrogate pk and NO @@unique([childId, parentId]).
+//  5. A second messages.trash on one message appends TRASH again today, so
+//     MessageLabel carries a surrogate pk and NO @@unique([messageId,
+//     labelId]) either.
+//
+// Ordering: `include` does not read back insertion order, so every listable
+// table carries `seq` and every caller-visible read must `orderBy: { seq }`.
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/gws"
+}
+
+// The clock and the mint counters, which /reset pins and every write
+// advances. One row per tenant; see rule 1 above for why the key is the
+// tenant and not a literal 1.
+model Meta {
+  tenant     String @id
+  epochMs    BigInt
+  ticks      Int    @default(0)
+  calendarTz String
+}
+
+// One counter per (tenant, kind): gws mints per-kind, so a new Doc does not
+// advance the next file id.
+model Counter {
+  tenant String
+  kind   String
+  n      Int    @default(0)
+
+  @@id([tenant, kind])
+}
+
+model Drive {
+  tenant String
+  id     String
+  name   String
+  seq    Int    @default(0)
+
+  files DriveFile[] @relation("DriveFiles")
+
+  @@id([tenant, id])
+}
+
+model DriveFile {
+  tenant       String
+  id           String
+  name         String
+  mimeType     String
+  trashed      Boolean @default(false)
+  createdTime  String
+  modifiedTime String
+  content      Bytes   @default("")
+  driveId      String?
+  seq          Int     @default(0)
+
+  drive       Drive?          @relation("DriveFiles", fields: [tenant, driveId], references: [tenant, id])
+  parents     DriveParent[]   @relation("ChildEdges")
+  children    DriveParent[]   @relation("ParentEdges")
+  revisions   Revision[]
+  permissions Permission[]
+  doc         Doc?
+  spreadsheet Spreadsheet?
+  presentation Presentation?
+  form        Form?
+
+  @@id([tenant, id])
+  @@index([tenant, driveId])
+  @@index([tenant, mimeType])
+}
+
+// A file has many parents and a parent has many files, and neither side owns
+// the other. See rules 2, 3 and 4: no cascade, no foreign key, no unique.
+model DriveParent {
+  pk       Int    @id @default(autoincrement())
+  tenant   String
+  childId  String
+  parentId String
+  seq      Int    @default(0)
+
+  child  DriveFile  @relation("ChildEdges", fields: [tenant, childId], references: [tenant, id])
+  parent DriveFile? @relation("ParentEdges", fields: [tenant, parentId], references: [tenant, id])
+
+  @@index([tenant, childId])
+  @@index([tenant, parentId])
+}
+
+model Revision {
+  tenant       String
+  id           String
+  fileId       String
+  modifiedTime String
+  md5Checksum  String
+  content      Bytes
+  seq          Int    @default(0)
+
+  file DriveFile @relation(fields: [tenant, fileId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, fileId])
+}
+
+model Permission {
+  tenant       String
+  id           String
+  fileId       String
+  role         String
+  type         String
+  emailAddress String?
+  seq          Int     @default(0)
+
+  file DriveFile @relation(fields: [tenant, fileId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, fileId])
+}
+
+// A Doc's flat text is authoritative; the Document body JSON is rebuilt from
+// it on read, so there is no paragraph table.
+model Doc {
+  tenant String
+  id     String
+  title  String
+  text   String @default("")
+
+  file DriveFile @relation(fields: [tenant, id], references: [tenant, id])
+
+  @@id([tenant, id])
+}
+
+model Spreadsheet {
+  tenant      String
+  id          String
+  title       String
+  nextSheetId Int    @default(1)
+
+  file DriveFile  @relation(fields: [tenant, id], references: [tenant, id])
+  tabs SheetTab[]
+
+  @@id([tenant, id])
+}
+
+// `rows`/`cols` are the DECLARED grid, which is independent of what has been
+// written: a new tab reports 1000 rows holding nothing. `seq` is the tab
+// order inside the spreadsheet, which duplicateSheet's insertSheetIndex
+// rewrites.
+model SheetTab {
+  pk            Int    @id @default(autoincrement())
+  tenant        String
+  spreadsheetId String
+  sheetId       Int
+  title         String
+  rows          Int    @default(1000)
+  cols          Int    @default(26)
+  seq           Int    @default(0)
+
+  spreadsheet Spreadsheet @relation(fields: [tenant, spreadsheetId], references: [tenant, id])
+  cells       SheetCell[]
+
+  @@unique([tenant, spreadsheetId, sheetId])
+  @@index([tenant, spreadsheetId])
+}
+
+// The sparse cell map, one row per written cell. Unique on its coordinate
+// because that IS the map key; a second write to one cell overwrites.
+model SheetCell {
+  pk     Int    @id @default(autoincrement())
+  tenant String
+  tabPk  Int
+  row    Int
+  col    Int
+  text   String
+
+  tab SheetTab @relation(fields: [tabPk], references: [pk])
+
+  @@unique([tabPk, row, col])
+  @@index([tenant, tabPk])
+}
+
+model Presentation {
+  tenant String
+  id     String
+  title  String
+
+  file   DriveFile @relation(fields: [tenant, id], references: [tenant, id])
+  slides Slide[]
+
+  @@id([tenant, id])
+}
+
+model Slide {
+  pk             Int    @id @default(autoincrement())
+  tenant         String
+  presentationId String
+  objectId       String
+  seq            Int    @default(0)
+
+  presentation Presentation   @relation(fields: [tenant, presentationId], references: [tenant, id])
+  elements     SlideElement[]
+
+  @@unique([tenant, presentationId, objectId])
+  @@index([tenant, presentationId])
+}
+
+// Object ids are unique across a whole presentation, which is why
+// duplicateObject re-keys every copied element.
+model SlideElement {
+  pk       Int    @id @default(autoincrement())
+  tenant   String
+  slidePk  Int
+  objectId String
+  text     String @default("")
+  seq      Int    @default(0)
+
+  slide Slide @relation(fields: [slidePk], references: [pk])
+
+  @@unique([slidePk, objectId])
+  @@index([tenant, slidePk])
+}
+
+model Label {
+  tenant String
+  id     String
+  name   String
+  type   String
+  seq    Int    @default(0)
+
+  messages MessageLabel[]
+
+  @@id([tenant, id])
+}
+
+model Message {
+  tenant       String
+  id           String
+  threadId     String
+  internalDate BigInt
+  bodyText     String @default("")
+  seq          Int    @default(0)
+
+  headers     MessageHeader[]
+  labels      MessageLabel[]
+  attachments Attachment[]
+
+  @@id([tenant, id])
+  @@index([tenant, threadId])
+}
+
+// Order matters (From, To, Cc, Subject, Date, ...) and a header may repeat,
+// so this is a list with a seq, not a map.
+model MessageHeader {
+  pk        Int    @id @default(autoincrement())
+  tenant    String
+  messageId String
+  name      String
+  value     String
+  seq       Int    @default(0)
+
+  message Message @relation(fields: [tenant, messageId], references: [tenant, id])
+
+  @@index([tenant, messageId])
+}
+
+// See rule 5: a second messages.trash appends TRASH again today, so no
+// @@unique([messageId, labelId]).
+model MessageLabel {
+  pk        Int    @id @default(autoincrement())
+  tenant    String
+  messageId String
+  labelId   String
+  seq       Int    @default(0)
+
+  message Message @relation(fields: [tenant, messageId], references: [tenant, id])
+  label   Label?  @relation(fields: [tenant, labelId], references: [tenant, id])
+
+  @@index([tenant, messageId])
+  @@index([tenant, labelId])
+}
+
+model Attachment {
+  tenant       String
+  attachmentId String
+  messageId    String
+  filename     String
+  mimeType     String
+  data         Bytes
+  seq          Int    @default(0)
+
+  message Message @relation(fields: [tenant, messageId], references: [tenant, id])
+
+  @@id([tenant, attachmentId])
+  @@index([tenant, messageId])
+}
+
+model Calendar {
+  tenant     String
+  id         String
+  summary    String
+  timeZone   String
+  accessRole String  @default("owner")
+  primary    Boolean @default(false)
+  hidden     Boolean @default(false)
+  seq        Int     @default(0)
+
+  events Event[]
+
+  @@id([tenant, id])
+}
+
+// start/end are stored as the three EventTime fields rather than as an
+// instant: an all-day event carries a floating `date` with no zone, and a
+// timed one may name its own zone, so collapsing them to a timestamp loses
+// exactly what the day-bucketing tests exercise. `attendees` is opaque JSON
+// echoed back verbatim.
+model Event {
+  tenant        String
+  id            String
+  calendarId    String
+  status        String  @default("confirmed")
+  summary       String?
+  description   String?
+  location      String?
+  startDate     String?
+  startDateTime String?
+  startTimeZone String?
+  endDate       String?
+  endDateTime   String?
+  endTimeZone   String?
+  attendees     String?
+  created       String
+  updated       String
+  seq           Int     @default(0)
+
+  calendar Calendar @relation(fields: [tenant, calendarId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, calendarId])
+}
+
+model Form {
+  tenant        String
+  id            String
+  title         String
+  documentTitle String
+  description   String?
+  revision      Int     @default(1)
+
+  file      DriveFile      @relation(fields: [tenant, id], references: [tenant, id])
+  items     FormItem[]
+  responses FormResponse[]
+
+  @@id([tenant, id])
+}
+
+// `body` is the whole item JSON minus itemId, echoed back verbatim: the
+// Forms API's question model is deep and the fake never reads into it.
+//
+// The key carries formId because an itemId is only unique INSIDE a form:
+// newFormItem spreads the raw item over the minted id, so a fixture item
+// carrying its own itemId keeps it, and fixtures/forms/v1.json does exactly
+// that (`serial`, `email`). Two forms seeded from that fixture into one tenant
+// collide on `@@id([tenant, itemId])`.
+model FormItem {
+  tenant String
+  itemId String
+  formId String
+  body   String @default("{}")
+  seq    Int    @default(0)
+
+  form Form @relation(fields: [tenant, formId], references: [tenant, id])
+
+  @@id([tenant, formId, itemId])
+  @@index([tenant, formId])
+}
+
+model FormResponse {
+  pk         Int    @id @default(autoincrement())
+  tenant     String
+  formId     String
+  responseId String
+  body       String @default("{}")
+  seq        Int    @default(0)
+
+  form Form @relation(fields: [tenant, formId], references: [tenant, id])
+
+  @@unique([tenant, formId, responseId])
+  @@index([tenant, formId])
+}

@@ -14,9 +14,11 @@
 
 import { cacheAwareStreamEager } from '../../../cache/read_through.ts'
 import { IOResult } from '../../../io/types.ts'
-import type { FileStat, PathSpec } from '../../../types.ts'
+import { FileType, Limit, type FileStat, type PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
-import { numberFlagError } from '../tail_helper.ts'
+import { numberFlagError, parseByteCount } from '../tail_helper.ts'
+import { CHAR_DEVICE_MAX_BYTES } from '../utils/constants.ts'
+import { truncateStream } from '../utils/limit.ts'
 import { splitReadable } from '../utils/operands.ts'
 import { resolveSource } from '../utils/stream.ts'
 import type { FlagValue } from '../../spec/types.ts'
@@ -45,7 +47,7 @@ function parseFlags(flags: Record<string, FlagValue>): HeadFlags | string {
   if (numErr !== null) return numErr
   return {
     lines: nRaw !== null ? Number.parseInt(nRaw, 10) : 10,
-    bytesMode: cRaw !== null ? Number.parseInt(cRaw, 10) : null,
+    bytesMode: cRaw !== null ? parseByteCount(cRaw) : null,
     quiet: flags.quiet === true || flags.silent === true,
     verbose: flags.verbose === true,
     zeroTerminated: flags.zero_terminated === true,
@@ -105,19 +107,20 @@ async function* headStream(
   if (lines >= 0) {
     if (lines === 0) return
     let emitted = 0
-    let buf: Uint8Array = new Uint8Array(0)
     for await (const chunk of source) {
-      buf = concat(buf, chunk)
-      let nl = buf.indexOf(delimiter)
-      while (nl >= 0 && emitted < lines) {
-        yield buf.subarray(0, nl + 1)
-        buf = buf.subarray(nl + 1)
+      let start = 0
+      while (emitted < lines) {
+        const nl = chunk.indexOf(delimiter, start)
+        if (nl < 0) {
+          if (start < chunk.byteLength) yield chunk.subarray(start)
+          break
+        }
+        yield chunk.subarray(start, nl + 1)
         emitted += 1
-        nl = buf.indexOf(delimiter)
+        if (emitted >= lines) return
+        start = nl + 1
       }
-      if (emitted >= lines) return
     }
-    if (buf.byteLength > 0 && emitted < lines) yield buf
     return
   }
 
@@ -189,9 +192,17 @@ export async function headGeneric(
       stderr: err === '' ? null : ENC.encode(err),
     })
     if (readable.length === 0) return [null, io]
+    const sourceFor = async function* (p: PathSpec): AsyncIterable<Uint8Array> {
+      const source = stream(p)
+      if ((await stat(p)).type === FileType.CHAR_DEVICE && parsed.bytesMode === null) {
+        yield* truncateStream(source, io, new Limit({ maxBytes: CHAR_DEVICE_MAX_BYTES }))
+        return
+      }
+      yield* source
+    }
     return [
       headMulti(
-        stream,
+        sourceFor,
         readable,
         parsed.lines,
         parsed.bytesMode,

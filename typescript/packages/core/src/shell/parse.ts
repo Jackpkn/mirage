@@ -161,8 +161,21 @@ export function findUnterminatedBacktick(command: string): string | null {
   return opened !== null ? command.slice(opened) : null
 }
 
+// `Parser.init` boots one wasm module for the whole process, so two callers
+// that start at the same time used to race it: the second read the language
+// out of a half-built module and threw "Incompatible language version 0".
+// Every caller now awaits the same boot. A failed boot is not kept, or one bad
+// start would poison every later parser.
+let engineBoot: Promise<void> | null = null
+
 export async function createShellParser(config: ShellParserConfig): Promise<ShellParser> {
-  await Parser.init({ wasmBinary: toArrayBuffer(config.engineWasm) })
+  engineBoot ??= Parser.init({ wasmBinary: toArrayBuffer(config.engineWasm) }).catch(
+    (err: unknown) => {
+      engineBoot = null
+      throw err
+    },
+  )
+  await engineBoot
   const language = await Language.load(toUint8(config.grammarWasm))
   const parser = new Parser()
   parser.setLanguage(language)

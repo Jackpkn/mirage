@@ -14,7 +14,7 @@
 
 import pytest
 
-from mirage.resource.dev.dev import _ZERO_CHUNK_SIZE, DevStore, _DevFiles
+from mirage.resource.dev.dev import DevStore, _DevFiles
 
 
 def test_contains_dev_names_with_or_without_slash():
@@ -26,10 +26,10 @@ def test_contains_dev_names_with_or_without_slash():
     assert "/other" not in files
 
 
-def test_null_reads_empty_and_zero_reads_zeros():
+def test_synthetic_devices_use_empty_store_placeholders():
     files = _DevFiles()
     assert files["/null"] == b""
-    assert files["/zero"] == b"\x00" * _ZERO_CHUNK_SIZE
+    assert files["/zero"] == b""
     with pytest.raises(KeyError):
         files["/missing"]
 
@@ -38,7 +38,7 @@ def test_set_on_active_device_is_discarded():
     files = _DevFiles()
     files["/null"] = b"overwrite"
     assert files["/null"] == b""
-    assert files["/zero"] == b"\x00" * _ZERO_CHUNK_SIZE
+    assert files["/zero"] == b""
 
 
 def test_delete_tombstones_a_synthetic_device():

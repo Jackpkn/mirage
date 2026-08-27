@@ -27,7 +27,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { startMockServer } from './server/notion_server.ts'
+import { start } from './server/kit/typescript/index.ts'
+import { notionFake } from './server/notion/fake.ts'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const BATTERY = join(HERE, 'cli', 'ntn.json')
@@ -139,7 +140,11 @@ async function main(): Promise<void> {
 
   const battery = JSON.parse(readFileSync(BATTERY, 'utf8')) as { cases: Case[] }
   const cases = [...battery.cases].sort((a, b) => a.seq - b.seq)
-  const { server, port } = await startMockServer()
+  // Asynchronous on purpose: the fake is served by THIS event loop, so a
+  // synchronous spawn below would deadlock the loop that has to answer the
+  // child's request.
+  const fake = await start(notionFake, 0)
+  const port = fake.port
   const home = mkdtempSync(join(tmpdir(), 'ntn-conformance-'))
   const env = {
     ...process.env,
@@ -159,24 +164,31 @@ async function main(): Promise<void> {
   let checked = 0
   for (const one of cases) {
     if (!isConformable(one)) {
-      skipped.push(one.conformance_skip === undefined ? one.id : `${one.id} (${one.conformance_skip})`)
+      skipped.push(
+        one.conformance_skip === undefined ? one.id : `${one.id} (${one.conformance_skip})`,
+      )
       continue
     }
     checked += 1
     if (process.env.NTN_CONFORMANCE_TRACE === '1') process.stderr.write(`. ${one.id}\n`)
     const got = await runLine(one.command, env)
     const diffs: string[] = []
-    if (got.exit !== one.expect.exit) diffs.push(`  exit: want ${String(one.expect.exit)}, got ${String(got.exit)}`)
+    if (got.exit !== one.expect.exit)
+      diffs.push(`  exit: want ${String(one.expect.exit)}, got ${String(got.exit)}`)
     if (got.stdout !== one.expect.stdout) {
-      diffs.push(`  ${show('stdout want', one.expect.stdout)}\n  ${show('stdout got ', got.stdout)}`)
+      diffs.push(
+        `  ${show('stdout want', one.expect.stdout)}\n  ${show('stdout got ', got.stdout)}`,
+      )
     }
     if (got.stderr !== one.expect.stderr) {
-      diffs.push(`  ${show('stderr want', one.expect.stderr)}\n  ${show('stderr got ', got.stderr)}`)
+      diffs.push(
+        `  ${show('stderr want', one.expect.stderr)}\n  ${show('stderr got ', got.stderr)}`,
+      )
     }
     if (diffs.length > 0) failures.push(`${one.id} (${one.command})\n${diffs.join('\n')}`)
   }
 
-  server.close()
+  await fake.close()
   rmSync(home, { recursive: true, force: true })
 
   console.log(

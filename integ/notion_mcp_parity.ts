@@ -22,12 +22,10 @@
 import { NotionResource as BrowserNotionResource } from '@struktoai/mirage-browser'
 import { MemoryOAuthClientProvider } from '@struktoai/mirage-core'
 import { MountMode, NotionResource, Workspace } from '@struktoai/mirage-node'
-import {
-  CASES,
-  EXIT_CODE_CASES,
-  startMockMcpServer,
-  startMockServer,
-} from './server/notion_server.ts'
+import { start } from './server/kit/typescript/index.ts'
+import { CASES, EXIT_CODE_CASES } from './server/notion/cases.ts'
+import { notionFake } from './server/notion/fake.ts'
+import { startMockMcpServer } from './server/notion/mcp.ts'
 
 const MOUNT = '/notion'
 const DEC = new TextDecoder()
@@ -40,10 +38,17 @@ async function render(ws: Workspace, cmd: string, withExit: boolean): Promise<st
 }
 
 async function main(): Promise<void> {
-  const { server, port } = await startMockServer()
-  const { server: mcpServer, port: mcpPort } = await startMockMcpServer()
+  const rest = await start(notionFake, 0)
+  const port = rest.port
+  const mcp = await startMockMcpServer()
+  const mcpPort = mcp.port
   const restWs = new Workspace(
-    { [MOUNT]: new NotionResource({ apiKey: 'integ-test', baseUrl: `http://127.0.0.1:${String(port)}/v1` }) },
+    {
+      [MOUNT]: new NotionResource({
+        apiKey: 'integ-test',
+        baseUrl: `http://127.0.0.1:${String(port)}/v1`,
+      }),
+    },
     { mode: MountMode.READ },
   )
   const authProvider = new MemoryOAuthClientProvider({
@@ -76,12 +81,14 @@ async function main(): Promise<void> {
       }
     }
     const n = String(all.length)
-    if (mismatches === 0) process.stderr.write(`notion mcp parity: ${n}/${n} cases byte-identical\n`)
+    if (mismatches === 0)
+      process.stderr.write(`notion mcp parity: ${n}/${n} cases byte-identical\n`)
   } finally {
     await restWs.close()
     await mcpWs.close()
-    server.close()
-    mcpServer.close()
+    // Both closes dispose their kit runtime, so the SQLite files go too.
+    await rest.close()
+    await mcp.close()
   }
   // The MCP transport leaves open handles, so exit explicitly rather than
   // waiting for the event loop to drain (which would hang the CI step).

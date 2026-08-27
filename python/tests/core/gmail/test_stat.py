@@ -118,6 +118,22 @@ async def test_stat_date(accessor, index):
 
 
 @pytest.mark.asyncio
+async def test_stat_date_outside_the_listed_window(accessor, index):
+    # The label listing is a bounded window of recent messages, so it never
+    # minted this day; the date query answers for any well-formed one, so the
+    # label's existence is the proof rather than the window. No API mock is
+    # needed precisely because nothing is fetched.
+    await _populate_index(index)
+    result = await stat(
+        accessor,
+        PathSpec(resource_path=mount_key("/gmail/INBOX/2020-01-01", "/gmail"),
+                 virtual="/gmail/INBOX/2020-01-01",
+                 directory="/gmail/INBOX/2020-01-01"), index)
+    assert result.type == FileType.DIRECTORY
+    assert result.name == "2020-01-01"
+
+
+@pytest.mark.asyncio
 async def test_stat_message(accessor, index):
     await _populate_index(index)
     result = await stat(

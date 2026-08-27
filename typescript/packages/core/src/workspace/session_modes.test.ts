@@ -91,7 +91,7 @@ describe('per-session mount grants', () => {
 
     const denied = await ws.execute('echo leaked > /a/y.txt', { sessionId: 'agent' })
     expect(denied.exitCode).not.toBe(0)
-    expect(stderrStr(denied)).toBe('/a/y.txt: Permission denied\n')
+    expect(stderrStr(denied)).toBe('/a/y.txt: Read-only file system\n')
     expect(a.store.files.has('/y.txt')).toBe(false)
   })
 
@@ -128,7 +128,7 @@ describe('per-session mount grants', () => {
 
     const denied = await ws.execute('echo up > /a/y.txt', { sessionId: 'agent' })
     expect(denied.exitCode).not.toBe(0)
-    expect(stderrStr(denied)).toBe('/a/y.txt: Permission denied\n')
+    expect(stderrStr(denied)).toBe('/a/y.txt: Read-only file system\n')
   })
 
   // A list used to mean "only these mounts are reachable"; a mount a profile
@@ -189,7 +189,7 @@ describe('per-session mount grants', () => {
 
     const writeDenied = await ws.execute('echo x > /root.txt', { sessionId: 'root_ro' })
     expect(writeDenied.exitCode).not.toBe(0)
-    expect(stderrStr(writeDenied)).toBe('/root.txt: Permission denied\n')
+    expect(stderrStr(writeDenied)).toBe('/root.txt: Read-only file system\n')
   })
 
   it('the implicit scratch root keeps pathless commands working', async () => {

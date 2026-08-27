@@ -24,6 +24,7 @@ import { DevResource } from '../../resource/dev/dev.ts'
 import { Decisions, MountRootPolicy, OutputCapPolicy, Policies } from '../../policy/index.ts'
 import { type Limit, ConsistencyPolicy, MountMode, PathSpec } from '../../types.ts'
 import { CLIRegistry } from '../cli/registry.ts'
+import { effectivePathMode, strongestModeUnder } from '../../context/session_context.ts'
 import { MountEntry } from './mount.ts'
 import { ownerPrefix, rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
@@ -375,9 +376,22 @@ export class MountRegistry {
   isExecAllowed(): boolean {
     for (const m of this.mountList) {
       if (m.prefix === DEV_PREFIX) continue
-      if (m.effectiveMode() === MountMode.EXEC) return true
+      // strongestModeUnder, not effectiveMode: a session whose only x
+      // grant is a show entry still counts as having one.
+      if (strongestModeUnder(m.prefix, m.mode) === MountMode.EXEC) return true
     }
     return false
+  }
+
+  /**
+   * Whether code may be loaded from this path: the per-script form of
+   * `isExecAllowed`, read by an interpreter running a file operand
+   * (`python3 path.py`, `bash script.sh`).
+   */
+  execAllowedAt = (virtual: string): boolean => {
+    const m = this.tryMountFor(virtual)
+    if (m === null) return false
+    return effectivePathMode(virtual, m.prefix, m.mode) === MountMode.EXEC
   }
 
   mountForCommand(cmdName: string): MountEntry | null {

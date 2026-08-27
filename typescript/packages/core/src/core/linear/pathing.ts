@@ -16,6 +16,7 @@ import { sanitizeName } from '../../utils/sanitize.ts'
 
 export { sanitizeName } from '../../utils/sanitize.ts'
 export { parseIdName as splitSuffixId } from '../../utils/naming.ts'
+import { SEPARATOR, fitIdName } from '../../utils/naming.ts'
 
 function pickString(record: Record<string, unknown>, ...keys: readonly string[]): string {
   for (const key of keys) {
@@ -41,30 +42,33 @@ export function teamDirname(team: Record<string, unknown>): string {
     if (!parts.includes(sanitized)) parts.push(sanitized)
   }
   if (parts.length === 0) parts.push('team')
-  return `${parts.join('__')}__${requireId(team)}`
+  // fitIdName rather than makeIdName: the parts are already sanitized and
+  // joined with the separator, and re-sanitizing would collapse that `__`
+  // to `_`.
+  return fitIdName(parts.join(SEPARATOR), requireId(team))
 }
 
 export function memberFilename(user: Record<string, unknown>): string {
   const label = sanitizeName(pickString(user, 'displayName', 'name', 'email') || 'user')
-  return `${label}__${requireId(user)}.json`
+  return fitIdName(label, requireId(user), '.json')
 }
 
 export function issueDirname(issue: Record<string, unknown>): string {
   const key = pickString(issue, 'identifier', 'id') || 'issue'
-  return `${sanitizeName(key)}__${requireId(issue)}`
+  return fitIdName(sanitizeName(key), requireId(issue))
 }
 
 export function projectFilename(project: Record<string, unknown>): string {
   const label = sanitizeName(pickString(project, 'name') || 'project')
-  return `${label}__${requireId(project)}.json`
+  return fitIdName(label, requireId(project), '.json')
 }
 
 export function cycleFilename(cycle: Record<string, unknown>): string {
   const label = sanitizeName(pickString(cycle, 'name') || 'cycle')
-  return `${label}__${requireId(cycle)}.json`
+  return fitIdName(label, requireId(cycle), '.json')
 }
 
 export function documentFilename(document: Record<string, unknown>): string {
   const label = sanitizeName(pickString(document, 'title') || 'document')
-  return `${label}__${requireId(document)}.json`
+  return fitIdName(label, requireId(document), '.json')
 }

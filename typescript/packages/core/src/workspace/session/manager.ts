@@ -18,7 +18,7 @@ import type { CompiledProfile } from '../../policy/profile.ts'
 import { RAMSessionStore } from './ram.ts'
 import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
-import type { AdmissionRules, Decision, ProfileScript } from '../../policy/types.ts'
+import type { AdmissionRules, Decision, HideReason, ProfileScript } from '../../policy/types.ts'
 import type { MountMode } from '../../types.ts'
 
 type StoredSession = Parameters<typeof Session.fromJSON>[0]
@@ -96,6 +96,19 @@ export class SessionManager {
   scriptOf(sessionId: string): ProfileScript | null {
     const session = this.sessions.get(sessionId)
     return session === undefined ? (this.defaultProfileInternal?.script ?? null) : session.script
+  }
+
+  /**
+   * The operator's hide reasons for one session's profile. The default
+   * profile's for an id this manager does not know, the same fallback
+   * `commandsOf` makes and for the same reason. Host-side only:
+   * nothing on the command surface renders these, because a reason on
+   * a nonexistent path would confirm the path exists.
+   */
+  hideReasonsOf(sessionId: string): readonly HideReason[] {
+    const session = this.sessions.get(sessionId)
+    if (session === undefined) return this.defaultProfileInternal?.hideReasons ?? []
+    return session.hideReasons
   }
 
   /**
@@ -194,7 +207,9 @@ export class SessionManager {
         // unrestricted and let the next flush erase them from the
         // store.
         dflt.hiddenPaths = stored.hiddenPaths
+        dflt.shownPaths = stored.shownPaths
         dflt.hiddenVars = stored.hiddenVars
+        dflt.hideReasons = stored.hideReasons
         dflt.commands = stored.commands
         dflt.script = stored.script
         // The host's standing answers are session state like cwd:

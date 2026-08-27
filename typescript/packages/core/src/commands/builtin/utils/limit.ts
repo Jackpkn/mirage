@@ -129,6 +129,37 @@ function buildNotice(limit: Limit): Uint8Array {
   )
 }
 
+export async function* truncateStream(
+  src: ByteSource,
+  io: IOResult,
+  limit: Limit,
+): AsyncIterable<Uint8Array> {
+  const maxBytes = limit.maxBytes
+  const iterable: AsyncIterable<Uint8Array> = src instanceof Uint8Array ? yieldBytes(src) : src
+  if (maxBytes === null) {
+    yield* iterable
+    return
+  }
+  let emitted = 0
+  for await (const chunk of iterable) {
+    const remaining = maxBytes - emitted
+    if (chunk.byteLength <= remaining) {
+      yield chunk
+      emitted += chunk.byteLength
+      continue
+    }
+    if (remaining > 0) yield chunk.subarray(0, remaining)
+    const existing = io.stderr !== null ? await materialize(io.stderr) : new Uint8Array()
+    const notice = buildNotice(limit)
+    const merged = new Uint8Array(existing.byteLength + notice.byteLength)
+    merged.set(existing, 0)
+    merged.set(notice, existing.byteLength)
+    io.stderr = merged
+    if (limit.onExceed === OnExceed.ERROR) io.exitCode = 1
+    return
+  }
+}
+
 function concat(chunks: Uint8Array[], total: number): Uint8Array {
   const out = new Uint8Array(total)
   let offset = 0

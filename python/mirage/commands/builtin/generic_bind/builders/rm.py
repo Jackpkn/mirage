@@ -27,6 +27,8 @@ from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import FileType, PathSpec
+from mirage.utils.errors import (FS_ERRORS, error_path, fs_strerror,
+                                 operand_spelling)
 
 
 async def rm(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
@@ -71,35 +73,46 @@ async def rm(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
                           "No such file or directory")
             continue
         entry_lines: list[str] = []
-        if s.type == FileType.DIRECTORY:
-            if recursive:
-                if ops.rm_r is None:
-                    raise NotImplementedError(
-                        "rm: recursive remove not supported on this backend")
-                if v:
-                    readdir = functools.partial(ops.readdir,
-                                                accessor,
-                                                index=opts.index)
-                    entry_lines = removal_lines(await walk(
-                        readdir, functools.partial(ops.stat, accessor), p))
-                await ops.rm_r(accessor, p)
-            elif d:
-                if ops.rmdir is None:
-                    raise NotImplementedError(
-                        "rm: directory remove not supported on this backend")
-                if await ops.readdir(accessor, p, index=opts.index):
-                    errors.append(f"rm: cannot remove '{p.raw_path}': "
-                                  "Directory not empty")
+        try:
+            if s.type == FileType.DIRECTORY:
+                if recursive:
+                    if ops.rm_r is None:
+                        raise NotImplementedError(
+                            "rm: recursive remove not supported on this "
+                            "backend")
+                    if v:
+                        readdir = functools.partial(ops.readdir,
+                                                    accessor,
+                                                    index=opts.index)
+                        entry_lines = removal_lines(await walk(
+                            readdir, functools.partial(ops.stat, accessor), p))
+                    await ops.rm_r(accessor, p)
+                elif d:
+                    if ops.rmdir is None:
+                        raise NotImplementedError(
+                            "rm: directory remove not supported on this "
+                            "backend")
+                    if await ops.readdir(accessor, p, index=opts.index):
+                        errors.append(f"rm: cannot remove '{p.raw_path}': "
+                                      "Directory not empty")
+                        continue
+                    await ops.rmdir(accessor, p, index=opts.index)
+                    entry_lines = [f"removed directory '{p.virtual}'"]
+                else:
+                    errors.append(
+                        f"rm: cannot remove '{p.raw_path}': Is a directory")
                     continue
-                await ops.rmdir(accessor, p)
-                entry_lines = [f"removed directory '{p.virtual}'"]
             else:
-                errors.append(
-                    f"rm: cannot remove '{p.raw_path}': Is a directory")
-                continue
-        else:
-            await ops.require(Operation.UNLINK)(accessor, p)
-            entry_lines = [f"removed '{p.virtual}'"]
+                await ops.require(Operation.UNLINK)(accessor, p)
+                entry_lines = [f"removed '{p.virtual}'"]
+        except FS_ERRORS as exc:
+            # GNU rm names the entry it could not remove (the guard
+            # blames a read-only region below the operand by its
+            # anchor) and keeps removing the rest.
+            errors.append("rm: cannot remove "
+                          f"'{operand_spelling(error_path(exc), p)}': "
+                          f"{fs_strerror(exc)}")
+            continue
         removed[p.mount_path] = b""
         if v:
             verbose_parts.extend(entry_lines)

@@ -83,6 +83,23 @@ export class MontyVFS {
     }
   }
 
+  /**
+   * The file's bytes, or null when the mount does not have it — the
+   * shape python's `MontyVFS.read` answers, for callers that need
+   * "missing" as a value (an append's base) rather than a raise.
+   */
+  async readOrNull(path: string): Promise<Uint8Array | null> {
+    if (this.missing.has(path)) return null
+    try {
+      return await this.core.read(path)
+    } catch (caught) {
+      const guest = asGuestError(caught, path)
+      if (!isAbsence(guest)) throw guest
+      this.missing.add(path)
+      return null
+    }
+  }
+
   async write(path: string, data: unknown): Promise<number> {
     const bytes =
       data instanceof Uint8Array
@@ -94,11 +111,38 @@ export class MontyVFS {
       throw asGuestError(caught, path)
     }
     this.missing.delete(path)
-    return typeof data === 'string' ? data.length : bytes.length
+    // Characters the way python's len counts them (code points), which
+    // is what pathlib's write_text returns to the guest.
+    return typeof data === 'string' ? Array.from(data).length : bytes.length
   }
 
-  async mkdir(path: string): Promise<null> {
-    const out = await this.mutate(path, () => this.core.mkdir(path))
+  /**
+   * Extend `path` by `tail`, shipping only the delta when the mount
+   * takes one; `whole` is the running content for the write fallback
+   * (S3 registers `write` without `append`).
+   */
+  async append(path: string, tail: Uint8Array, whole: Uint8Array): Promise<null> {
+    const out = await this.mutate(path, () => this.core.append(path, tail, whole))
+    this.missing.delete(path)
+    return out
+  }
+
+  /** Establish an empty file, the open-time effect of 'w'/'a' on a missing path. */
+  async create(path: string): Promise<null> {
+    const out = await this.mutate(path, () => this.core.create(path))
+    this.missing.delete(path)
+    return out
+  }
+
+  /** Discard content, the open-time effect of 'w' on an existing path. */
+  async truncate(path: string): Promise<null> {
+    const out = await this.mutate(path, () => this.core.truncate(path))
+    this.missing.delete(path)
+    return out
+  }
+
+  async mkdir(path: string, parents = false): Promise<null> {
+    const out = await this.mutate(path, () => this.core.mkdir(path, parents))
     this.missing.delete(path)
     return out
   }

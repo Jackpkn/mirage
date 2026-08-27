@@ -14,9 +14,21 @@
 
 import argparse
 import asyncio
+import os
 from typing import Any
 
 from aiohttp import web
+
+# The interface the fake listens on. Loopback is right on a developer's
+# machine and wrong inside a container: a server on the container's own
+# 127.0.0.1 is invisible to the published port, so a client on the host has
+# its connection accepted and then closed with no response -- while a
+# healthcheck running inside the container sees a healthy server. Set
+# MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+#
+# The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+# interface to listen on, not an address anything can connect to.
+BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
 
 FIXED_UPDATED_AT = 1716282000
 
@@ -207,7 +219,7 @@ async def start_fake_dify() -> tuple[FakeDify, DifyServer, web.AppRunner]:
     server = DifyServer(state)
     runner = web.AppRunner(build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, BIND_HOST, 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     state.base = f"http://127.0.0.1:{port}"
@@ -219,7 +231,7 @@ async def _serve(port: int) -> None:
     server = DifyServer(state)
     runner = web.AppRunner(build_app(server))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, BIND_HOST, port)
     await site.start()
     state.base = f"http://127.0.0.1:{port}"
     print(f"DIFY_ENDPOINT={state.base}", flush=True)

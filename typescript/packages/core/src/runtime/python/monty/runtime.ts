@@ -47,8 +47,9 @@ interface RunInterruption {
  * worker process — which poisons the session (the pool discards and
  * replaces the worker) and settles the pending feedRun. The pid is
  * only readable while the session is idle, so callers capture it
- * before feeding. Python needs none of this: cancelling run_async
- * halts the interpreter.
+ * before feeding. Python's runtime does the same reclaim: cancelling
+ * a feed leaves the worker running, so its `_kill_worker` SIGKILLs it
+ * on cancellation exactly like this.
  */
 function killWorker(pid: number | undefined): void {
   if (pid === undefined) return
@@ -87,11 +88,16 @@ function toEvalValue(value: unknown): EvalValue {
  * it: `os.getenv` and `os.environ` (a dict copy, so the two hosts run
  * the same program). Command-line arguments are exposed as the
  * `argv` global (`argv[0]` is the script name) and piped input as the
- * `stdin` global (bytes, None when nothing was piped). Monty implements
- * a Python subset; host-only features (`sys.stdin`, `sys.argv`,
- * third-party imports) are unavailable, and the builtin `open()` is not
- * bridgeable yet (the JS binding cannot return a file handle from an
- * `os` callback) — use `pathlib` for file I/O, or the pyodide runtime.
+ * `stdin` global (bytes, None when nothing was piped). The builtin
+ * `open()` is bridged (@pydantic/monty 0.0.21 carries a
+ * `MontyFileHandle` back from the `os` callback), and a path under no
+ * mount lives in a per-run in-memory scratch tree, exactly like
+ * python's binding-side tree — so `/tmp` is real scratch space on both
+ * hosts. Monty implements a Python subset; host-only features
+ * (`sys.stdin`, `sys.argv`, third-party imports) are unavailable, and
+ * `Path.stat()` stays unbridged until the JS binding grows a
+ * StatResult marker (see MirageOSAccess) — use the pyodide runtime
+ * when a guest needs stat.
  */
 export class MontyRuntime extends PythonRuntime implements Evaluator {
   readonly name = 'monty'
@@ -242,7 +248,7 @@ export class MontyRuntime extends PythonRuntime implements Evaluator {
         if (stream === 'stderr') err.push(text)
         else out.push(text)
       },
-      os: new MirageOSAccess(module.NOT_HANDLED, {}, this.perRunVfs()).handle,
+      os: new MirageOSAccess(module, {}, this.perRunVfs()).handle,
     }
     const enc = new TextEncoder()
     // One-shot evals get the quickjs-style 10s bound (the policy layer
@@ -375,7 +381,7 @@ export class MontyRuntime extends PythonRuntime implements Evaluator {
         if (stream === 'stderr') err.push(text)
         else out.push(text)
       },
-      os: new MirageOSAccess(module.NOT_HANDLED, args.env, this.perRunVfs()).handle,
+      os: new MirageOSAccess(module, args.env, this.perRunVfs()).handle,
     }
     try {
       await session.feedRun(code, options)
@@ -385,6 +391,19 @@ export class MontyRuntime extends PythonRuntime implements Evaluator {
         return {
           stdout: new TextEncoder().encode(out.join('')),
           stderr: err.length > 0 ? new TextEncoder().encode(err.join('')) : null,
+          exitCode: 1,
+        }
+      }
+      // A dead worker (hard crash, or the pool's own watchdog) is a
+      // failed command, not a broken host: exit 1 with a note, prior
+      // stdout kept, mirroring python's MontyCrashedError handler.
+      // eval() deliberately does not map this — python's eval lets it
+      // propagate too.
+      if (caught instanceof module.MontyCrashedError) {
+        err.push(`${this.name}: worker ${caught.timedOut ? 'timed out' : 'crashed'}\n`)
+        return {
+          stdout: new TextEncoder().encode(out.join('')),
+          stderr: new TextEncoder().encode(err.join('')),
           exitCode: 1,
         }
       }

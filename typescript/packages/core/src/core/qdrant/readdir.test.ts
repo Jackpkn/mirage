@@ -99,3 +99,82 @@ describe('qdrant readdir sizes', () => {
     expect(json.entry?.size).toBe(renderJson(broken, config).byteLength)
   })
 })
+
+const CAP = 5
+const WIDE = 40
+
+function cappedAccessor(seen: { prefix: string | undefined }): QdrantAccessor {
+  // The accessor stands in for the scroll: with a prefix the cap bounds the
+  // MATCHES, so the fake filters first and slices second.
+  const rows: QdrantRow[] = []
+  for (let i = 0; i < WIDE; i += 1) rows.push({ id: `doc-${String(i).padStart(3, '0')}` })
+  return {
+    config: resolveQdrantConfig({
+      idField: 'id',
+      collection: 'wide',
+      groupBy: ['label'],
+      maxRows: CAP,
+    }),
+    listTables: () => Promise.resolve(['wide']),
+    tableExists: (name: string) => Promise.resolve(name === 'wide'),
+    distinct: () => Promise.resolve(['all']),
+    rowsMatching: (_t: string, _f: unknown, _c: string[], limit: number, prefix: string) => {
+      seen.prefix = prefix
+      return Promise.resolve(rows.filter((r) => String(r.id).startsWith(prefix)).slice(0, limit))
+    },
+  } as unknown as QdrantAccessor
+}
+
+function globbed(virtual: string, pattern: string): PathSpec {
+  return new PathSpec({
+    virtual,
+    directory: virtual,
+    resourcePath: virtual.replace(/^\//, ''),
+    pattern,
+  })
+}
+
+function ids(paths: string[]): string[] {
+  return [...new Set(paths.map((p) => (p.split('/').pop() ?? '').split('.')[0] ?? ''))]
+}
+
+describe('qdrant readdir narrows a capped listing', () => {
+  it('pushes a row glob prefix into the scroll', async () => {
+    const seen: { prefix: string | undefined } = { prefix: undefined }
+    const out = await readdir(
+      cappedAccessor(seen),
+      globbed('/all', 'doc-03*'),
+      new RAMIndexCacheStore(),
+    )
+    expect(ids(out)).toEqual(['doc-030', 'doc-031', 'doc-032', 'doc-033', 'doc-034'])
+    expect(seen.prefix).toBe('doc-03')
+  })
+
+  it('cuts the prefix at the suffix so a leaf glob cannot ask for a dot', async () => {
+    const seen: { prefix: string | undefined } = { prefix: undefined }
+    await readdir(cappedAccessor(seen), globbed('/all', 'doc-039.js*'), new RAMIndexCacheStore())
+    expect(seen.prefix).toBe('doc-039')
+  })
+
+  it('sends no prefix for a glob with no literal head', async () => {
+    const seen: { prefix: string | undefined } = { prefix: undefined }
+    const out = await readdir(
+      cappedAccessor(seen),
+      globbed('/all', '*9.json'),
+      new RAMIndexCacheStore(),
+    )
+    expect(ids(out)).toEqual(['doc-000', 'doc-001', 'doc-002', 'doc-003', 'doc-004'])
+    expect(seen.prefix).toBe('')
+  })
+
+  it('does not cache a narrowed listing as the directory', async () => {
+    const seen: { prefix: string | undefined } = { prefix: undefined }
+    const acc = cappedAccessor(seen)
+    const idx = new RAMIndexCacheStore()
+    await readdir(acc, globbed('/all', 'doc-03*'), idx)
+    const listed = await idx.listDir('/all/')
+    expect(listed.entries === undefined || listed.entries === null).toBe(true)
+    const plain = await readdir(acc, spec('/all'), idx)
+    expect(ids(plain)).toEqual(['doc-000', 'doc-001', 'doc-002', 'doc-003', 'doc-004'])
+  })
+})

@@ -153,7 +153,7 @@ const LINES: [string, string, string][] = [
 
 // The approval id is a digest of the session, cwd and words; it is
 // stable, and it is noise here.
-const APPROVAL_ID = /\(approval [0-9a-f]+\)/
+const ASK_ID = /\(ask [0-9a-f]+\)/
 
 const dec = new TextDecoder()
 
@@ -163,7 +163,7 @@ const dec = new TextDecoder()
  */
 function answer(out: string, err: string, code: number): string {
   if (err !== '') {
-    const first = err.replace(APPROVAL_ID, '(approval ...)').split('\n')[0]
+    const first = err.replace(ASK_ID, '(ask ...)').split('\n')[0]
     return `[${code}] ${first}`
   }
   return `[${code}] ${out.split(/\s+/).filter(Boolean).join(' ')}`.trimEnd()

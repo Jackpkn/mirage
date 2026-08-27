@@ -11,7 +11,7 @@
       "expect": {
         "exit": 1,
         "stdout": "",
-        "stderr": "cp: cannot create regular file '/ro/xro.txt': Permission denied\n"
+        "stderr": "cp: cannot create regular file '/ro/xro.txt': Read-only file system\n"
       }
     }
   ]

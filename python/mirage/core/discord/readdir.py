@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import aiohttp
 
@@ -31,6 +31,7 @@ from mirage.core.discord.render import history_jsonl_bytes
 from mirage.core.discord.scope import detect_scope
 from mirage.core.hierarchy.readdir import DirListing, Listed, make_readdir
 from mirage.core.hierarchy.scope import ScopeMatch
+from mirage.utils.glob_walk import glob_span, has_glob_span
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +45,33 @@ def _is_soft_error(exc: Exception) -> bool:
             and exc.status in SOFT_HTTP_STATUSES)
 
 
-def _date_range(end_date: str, days: int = 30) -> list[str]:
+def _date_range(end_date: str,
+                days: int = 30,
+                span: tuple[date, date] | None = None) -> list[str]:
+    """The channel's day directories, oldest first.
+
+    A day dir is real for any well-formed date under the channel, so the
+    bare listing is a window: the last ``days`` up to the newest
+    message. A glob names its own window instead, clipped at the newest
+    message because nothing was posted after it.
+
+    Args:
+        end_date (str): the newest message's date, ``YYYY-MM-DD``.
+        days (int): how many days the bare window covers.
+        span (tuple[date, date] | None): the glob's half-open range.
+    """
     end = datetime.strptime(end_date, "%Y-%m-%d").date()
-    return [(end - timedelta(days=i)).isoformat()
-            for i in range(days - 1, -1, -1)]
+    if span is None:
+        return [(end - timedelta(days=i)).isoformat()
+                for i in range(days - 1, -1, -1)]
+    start = span[0]
+    last = min(end, span[1] - timedelta(days=1))
+    out = []
+    d = start
+    while d <= last:
+        out.append(d.isoformat())
+        d += timedelta(days=1)
+    return out
 
 
 def _container_entry(name: str, guild_id: str) -> IndexEntry:
@@ -94,7 +118,10 @@ async def _list_channel_days(accessor: DiscordAccessor, match: ScopeMatch,
         end_date = snowflake_to_date(last_msg_id)
     else:
         end_date = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-    return [(d, history_entry(own.id, d)) for d in _date_range(end_date)]
+    span = glob_span(match.pattern)
+    entries = [(d, history_entry(own.id, d))
+               for d in _date_range(end_date, span=span)]
+    return DirListing(entries=entries, partial=span is not None)
 
 
 async def _day_listing(accessor: DiscordAccessor, channel_id: str,
@@ -207,5 +234,6 @@ readdir = make_readdir(
         "files": _list_files,
     },
     parent_entry_listers={"day": _list_day},
+    pattern_kinds={"channel": has_glob_span},
     leaf_error="enotdir",
 )

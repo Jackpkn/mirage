@@ -21,7 +21,6 @@ from mirage.core.gcal.day import (WINDOW_AHEAD_DAYS, WINDOW_BACK_DAYS,
                                   clamped_hhmm, day_bounds, days_covered,
                                   event_span, window_bounds)
 from mirage.core.gcal.scope import detect_scope
-from mirage.core.google.date_glob import glob_to_date_range
 from mirage.core.hierarchy.scope import ROOT
 from mirage.core.render.json import compact_json_bytes
 from mirage.resource.gcal.event_entry import (CALENDAR_FILE, PRIMARY_DIR,
@@ -30,6 +29,7 @@ from mirage.resource.gcal.event_entry import (CALENDAR_FILE, PRIMARY_DIR,
                                               make_event_filename)
 from mirage.types import JsonValue, PathSpec
 from mirage.utils.errors import enoent
+from mirage.utils.glob_walk import glob_span
 from mirage.utils.key_prefix import mount_prefix_of
 
 CALENDAR_DIR = "gcal/calendar_dir"
@@ -154,7 +154,7 @@ def day_span(pattern: str | None, today: date,
     Returns:
         tuple[str, str, date, date]: timeMin, timeMax, first day, last day.
     """
-    span = glob_to_date_range(pattern)
+    span = glob_span(pattern)
     if span is not None:
         last = span[1] - timedelta(days=1)
         return day_bounds(span[0].isoformat(),

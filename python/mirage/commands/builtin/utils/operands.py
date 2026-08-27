@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
 
+from mirage.commands.spec.usage import read_fail_exit
 from mirage.io.types import ByteSource, IOResult, materialize
 from mirage.ops.types import MountView, StatPath
 from mirage.types import (FileStat, FileType, PathSpec, PolymorphicReadFn,
@@ -86,6 +87,66 @@ async def operand_stat(
     return row
 
 
+async def split_readable_coded(
+    paths: list[PathSpec],
+    stat: StatFn,
+    cmd_name: str,
+) -> tuple[list[PathSpec], bytes, int]:
+    """``split_readable``, plus the exit code the failures add up to.
+
+    The code is the gzip family's, which is the only reason this variant
+    exists: gzip reports a directory as a warning (2) and a missing file
+    as an error (1), where every other command in the family answers the
+    same number whichever failure is asked, so ``split_readable`` just
+    drops this one.
+
+    Its rule is not "the last failure wins". An error is recorded
+    outright while a warning is recorded only when nothing has failed
+    yet, so the error outranks the warning in either order: ``zcat nope
+    dir`` and ``zcat dir nope`` are both 1, and only an invocation with
+    no error at all (``zcat dir ok.gz``) is 2. That is gzip's own code:
+    ``progerror`` assigns ``exit_code = ERROR`` unconditionally while the
+    ``WARN`` macro assigns ``only if (exit_code == OK)`` (gzip 1.13,
+    pinned on debian:stable-slim). A command whose rule is different
+    again has to own its own loop: GNU sed takes the most severe code,
+    and ``sed_generic`` does that itself.
+
+    Args:
+        paths (list[PathSpec]): Glob-resolved operands in command order.
+        stat (StatFn): Bound stat called as ``stat(path)``.
+        cmd_name (str): Command name for the stderr prefix.
+
+    Returns:
+        tuple[list[PathSpec], bytes, int]: Readable operands, the
+        concatenated stderr lines, and the exit code (0 when none
+        failed).
+    """
+    readable: list[PathSpec] = []
+    err = b""
+    code = 0
+    for p in paths:
+        failure: BaseException | None = None
+        try:
+            st = await stat(p)
+        except FS_ERRORS as exc:
+            failure = exc
+        else:
+            if getattr(st, "type", None) == FileType.DIRECTORY:
+                failure = eisdir(p)
+        if failure is None:
+            readable.append(p)
+            continue
+        err += fs_error_line(cmd_name, p, failure).encode()
+        # A directory is gzip's warning and everything else its error, so
+        # the directory yields to a code already recorded. Keyed on the
+        # errno rather than on which branch reported it, because a keyed
+        # backend raises EISDIR from the stat where an explicit directory
+        # returns a row.
+        if code == 0 or not isinstance(failure, IsADirectoryError):
+            code = read_fail_exit(cmd_name, failure)
+    return readable, err, code
+
+
 async def split_readable(
     paths: list[PathSpec],
     stat: StatFn,
@@ -114,18 +175,7 @@ async def split_readable(
         tuple[list[PathSpec], bytes]: Readable operands in order, and the
         concatenated stderr lines for the failed ones (``b""`` if none).
     """
-    readable: list[PathSpec] = []
-    err = b""
-    for p in paths:
-        try:
-            st = await stat(p)
-        except FS_ERRORS as exc:
-            err += fs_error_line(cmd_name, p, exc).encode()
-            continue
-        if getattr(st, "type", None) == FileType.DIRECTORY:
-            err += fs_error_line(cmd_name, p, eisdir(p)).encode()
-            continue
-        readable.append(p)
+    readable, err, _ = await split_readable_coded(paths, stat, cmd_name)
     return readable, err
 
 
@@ -179,17 +229,22 @@ async def read_operands(
     return ok, err
 
 
-def operands_io(err: bytes, cache: list[str] | None = None) -> IOResult:
+def operands_io(err: bytes,
+                cache: list[str] | None = None,
+                exit_code: int = 1) -> IOResult:
     """IOResult carrying operand-split stderr lines.
 
-    Exit 1 when any operand failed, exit 0 otherwise; mirrors
-    ``operandsIo`` in operands.ts.
+    Exit ``exit_code`` when any operand failed, exit 0 otherwise; mirrors
+    ``operandsIo`` in operands.ts. The default is 1, which is every GNU
+    command in this family except the gzip one, whose code depends on the
+    errno and which passes the number ``split_readable_coded`` reports.
 
     Args:
         err (bytes): Concatenated stderr lines, ``b""`` for none.
         cache (list[str] | None): Paths worth caching, if any.
+        exit_code (int): The code to report when ``err`` is non-empty.
     """
-    return IOResult(exit_code=0 if not err else 1,
+    return IOResult(exit_code=0 if not err else exit_code,
                     stderr=err or None,
                     cache=cache if cache is not None else [])
 
@@ -197,20 +252,23 @@ def operands_io(err: bytes, cache: list[str] | None = None) -> IOResult:
 async def merge_split_errors(
     result: tuple[ByteSource | None, IOResult],
     err: bytes,
+    exit_code: int = 1,
 ) -> tuple[ByteSource | None, IOResult]:
     """Attach ``split_readable`` stderr lines to a generic's result.
 
     Args:
         result (tuple[ByteSource | None, IOResult]): The body's return.
         err (bytes): Stderr lines for the operands dropped by the split;
-            when non-empty the command exits 1, per GNU.
+            when non-empty the command exits ``exit_code``.
+        exit_code (int): The code to report, 1 for every GNU command in
+            this family except the gzip one (see ``operands_io``).
     """
     if not err:
         return result
     out, io = result
     existing = await materialize(io.stderr) if io.stderr else b""
     io.stderr = existing + err
-    io.exit_code = 1
+    io.exit_code = exit_code
     return out, io
 
 

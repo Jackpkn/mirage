@@ -13,10 +13,55 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { FlagView } from '../../../spec/types.ts'
-import { forkRepo, login, readReadme, renameRepo, viewRepo } from '../../../../core/github/repo.ts'
+import {
+  createRepo,
+  forkRepo,
+  listRepos,
+  login,
+  readReadme,
+  renameRepo,
+  viewRepo,
+} from '../../../../core/github/repo.ts'
 import type { CommandFnResult } from '../../../config.ts'
 import type { CLIInvocation } from '../../types.ts'
-import { ghRepo, ghTransport, textOut } from './accessor.ts'
+import { camel, ghRepo, ghTransport, textOut, textValue, typedOut } from './accessor.ts'
+
+export const REPO_FIELDS = [
+  'createdAt',
+  'defaultBranchRef',
+  'description',
+  'isFork',
+  'isPrivate',
+  'name',
+  'nameWithOwner',
+  'owner',
+  'pushedAt',
+  'updatedAt',
+  'url',
+  'visibility',
+] as const
+
+function repo(value: unknown): Record<string, unknown> {
+  const row = camel(value)
+  const result = row !== null && typeof row === 'object' ? (row as Record<string, unknown>) : {}
+  if ('fullName' in result) {
+    result.nameWithOwner = result.fullName
+    delete result.fullName
+  }
+  if ('defaultBranch' in result) {
+    result.defaultBranchRef = { name: result.defaultBranch }
+    delete result.defaultBranch
+  }
+  if ('private' in result) {
+    result.isPrivate = result.private
+    delete result.private
+  }
+  if ('fork' in result) {
+    result.isFork = result.fork
+    delete result.fork
+  }
+  return result
+}
 
 /**
  * gh's own text view of a repository: two tab-separated header lines and
@@ -33,10 +78,52 @@ export function summary(repo: unknown, readme: string | null): string {
 }
 
 export async function view(inv: CLIInvocation): Promise<CommandFnResult> {
+  const fl = new FlagView(inv.flags)
   const transport = ghTransport(inv.config)
-  const ref = ghRepo(inv.config, inv.texts[0])
-  const repo = await viewRepo(transport, ref)
-  return textOut(summary(repo, await readReadme(transport, ref)))
+  const ref = ghRepo(inv.config, inv.texts[0] ?? fl.asStr('repo'))
+  const value = await viewRepo(transport, ref)
+  const human =
+    fl.asStr('json') === undefined ? summary(value, await readReadme(transport, ref)) : ''
+  return typedOut(value === null ? {} : repo(value), fl, human, REPO_FIELDS)
+}
+
+export async function listCmd(inv: CLIInvocation): Promise<CommandFnResult> {
+  const fl = new FlagView(inv.flags)
+  const rows = (
+    await listRepos(ghTransport(inv.config), inv.texts[0], fl.asInt('limit') ?? 30)
+  ).map(repo)
+  const human = rows
+    .map(
+      (row) =>
+        `${textValue(row.nameWithOwner)}\t${textValue(row.description)}\t${textValue(row.visibility)}\t${textValue(row.updatedAt)}\n`,
+    )
+    .join('')
+  return typedOut(rows, fl, human, REPO_FIELDS)
+}
+
+export async function createCmd(inv: CLIInvocation): Promise<CommandFnResult> {
+  const fl = new FlagView(inv.flags)
+  const spec = inv.texts[0] ?? ''
+  if (spec === '') throw new Error('a repository name is required in noninteractive mode')
+  const parts = spec.split('/')
+  if (parts.length > 2 || parts.some((part) => part === '')) {
+    throw new Error(`invalid repository name: "${spec}"`)
+  }
+  if (fl.asBool('public') && fl.asBool('private')) {
+    throw new Error('--public and --private are mutually exclusive')
+  }
+  const owner = parts.length === 2 ? parts[0] : undefined
+  const body: Record<string, unknown> = {
+    name: parts.at(-1) ?? '',
+    private: fl.asBool('private'),
+    auto_init: fl.asBool('add_readme'),
+  }
+  const description = fl.asStr('description')
+  const homepage = fl.asStr('homepage')
+  if (description !== undefined) body.description = description
+  if (homepage !== undefined) body.homepage = homepage
+  const created = repo(await createRepo(ghTransport(inv.config), owner, body))
+  return textOut(`${textValue(created.url)}\n`)
 }
 
 export async function fork(inv: CLIInvocation): Promise<CommandFnResult> {

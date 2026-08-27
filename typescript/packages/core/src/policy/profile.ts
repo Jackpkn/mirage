@@ -15,8 +15,9 @@
 import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from './constants.ts'
 import type { CommandRule, AdmissionRules, ProfileScript } from './types.ts'
 import { ScriptSource } from '../runtime/policy/types.ts'
-import type { HiddenPaths, HiddenVars } from '../types.ts'
+import type { HiddenPaths, HiddenVars, ShowEntry, ShownPaths } from '../types.ts'
 import { type MountMode, parseMountMode } from '../types.ts'
+import type { HideReason } from './types.ts'
 import { isGlob } from '../utils/hidden.ts'
 import { stripSlash } from '../utils/slash.ts'
 
@@ -25,11 +26,23 @@ import { stripSlash } from '../utils/slash.ts'
  * use the document's one grammar: an entry with `*`, `?` or `[` is a
  * pattern, anything else an exact path and its subtree
  * (`utils/hidden.classifyPaths`); every entry holds a token and is
- * absolute or a name pattern, wherever the block is written. `show`
- * arrives with its enforcement.
+ * absolute or a name pattern, wherever the block is written. A hide
+ * entry may also be a group `{patterns: [...], reason: ...}`: the
+ * patterns join the flat list like any other entry and the reason lands
+ * in `reasons`, the operator-only side table (`HideReason`).
+ *
+ * `show` is the other half of the path axis: a mapping of path to mode
+ * (`{"/repo/docs": "r"}`), or a plain list whose entries inherit the
+ * mount's mode. Every entry is absolute, a subtree or an anchored
+ * pattern, because a show anchors to a place and a name pattern names
+ * none. An entry re-opens its subtree inside a hidden region when its
+ * anchor is deeper than the hide's, and states the mode in force below
+ * its anchor when it carries one; both on the one anchor-depth rule.
  */
 export interface PathsBlock {
   readonly hide: readonly string[]
+  readonly show?: readonly ShowEntry[]
+  readonly reasons?: readonly HideReason[]
 }
 
 /** `vars:` of a profile: names or globs over names the session reads as unset. */
@@ -154,10 +167,14 @@ export interface CompiledProfile {
   readonly cwd: string | null
   readonly commands: AdmissionRules | null
   readonly script?: ProfileScript | null
+  /** Every show entry the profile states, its own and its mount sections'. */
+  readonly shownPaths?: ShownPaths | null
+  /** The operator's reasons for grouped hides, never rendered to the agent. */
+  readonly hideReasons?: readonly HideReason[]
 }
 
 const RULE_FIELDS = ['reason', 'commands', 'paths'] as const
-const PATHS_FIELDS = ['hide'] as const
+const PATHS_FIELDS = ['hide', 'show', 'reasons'] as const
 const VARS_FIELDS = ['hide'] as const
 const COMMANDS_FIELDS = ['allow', 'ask', 'deny'] as const
 const MOUNT_COMMANDS_FIELDS = ['ask', 'deny'] as const
@@ -347,13 +364,72 @@ function parseAllow(raw: unknown, where: string): readonly string[] | null {
   return stringList(raw, `${where}.allow`, 'a command')
 }
 
+function parseHideGroup(entry: Record<string, unknown>, where: string): HideReason {
+  rejectUnknownKeys(entry, ['patterns', 'reason'], where)
+  const patterns = stringList(entry.patterns, `${where} patterns`, 'a path')
+  if (patterns.length === 0) throw new Error(`${where} must list at least one pattern`)
+  const reason = entry.reason
+  if (typeof reason !== 'string' || reason.trim() === '')
+    throw new Error(`${where} reason must be a non-empty string`)
+  return { patterns, reason }
+}
+
+function parseShowEntries(raw: unknown, where: string): readonly ShowEntry[] {
+  if (raw === undefined || raw === null) return []
+  let pairs: [unknown, unknown][]
+  if (Array.isArray(raw)) {
+    pairs = raw.map((entry) => [entry, null])
+  } else if (isPlainObject(raw)) {
+    pairs = Object.entries(raw)
+  } else {
+    throw new Error(`${where} must be a mapping of path to mode or a list of paths`)
+  }
+  return pairs.map(([path, mode]) => {
+    if (typeof path !== 'string' || path.trim() === '')
+      throw new Error(`${where} entries must name a path`)
+    if (!path.startsWith('/'))
+      throw new Error(`${where} entries anchor to a place, so each is absolute: '${path}' is not`)
+    let parsed: MountMode | null = null
+    if (mode !== null && mode !== undefined) {
+      if (typeof mode !== 'string') throw new Error(`${where} modes must be a mode name or alias`)
+      parsed = parseMountMode(mode)
+    }
+    return { path, mode: parsed }
+  })
+}
+
 /** Validate a `paths:` block. Every entry is absolute or a name pattern. */
 export function parsePathsBlock(raw: unknown, where = 'paths'): PathsBlock {
   const obj = asObject(raw, where)
   rejectUnknownKeys(obj, PATHS_FIELDS, where)
-  const hide = stringList(obj.hide, `${where}.hide`, 'a path')
+  // Reason groups are a spelling of `hide`, so they are split out
+  // before the flat list is read.
+  const flat: unknown[] = []
+  const reasons: HideReason[] = []
+  for (const [i, entry] of asList(obj.hide, `${where}.hide`).entries()) {
+    if (isPlainObject(entry)) {
+      const group = parseHideGroup(entry, `${where}.hide[${String(i)}] group`)
+      flat.push(...group.patterns)
+      reasons.push(group)
+    } else {
+      flat.push(entry)
+    }
+  }
+  for (const entry of asList(obj.reasons, `${where}.reasons`, 'a list of groups')) {
+    if (!isPlainObject(entry))
+      throw new Error(`${where}.reasons entries must be groups of patterns and a reason`)
+    reasons.push(parseHideGroup(entry, `${where}.reasons group`))
+  }
+  const hide = stringList(flat, `${where}.hide`, 'a path')
   requireAbsolute(hide, `${where}.hide`)
-  return { hide }
+  const show = parseShowEntries(obj.show, `${where}.show`)
+  // An unsaid field stays absent, so a `{hide: [...]}` literal reads
+  // equal to its parsed form.
+  return {
+    hide,
+    ...(show.length > 0 ? { show } : {}),
+    ...(reasons.length > 0 ? { reasons } : {}),
+  }
 }
 
 export function parseVarsBlock(raw: unknown, where = 'vars'): VarsBlock {
@@ -394,6 +470,11 @@ export function parseProfileMount(raw: unknown, root: string, where: string): Pr
   if (obj.paths !== undefined && obj.paths !== null) {
     const paths = parsePathsBlock(obj.paths, `${where}.paths`)
     requireUnderMount(paths.hide, root, `${where}.paths.hide`)
+    requireUnderMount(
+      (paths.show ?? []).map((e) => e.path),
+      root,
+      `${where}.paths.show`,
+    )
     out.paths = paths
   }
   if (obj.commands !== undefined && obj.commands !== null) {

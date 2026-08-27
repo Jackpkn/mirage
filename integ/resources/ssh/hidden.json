@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "id": "ssh_subtree_prep",
+      "seq": 923360,
+      "targets": [
+        "ssh"
+      ],
+      "command": "mkdir -p /data/qsubh/sec && echo k > /data/qsubh/sec/k",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ssh_subtree_rmdir_visibly_empty_succeeds",
+      "seq": 923361,
+      "targets": [
+        "ssh"
+      ],
+      "command": "ls -a /data/qsubh && rmdir /data/qsubh",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "session": "veiled"
+    },
+    {
+      "id": "ssh_subtree_took_the_remnants",
+      "seq": 923362,
+      "targets": [
+        "ssh"
+      ],
+      "command": "test -e /data/qsubh",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  ]
+}

@@ -20,6 +20,12 @@ import { removalLines } from '../../utils/verbose.ts'
 import { specOf } from '../../../spec/builtins.ts'
 import { FlagView } from '../../../spec/types.ts'
 import { isSlashedLink, rmLinkRefusal } from '../../utils/slash_links.ts'
+import {
+  errorVirtualPath,
+  fsStrerror,
+  isFsError,
+  operandSpelling,
+} from '../../../../utils/errors.ts'
 import { type Builder, resolveGlobOf } from '../adapter.ts'
 
 export const RM_BUILDER: Builder = {
@@ -70,41 +76,52 @@ export const RM_BUILDER: Builder = {
         continue
       }
       let entryLines: string[] = []
-      if (isDir) {
-        // rmR/rmdir are resolved lazily so object stores without a real
-        // directory-remove op still unlink plain files (mirrors Python).
-        if (recursive) {
-          if (rmR === undefined) {
-            throw new Error('rm: recursive remove not supported on this backend')
-          }
-          if (verbose) {
-            entryLines = removalLines(
-              await cpWalk(
-                (dir) => ops.readdir(accessor, dir, idx),
-                (spec) => ops.stat(accessor, spec, idx),
-                p,
-                idx,
-              ),
-            )
-          }
-          await rmR(accessor, p)
-        } else if (dirFlag) {
-          if (rmdir === undefined) {
-            throw new Error('rm: directory remove not supported on this backend')
-          }
-          if ((await ops.readdir(accessor, p, idx)).length > 0) {
-            errors.push(`rm: cannot remove '${p.rawPath}': Directory not empty`)
+      try {
+        if (isDir) {
+          // rmR/rmdir are resolved lazily so object stores without a real
+          // directory-remove op still unlink plain files (mirrors Python).
+          if (recursive) {
+            if (rmR === undefined) {
+              throw new Error('rm: recursive remove not supported on this backend')
+            }
+            if (verbose) {
+              entryLines = removalLines(
+                await cpWalk(
+                  (dir) => ops.readdir(accessor, dir, idx),
+                  (spec) => ops.stat(accessor, spec, idx),
+                  p,
+                  idx,
+                ),
+              )
+            }
+            await rmR(accessor, p)
+          } else if (dirFlag) {
+            if (rmdir === undefined) {
+              throw new Error('rm: directory remove not supported on this backend')
+            }
+            if ((await ops.readdir(accessor, p, idx)).length > 0) {
+              errors.push(`rm: cannot remove '${p.rawPath}': Directory not empty`)
+              continue
+            }
+            await rmdir(accessor, p, idx)
+            entryLines = [`removed directory '${p.virtual}'`]
+          } else {
+            errors.push(`rm: cannot remove '${p.rawPath}': Is a directory`)
             continue
           }
-          await rmdir(accessor, p)
-          entryLines = [`removed directory '${p.virtual}'`]
         } else {
-          errors.push(`rm: cannot remove '${p.rawPath}': Is a directory`)
-          continue
+          await unlink(accessor, p)
+          entryLines = [`removed '${p.virtual}'`]
         }
-      } else {
-        await unlink(accessor, p)
-        entryLines = [`removed '${p.virtual}'`]
+      } catch (err) {
+        if (!isFsError(err)) throw err
+        // GNU rm names the entry it could not remove (the guard blames
+        // a read-only region below the operand by its anchor) and
+        // keeps removing the rest.
+        errors.push(
+          `rm: cannot remove '${operandSpelling(errorVirtualPath(err), p)}': ${fsStrerror(err) ?? String(err)}`,
+        )
+        continue
       }
       if (verbose) lines.push(...entryLines)
     }

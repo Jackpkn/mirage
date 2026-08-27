@@ -14,8 +14,8 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { enotsup } from '../utils/errors.ts'
-import { FileStat, FileType } from '../types.ts'
-import { DIR_MODE, FILE_MODE, LINK_MODE } from '../utils/stat_view.ts'
+import { DEVICE_NUMBERS_KEY, FileStat, FileType } from '../types.ts'
+import { CHAR_MODE, DIR_MODE, FILE_MODE, LINK_MODE } from '../utils/stat_view.ts'
 import { CrossMountError } from './errors.ts'
 import type { BridgeDispatchFn } from './types.ts'
 import { RuntimeVFS } from './vfs.ts'
@@ -86,6 +86,25 @@ describe('RuntimeVFS transport', () => {
       Promise.resolve(new FileStat({ name: 'a.txt', size: 1, type: FileType.TEXT })),
     )
     expect((await new RuntimeVFS(dispatch).stat('/ram/a.txt')).mtimeMs).toBe(0)
+  })
+
+  it('projects character type bits and logical device numbers', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() =>
+      Promise.resolve(
+        new FileStat({
+          name: 'zero',
+          type: FileType.CHAR_DEVICE,
+          extra: { [DEVICE_NUMBERS_KEY]: [1, 5] },
+        }),
+      ),
+    )
+    expect(await new RuntimeVFS(dispatch).stat('/dev/zero')).toEqual({
+      size: 0,
+      isDir: false,
+      mode: CHAR_MODE,
+      mtimeMs: 0,
+      rdev: 0x105,
+    })
   })
 
   // lstat is one door question now, not a surface reaching past it: the

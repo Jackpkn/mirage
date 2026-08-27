@@ -17,7 +17,10 @@ import pytest
 from mirage.cache.index import NULL_INDEX
 from mirage.commands.builtin.generic.rm_cmd import make_rm
 from mirage.commands.config import CommandOpts
-from mirage.types import PathSpec
+from mirage.context import (reset_current_session, reset_mount_gate,
+                            set_current_session, set_mount_gate)
+from mirage.types import MountMode, PathSpec, ShowEntry, ShownPaths
+from mirage.workspace.session import Session
 
 
 class FakeAccessor:
@@ -70,6 +73,36 @@ async def test_rm_enoent_reports_and_continues_without_force():
     assert result.stderr == (b"rm: cannot remove '/owned/x.json': "
                              b"No such file or directory\n")
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_rm_holds_each_path_to_its_regions_mode():
+    # The bound unlink rides the same guard chain as the generic rm's
+    # slots: the command gate admits rm because one region grants
+    # writes, and each unlink still answers for its own path.
+    files = {"/gdocs/plain.json", "/gdocs/build/a.json"}
+    calls: list[tuple] = []
+    rm = _make_rm(files, calls)
+    sess = Session(session_id="agent",
+                   mount_modes={"/gdocs": MountMode.READ},
+                   shown_paths=ShownPaths(
+                       entries=(ShowEntry("/gdocs/build", MountMode.WRITE), )))
+    session_token = set_current_session(sess)
+    gate_token = set_mount_gate("/gdocs", MountMode.WRITE)
+    try:
+        _, result = await rm(FakeAccessor(), [
+            PathSpec.from_str_path("/gdocs/plain.json"),
+            PathSpec.from_str_path("/gdocs/build/a.json"),
+        ], [], CommandOpts())
+    finally:
+        reset_mount_gate(gate_token)
+        reset_current_session(session_token)
+    assert result.exit_code == 1
+    assert result.stderr == (b"rm: cannot remove '/gdocs/plain.json': "
+                             b"Read-only file system\n")
+    # The refused path never reached the backend; the granted one did.
+    assert [c[1].virtual for c in calls] == ["/gdocs/build/a.json"]
+    assert files == {"/gdocs/plain.json"}
 
 
 @pytest.mark.asyncio

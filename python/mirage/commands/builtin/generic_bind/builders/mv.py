@@ -18,7 +18,8 @@ from mirage.accessor.base import Accessor
 from mirage.commands.builtin.generic.mv import mv as generic_mv
 from mirage.commands.builtin.generic.mv import parse_mv_flags
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
-                                                          Operation, bound_op)
+                                                          Operation, bound_op,
+                                                          refuse_reveal)
 from mirage.commands.builtin.generic_bind.builders.cp import overlayable_stat
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
@@ -42,7 +43,8 @@ async def mv(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
             rename=partial(ops.require(Operation.RENAME), accessor)),
         stat=overlayable_stat(ops, accessor, opts.index, overlay),
         flags=parsed,
-        readdir=bound_op(ops.readdir, accessor, opts.index))
+        readdir=bound_op(ops.readdir, accessor, opts.index),
+        guard=refuse_reveal)
 
 
 BUILDER = Builder('mv',

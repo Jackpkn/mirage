@@ -122,7 +122,7 @@ describe('cross-mount mv with an unremovable source', () => {
     const ws = await makeReadonlySrcWs()
     const r = await runCmd(ws, 'mv /mail/report.csv /scratch/x.csv')
     expect(r.code).toBe(1)
-    expect(r.err).toBe("mv: cannot remove '/mail/report.csv': Permission denied\n")
+    expect(r.err).toBe("mv: cannot remove '/mail/report.csv': Read-only file system\n")
     const kept = await runCmd(ws, 'cat /scratch/x.csv')
     expect([kept.out, kept.code]).toEqual(['name,age\nalice,30\n', 0])
     const src = await runCmd(ws, 'cat /mail/report.csv')

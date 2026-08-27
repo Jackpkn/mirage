@@ -156,6 +156,92 @@ describe('decisions', () => {
     expect(waiting.pending()).toHaveLength(1)
   })
 
+  it('hands the run signal to the host, so a prompt can be taken down', async () => {
+    const seen: (AbortSignal | undefined)[] = []
+    const controller = new AbortController()
+    const ledger = new Decisions(null, (r, signal) => {
+      seen.push(signal)
+      return Promise.resolve({ ...r, outcome: Outcome.ALLOW, scope: Scope.ONCE })
+    })
+    expect(await ledger.resolve(ctx(), ASK, controller.signal)).toBeNull()
+    expect(seen).toEqual([controller.signal])
+  })
+
+  it('stops waiting on a host when the run it belongs to is killed', async () => {
+    const controller = new AbortController()
+    const ledger = new Decisions(
+      null,
+      () =>
+        new Promise(() => {
+          // A host that never answers: without the bound below, the run
+          // waiting on this would outlive its own deadline entirely.
+        }),
+    )
+    const asked = ledger.resolve(ctx(), ASK, controller.signal)
+    controller.abort()
+    expect(await asked).toEqual({ kind: 'abandoned' })
+    // Nobody answered, so the question is still open for whoever asks next.
+    expect(ledger.pending()).toHaveLength(1)
+  })
+
+  it('puts nothing to a host on behalf of a run already over', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    let asked = false
+    const ledger = new Decisions(null, () => {
+      asked = true
+      return Promise.resolve(null)
+    })
+    expect(await ledger.resolve(ctx(), ASK, controller.signal)).toEqual({ kind: 'abandoned' })
+    expect(asked).toBe(false)
+    expect(ledger.pending()).toHaveLength(1)
+  })
+
+  it('drops an answer that arrives after the kill instead of recording it', async () => {
+    const controller = new AbortController()
+    const host: { yes?: () => void } = {}
+    const ledger = new Decisions(
+      null,
+      (r) =>
+        new Promise<Decision>((resolve) => {
+          host.yes = () => {
+            resolve({ ...r, outcome: Outcome.ALLOW, scope: Scope.ONCE })
+          }
+        }),
+    )
+    const asked = ledger.resolve(ctx(), ASK, controller.signal)
+    controller.abort()
+    expect(await asked).toEqual({ kind: 'abandoned' })
+    host.yes?.()
+    await Promise.resolve()
+    // Recording it would leave a spent-once grant behind, and the next
+    // identical line would take it without anybody being asked.
+    expect(ledger.pending()).toHaveLength(1)
+    expect(ledger.list()[0]?.outcome).toBeNull()
+  })
+
+  it('swallows a host rejection that arrives after the kill', async () => {
+    const controller = new AbortController()
+    const host: { fail?: () => void } = {}
+    const ledger = new Decisions(
+      null,
+      () =>
+        new Promise<Decision>((_resolve, reject) => {
+          host.fail = () => {
+            reject(new Error('the approval channel fell over'))
+          }
+        }),
+    )
+    const asked = ledger.resolve(ctx(), ASK, controller.signal)
+    controller.abort()
+    expect(await asked).toEqual({ kind: 'abandoned' })
+    // Left unhandled this would surface as an unhandled rejection and
+    // take the host process down with it.
+    host.fail?.()
+    await Promise.resolve()
+    expect(ledger.pending()).toHaveLength(1)
+  })
+
   it('lists records per session and across them', async () => {
     const ledger = new Decisions()
     await ledger.resolve(ctx('a'), ASK)

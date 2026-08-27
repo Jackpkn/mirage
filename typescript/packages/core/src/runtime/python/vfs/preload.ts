@@ -17,6 +17,8 @@ import type { RuntimeVFS, VFSEntry } from '../../vfs.ts'
 export interface FSLike {
   mkdirTree(path: string): void
   writeFile(path: string, bytes: Uint8Array): void
+  /** Note a character device without materializing its content. */
+  charDevice?(path: string, mode: number, rdev: number): void
   /**
    * Note a listed file whose content could not be fetched. A target that
    * does not implement this simply omits the file, which is only safe
@@ -97,6 +99,11 @@ async function preloadEntry(fs: FSLike, vfs: RuntimeVFS, entry: VFSEntry): Promi
         `mirage preload: skipping subtree ${next}: ${err instanceof Error ? err.message : String(err)}`,
       )
     }
+    return
+  }
+  if (entry.mode !== undefined && (entry.mode & 0o170000) === 0o020000) {
+    fs.charDevice?.(entry.path, entry.mode, entry.rdev ?? 0)
+    applyMeta(fs, entry)
     return
   }
   try {

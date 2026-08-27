@@ -22,6 +22,7 @@ from mirage.commands.builtin.generic.crossmount.types import (CrossResult,
                                                               RunSingle,
                                                               Strategy)
 from mirage.commands.spec.types import FlagValue
+from mirage.commands.spec.usage import read_fail_exit
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.ops.types import NamespaceView
@@ -82,5 +83,5 @@ async def handle_cross_mount(
                                 run_single,
                                 stdin=stdin)
     except FS_ERRORS as exc:
-        return None, IOResult(exit_code=1,
+        return None, IOResult(exit_code=read_fail_exit(cmd_name, exc),
                               stderr=format_fs_error(cmd_name, exc, scopes))

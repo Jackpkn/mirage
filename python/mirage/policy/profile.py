@@ -19,9 +19,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from mirage.policy.constants import DEFAULT_ASK_REASON, DEFAULT_DENY_REASON
-from mirage.policy.types import AdmissionRules, CommandRule, ProfileScript
+from mirage.policy.types import (AdmissionRules, CommandRule, HideReason,
+                                 ProfileScript)
 from mirage.runtime.types import ScriptSource
-from mirage.types import HiddenPaths, HiddenVars, MountMode, parse_mount_mode
+from mirage.types import (HiddenPaths, HiddenVars, MountMode, ShowEntry,
+                          ShownPaths, parse_mount_mode)
 from mirage.utils.hidden import is_glob
 
 _DOC = ConfigDict(extra="forbid", frozen=True)
@@ -245,21 +247,133 @@ class PathsBlock(BaseModel):
     ``*``, ``?`` or ``[`` is a pattern, anything else an exact path
     and its subtree (``utils/hidden.classify_paths``); every entry
     holds a token and is absolute or a name pattern, wherever the block
-    is written.
-    ``show`` arrives with its enforcement.
+    is written. A hide entry may also be a group
+    ``{patterns: [...], reason: ...}``: the patterns join the flat list
+    like any other entry and the reason lands in ``reasons``, the
+    operator-only side table (:class:`HideReason`).
+
+    ``show`` is the other half of the path axis: a mapping of path to
+    mode (``{"/repo/docs": r}``), or a plain list whose entries inherit
+    the mount's mode. Every entry is absolute, a subtree or an anchored
+    pattern, because a show anchors to a place and a name pattern names
+    none. An entry re-opens its subtree inside a hidden region when its
+    anchor is deeper than the hide's, and states the mode in force
+    below its anchor when it carries one; both on the one anchor-depth
+    rule.
 
     Args:
         hide (tuple[str, ...]): what the profile makes nonexistent.
+        show (tuple[ShowEntry, ...]): the profile's show entries, in
+            document order.
+        reasons (tuple[HideReason, ...]): why grouped hide entries
+            exist, for the operator's doors only.
     """
 
     model_config = _DOC
 
     hide: tuple[str, ...] = ()
+    show: tuple[ShowEntry, ...] = ()
+    reasons: tuple[HideReason, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _v_groups(cls, data: Any) -> Any:
+        # Reason groups are a spelling of `hide`, so they are split out
+        # before the field validators read a flat list.
+        if not isinstance(data, Mapping):
+            return data
+        raw = data.get("hide")
+        if not isinstance(raw, (list, tuple)) or not any(
+                isinstance(e, Mapping) for e in raw):
+            return data
+        flat: list[Any] = []
+        groups: list[Any] = list(data.get("reasons") or ())
+        for entry in raw:
+            if not isinstance(entry, Mapping):
+                flat.append(entry)
+                continue
+            unknown = sorted(set(entry) - {"patterns", "reason"})
+            if unknown:
+                raise ValueError("paths.hide group has unknown field(s): " +
+                                 ", ".join(str(u) for u in unknown))
+            patterns = _string_list(entry.get("patterns"),
+                                    "paths.hide group patterns",
+                                    names="a path")
+            if not patterns:
+                raise ValueError(
+                    "paths.hide group must list at least one pattern")
+            reason = entry.get("reason")
+            if not isinstance(reason, str) or not reason.split():
+                raise ValueError(
+                    "paths.hide group reason must be a non-empty string")
+            flat.extend(patterns)
+            groups.append(HideReason(patterns=patterns, reason=reason))
+        out = dict(data)
+        out["hide"] = flat
+        out["reasons"] = tuple(groups)
+        return out
 
     @field_validator("hide", mode="before")
     @classmethod
     def _v_hide(cls, v: Any) -> Any:
         return _string_list(v, "paths.hide", names="a path")
+
+    @field_validator("show", mode="before")
+    @classmethod
+    def _v_show(cls, v: Any) -> Any:
+        if v is None:
+            return ()
+        if isinstance(v, Mapping):
+            pairs = list(v.items())
+        elif isinstance(v, (list, tuple)):
+            pairs = []
+            for entry in v:
+                if isinstance(entry, ShowEntry):
+                    pairs.append((entry.path, entry.mode))
+                elif isinstance(entry, (list, tuple)) and len(entry) == 2:
+                    pairs.append((entry[0], entry[1]))
+                else:
+                    pairs.append((entry, None))
+        else:
+            raise ValueError("paths.show must be a mapping of path to mode "
+                             "or a list of paths")
+        entries = []
+        for path, mode in pairs:
+            if not isinstance(path, str) or not path.split():
+                raise ValueError("paths.show entries must name a path")
+            if not path.startswith("/"):
+                raise ValueError("paths.show entries anchor to a place, so "
+                                 f"each is absolute: {path!r} is not")
+            parsed: MountMode | None = None
+            if mode is not None:
+                if isinstance(mode, MountMode):
+                    parsed = mode
+                elif isinstance(mode, str):
+                    parsed = parse_mount_mode(mode)
+                else:
+                    raise ValueError(
+                        "paths.show modes must be a mode name or alias")
+            entries.append(ShowEntry(path=path, mode=parsed))
+        return tuple(entries)
+
+    @field_validator("reasons", mode="before")
+    @classmethod
+    def _v_reasons(cls, v: Any) -> Any:
+        entries = _list(v, "paths.reasons", "a list of groups")
+        out = []
+        for entry in entries:
+            if isinstance(entry, HideReason):
+                out.append(entry)
+                continue
+            if not isinstance(entry, Mapping):
+                raise ValueError("paths.reasons entries must be groups of "
+                                 "patterns and a reason")
+            out.append(
+                HideReason(patterns=_string_list(entry.get("patterns"),
+                                                 "paths.reasons patterns",
+                                                 names="a path"),
+                           reason=str(entry.get("reason", ""))))
+        return tuple(out)
 
 
 class VarsBlock(BaseModel):
@@ -510,6 +624,8 @@ class SessionProfile(BaseModel):
             if entry.paths is not None:
                 _absolute_paths(entry.paths.hide, f"{where}.paths.hide")
                 _under_mount(entry.paths.hide, prefix, f"{where}.paths.hide")
+                _under_mount(tuple(e.path for e in entry.paths.show), prefix,
+                             f"{where}.paths.show")
             if entry.commands is not None:
                 for verb, rules in (("ask", entry.commands.ask),
                                     ("deny", entry.commands.deny)):
@@ -535,6 +651,10 @@ class CompiledProfile:
             its own and its mount sections' in one list.
         script (ProfileScript | None): the profile's per-command script,
             which ``ScriptPolicy`` evaluates at the admission gate.
+        shown_paths (ShownPaths | None): every show entry the profile
+            states, its own and its mount sections' in one list.
+        hide_reasons (tuple[HideReason, ...]): the operator's reasons
+            for grouped hides, never rendered to the agent.
     """
 
     mount_modes: dict[str, MountMode] | None
@@ -544,3 +664,5 @@ class CompiledProfile:
     cwd: str | None
     commands: AdmissionRules | None = None
     script: ProfileScript | None = None
+    shown_paths: ShownPaths | None = None
+    hide_reasons: tuple[HideReason, ...] = ()

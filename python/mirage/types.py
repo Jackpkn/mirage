@@ -108,6 +108,11 @@ class ContentType(str, Enum):
 # target travels with the stat row.
 LINK_TARGET_KEY = "link_target"
 
+# FileStat.extra key holding a device node's logical [major, minor]. A
+# character or block device has no size; its identity is these numbers,
+# which stat, ls -l, file and tar render in place of a byte length.
+DEVICE_NUMBERS_KEY = "device_numbers"
+
 
 class FileStat(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -327,6 +332,43 @@ class HiddenPaths:
 
     paths: tuple[str, ...] = ()
     patterns: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ShowEntry:
+    """One ``show`` entry of a profile's path axis, compiled.
+
+    Args:
+        path (str): the entry as written: an exact subtree or an
+            anchored pattern, always absolute. A slashless name pattern
+            is refused at validation, because a show anchors to a place
+            and a name pattern names none.
+        mode (MountMode | None): the mode the entry states for its
+            subtree; None for a list-form entry, which inherits the
+            mount's.
+    """
+
+    path: str
+    mode: MountMode | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ShownPaths:
+    """The ``show`` half of one session's path axis.
+
+    A sibling of ``HiddenPaths``: per-session state the doors read,
+    None-on-the-session means the document states no show. An entry
+    does two things, each on the one anchor-depth rule: it re-opens a
+    subtree inside a hidden region when its anchor is deeper than the
+    hide's, and it states the mode in force below its anchor when it
+    carries one.
+
+    Args:
+        entries (tuple[ShowEntry, ...]): the entries, in document
+            order.
+    """
+
+    entries: tuple[ShowEntry, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

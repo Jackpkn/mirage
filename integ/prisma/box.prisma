@@ -1,0 +1,56 @@
+// Schema for the Box fake (integ/server/box/). Box addresses every item by an
+// opaque numeric id and states its parent as a reference, so unlike Dropbox
+// this is a real parent/child tree and a path is something the caller walks,
+// never something stored. That is why the two fakes do NOT share a table: a
+// rename here moves one row, and on Dropbox it rewrites a whole subtree's keys.
+//
+// One table for all three item kinds (`folder`, `file`, `web_link`), because
+// the vendor returns them from the same endpoints and tells them apart by a
+// `type` string. A web_link is the reason `content` is nullable on a non-folder:
+// it is an item with a url and no bytes at all, which is exactly what the
+// battery mounts it to prove (listings hide it, a direct stat ENOENTs).
+//
+// `tenant` is one Box ACCOUNT. The vendor's own developer-token flow hands the
+// client a pre-fetched access token that it sends verbatim, so `tenantFromBearer`
+// reads the account off `Authorization` with no mirage-only header. Each run
+// takes its own account, which replaces the old fake's trick of naming a folder
+// `integ-<runid>-<mount>` inside ONE shared account to fake isolation.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/box"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model BoxItem {
+  tenant   String
+  id       String
+  // folder | file | web_link
+  type     String
+  name     String
+  // Null only for the account root, which the vendor calls folder id "0" and
+  // names "All Files". Every fixture states that row rather than the fake
+  // synthesizing it, so the one item that exists before any write is data.
+  parentId String?
+  modified String
+  content  Bytes?
+  sha1     String?
+  // The vendor's `etag`, which it advances on every content write. Rendered as
+  // a string; stored as the number so a write is an increment, not a parse.
+  version  Int     @default(1)
+  // web_link only.
+  url      String?
+  // Real Box transcodes many formats server-side and advertises the result as
+  // a `representation`. The fake advertises extracted_text only when a fixture
+  // attached one, so a mount that asks for representations on a file without
+  // one sees the empty list the vendor returns rather than a fabricated hit.
+  extractedText String?
+  seq      Int
+
+  @@id([tenant, id])
+}

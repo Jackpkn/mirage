@@ -18,7 +18,7 @@ import { PathSpec } from '../../../types.ts'
 import type { CommandOpts } from '../../config.ts'
 import { UsageError } from '../../errors.ts'
 import {
-  hiddenPathsActive,
+  hiddenPathsIntersect,
   pathAllowed,
   pathRulesActive,
 } from '../../../context/session_context.ts'
@@ -470,7 +470,13 @@ async function duOne(
   if (roots.length > 0) leaves = dropShadowed(leaves, roots)
   const linkTotal = leaves.reduce((acc, [, size]) => acc + size, 0)
 
-  if (flags.s && !flags.S && roots.length === 0 && !hiddenPathsActive() && !pathRulesActive()) {
+  if (
+    flags.s &&
+    !flags.S &&
+    roots.length === 0 &&
+    !hiddenPathsIntersect(path.virtual) &&
+    !pathRulesActive()
+  ) {
     // The one-total fast path trusts the backend's own sum, which a
     // session hiding paths cannot: hidden leaves would be counted into
     // a total their names never justify, so that session takes the

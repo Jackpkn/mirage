@@ -31,13 +31,14 @@ from mirage.policy.profile import (CommandsBlock, CompiledProfile,
 from mirage.policy.script import ScriptPolicy
 
 from mirage.policy.types import (  # isort: skip
-    VALIDITY, Action, Ask, CommandContext, CommandRule, AdmissionRules,
-    Decision, Deny, DenyScope, ExecuteResultContext, Explanation, Limit,
-    MountRootQuery, OpsContext, OpsResultContext, Pending, ProfileScript,
-    Scope, SessionCommandsQuery, SessionContext, SessionDecisionsQuery,
-    SessionScriptsQuery)
+    VALIDITY, Abandoned, Action, Ask, CommandContext, CommandRule,
+    AdmissionRules, Decision, Deny, DenyScope, ExecuteResultContext,
+    Explanation, Limit, MountRootQuery, OpsContext, OpsResultContext, Pending,
+    ProfileScript, Scope, SessionCommandsQuery, SessionContext,
+    SessionDecisionsQuery, SessionScriptsQuery)
 
 __all__ = [
+    "Abandoned",
     "Action",
     "AdmissionRules",
     "Ask",

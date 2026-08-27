@@ -32,16 +32,6 @@ async function jsCommand(
   texts: string[],
   opts: CommandOpts,
 ): Promise<CommandFnResult> {
-  if (opts.execAllowed === false) {
-    return [
-      null,
-      new IOResult({
-        exitCode: 126,
-        stderr: ENC.encode("js: root mount '/' is not in EXEC mode\n"),
-      }),
-    ]
-  }
-
   if (!(opts.runtime instanceof LanguageRuntime)) {
     return [
       null,
@@ -84,6 +74,31 @@ async function jsCommand(
     argStrs = texts.slice(1)
   } else {
     argStrs = []
+  }
+
+  // The x check follows the source's door, exactly as python3's: a
+  // file operand asks the per-path door, everything else keeps the
+  // whole-session rule.
+  if (scriptPath !== null) {
+    const allowed = opts.execPathAllowed?.(scriptPath.virtual) ?? opts.execAllowed !== false
+    if (!allowed) {
+      const display = scriptPath.rawPath !== '' ? scriptPath.rawPath : scriptPath.virtual
+      return [
+        null,
+        new IOResult({
+          exitCode: 126,
+          stderr: ENC.encode(`js: ${display}: not in EXEC mode\n`),
+        }),
+      ]
+    }
+  } else if (opts.execAllowed === false) {
+    return [
+      null,
+      new IOResult({
+        exitCode: 126,
+        stderr: ENC.encode("js: root mount '/' is not in EXEC mode\n"),
+      }),
+    ]
   }
 
   let resolvedCode: string | null = code

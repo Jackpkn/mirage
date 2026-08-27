@@ -58,3 +58,41 @@ async def test_files_under_a_sealed_day_is_enoent(api, accessor, index):
     # The sealed day lists nothing, so its files subdir does not exist.
     with pytest.raises(FileNotFoundError):
         await readdir(accessor, spec(f"/{CHANNEL}/{SEALED_DAY}/files"), index)
+
+
+def globbed(virtual: str, pattern: str) -> PathSpec:
+    return PathSpec(virtual=f"{virtual}/{pattern}",
+                    directory=f"{virtual}/",
+                    resource_path=f"{virtual.lstrip('/')}/{pattern}",
+                    pattern=pattern)
+
+
+async def test_channel_glob_reaches_days_outside_the_window(
+        api, accessor, index):
+    # The bare listing is the 30 days up to the newest message, so a glob
+    # for an older month sees nothing unless it pushes its own span down.
+    result = await readdir(accessor, globbed(f"/{CHANNEL}", "2023-11-*"),
+                           index)
+    assert result[0] == f"/{CHANNEL}/2023-11-01"
+    assert result[-1] == f"/{CHANNEL}/2023-11-30"
+    assert len(result) == 30
+
+
+async def test_channel_glob_is_clipped_at_the_newest_message(
+        api, accessor, index):
+    # The fixture channel's last message is 2024-01-15, and nothing was
+    # posted after it, so the rest of January is not listed.
+    result = await readdir(accessor, globbed(f"/{CHANNEL}", "2024-01-*"),
+                           index)
+    assert result[-1] == f"/{CHANNEL}/2024-01-15"
+    assert len(result) == 15
+
+
+async def test_a_globbed_channel_listing_is_not_the_directory(
+        api, accessor, index):
+    # The glob's answer must not stand in for the channel: a later bare
+    # listing still reports the recent window.
+    await readdir(accessor, globbed(f"/{CHANNEL}", "2023-11-*"), index)
+    result = await readdir(accessor, spec(f"/{CHANNEL}"), index)
+    assert result[-1] == f"/{CHANNEL}/2024-01-15"
+    assert len(result) == 30

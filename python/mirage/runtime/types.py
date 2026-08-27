@@ -74,6 +74,12 @@ class DispatchFn(Protocol):
         ...
 
 
+# Whether code may be loaded from one virtual path: the per-script exec
+# question an interpreter command asks about a file operand. Defined
+# beside DispatchFn for the same reason: the consumer receives it, the
+# workspace provides it.
+ExecPathFn: TypeAlias = Callable[[str], bool]
+
 # Live view of the workspace mount prefixes, read per run so mounts
 # added or removed after construction are always picked up.
 PrefixSource: TypeAlias = Callable[[], list[str]]
@@ -109,6 +115,8 @@ class VFSStat:
         is_link (bool): the path is a symlink. Only ever true for a
             stat the caller asked not to follow, since every other
             answer is the target's.
+        rdev (int): encoded logical major:minor for a character device,
+            otherwise 0.
     """
 
     size: int
@@ -116,6 +124,7 @@ class VFSStat:
     mode: int
     mtime_ns: int
     is_link: bool = False
+    rdev: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +156,8 @@ class VFSEntry:
             None on the same rows and for the same reason. 0 is a real
             answer here (1970-01-01T00:00:00Z, and what an unknown
             mtime collapses to once a stat did happen).
+        rdev (int): encoded logical major:minor for a character device,
+            otherwise 0.
     """
 
     path: str
@@ -155,6 +166,7 @@ class VFSEntry:
     is_link: bool = False
     mode: int | None = None
     mtime_ns: int | None = None
+    rdev: int = 0
 
 
 @dataclass(frozen=True, slots=True)

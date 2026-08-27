@@ -18,7 +18,12 @@ import { FsError, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
 import type { FsErrorCode } from '@deepseek-ai/dsh-fs'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
-import { LocalRuntime, Workspace, registerResourceFactory } from '@struktoai/mirage-node'
+import {
+  LocalRuntime,
+  Workspace,
+  parseSessionProfile,
+  registerResourceFactory,
+} from '@struktoai/mirage-node'
 import { MirageFileSystem } from './fs.ts'
 import type { MirageFsConfig } from './fs.ts'
 import { MirageService } from './service.ts'
@@ -541,5 +546,45 @@ describe('listDir cancellation', () => {
     const { fs } = await makeFs({ 'a.txt': 'x', 'b.txt': 'y' })
     const entries = await fs.listDir(await fs.resolve('/data'), new AbortController().signal)
     expect(entries.map((e) => e.name)).toEqual(['a.txt', 'b.txt'])
+  })
+})
+
+describe('a policy refusal at the op door', () => {
+  it('reads as a sandbox denial, so the tool layer offers the escalation', async () => {
+    const ram = new RAMResource()
+    const seeder = new Workspace({ '/data': [ram, MountMode.WRITE] })
+    workspaces.push(seeder)
+    await seeder.fs.writeFile('/data/keep.txt', 'original')
+    const ws = new Workspace(
+      { '/data': [ram, MountMode.WRITE] },
+      {
+        profiles: {
+          agent: parseSessionProfile(
+            { commands: { deny: [{ reason: 'keep.txt is frozen', paths: ['/data/keep.txt'] }] } },
+            'profile agent',
+          ),
+        },
+        profile: 'agent',
+      },
+    )
+    workspaces.push(ws)
+    const ctx = new Context()
+    await ctx.plugin(MirageService, { workspace: ws }).await()
+    await ctx.plugin(MirageFileSystem, {}).await()
+    const fs = ctx.fs as MirageFileSystem
+    const target = await fs.resolve('/data/keep.txt')
+    const err = await fs.writeText(target, 'overwritten').catch((caught: unknown) => caught)
+    expect(err).toBeInstanceOf(FsError)
+    // Not FS_PERMISSION_DENIED: a mode refusal is the shape of this world,
+    // while a rule is a confinement a call may be entitled to escalate past.
+    expect((err as FsError).code).toBe('FS_SANDBOX_DENIED')
+    expect((err as FsError).message).toContain('keep.txt is frozen')
+  })
+
+  it('still reads a plain mount-mode refusal as a permission denial', async () => {
+    const { fs } = await makeFs({ 'a.txt': 'read only' }, { readOnly: true })
+    const target = await fs.resolve('/data/a.txt')
+    const err = await fs.writeText(target, 'nope').catch((caught: unknown) => caught)
+    expect((err as FsError).code).toBe('FS_PERMISSION_DENIED')
   })
 })

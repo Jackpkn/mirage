@@ -342,6 +342,79 @@ describe('mirage CLI end-to-end', () => {
     await runCli(env, ['workspace', 'delete', 'perm-ws'])
   }, 30000)
 
+  it('an ask rule is answered through list-asks, allow and deny', async () => {
+    // The asks door end to end: the guarded line is refused pending at
+    // 126 quoting an id, `workspace list-asks` shows that id, `allow`
+    // passes the retry (and the once answer is consumed by it), `deny`
+    // refuses the retry in the deny voice.
+    const cfgPath = join(tmp, 'asks-cfg.yaml')
+    writeFileSync(
+      cfgPath,
+      [
+        'mounts:',
+        '  /:',
+        '    resource: ram',
+        '    mode: write',
+        'profiles:',
+        '  default:',
+        '    commands:',
+        '      ask:',
+        '        - reason: removal needs sign-off',
+        '          commands: [rm]',
+        '',
+      ].join('\n'),
+    )
+    await runCli(env, ['workspace', 'create', cfgPath, '--id', 'asks-ws'])
+    await runCli(env, ['execute', '-w', 'asks-ws', '-c', 'touch /f.txt /g.txt'])
+
+    const refused = await runCliRaw(env, ['execute', '-w', 'asks-ws', '-c', 'rm /f.txt'])
+    expect(refused.status).toBe(126)
+    const stderr = (refused.parsed as { stderr: string }).stderr
+    expect(stderr).toContain('requires approval: removal needs sign-off')
+
+    const asks = (await runCli(env, ['workspace', 'list-asks', 'asks-ws'])) as {
+      id: string
+      command: string
+      outcome: string | null
+    }[]
+    expect(asks).toHaveLength(1)
+    const askId = asks[0]?.id ?? ''
+    expect(stderr).toContain(askId)
+    expect(asks[0]?.outcome).toBeNull()
+
+    const allowed = (await runCli(env, ['workspace', 'allow', 'asks-ws', askId])) as {
+      outcome: string
+      scope: string
+    }
+    expect(allowed.outcome).toBe('allow')
+    expect(allowed.scope).toBe('once')
+    const retried = await runCliRaw(env, ['execute', '-w', 'asks-ws', '-c', 'rm /f.txt'])
+    expect(retried.status).toBe(0)
+
+    const refusedAgain = await runCliRaw(env, ['execute', '-w', 'asks-ws', '-c', 'rm /g.txt'])
+    expect(refusedAgain.status).toBe(126)
+    const nextAsks = (await runCli(env, ['workspace', 'list-asks', 'asks-ws'])) as {
+      id: string
+    }[]
+    const denied = (await runCli(env, [
+      'workspace',
+      'deny',
+      'asks-ws',
+      nextAsks[0]?.id ?? '',
+      '--note',
+      'not now',
+    ])) as { outcome: string; note: string }
+    expect(denied.outcome).toBe('deny')
+    expect(denied.note).toBe('not now')
+    const deniedRun = await runCliRaw(env, ['execute', '-w', 'asks-ws', '-c', 'rm /g.txt'])
+    expect(deniedRun.status).toBe(126)
+    expect((deniedRun.parsed as { stderr: string }).stderr).toContain('policy denied')
+
+    const drained = (await runCli(env, ['workspace', 'list-asks', 'asks-ws'])) as unknown[]
+    expect(drained).toHaveLength(0)
+    await runCli(env, ['workspace', 'delete', 'asks-ws'])
+  }, 30000)
+
   it('background execution can be waited on', async () => {
     const cfgPath = writeRamConfig(tmp, 'bg-cfg.yaml')
     const created = (await runCli(env, ['workspace', 'create', cfgPath, '--id', 'bg-ws'])) as {

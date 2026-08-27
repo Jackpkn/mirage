@@ -12,9 +12,9 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from datetime import date, timedelta
+from datetime import date
 
-from mirage.utils.glob_walk import GLOB_CHARS
+from mirage.utils.glob_walk import glob_span
 
 
 def _iso(d: date) -> str:
@@ -24,6 +24,10 @@ def _iso(d: date) -> str:
 def glob_to_modified_range(pattern: str | None) -> tuple[str, str] | None:
     """Translate a date-prefixed glob into an RFC3339 modifiedTime range.
 
+    Drive's own spelling of the span ``glob_span`` reads; a caller
+    bucketing in a named time zone builds its own bounds from the dates
+    instead, since UTC instants would shift the window by the offset.
+
     Args:
         pattern (str | None): the glob as typed, or None.
 
@@ -31,60 +35,7 @@ def glob_to_modified_range(pattern: str | None) -> tuple[str, str] | None:
         tuple[str, str] | None: (start, end) in UTC, or None when the glob
         does not start with a date prefix.
     """
-    span = glob_to_date_range(pattern)
+    span = glob_span(pattern)
     if span is None:
         return None
     return _iso(span[0]), _iso(span[1])
-
-
-def glob_to_date_range(pattern: str | None) -> tuple[date, date] | None:
-    """Translate a date-prefixed glob into a half-open range of dates.
-
-    Kept separate from ``glob_to_modified_range`` because a caller bucketing
-    in a named time zone has to build its own bounds from the dates; UTC
-    instants would silently shift the window by the zone's offset.
-
-    Args:
-        pattern (str | None): the glob as typed, or None.
-
-    Returns:
-        tuple[date, date] | None: (start, end) with end exclusive, or None
-        when the glob does not start with a date prefix.
-    """
-    if not pattern:
-        return None
-    meta_index = -1
-    for ch in GLOB_CHARS:
-        idx = pattern.find(ch)
-        if idx != -1 and (meta_index == -1 or idx < meta_index):
-            meta_index = idx
-    if meta_index == -1:
-        return None
-    prefix = pattern[:meta_index]
-    prefix = prefix.rstrip("_-")
-    parts = prefix.split("-")
-    try:
-        if len(parts) == 1 and len(parts[0]) == 4:
-            year = int(parts[0])
-            start = date(year, 1, 1)
-            end = date(year + 1, 1, 1)
-        elif len(parts) == 2 and len(parts[0]) == 4 and len(parts[1]) == 2:
-            year = int(parts[0])
-            month = int(parts[1])
-            start = date(year, month, 1)
-            if month == 12:
-                end = date(year + 1, 1, 1)
-            else:
-                end = date(year, month + 1, 1)
-        elif (len(parts) == 3 and len(parts[0]) == 4 and len(parts[1]) == 2
-              and len(parts[2]) == 2):
-            year = int(parts[0])
-            month = int(parts[1])
-            day = int(parts[2])
-            start = date(year, month, day)
-            end = start + timedelta(days=1)
-        else:
-            return None
-    except ValueError:
-        return None
-    return start, end

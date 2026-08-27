@@ -20,10 +20,11 @@ import type { QdrantRow } from './client.ts'
 import { PathSpec } from '../../types.ts'
 import { perAccessor } from '../hierarchy/bind.ts'
 import type { ReaddirFn } from '../hierarchy/probe.ts'
-import { makeReaddir, type Lister } from '../hierarchy/readdir.ts'
+import { makeReaddir, type DirListing, type Listed, type Lister } from '../hierarchy/readdir.ts'
 import { ROOT, type ScopeMatch } from '../hierarchy/scope.ts'
 import { blobBytes, renderJson, renderText } from './render.ts'
 import { detectFor, filtersOf, tableOf } from './scope.ts'
+import { globPrefix, globStemPrefix, hasGlobPrefix } from '../../utils/glob_walk.ts'
 
 const GROUP_TYPE = 'qdrant/group'
 
@@ -96,45 +97,65 @@ function rowEntries(rows: QdrantRow[], config: QdrantConfigResolved): [string, I
   return entries
 }
 
-async function children(
-  accessor: QdrantAccessor,
-  table: string,
-  filters: Record<string, string>,
-): Promise<[string, IndexEntry][] | null> {
+/**
+ * The point-id prefix a leaf glob narrows the scroll to.
+ *
+ * A leaf is named `<pointId>` plus whichever suffix the renderer gave it, and
+ * only the id half is a prefix the scroll can test.
+ */
+function rowPrefix(pattern: string | null, config: QdrantConfigResolved): string {
+  const suffixes = ['.json']
+  if (config.textField !== null && config.textField !== '') suffixes.push('.txt')
+  if (config.blobField !== null && config.blobField !== '') suffixes.push(`.${config.blobExt}`)
+  return globStemPrefix(pattern, suffixes)
+}
+
+async function children(accessor: QdrantAccessor, match: ScopeMatch): Promise<Listed | null> {
   const config = accessor.config
+  const table = tableOf(config, match)
+  const filters = filtersOf(config, match)
+  const pattern = match.pattern
   if (!(await accessor.tableExists(table))) return null
   const depth = Object.keys(filters).length
   if (depth < config.groupBy.length) {
+    const groupPrefix = globPrefix(pattern)
     const names = await accessor.distinct(
       table,
       config.groupBy[depth] ?? '',
       filters,
       config.maxRows,
+      groupPrefix,
     )
-    return names.map((name): [string, IndexEntry] => [name, dirEntry(name)])
+    const listing: DirListing = {
+      entries: names.map((name): [string, IndexEntry] => [name, dirEntry(name)]),
+      seeds: {},
+      partial: groupPrefix !== '',
+    }
+    return listing
   }
-  const rows = await accessor.rowsMatching(table, filters, [config.idField], config.maxRows)
-  return rowEntries(rows, config)
+  const prefix = rowPrefix(pattern, config)
+  const rows = await accessor.rowsMatching(table, filters, [config.idField], config.maxRows, prefix)
+  const listing: DirListing = {
+    entries: rowEntries(rows, config),
+    seeds: {},
+    partial: prefix !== '',
+  }
+  return listing
 }
 
-async function listRoot(
-  accessor: QdrantAccessor,
-  _match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
+async function listRoot(accessor: QdrantAccessor, match: ScopeMatch): Promise<Listed | null> {
   const config = accessor.config
   if (config.collection === null) {
+    // Collection names come from the catalog, not from a capped scroll, so a
+    // glob here has nothing to narrow.
     const tables = await accessor.listTables()
     return tables.map((name): [string, IndexEntry] => [name, dirEntry(name)])
   }
-  return children(accessor, config.collection, {})
+  return children(accessor, match)
 }
 
-async function listGroup(
-  accessor: QdrantAccessor,
-  match: ScopeMatch,
-): Promise<[string, IndexEntry][] | null> {
-  const config = accessor.config
-  return children(accessor, tableOf(config, match), filtersOf(config, match))
+async function listGroup(accessor: QdrantAccessor, match: ScopeMatch): Promise<Listed | null> {
+  return children(accessor, match)
 }
 
 const LISTERS: Record<string, Lister<QdrantAccessor>> = {
@@ -142,8 +163,10 @@ const LISTERS: Record<string, Lister<QdrantAccessor>> = {
   group: listGroup,
 }
 
+const PATTERN_KINDS = { [ROOT]: hasGlobPrefix, group: hasGlobPrefix }
+
 function buildReaddir(accessor: QdrantAccessor): ReaddirFn<QdrantAccessor> {
-  return makeReaddir(detectFor(accessor), { listers: LISTERS })
+  return makeReaddir(detectFor(accessor), { listers: LISTERS, patternKinds: PATTERN_KINDS })
 }
 
 export const readdirFor = perAccessor(buildReaddir)

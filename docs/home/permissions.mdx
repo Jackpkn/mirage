@@ -1,0 +1,251 @@
+---
+title: Permissions
+description: Profiles decide what each session may see and run; asks are the questions a guarded command raises and a host answers.
+icon: shield-halved
+---
+
+A workspace serves every agent the same mounts; a **profile** decides what
+one session sees of them and what it may run. Profiles are declared on the
+workspace, sessions are created under one, and every command line an agent
+types passes the same admission gate before anything runs. This page is
+about that gate. (Routing a line to a runtime is a different decision,
+made by the [policy engine](/home/policy-engine).)
+
+```yaml
+mode: WRITE
+mounts:
+  /repo:
+    resource: ram
+  /vault:
+    resource: ram
+
+profiles:
+  guarded:
+    commands:
+      allow: [ls, cat, grep, rm]
+      ask:
+        - reason: removal needs sign-off
+          commands: [rm]
+      deny:
+        - reason: credentials are never read by hand
+          paths: ["/vault/*"]
+  auditor:
+    commands:
+      allow: [ls, cat, grep]
+    paths:
+      hide: [/vault]
+```
+
+A session binds a profile by name at creation and keeps it for life:
+
+```bash
+mirage workspace create workspace.yaml --id demo
+mirage session create demo --id agent_a --profile guarded
+mirage execute -w demo -s agent_a -c "cat /repo/notes.md"
+```
+
+In code, the same two doors: `Workspace(mounts, profiles=...)` and
+`ws.create_session("agent_a", profile="guarded")` in Python,
+`new Workspace(mounts, { profiles })` and
+`ws.createSession('agent_a', { profile: 'guarded' })` in TypeScript.
+A session that names no profile runs under `profiles.default` when the
+workspace defines one, and unrestricted otherwise; the workspace's own
+default session follows the same rule, so a `default` profile governs
+bare `ws.execute(...)` too.
+
+## Two axes and a hider
+
+Every rule in a profile is read by one of two orderings, and hiding is
+neither:
+
+- **The command axis.** A rule naming no path is read by verb alone:
+  `deny` before `ask`, and the `allow` list decides whether the word is
+  a command at all.
+- **The path axis.** A rule carrying paths, and every hide, is read by
+  **anchor depth**: the number of literal components before the first
+  wildcard. `/runbook/frozen/*` is depth 2 and `/runbook/*` is depth 1,
+  so the deeper entry wins wherever both reach, whichever verb it
+  carries. Ties break by verb.
+- **Hiding is not a refusal.** A hidden path answers `ENOENT`, so the
+  session never learns the name; a denied path stays in the listing and
+  fails when read. The same `/vault` can be denied for one role and
+  hidden for another.
+
+### `commands`: allow, ask, deny
+
+`allow` is the session's tool set, not a filter over one: a word missing
+from the list is **not a command** (`sort: command not found`, exit 127,
+absent from `type`, `which` and `man`), an omitted list installs
+everything, and an empty list installs nothing. Shell builtins are
+subjects like everything else, so a list stating only `cat` leaves no
+`echo` and no `cd`. The agent's own shell functions are the one
+exemption, safe because every line of a body passes the gate itself.
+
+`ask` and `deny` take the same rule shape: a `reason`, plus what the rule
+covers.
+
+```yaml
+deny:
+  - reason: pushes go through CI
+    commands: [git push]    # whole lines, by prefix pattern
+  - reason: the rollback plan is frozen
+    commands:               # one command, on these paths
+      rm: ["/runbook/frozen/*"]
+  - reason: credentials are never read by hand
+    paths: ["/vault/*"]     # any command, these paths
+```
+
+A command pattern is a **prefix of the line**: `git push` covers
+`git push origin main`, a `*` token matches any one word, and a bare
+`*` is every command (`git push` and `git push *` are the same rule).
+The same patterns spell the `allow` list.
+
+A rule with `paths` and no command also reaches the VFS op door, so FUSE
+mounts and the cache cannot go around it. A whole-command `deny` refuses
+with `<command>: policy denied: <reason>` at exit 126; a `deny` matched
+through `paths` refuses the operand instead, in the GNU voice
+`<command>: <path>: <reason>` at the command's own operand exit code
+(`cat: /vault/aws.token: credentials are never read by hand`, exit 1).
+An `ask` refuses at 126, naming an ask id, until a host answers; see
+[Asks](#asks) below.
+
+### `paths` and `vars`: hide and show
+
+`paths.hide` makes entries nonexistent for the session: an entry with
+`*`, `?` or `[` is a pattern, anything else an exact path and its whole
+subtree. `paths.show` is the other half of the axis: a mapping of path
+to mode (or a plain list inheriting the mount's mode) that re-opens a
+subtree inside a hidden region when its anchor is deeper than the
+hide's, and states the mode in force below its anchor.
+
+```yaml
+paths:
+  hide:
+    - /vault
+    - patterns: ["*.env"]
+      reason: dotenv files carry credentials
+  show:
+    /vault/policies: read
+```
+
+A hide entry may be a group with a `reason`; the reason lands in an
+operator-only side table and is never shown to the session (a hidden
+path must not explain itself). `vars.hide` does the same for the
+environment: listed names (or globs over names) read as unset.
+
+### `mounts`: narrowing one mount
+
+A profile's `mounts` section is keyed by prefix and only ever narrows.
+A mount the mapping omits keeps the mode it declares in the workspace's
+`mounts:`; a profile can weaken that mode, never raise it. Name patterns
+written in a mount section anchor to that mount, and `commands` here
+carries `ask` and `deny` only, applied to lines working inside the mount
+by cwd or by operand (which is what a path-scoped rule cannot express:
+`cd /repo && git commit` names no path).
+
+```yaml
+profiles:
+  oncall:
+    mounts:
+      /repo:
+        mode: read
+        paths:
+          hide: ["*.env"]
+      /runbook:
+        commands:
+          deny:
+            - reason: the rollback plan is frozen
+              commands:
+                rm: ["/runbook/frozen/*"]
+```
+
+A profile may also state `cwd` and `env` (seeded and exported at session
+creation), and a `script` with its `runtime`: a program evaluated at the
+gate for every command, whose last expression answers allow, deny or ask,
+for the conditions a declarative rule cannot express. Like every rule,
+a script can only restrict, never grant past a deny.
+
+## Asks
+
+An `ask` rule guards a command instead of refusing it outright. When a
+session runs the guarded line, the line does not run; the agent reads
+
+```
+rm: requires approval: removal needs sign-off (ask 5b25c31eb62e)
+```
+
+at exit 126, and the ask lands in the workspace's decision ledger as a
+pending record carrying the session, command, argv, cwd, paths and the
+rule's reason. Decisions are session state, so they persist wherever the
+session store persists. A host answers **allow** or **deny**:
+
+- `allow` with scope `once` (the default) answers exactly that line: the
+  agent's retry passes, and the answer is consumed by the retry that
+  used it.
+- `allow` with scope `session` answers every line the rule covers for
+  that session, and stays.
+- `deny` answers once: the retry is refused in the deny voice
+  (`rm: policy denied: removal needs sign-off`), and running the line
+  again raises a new ask.
+
+### From the CLI
+
+```bash
+mirage workspace list-asks demo                # pending asks
+mirage workspace list-asks demo --session agent_a --all
+mirage workspace allow demo 5b25c31eb62e --note "reviewed"
+mirage workspace allow demo 5b25c31eb62e --scope session
+mirage workspace deny demo 5b25c31eb62e --note "not now"
+```
+
+`list-asks` prints pending asks (every decision with `--all`); `allow`
+and `deny` answer one ask by the id quoted in the refusal and print the
+settled record.
+
+### Over REST
+
+The daemon serves the same door:
+
+```bash
+GET  /v1/workspaces/{id}/asks                # pending; ?all=true for every decision
+GET  /v1/workspaces/{id}/asks?session_id=agent_a
+POST /v1/workspaces/{id}/asks/{ask_id}
+     {"answer": "allow", "scope": "once", "note": "reviewed"}
+```
+
+Each record carries `id`, `session_id`, `agent_id`, `command`, `argv`,
+`cwd`, `paths`, `reason`, `outcome` (null while pending), `scope` and
+`note`. Field casing follows the serving daemon, as everywhere on this
+API: `session_id` from the Python daemon, `sessionId` from the
+TypeScript one. Answering an unknown id is 404; answering an id that was
+already answered is 409, so an operator retrying a click reads "already
+answered", not "not found". `deny` with scope `session` is refused
+(422): a deny answers once, and asking again raises a new record.
+
+### In code
+
+`ws.decisions` is the ledger the CLI and REST doors read:
+`pending(session_id)`, `list(session_id)` and
+`answer(ask_id, outcome, scope, note)`. A host that wants to answer
+inline instead of leaving the ask pending passes `on_ask` (`onAsk`) to
+the workspace: an async handler given the pending record, whose answer
+settles the ask while the line waits, like a tool-approval prompt.
+
+## Dry runs
+
+`ws.explain(line, session_id)` runs the same gate without running the
+line: one `Explanation` per command, with the outcome, the rule that
+spoke and where it was written, the matched operand, and the exact
+`exit_code` and `stderr` the agent would see, byte-identical to the real
+refusal. What a host reads in an explanation and what an agent sees at
+the prompt cannot disagree, because they are the same computation.
+
+## The worked example
+
+The permissions example builds an incident-response workspace in which
+three roles read the same three mounts and see three different
+filesystems, one line per rule interaction:
+[python](https://github.com/strukto-ai/mirage/blob/main/examples/python/permissions/permissions.py),
+[typescript](https://github.com/strukto-ai/mirage/blob/main/examples/typescript/permissions/permissions.ts).
+Its printed table is pinned in CI, so the behaviors this page describes
+are the behaviors the build enforces.

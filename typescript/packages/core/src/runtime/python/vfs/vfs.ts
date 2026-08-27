@@ -33,6 +33,48 @@ import type {
 } from './types.ts'
 
 const ENC = new TextEncoder()
+const S_IFMT = 0o170000
+const S_IFCHR = 0o020000
+
+// Emscripten's MEMFS makes these three at startup and its own stderr capture
+// reopens /dev/stderr when a run ends (`API.restore_stderr`). Mounting mirage's
+// /dev on top hid them, so that reopen raised ENOENT out of a filesystem
+// callback nobody catches, and the unhandled rejection took the process down
+// with it. Recreated here so the interpreter still finds them. rdev matches
+// MEMFS's own numbering.
+const STD_STREAM_RDEV: ReadonlyMap<string, number> = new Map([
+  ['stdin', 6],
+  ['stdout', 7],
+  ['stderr', 8],
+])
+
+// /dev/null's device number. It and the three streams above answer a read with
+// EOF; only /dev/zero hands back an endless run of zeroes, and a stream that
+// did the same would hang `open('/dev/stdin').read()` forever.
+const NULL_RDEV = 0x103
+
+const EOF_ON_READ_RDEV: ReadonlySet<number> = new Set([NULL_RDEV, ...STD_STREAM_RDEV.values()])
+
+/**
+ * Whether the seed already places a node at this path, by any means.
+ *
+ * Args:
+ *   seed: the tree collected from the mounts before the run.
+ *   path: guest-absolute path to check.
+ */
+function seedHolds(seed: MirageFsSeed, path: string): boolean {
+  return (
+    seed.files.has(path) ||
+    seed.devices.has(path) ||
+    seed.links.has(path) ||
+    seed.unreadable.has(path) ||
+    seed.dirs.includes(path)
+  )
+}
+
+function isCharDevice(mode: number): boolean {
+  return (mode & S_IFMT) === S_IFCHR
+}
 
 /**
  * The metadata a `setattr` actually changes, or null when it changes
@@ -96,6 +138,7 @@ export class MirageFs {
   private readonly journal: MutationJournal
   private readonly tree: NodeTree
   private readonly mountOf: (path: string) => string | null
+  private readonly prefix: string
   // The file node FS.open just created, whose finalizing chmod is the
   // filesystem's own and not a guest metadata write. Cleared by the
   // first setattr, so it can never outlive the create it belongs to.
@@ -120,6 +163,7 @@ export class MirageFs {
     mountOf: (path: string) => string | null,
   ) {
     this.host = host
+    this.prefix = prefix
     this.errno = errno
     this.journal = journal
     this.mountOf = mountOf
@@ -153,6 +197,24 @@ export class MirageFs {
    *   seed: tree collected from the mounts before the run.
    */
   seed(seed: MirageFsSeed): void {
+    // Only when this shim is what /dev resolves to. The mount's own listing
+    // is untouched: these nodes live in this tree, which is what the
+    // interpreter reads, not what `ls /dev` on the mount reports.
+    if (this.prefix === '/dev') {
+      for (const [name, rdev] of STD_STREAM_RDEV) {
+        const path = `/dev/${name}`
+        // Only where the mount itself has nothing by that name. `NodeTree.seed`
+        // places devices after files, directories and links, so injecting one
+        // blindly would overwrite a real entry the mount is serving and hand
+        // the guest an empty device instead of its content.
+        if (seedHolds(seed, path)) continue
+        // A write is swallowed, as it is for every synthetic character device
+        // here. The interpreter's real stderr rides its own capture, not this
+        // node, so nothing that used to be reported is lost: before this the
+        // path did not exist at all and the open raised.
+        seed.charDevice(path, S_IFCHR | 0o666, rdev)
+      }
+    }
     this.tree.seed(seed)
   }
 
@@ -171,7 +233,7 @@ export class MirageFs {
       nlink: 1,
       uid: 0,
       gid: 0,
-      rdev: 0,
+      rdev: node.rdev,
       size,
       atime: new Date(node.atime),
       mtime: new Date(node.mtime),
@@ -189,7 +251,12 @@ export class MirageFs {
     // a stamp write that changes nothing.
     const finalizing = this.fresh === node
     this.fresh = null
-    const fields = finalizing ? null : changedAttrs(node, attr)
+    // Read before the mode below is applied. A character device is not mount
+    // content, so none of its metadata is a guest write: Emscripten chmods one
+    // right after creating it, and journaling that queued a setattr against
+    // the real mount for a node the mount does not have.
+    const isDevice = isCharDevice(node.mode)
+    const fields = finalizing || isDevice ? null : changedAttrs(node, attr)
     if (attr.mode !== undefined) node.mode = attr.mode
     if (attr.atime !== undefined) node.atime = attr.atime
     if (attr.mtime !== undefined) node.mtime = attr.mtime
@@ -200,7 +267,7 @@ export class MirageFs {
       if (this.host.isLink(node.mode)) fields.nofollow = true
       this.journal.markSetattr(this.tree.pathOf(node), fields)
     }
-    if (attr.size === undefined) return
+    if (attr.size === undefined || isDevice) return
     const old = node.contents ?? new Uint8Array(0)
     const next = new Uint8Array(attr.size)
     next.set(old.subarray(0, Math.min(old.length, attr.size)))
@@ -224,6 +291,12 @@ export class MirageFs {
   private mknod(parent: FSNode, name: string, mode: number, rdev: number): FSNode {
     const node = this.tree.makeNode(parent, name, mode)
     node.rdev = rdev
+    // A character device is not mount content. pyodide makes one of its own
+    // at runtime -- `API.capture_stderr` calls FS.createDevice, which lands
+    // here as mknod -- and journaling it queued a write of /dev/capture_stderr
+    // against the real mount, which then failed on replay. Devices live in
+    // this tree only.
+    if (isCharDevice(mode)) return node
     const path = this.tree.pathOf(node)
     if (this.host.isDir(mode)) this.journal.markMkdir(path)
     else {
@@ -330,6 +403,11 @@ export class MirageFs {
     position: number,
   ): number {
     const node = stream.node
+    if (isCharDevice(node.mode)) {
+      if (EOF_ON_READ_RDEV.has(node.rdev)) return 0
+      buffer.fill(0, offset, offset + length)
+      return length
+    }
     const used = node.usedBytes ?? 0
     if (position >= used) return 0
     const size = Math.min(used - position, length)
@@ -346,6 +424,7 @@ export class MirageFs {
   ): number {
     if (length === 0) return 0
     const node = stream.node
+    if (isCharDevice(node.mode)) return length
     const need = position + length
     let contents = node.contents ?? new Uint8Array(0)
     if (contents.length < need) {

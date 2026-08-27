@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import errno
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -20,9 +21,9 @@ from typing import Any
 from mirage.commands.spec.types import ValueType
 from mirage.context.session_context import session_path_allowed
 from mirage.io.types import ByteSource
-from mirage.policy import (AdmissionRules, Ask, CommandContext, CommandRule,
-                           Deny, Pending, PolicyDenied, Scope, ask_rule,
-                           render_deny, render_pending)
+from mirage.policy import (Abandoned, AdmissionRules, Ask, CommandContext,
+                           CommandRule, Deny, Pending, PolicyDenied, Scope,
+                           ask_rule, render_deny, render_pending)
 from mirage.policy.match import (Outcome, has_rules, io_refusal, reads_args,
                                  scopes_paths)
 from mirage.runtime.policy import command_nodes
@@ -34,6 +35,7 @@ from mirage.shell.types import RedirectKind
 from mirage.types import PathSpec
 from mirage.utils.hidden import is_glob
 from mirage.utils.path import CycleError, resolve_path
+from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.executor.builtins.links.links import follow_paths
 from mirage.workspace.executor.builtins.scope import _to_scope
 from mirage.workspace.executor.command.routing import (CWD_DEFAULT_RAW,
@@ -293,15 +295,16 @@ async def gate(
 
 
 async def admit(
-        name: str,
-        args: list[str],
-        operands: Sequence[str | PathSpec],
-        session: Session,
-        registry: MountRegistry,
-        namespace: Namespace | None,
-        agent_id: str = "",
-        stdin: ByteSource | None = None,
-        redirects: Sequence[PathSpec] = (),
+    name: str,
+    args: list[str],
+    operands: Sequence[str | PathSpec],
+    session: Session,
+    registry: MountRegistry,
+    namespace: Namespace | None,
+    agent_id: str = "",
+    stdin: ByteSource | None = None,
+    redirects: Sequence[PathSpec] = (),
+    cancel: asyncio.Event | None = None,
 ) -> Refusal | Admitted:
     """The command plane's admission of one command: visibility, then
     the policy chain, then the decision ledger.
@@ -332,6 +335,10 @@ async def admit(
             whether a bare ``rg`` reads the working directory.
         redirects (Sequence[PathSpec]): the statement's expanded
             redirect targets, empty when it has none.
+        cancel (asyncio.Event | None): the run's kill channel, carried
+            only so a question put to a host cannot outlive the run
+            that raised it. Nothing else here waits on anything outside
+            mirage.
     """
     gated = await gate(name, args, operands, session, registry, namespace,
                        agent_id, stdin, redirects)
@@ -341,8 +348,15 @@ async def admit(
     # An Ask is the chain's answer only after every Deny had its say;
     # the ledger answers it from the session's records or the host, so
     # an answer never re-opens a deny.
-    action: Deny | Pending | None = (await registry.decisions.resolve(
-        ctx, asked) if isinstance(asked, Ask) else asked)
+    action: Deny | Pending | Abandoned | None = (
+        await registry.decisions.resolve(ctx, asked, cancel) if isinstance(
+            asked, Ask) else asked)
+    # The ledger stopped waiting on a host because this run was killed
+    # while it was deciding. That is the kill landing late, not a ruling,
+    # so it joins every other abandoned wait rather than being rendered
+    # as a refusal the document never made.
+    if isinstance(action, Abandoned):
+        raise MirageAbortError()
     if action is None:
         granted = [
             r.rule for r in session.decisions
@@ -445,14 +459,15 @@ def redirect_paths(words: Sequence[Word], registry: MountRegistry,
 
 
 async def _admit_words(
-        words: list[Word],
-        open_: bool,
-        session: Session,
-        registry: MountRegistry,
-        namespace: Namespace | None,
-        agent_id: str,
-        rules: AdmissionRules | None,
-        redirect_words: tuple[Word, ...] = (),
+    words: list[Word],
+    open_: bool,
+    session: Session,
+    registry: MountRegistry,
+    namespace: Namespace | None,
+    agent_id: str,
+    rules: AdmissionRules | None,
+    redirect_words: tuple[Word, ...] = (),
+    cancel: asyncio.Event | None = None,
 ) -> Refusal | None:
     """Admit one command of a whole line on the words the gate read,
     then whatever lines the command runs in turn.
@@ -469,6 +484,7 @@ async def _admit_words(
         rules (AdmissionRules | None): the session's admission rules.
         redirect_words (tuple[Word, ...]): the statement's redirect
             targets, as the gate reads them.
+        cancel (asyncio.Event | None): the run's kill channel.
     """
     head = words[0]
     if head.text is None and has_rules(rules):
@@ -485,7 +501,8 @@ async def _admit_words(
                          registry,
                          namespace,
                          agent_id,
-                         redirects=redirects)
+                         redirects=redirects,
+                         cancel=cancel)
     if isinstance(action, Refusal):
         return action
     if action.scoped:
@@ -513,10 +530,16 @@ async def _admit_words(
             continue
         if inner.line is not None:
             refusal = await admit_line(parse(inner.line), session, registry,
-                                       namespace, agent_id)
+                                       namespace, agent_id, cancel)
         else:
-            refusal = await _admit_words(list(inner.argv), inner.open, session,
-                                         registry, namespace, agent_id, rules)
+            refusal = await _admit_words(list(inner.argv),
+                                         inner.open,
+                                         session,
+                                         registry,
+                                         namespace,
+                                         agent_id,
+                                         rules,
+                                         cancel=cancel)
         if refusal is not None:
             return refusal
     return None
@@ -528,6 +551,7 @@ async def admit_line(
     registry: MountRegistry,
     namespace: Namespace | None,
     agent_id: str = "",
+    cancel: asyncio.Event | None = None,
 ) -> Refusal | None:
     """Admit every command of a line a runtime takes whole.
 
@@ -563,6 +587,7 @@ async def admit_line(
             decision ledger and the CLI installs.
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
+        cancel (asyncio.Event | None): the run's kill channel.
     """
     rules = session.commands
     home = home_dir(session)
@@ -581,7 +606,8 @@ async def admit_line(
                                      agent_id,
                                      rules,
                                      redirect_words=statement_redirects(
-                                         node, home))
+                                         node, home),
+                                     cancel=cancel)
         if refusal is not None:
             return refusal
     return None

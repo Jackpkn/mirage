@@ -68,3 +68,41 @@ def test_blob_size_leaves_undecodable_values_unknown():
     # the whole directory listing down with it.
     assert _blob_size("UE5HLTE=") == 5
     assert _blob_size(42) is None
+
+
+def _globbed(path: str, pattern: str) -> PathSpec:
+    return PathSpec(virtual=path,
+                    directory=path,
+                    resource_path=path.strip("/"),
+                    pattern=pattern)
+
+
+def _ids(paths: list[str]) -> set[str]:
+    return {p.rsplit("/", 1)[-1].split(".")[0] for p in paths}
+
+
+@pytest.mark.asyncio
+async def test_a_row_glob_reaches_past_the_cap(capped):
+    # The cap covers ids 1..5, so filtering it would answer nothing.
+    # Qdrant has no prefix condition, so the scroll keeps paging and
+    # tests each page until it has as many MATCHES as the cap allows.
+    out = await readdir(capped, _globbed("/all", "45*"))
+    assert _ids(out) == {"45", "450", "451", "452", "453"}
+    assert (await capped.client()).pages > 1
+
+
+@pytest.mark.asyncio
+async def test_a_glob_with_no_literal_head_stays_capped(capped):
+    out = await readdir(capped, _globbed("/all", "*9.json"))
+    assert _ids(out) == {"1", "2", "3", "4", "5"}
+    assert (await capped.client()).pages == 1
+
+
+@pytest.mark.asyncio
+async def test_a_narrowed_listing_is_not_cached_as_the_directory(capped):
+    index = RAMIndexCacheStore()
+    await readdir(capped, _globbed("/all", "45*"), index)
+    listing = await index.list_dir("/all/")
+    assert listing.entries is None
+    plain = await readdir(capped, _ps("/all"), index)
+    assert _ids(plain) == {"1", "2", "3", "4", "5"}

@@ -19,9 +19,11 @@ import { Cmd } from '../types.ts'
 // matched, then any match wins (0), then no-match (1). `-q` keeps GNU's
 // match-wins rule over errors. Everything else: worst operand wins.
 //
-// Deliberate divergence from GNU: a per-operand read error (missing file)
-// exits 1, not GNU's 2 — the single-mount grep/rg generics flatten fs
-// errors to 1 and this combine mirrors them.
+// A read error is no longer one of the codes this has to invent: the
+// generics answer GNU's own number for a failed read, so a failed operand
+// arrives here as 2 and the first branch carries it through. The `errored`
+// branch below is for an operand that reported something on stderr while
+// still exiting 1, which no read failure does now.
 export function combinedExit(
   cmdName: Cmd,
   codes: number[],

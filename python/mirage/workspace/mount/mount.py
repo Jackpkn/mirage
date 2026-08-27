@@ -24,7 +24,9 @@ from mirage.commands.config import CommandOpts, RegisteredCommand
 from mirage.commands.resolve import get_extension
 from mirage.commands.spec import CommandSpec
 from mirage.commands.spec.types import FlagValue
-from mirage.context import effective_mount_mode
+from mirage.context import (effective_mount_mode, effective_path_mode,
+                            readonly_below, reset_mount_gate, set_mount_gate,
+                            strongest_mode_under)
 from mirage.io.cachable_iterator import CachableAsyncIterator
 from mirage.io.types import ByteSource, IOResult
 from mirage.observe.context import (push_mount_prefix, push_revisions,
@@ -36,11 +38,18 @@ from mirage.ops.types import NamespaceView, ReaddirPath, SessionView, StatPath
 from mirage.policy import resolve_limit
 from mirage.resource.base import BaseResource
 from mirage.runtime.base import Runtime
-from mirage.runtime.types import DispatchFn
-from mirage.types import (ConsistencyPolicy, Limit, MountMode, PathSpec,
-                          Producer)
-from mirage.utils.errors import enotsup
+from mirage.runtime.types import DispatchFn, ExecPathFn
+from mirage.types import (ConsistencyPolicy, FileType, Limit, MountMode,
+                          PathSpec, Producer)
+from mirage.utils.errors import ReadOnlyError, enotsup
 from mirage.utils.key_prefix import mount_key
+
+# Ops that mutate everything under their endpoints in one backend call
+# (a directory rename relocates its whole subtree), so the door also
+# refuses a read-only region below either endpoint. The removal ops
+# stay per-path: the runtimes compose rmtree from unlink/rmdir, and
+# each of those answers for its own path above.
+_SUBTREE_OPS = frozenset({"rename"})
 
 
 def _wrap_cmd_streams(
@@ -462,6 +471,7 @@ class MountEntry:
         session_id: str | None = None,
         env: dict[str, str] | None = None,
         exec_allowed: bool = True,
+        exec_path_allowed: ExecPathFn | None = None,
         runtime: Runtime | None = None,
         runtime_unavailable: str | None = None,
         ns: NamespaceView | None = None,
@@ -497,6 +507,21 @@ class MountEntry:
                 here.
         """
         extension = get_extension(paths[0].virtual) if paths else None
+        # A filetype handler is selected from the operand's NAME, and a
+        # directory can carry any extension, so the cascade would hand a
+        # renderer a directory to read. One stat settles it, and only when
+        # a handler for this exact extension exists, so a mount with no
+        # filetype registrations never reaches the probe. The built-in is
+        # what a directory should get: it owns GNU's `Is a directory`
+        # wording, and the renderer owns nothing but its own format.
+        # The DISPATCHER's stat, not the backend's, so a mount root and a
+        # namespace-only directory answer too; None means neither plane
+        # saw anything, in which case the renderer reports its own miss.
+        if (extension is not None and paths and stat_path is not None
+                and (cmd_name, extension) in self._cmds):
+            entry = await stat_path(paths[0].virtual)
+            if entry is not None and entry.type == FileType.DIRECTORY:
+                extension = None
 
         handlers = self._resolve_cascade(cmd_name, extension, self._cmds,
                                          self._general_cmds)
@@ -557,6 +582,7 @@ class MountEntry:
             session_id=session_id,
             env=env,
             exec_allowed=exec_allowed,
+            exec_path_allowed=exec_path_allowed,
             runtime=runtime,
             runtime_unavailable=runtime_unavailable,
             ns=ns,
@@ -568,6 +594,11 @@ class MountEntry:
         prev_prefix = push_mount_prefix(mount_prefix)
         revs_token = push_revisions(self.revisions or None)
         prev_manager = push_cache_manager(self.cache_manager)
+        # What the command tier's mode guard reads: the write-command
+        # gate below admits a command when any shown subtree grants
+        # writes, and this binding is how each write the handler then
+        # makes is held to its own region's mode.
+        gate_token = set_mount_gate(self.prefix, self.mode)
         try:
             # --help / --version short-circuit inside the handler wrapper
             # and never touch the backend, so a read-only mount answers
@@ -575,8 +606,11 @@ class MountEntry:
             info_only = (flags.get("help") is True
                          or flags.get("version") is True)
             for cmd in handlers:
-                if (cmd.write and not info_only
-                        and self.effective_mode() == MountMode.READ):
+                # strongest_mode_under, not effective_mode: a mount
+                # whose only writable region is a show entry still runs
+                # the command, and the op door refuses per path.
+                if (cmd.write and not info_only and strongest_mode_under(
+                        self.prefix, self.mode) == MountMode.READ):
                     return None, IOResult(
                         exit_code=1,
                         stderr=(f"{cmd_name}: read-only mount "
@@ -605,6 +639,7 @@ class MountEntry:
                     return stream, io
             return None, IOResult()
         finally:
+            reset_mount_gate(gate_token)
             reset_revisions(revs_token)
             push_mount_prefix(prev_prefix)
             push_cache_manager(prev_manager)
@@ -652,14 +687,33 @@ class MountEntry:
         if not levels:
             raise enotsup(str(self.resource.name), op_name, path)
 
-        if (self.effective_mode() == MountMode.READ
-                and any(o.write for o in levels)):
+        if any(o.write for o in levels):
             # GNU reports the operand, not the guard's own wording, so
             # stamp errno + filename and let format_fs_error render
-            # "<cmd>: <path>: Permission denied" (mirrors the TypeScript
-            # eaccesReadOnly stamp).
-            raise PermissionError(errno.EACCES,
-                                  f"mount {self.prefix!r} is read-only", path)
+            # "<cmd>: <path>: Read-only file system" (mirrors the
+            # TypeScript erofsReadOnly stamp). Per path, not per mount:
+            # a show entry can hold one subtree below `w` on a writable
+            # mount, or one writable region on a read mount. A rename
+            # mutates its destination too, so both endpoints answer,
+            # and it relocates whole subtrees in one call, so a
+            # read-only region below either endpoint refuses it too.
+            if effective_path_mode(path, self.prefix,
+                                   self.mode) == MountMode.READ:
+                raise ReadOnlyError(errno.EROFS, "Read-only file system", path)
+            dst = kwargs.get("dst")
+            if isinstance(dst, PathSpec) and effective_path_mode(
+                    dst.virtual, self.prefix, self.mode) == MountMode.READ:
+                raise ReadOnlyError(errno.EROFS, "Read-only file system",
+                                    dst.virtual)
+            if op_name in _SUBTREE_OPS:
+                endpoints = [path]
+                if isinstance(dst, PathSpec):
+                    endpoints.append(dst.virtual)
+                for endpoint in endpoints:
+                    blame = readonly_below(endpoint, self.prefix, self.mode)
+                    if blame is not None:
+                        raise ReadOnlyError(errno.EROFS,
+                                            "Read-only file system", blame)
 
         mount_prefix = self.prefix.rstrip("/")
         scope = PathSpec(

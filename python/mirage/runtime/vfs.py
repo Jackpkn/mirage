@@ -27,8 +27,8 @@ from mirage.runtime.types import DispatchFn, VFSEntry, VFSStat
 from mirage.types import FileStat, PathSpec
 from mirage.utils.errors import OperationNotSupportedError
 from mirage.utils.path import norm
-from mirage.utils.stat_view import (content_size, is_dir, is_link, mtime_ns,
-                                    posix_mode)
+from mirage.utils.stat_view import (content_size, device_rdev, is_dir, is_link,
+                                    mtime_ns, posix_mode)
 
 
 class RuntimeVFS:
@@ -195,7 +195,8 @@ class RuntimeVFS:
                        is_dir=is_dir(fs),
                        mode=posix_mode(fs),
                        mtime_ns=0 if ns is None else ns,
-                       is_link=is_link(fs))
+                       is_link=is_link(fs),
+                       rdev=device_rdev(fs))
 
     def readdir(self, path: str) -> list[VFSEntry]:
         """List a directory as resolved entries (the TS door's shape).
@@ -246,7 +247,8 @@ class RuntimeVFS:
                          is_dir=st.is_dir,
                          is_link=linked,
                          mode=st.mode,
-                         mtime_ns=st.mtime_ns))
+                         mtime_ns=st.mtime_ns,
+                         rdev=st.rdev))
         return entries
 
     def _link_names(self, directory: str) -> set[str]:

@@ -712,6 +712,207 @@
         "stdout": "data\ndev\nghost\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "nest_namespace_ancestor_base64",
+      "seq": 950060,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "base64 /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "base64: /ghost: Is a directory\n"
+      },
+      "note": "The same namespace-only parent, reached through the read SLOT rather than the stat chokepoint. cat/wc/head/tail/md5sum/cut above stat the operand first and so already saw it; these commands read straight from the backend, which on a keyed mount answers ENOENT because there is no key. Each one also carries GNU's own exit code for a failed read, which is the command's and not the errno's."
+    },
+    {
+      "id": "nest_namespace_ancestor_sort",
+      "seq": 950061,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "sort /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "sort: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_xxd",
+      "seq": 950062,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "xxd /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "xxd: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_od",
+      "seq": 950063,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "od /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "od: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_awk",
+      "seq": 950064,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "awk '{print}' /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "awk: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_sed",
+      "seq": 950065,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "sed -n p /ghost",
+      "expect": {
+        "exit": 4,
+        "stdout": "",
+        "stderr": "sed: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_jq",
+      "seq": 950066,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "jq . /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "jq: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_uniq",
+      "seq": 950067,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "uniq /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "uniq: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_paste",
+      "seq": 950068,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "paste /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "paste: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_gzip",
+      "seq": 950069,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "gzip -c /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "gzip: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_namespace_ancestor_zgrep",
+      "seq": 950070,
+      "targets": [
+        "ram-nested"
+      ],
+      "command": "zgrep x /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "zgrep: /ghost: Is a directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_base64",
+      "seq": 950071,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "base64 /ghost",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "base64: /ghost: No such file or directory\n"
+      },
+      "note": "The hide outranks the directory synthesis on this route too. The slot guard reads the same session-filtered child names the stat chokepoint asks for, so a mount the session may not be told about leaves the parent with no children and the operand falls back to absence."
+    },
+    {
+      "id": "nest_hidden_mount_parent_sort",
+      "seq": 950072,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "sort /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "sort: /ghost: No such file or directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_xxd",
+      "seq": 950073,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "xxd /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "xxd: /ghost: No such file or directory\n"
+      }
+    },
+    {
+      "id": "nest_hidden_mount_parent_sed",
+      "seq": 950074,
+      "targets": [
+        "ram-nested"
+      ],
+      "session": "blind",
+      "command": "sed -n p /ghost",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "sed: /ghost: No such file or directory\n"
+      }
     }
   ]
 }

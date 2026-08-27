@@ -111,6 +111,61 @@ describe('MontyVFS values', () => {
     const vfs = viewOn(dispatch)
     expect(await vfs.write('/ram/x', 'héllo')).toBe(5)
     expect(await vfs.write('/ram/y', new Uint8Array([1, 2, 3]))).toBe(3)
+    // Code points, not UTF-16 units: python's len('𝄞') is 1.
+    expect(await vfs.write('/ram/z', '\u{1d11e}')).toBe(1)
+  })
+
+  it('answers readOrNull with null for a miss and the bytes for a hit', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path) => {
+      if (op === 'read' && path === '/ram/a') {
+        return Promise.resolve(new TextEncoder().encode('hi'))
+      }
+      return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
+    })
+    const vfs = viewOn(dispatch)
+    expect(await vfs.readOrNull('/ram/a')).toEqual(new TextEncoder().encode('hi'))
+    expect(await vfs.readOrNull('/ram/nope')).toBeNull()
+    // The miss is remembered, so the second probe costs no dispatch.
+    expect(await vfs.readOrNull('/ram/nope')).toBeNull()
+    expect(dispatch.mock.calls.filter(([, p]) => p === '/ram/nope')).toHaveLength(1)
+  })
+
+  it('readOrNull lets a transport failure propagate rather than faking absence', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.reject(new Error('socket hangup')))
+    await expect(viewOn(dispatch).readOrNull('/ram/a')).rejects.toThrow('socket hangup')
+  })
+
+  it('forwards the establishing ops and the mkdir parents flag to the bridge', async () => {
+    const dispatch = vi.fn<BridgeDispatchFn>(() => Promise.resolve(undefined))
+    const vfs = viewOn(dispatch)
+    await vfs.create('/ram/new')
+    await vfs.truncate('/ram/keep')
+    await vfs.mkdir('/ram/d')
+    await vfs.mkdir('/ram/x/y', true)
+    expect(dispatch).toHaveBeenCalledWith('create', '/ram/new')
+    expect(dispatch).toHaveBeenCalledWith('truncate', '/ram/keep')
+    expect(dispatch).toHaveBeenCalledWith('mkdir', '/ram/d', undefined, undefined, undefined)
+    expect(dispatch).toHaveBeenCalledWith('mkdir', '/ram/x/y', undefined, undefined, {
+      parents: true,
+    })
+  })
+
+  it('append rides the delta and keeps the negative cache honest', async () => {
+    const appends: Uint8Array[] = []
+    const dispatch = vi.fn<BridgeDispatchFn>((op, path, bytes) => {
+      if (op === 'append') {
+        appends.push(bytes ?? new Uint8Array())
+        return Promise.resolve(undefined)
+      }
+      return Promise.reject(Object.assign(new Error(`gone: ${path}`), { code: 'ENOENT' }))
+    })
+    const vfs = viewOn(dispatch)
+    await expect(vfs.read('/ram/log')).rejects.toThrow()
+    await vfs.append('/ram/log', new Uint8Array([98]), new Uint8Array([97, 98]))
+    expect(appends).toEqual([new Uint8Array([98])])
+    // The append forgot the remembered absence.
+    expect(await vfs.readOrNull('/ram/log')).toBeNull()
+    expect(dispatch.mock.calls.filter(([op]) => op === 'read')).toHaveLength(2)
   })
 
   it('lists a directory through its slash-terminated prefix', async () => {

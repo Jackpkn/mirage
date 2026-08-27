@@ -15,49 +15,13 @@
 import type { PostgresAccessor } from '../../accessor/postgres.ts'
 import type { IndexCacheStore } from '../../cache/index/store.ts'
 import { FileStat, FileType, type PathSpec } from '../../types.ts'
-import { enoent } from '../../utils/errors.ts'
 import { sha256Hex } from '../../utils/hash.ts'
 import { compactJsonBytes } from '../render/json.ts'
 import { makeStat } from '../hierarchy/stat.ts'
 import type { ScopeMatch } from '../hierarchy/scope.ts'
-import {
-  estimatedRowCount,
-  fetchColumns,
-  listMatviews,
-  listSchemas,
-  listTables,
-  listViews,
-  tableSizeBytes,
-} from './client.ts'
-import { readdir } from './readdir.ts'
+import { estimatedRowCount, fetchColumns, tableSizeBytes } from './client.ts'
+import { entityGuard, readdir, schemaGuard } from './readdir.ts'
 import { detectScope } from './scope.ts'
-
-async function schemaGuard(
-  accessor: PostgresAccessor,
-  match: ScopeMatch,
-  virtual: string,
-): Promise<void> {
-  const schemas = await listSchemas(accessor, accessor.config.schemas)
-  if (!schemas.includes(match.slots.schema ?? '')) throw enoent(virtual)
-}
-
-async function entityGuard(
-  accessor: PostgresAccessor,
-  match: ScopeMatch,
-  virtual: string,
-): Promise<void> {
-  const schema = match.slots.schema ?? ''
-  const kind = match.slots.kind ?? ''
-  let names: string[]
-  if (kind === 'tables') {
-    names = await listTables(accessor, schema)
-  } else {
-    const views = await listViews(accessor, schema)
-    const mviews = await listMatviews(accessor, schema)
-    names = [...new Set([...views, ...mviews])]
-  }
-  if (!names.includes(match.slots.entity ?? '')) throw enoent(virtual)
-}
 
 function schemaExtra(match: ScopeMatch): Record<string, string> {
   return { schema: match.slots.schema ?? '' }

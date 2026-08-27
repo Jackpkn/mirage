@@ -154,3 +154,35 @@ def qdrant_config() -> QdrantConfig:
 @pytest.fixture
 def accessor(qdrant_config) -> FakeAccessor:
     return FakeAccessor(qdrant_config, FakeQdrantClient())
+
+
+WIDE_CAP = 5
+WIDE_POINTS = 600
+
+
+class WideQdrantClient(FakeQdrantClient):
+    """A collection far wider than one scroll page, counting pages."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.points = [
+            SimpleNamespace(id=i, payload={
+                "label": "all",
+                "name": f"n{i}"
+            }) for i in range(1, WIDE_POINTS + 1)
+        ]
+        self.pages = 0
+
+    async def scroll(self, *args, **kwargs):
+        self.pages += 1
+        return await super().scroll(*args, **kwargs)
+
+
+@pytest.fixture
+def capped() -> FakeAccessor:
+    return FakeAccessor(
+        QdrantConfig(collection=COLLECTION,
+                     group_by=["label"],
+                     id_field="id",
+                     text_field="name",
+                     max_rows=WIDE_CAP), WideQdrantClient())

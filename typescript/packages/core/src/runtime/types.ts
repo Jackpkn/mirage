@@ -66,6 +66,14 @@ export type DispatchFn = (
 ) => Promise<[unknown, IOResult]>
 
 /**
+ * Per-op modifiers riding the bridge's attrs slot: setattr's fields,
+ * stat's `nofollow` (the caller's lstat), and mkdir's `parents`
+ * (pathlib's mkdir(parents=True), forwarded to the backend op the way
+ * python forwards it as a dispatch kwarg).
+ */
+export type BridgeOpAttrs = SetAttrFields & { parents?: boolean }
+
+/**
  * The narrow bridge a sandboxed guest's file I/O rides: fixed op names,
  * string paths, positional payloads (the guest cannot build PathSpecs).
  *
@@ -92,7 +100,7 @@ export type BridgeDispatchFn = (
   path: string,
   bytes?: Uint8Array,
   dst?: string,
-  attrs?: SetAttrFields,
+  attrs?: BridgeOpAttrs,
 ) => Promise<unknown>
 
 /**

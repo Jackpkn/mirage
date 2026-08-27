@@ -33,12 +33,6 @@ import { PrefixResolver } from './resolver.ts'
 // it.fails with the reason beside the table; the mark comes off as
 // each one is fixed.
 
-// ts monty bridges only the typed Path arms; builtin open (any mode)
-// and Path.stat answer PermissionError on mount paths, so no append
-// spelling exists at all. py monty serves all of them.
-const MONTY_OPEN_UNSUPPORTED =
-  'ts monty: builtin open and Path.stat answer PermissionError on mount paths'
-
 // Path.stat is not a missing case, it is a shape the seam cannot carry:
 // the binding converts whatever the os callback returns structurally, so
 // every candidate (plain object, class instance, tuple, proxy) arrives in
@@ -46,10 +40,11 @@ const MONTY_OPEN_UNSUPPORTED =
 // The JS package exports no StatResult to build the real thing with,
 // where python's binding hands over an OSAccess subclass and constructs
 // monty's own. Declining, so the sandbox raises PermissionError, is the
-// honest answer until the binding grows a stat shape. Probed against
-// @pydantic/monty 0.0.19.
+// honest answer until the binding grows a stat shape (drafted as an
+// upstream ask, alongside iterdir's str-not-Path elements). Probed
+// against @pydantic/monty 0.0.19 and again on 0.0.21.
 const MONTY_STAT_UNSUPPORTED =
-  'ts monty: the os callback cannot return an os.stat_result (@pydantic/monty 0.0.19)'
+  'ts monty: the os callback cannot return an os.stat_result (@pydantic/monty 0.0.21)'
 
 // The pyodide shim patches only open/io.open, os.listdir, os.stat and
 // os.scandir, so every mutation spelling mutates MEMFS and never
@@ -123,14 +118,12 @@ const MONTY_ROWS: Row[] = [
     line: `python3 -c "print(open('/data/r.txt').read())"`,
     setup: ['echo -n seen > /data/r.txt'],
     lineOut: 'seen',
-    broken: MONTY_OPEN_UNSUPPORTED,
   },
   {
     capability: 'write',
     spelling: 'open',
     line: `python3 -c "f = open('/data/w1.txt', 'w'); f.write('data'); f.close()"`,
     checks: [['cat /data/w1.txt', 'data']],
-    broken: MONTY_OPEN_UNSUPPORTED,
   },
   {
     capability: 'write',
@@ -159,7 +152,6 @@ const MONTY_ROWS: Row[] = [
     line: `python3 -c "\nfor part in ['b', 'c', 'd']:\n    with open('/data/log.txt', 'a') as f:\n        f.write(part)\n"`,
     setup: ['echo -n a > /data/log.txt'],
     checks: [['cat /data/log.txt', 'abcd']],
-    broken: MONTY_OPEN_UNSUPPORTED,
   },
   {
     capability: 'append-preserves',
@@ -167,7 +159,6 @@ const MONTY_ROWS: Row[] = [
     line: `python3 -c "f = open('/data/keep.txt', 'a'); f.write('Z'); f.close()"`,
     setup: ['echo -n a > /data/keep.txt'],
     checks: [['cat /data/keep.txt', 'aZ']],
-    broken: MONTY_OPEN_UNSUPPORTED,
   },
   {
     // Monty's own tree holds no links, so this reads the mount's name
@@ -665,19 +656,15 @@ function runArgs(code: string): RunArgs {
 // runtime still produces the right final content, so the file alone
 // cannot tell one append from a full rewrite per close.
 describe('append ships only the deltas', () => {
-  it.fails(
-    `monty [${MONTY_OPEN_UNSUPPORTED}]`,
-    async () => {
-      const counting = makeCountingBridge({ '/data/log.txt': 'S'.repeat(64) })
-      const rt = new MontyRuntime()
-      rt.attach(counting.dispatch, new PrefixResolver(() => ['/data/']))
-      const result = await rt.run(runArgs(APPEND_LOOP_PY))
-      await rt.close()
-      expect(result.exitCode).toBe(0)
-      expect(counting.mutationBytes(), counting.mutationOps().join(', ')).toBe(24)
-    },
-    120_000,
-  )
+  it('monty', async () => {
+    const counting = makeCountingBridge({ '/data/log.txt': 'S'.repeat(64) })
+    const rt = new MontyRuntime()
+    rt.attach(counting.dispatch, new PrefixResolver(() => ['/data/']))
+    const result = await rt.run(runArgs(APPEND_LOOP_PY))
+    await rt.close()
+    expect(result.exitCode).toBe(0)
+    expect(counting.mutationBytes(), counting.mutationOps().join(', ')).toBe(24)
+  }, 120_000)
 
   it('pyodide', async () => {
     const counting = makeCountingBridge({ '/data/log.txt': 'S'.repeat(64) })

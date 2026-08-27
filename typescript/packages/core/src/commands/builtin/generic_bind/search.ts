@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { Accessor } from '../../../accessor/base.ts'
+import { hiddenPathsIntersect, pathRulesActive } from '../../../context/session_context.ts'
 import type { IndexCacheStore } from '../../../cache/index/store.ts'
 import { ROOT, type DetectFn } from '../../../core/hierarchy/scope.ts'
 import type { Searcher, SearchQuery } from '../../../core/hierarchy/search.ts'
@@ -120,7 +121,13 @@ export function makeSearch<A extends Accessor>(
     const fl = new FlagView(opts.flags, spec)
     const pattern = patternArg(texts, opts.flags)
     const operand = options.qualify(paths, opts.flags, pattern)
-    if (pattern !== null && operand !== null) {
+    // A native search answers from the raw backend, so it would print
+    // lines out of files the session cannot see, or ones a path rule
+    // refuses; the generic scan classifies through the guarded
+    // readdir/stat instead. Per operand, like find's fork.
+    const pushdownOpen =
+      operand === null || (!hiddenPathsIntersect(operand.virtual) && !pathRulesActive())
+    if (pattern !== null && operand !== null && pushdownOpen) {
       const match = detect(operand)
       const searcher = searchers[match.kind]
       if (searcher !== undefined) {

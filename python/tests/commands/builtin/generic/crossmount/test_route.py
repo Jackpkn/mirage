@@ -78,5 +78,7 @@ async def test_a_filesystem_error_reports_in_the_commands_voice(monkeypatch):
         _broken(FileNotFoundError("/a/x")))
     _, result = await handle_cross_mount("sort", [_path("/a/x")], [], {},
                                          _dispatch, _run_single)
-    assert result.exit_code == 1
+    # sort's own code for a failed read, not the catch-all 1: GNU sort
+    # exits 2 whether the operand is missing or a directory.
+    assert result.exit_code == 2
     assert b"sort" in result.stderr

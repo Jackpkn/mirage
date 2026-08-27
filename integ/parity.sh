@@ -3,9 +3,9 @@
 # Python CLI and the TypeScript CLI, records normalized results per language,
 # then asserts (1) the two languages produce identical results and (2) the
 # results match the expected values. Covers subshell isolation, sessions,
-# per-session mount modes, git-backed versioning, and fuse config wiring.
-# Uses RAM mounts only (no redis/minio/fuse kernel deps), so it runs
-# anywhere both CLIs are built.
+# per-session mount modes, asks (list-asks/allow/deny), git-backed
+# versioning, and fuse config wiring. Uses RAM mounts only (no
+# redis/minio/fuse kernel deps), so it runs anywhere both CLIs are built.
 #
 # Usage: parity.sh "<py-cli>" "<ts-cli>"
 set -uo pipefail
@@ -48,6 +48,20 @@ profiles:
     paths:
       hide:
         - /side
+YML
+
+ASKS_YAML=/tmp/parity-asks.yaml
+cat > "$ASKS_YAML" <<'YML'
+mode: WRITE
+mounts:
+  /:
+    resource: ram
+profiles:
+  default:
+    commands:
+      ask:
+        - reason: removal needs sign-off
+          commands: [rm]
 YML
 
 # The workspace default stays WRITE so the implicit scratch root (always
@@ -158,6 +172,25 @@ probe() {
   echo "mode.exec_allowed=$($cli execute -w gx -s withexec -c 'python3 -c "print(1)"' </dev/null | sout)"
   $cli workspace delete gx >/dev/null 2>&1 </dev/null || true
 
+  # ── asks: an ask rule pends at 126; allow passes the retry once, deny refuses it ──
+  local ask_id
+  $cli workspace delete aw >/dev/null 2>&1 </dev/null || true
+  $cli workspace create "$ASKS_YAML" --id aw >/dev/null </dev/null
+  $cli execute -w aw -c 'touch /f.txt /g.txt' </dev/null >/dev/null
+  echo "ask.refused=$($cli execute -w aw -c 'rm /f.txt' </dev/null | sexit)"
+  echo "ask.pending_count=$($cli workspace list-asks aw </dev/null | jq 'length')"
+  echo "ask.reason=$($cli workspace list-asks aw </dev/null | jq -r '.[0].reason')"
+  ask_id="$($cli workspace list-asks aw </dev/null | jq -r '.[0].id')"
+  echo "ask.allow_scope=$($cli workspace allow aw "$ask_id" </dev/null | jq -r '.scope')"
+  echo "ask.retry=$($cli execute -w aw -c 'rm /f.txt' </dev/null | sexit)"
+  echo "ask.spent=$($cli workspace list-asks aw --all </dev/null | jq 'length')"
+  $cli execute -w aw -c 'rm /g.txt' </dev/null >/dev/null
+  ask_id="$($cli workspace list-asks aw </dev/null | jq -r '.[0].id')"
+  echo "ask.deny_outcome=$($cli workspace deny aw "$ask_id" --note veto </dev/null | jq -r '.outcome')"
+  echo "ask.denied_err=$($cli execute -w aw -c 'rm /g.txt' </dev/null | serr)"
+  echo "ask.drained=$($cli workspace list-asks aw </dev/null | jq 'length')"
+  $cli workspace delete aw >/dev/null 2>&1 </dev/null || true
+
   # ── versioning: commit/branch/log/clone/checkout/diff (git-backed) ──
   $cli workspace delete vw >/dev/null 2>&1 </dev/null || true
   $cli workspace create "$YAML" --id vw >/dev/null </dev/null
@@ -259,6 +292,15 @@ expect "mode.lister_inherits" "l"
 expect "mode.capped_ro" "denied"
 expect "mode.exec_denied_err" "python3: root mount '/' is not in EXEC mode"
 expect "mode.exec_allowed" "1"
+expect "ask.refused" "126"
+expect "ask.pending_count" "1"
+expect "ask.reason" "removal needs sign-off"
+expect "ask.allow_scope" "once"
+expect "ask.retry" "0"
+expect "ask.spent" "0"
+expect "ask.deny_outcome" "deny"
+expect "ask.denied_err" "rm: policy denied: removal needs sign-off"
+expect "ask.drained" "0"
 expect "version.log" "second,first"
 expect "version.branch_log" "first"
 expect "ws.get_mounts" "/"
@@ -285,4 +327,4 @@ if [ "$fail" != "0" ]; then
   exit 1
 fi
 echo
-echo "CLI feature parity OK (subshell, sessions, session modes, versioning, fuse; py == ts)."
+echo "CLI feature parity OK (subshell, sessions, session modes, asks, versioning, fuse; py == ts)."

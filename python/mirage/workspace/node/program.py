@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from mirage.commands.spec.usage import read_fail_exit
 from mirage.io import IOResult
 from mirage.io.stream import async_chain, materialize
 from mirage.shell.errors import ExitSignal
@@ -186,6 +187,10 @@ async def _run_program(
             # Materialize stdout so lazy exit codes (e.g. from
             # exit_on_empty in grep) are finalized before $? is set.
             drain_err: bytes | None = None
+            # Only a filesystem failure reads its code off the command;
+            # anything else keeps the catch-all 1, so the two arms below
+            # do not share the assignment.
+            drain_exit = 1
             try:
                 stdout = await materialize(stdout)
             except OSError as exc:
@@ -196,6 +201,7 @@ async def _run_program(
                 cmd_name = (last_exec.command.split()[0]
                             if last_exec.command else "")
                 drain_err = format_fs_error(cmd_name, exc, last_exec.paths)
+                drain_exit = read_fail_exit(cmd_name, exc)
                 stdout = None
             except Exception as exc:
                 drain_err = f"{exc}\n".encode()
@@ -203,7 +209,7 @@ async def _run_program(
             if drain_err is not None:
                 existing = await materialize(io.stderr) or b""
                 io.stderr = existing + drain_err
-                io.exit_code = 1
+                io.exit_code = drain_exit
             session.last_exit_code = io.exit_code
             i += 1
 

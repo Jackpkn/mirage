@@ -33,7 +33,9 @@ import {
   RedisResource,
   SlackResource,
   Workspace,
+  parseSessionProfile,
 } from '@struktoai/mirage-node'
+import { Outcome, Scope } from '@struktoai/mirage-core/policy/types'
 import { MirageFileSystem, MirageService, MirageShellExecutor } from '@struktoai/mirage-dsh'
 
 const __HERE = fileURLToPath(new URL('.', import.meta.url))
@@ -43,6 +45,27 @@ const SCRIPT_NAME = 'example.py'
 const SCRIPT_STEM = SCRIPT_NAME.slice(0, SCRIPT_NAME.lastIndexOf('.'))
 const SCRIPT_EXT = SCRIPT_NAME.slice(SCRIPT_NAME.lastIndexOf('.'))
 const RECENT_DAYS = 5
+
+// The permission document this run works under: every tool the demo uses
+// is admitted and recursive removes are refused outright, while a plain
+// remove needs a human — but only inside /tmp, which is what the `mounts`
+// section scopes it to, so the run's own /redis cleanup is not caught by
+// it. Nothing here composes an approval channel, so an asked line has
+// nobody to reach and waits in the ledger instead.
+const ROLE = parseSessionProfile(
+  {
+    commands: {
+      allow: ['cat', 'ls', 'grep', 'head', 'rm', 'echo', 'python', 'python3'],
+      deny: [{ commands: ['rm -rf'], reason: 'no recursive deletes' }],
+    },
+    mounts: {
+      '/tmp': {
+        commands: { ask: [{ commands: ['rm'], reason: 'deletes are reviewed' }] },
+      },
+    },
+  },
+  'profile agent',
+)
 
 function newestFirst(a: string, b: string): number {
   return a < b ? 1 : a > b ? -1 : 0
@@ -131,6 +154,34 @@ async function runFromSlack(ctx: Context, channel: string): Promise<void> {
   console.log(report.stdout.text.trim())
 }
 
+// allow / ask / deny — the role above, enforced. A denied line is refused
+// at 126; an asked line has nobody to ask, so it waits in the ledger for
+// a host to answer; and `explain` says what a line would do without
+// running it or raising a question against it.
+async function permissions(ctx: Context): Promise<void> {
+  console.log('=== permissions: allow, ask, deny ===')
+  const shell = ctx.shell
+
+  const denied = await bash(shell, 'rm -rf /tmp/scratch')
+  console.log('deny:', denied.exitCode, denied.stderr.text.trim())
+
+  await bash(shell, 'echo scratch > /tmp/scratch.txt')
+  const asked = await bash(shell, 'rm /tmp/scratch.txt')
+  console.log('ask:', asked.exitCode, asked.stderr.text.trim())
+
+  // The question is real, and a host answers it out of band.
+  const [waiting] = ctx.mirage.decisions.pending()
+  if (waiting !== undefined) {
+    await ctx.mirage.decisions.answer(waiting.id, Outcome.ALLOW, Scope.ONCE)
+    const retry = await bash(shell, 'rm /tmp/scratch.txt')
+    console.log('after approval:', retry.exitCode)
+  }
+
+  // A dry run through the same gate: no question raised, nothing spent.
+  const [what] = await ctx.mirage.explain('rm -rf /tmp/scratch')
+  console.log('explain:', what?.outcome, '-', what?.reason)
+}
+
 async function main(): Promise<void> {
   const token = process.env.SLACK_BOT_TOKEN
   if (token === undefined || token === '') throw new Error('SLACK_BOT_TOKEN env var is required')
@@ -146,10 +197,18 @@ async function main(): Promise<void> {
       '/redis': [new RedisResource({ url: redisUrl, keyPrefix: 'dsh:' }), MountMode.WRITE],
       '/slack': [new SlackResource({ token }), MountMode.EXEC],
     },
-    { runtimes: [buildRuntime('monty', { captures: ['python', 'python3'] })] },
+    {
+      runtimes: [buildRuntime('monty', { captures: ['python', 'python3'] })],
+      profiles: { agent: ROLE },
+      profile: 'agent',
+      // No `onAsk` on purpose: this example composes no approval channel,
+      // so mirage's own recording default applies. An embedder with dsh's
+      // approval plugin composed passes `onAsk: askThroughApproval(ctx)`.
+    },
   )
   const ctx = await composeWorld(ws)
   try {
+    await permissions(ctx)
     await fileTools(ctx)
     await bashTool(ctx)
     await runFromSlack(ctx, channel)

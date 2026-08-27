@@ -21,3 +21,11 @@ export {
 } from './service.ts'
 export { MirageFileSystem, type MirageFsConfig } from './fs.ts'
 export { MirageShellExecutor, type MirageShellConfig } from './shell.ts'
+export {
+  APPROVAL_TOOL_NAME,
+  approvalReason,
+  approverOf,
+  askThroughApproval,
+  type ApprovalOutcome,
+  type Approver,
+} from './approval.ts'

@@ -36,11 +36,26 @@ export interface MontyPoolLike {
   close(): Promise<void>
 }
 
-export interface MontyModuleLike {
-  Monty: { create(options?: Record<string, unknown>): Promise<MontyPoolLike> }
+/**
+ * The two door pieces `MirageOSAccess` needs from the binding: the
+ * decline sentinel, and the handle class an `open` answer must be an
+ * instance of (the binding wraps it into the guest's `_io.*` object).
+ */
+export interface MontyBindingBits {
   NOT_HANDLED: symbol
+  MontyFileHandle: new (path: string, mode: string) => unknown
+}
+
+/** A worker-death error, the one shape run() maps to an exit code. */
+export interface MontyCrashedLike extends Error {
+  timedOut: boolean
+}
+
+export interface MontyModuleLike extends MontyBindingBits {
+  Monty: { create(options?: Record<string, unknown>): Promise<MontyPoolLike> }
   MontySyntaxError: new (...args: never[]) => Error
   MontyRuntimeError: new (...args: never[]) => Error
+  MontyCrashedError: new (...args: never[]) => MontyCrashedLike
 }
 
 export interface MontyDisplayableError extends Error {

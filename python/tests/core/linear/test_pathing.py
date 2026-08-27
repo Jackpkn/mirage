@@ -14,9 +14,11 @@
 
 import pytest
 
-from mirage.core.linear.pathing import (cycle_filename, issue_dirname,
-                                        member_filename, project_filename,
-                                        split_suffix_id, team_dirname)
+from mirage.core.linear.pathing import (cycle_filename, document_filename,
+                                        issue_dirname, member_filename,
+                                        project_filename, split_suffix_id,
+                                        team_dirname)
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len
 
 
 def test_split_suffix_id_basic():
@@ -89,3 +91,43 @@ def test_cycle_filename():
 def test_cycle_filename_no_name():
     cycle = {"id": "CYCLE1"}
     assert cycle_filename(cycle) == "cycle__CYCLE1.json"
+
+
+CJK = "会議の記録" * 40
+UUID = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+
+# Every builder, the record fields it reads for the label, and the suffix it
+# appends.
+NAME_CASES = [
+    (team_dirname, ("key", "name"), ""),
+    (member_filename, ("displayName", ), ".json"),
+    (issue_dirname, ("identifier", ), ""),
+    (project_filename, ("name", ), ".json"),
+    (cycle_filename, ("name", ), ".json"),
+    (document_filename, ("title", ), ".json"),
+]
+
+
+@pytest.mark.parametrize("build,fields,suffix", NAME_CASES)
+def test_a_cjk_label_fits_name_max_and_still_addresses_the_id(
+        build, fields, suffix):
+    # These composed `<label>__<id>` by hand, so the 100-character cap in
+    # sanitize_name let a CJK name render 338-343 bytes against a 255-byte
+    # NAME_MAX. They route through fit_id_name now.
+    record: dict[str, str] = {"id": UUID}
+    for field in fields:
+        record[field] = CJK
+    name = build(record)
+    assert byte_len(name) <= NAME_MAX_BYTES
+    assert "\ufffd" not in name
+    assert split_suffix_id(name, suffix=suffix)[1] == UUID
+
+
+def test_team_dirname_keeps_the_separator_between_its_parts():
+    # The label is two sanitized parts joined by `__`; re-sanitizing it
+    # would collapse that to `_` and change the directory's name.
+    assert team_dirname({
+        "key": "ENG",
+        "name": "Engineering",
+        "id": "T1"
+    }) == "ENG__Engineering__T1"

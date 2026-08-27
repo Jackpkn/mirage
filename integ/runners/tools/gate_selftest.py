@@ -147,7 +147,7 @@ def selftest_strict_exit() -> None:
     Uses --target rather than --facet so the older all-skipped facet guard
     cannot be what fires; this pins the new per-target gate on its own.
     """
-    blanked = {"TRELLO_ENDPOINT": ""}
+    blanked = {"TRELLO_URL": ""}
     code = run_main(["--target", "trello", "--strict"], blanked)
     check("strict: a skipped target exits non-zero", code != 0, f"exit {code}")
 
@@ -285,7 +285,7 @@ def selftest_typescript_gates(require: bool) -> None:
     check("typescript runner starts (packages built)", code == 2,
           f"exit {code}: {err}")
 
-    blanked = {"TRELLO_ENDPOINT": ""}
+    blanked = {"TRELLO_URL": ""}
     code, err = run_typescript(["--target", "trello", "--strict"], blanked)
     check("strict (ts): a skipped target exits non-zero", code != 0,
           f"exit {code}: {err}")

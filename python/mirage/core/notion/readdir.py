@@ -22,9 +22,8 @@ from mirage.core.notion.pages import (get_data_source, get_database,
                                       list_block_children, query_data_source,
                                       search_data_sources, search_pages)
 from mirage.core.notion.pathing import (data_source_dirname, database_dirname,
-                                        page_dirname)
+                                        format_segment, page_dirname)
 from mirage.core.notion.scope import detect_scope
-from mirage.utils.sanitize import sanitize_name
 
 
 async def _list_pages_root(accessor: NotionAccessor,
@@ -95,7 +94,7 @@ async def _list_page(accessor: NotionAccessor,
         child_title = child_block.get("child_page",
                                       {}).get("title", "untitled")
         child_id = child_block["id"]
-        dirname = f"{sanitize_name(child_title)}__{child_id}"
+        dirname = format_segment(child_title, child_id)
         entries.append(
             (dirname,
              IndexEntry(
