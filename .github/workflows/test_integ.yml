@@ -735,6 +735,14 @@ jobs:
         working-directory: typescript
         run: pnpm install --frozen-lockfile=false
 
+      # integ/generated/ is gitignored, so every kit fake this job starts
+      # (dropbox, box, onedrive) fails to import its client until this runs.
+      # The battery jobs get it from the integ-battery-setup action; this job
+      # does not use that action and has to ask for it itself.
+      - name: Generate integ Prisma clients
+        working-directory: integ
+        run: pnpm run prisma:clients
+
       - name: Start fake Notion API (Prisma)
         working-directory: integ
         env:
@@ -820,6 +828,10 @@ jobs:
             sleep 1
           done
           cat /tmp/dropbox-watch.log
+          # Fail HERE, not 20 minutes later as a connection refused inside the
+          # battery: a server that died on startup still leaves this step green
+          # if the only thing it does is cat the log.
+          grep -q "DROPBOX_URL=" /tmp/dropbox-watch.log
 
       - name: Start the fake Box server
         working-directory: integ
@@ -831,6 +843,10 @@ jobs:
             sleep 1
           done
           cat /tmp/box-watch.log
+          # Fail HERE, not 20 minutes later as a connection refused inside the
+          # battery: a server that died on startup still leaves this step green
+          # if the only thing it does is cat the log.
+          grep -q "BOX_URL=" /tmp/box-watch.log
 
       - name: Start the fake Microsoft Graph server
         working-directory: integ
@@ -842,6 +858,10 @@ jobs:
             sleep 1
           done
           cat /tmp/onedrive-watch.log
+          # Fail HERE, not 20 minutes later as a connection refused inside the
+          # battery: a server that died on startup still leaves this step green
+          # if the only thing it does is cat the log.
+          grep -q "ONEDRIVE_URL=" /tmp/onedrive-watch.log
 
       - name: Run watch battery
         env:

@@ -36,7 +36,6 @@ import {
   searchMatch,
   wholeWordHit,
 } from './wire.ts'
-import type { Item } from './wire.ts'
 
 const DEC = new TextDecoder()
 
@@ -84,9 +83,14 @@ function page(entries: JsonValue[], cursor: string | null, hasMore: boolean): Js
   return out
 }
 
-async function listPage(ctx: Ctx<C>, items: Item[], limit: number): Promise<Reply> {
-  const head = items.slice(0, limit)
-  const tail = items.slice(limit)
+// Takes RENDERED entries, not rows, because the tail is parked in a cursor as
+// JSON: an Item carries `content` as a Uint8Array, which JSON.stringify writes
+// out as a numeric-keyed object and JSON.parse hands back as one, so the
+// continuation then fed a plain object to createHash and answered 500. Search
+// already paginates over rendered matches; list is the one that did not.
+async function listPage(ctx: Ctx<C>, entries: JsonValue[], limit: number): Promise<Reply> {
+  const head = entries.slice(0, limit)
+  const tail = entries.slice(limit)
   // A cursor is always handed out, even for a complete listing, because the
   // vendor always does: a client that only continues when has_more is set is
   // the one being tested, and a fake that omitted the field would let a client
@@ -94,7 +98,7 @@ async function listPage(ctx: Ctx<C>, items: Item[], limit: number): Promise<Repl
   const cursor = await saveCursor(ctx.db, ctx.tenant, 'list', JSON.stringify(tail), ctx.minter)
   return {
     status: 200,
-    body: page(head.map(entryFor), cursor, tail.length > 0),
+    body: page(head, cursor, tail.length > 0),
   }
 }
 
@@ -102,13 +106,13 @@ async function listFolder(ctx: Ctx<C>): Promise<Reply> {
   const body = obj(ctx.json())
   const items = await listChildren(ctx.db, ctx.tenant, str(body.path), body.recursive === true)
   if (items === null) return apiError('path/not_found/...')
-  return listPage(ctx, items, num(body.limit, LIST_LIMIT))
+  return listPage(ctx, items.map(entryFor), num(body.limit, LIST_LIMIT))
 }
 
 async function listContinue(ctx: Ctx<C>): Promise<Reply> {
   const payload = await takeCursor(ctx.db, ctx.tenant, str(obj(ctx.json()).cursor), 'list')
   if (payload === null) return apiError('reset/...')
-  return listPage(ctx, JSON.parse(payload) as Item[], LIST_LIMIT)
+  return listPage(ctx, JSON.parse(payload) as JsonValue[], LIST_LIMIT)
 }
 
 async function getMetadata(ctx: Ctx<C>): Promise<Reply> {
