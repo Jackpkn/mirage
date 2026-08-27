@@ -54,9 +54,10 @@ class CLIDoors:
 
     Args:
         dispatch (DispatchFn | None): the data plane's door, the
-            workspace op dispatcher. Typed loosely on purpose: the
-            DispatchFn Protocol lives in ``workspace.types``, and
-            ``commands`` stays free of a workspace import.
+            workspace op dispatcher. The Protocol is declared in
+            ``runtime.types``, on the consumer side, because the
+            workspace provides the door and everyone else receives one;
+            naming it from here costs no workspace import.
         stat_path (StatPath | None): dispatcher-backed stat that asks
             both channels a backend can answer on.
         ns (NamespaceView | None): the name plane's door, holding the

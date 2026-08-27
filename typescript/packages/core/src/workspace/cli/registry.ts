@@ -37,7 +37,7 @@ import { compareCodePoints } from '../../utils/sort.ts'
  * do is shadow a head word with a shell function, which is bash's own
  * rule, reversible with `unset -f`, bypassable with `command <name>`,
  * and visible through `type -a`. Pinning a head word against that
- * belongs in the policy layer's `preExecute`, since it is a
+ * belongs in the policy layer's `preCommand`, since it is a
  * per-deployment call rather than a property of the registry.
  */
 export class CLIRegistry {

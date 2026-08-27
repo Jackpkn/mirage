@@ -183,7 +183,6 @@ async def show(inv: CLIInvocation[None]) -> tuple[ByteSource | None, IOResult]:
     """
     doors = inv.doors or CLIDoors()
     dispatch = doors.dispatch
-    doors.stat_path
     texts = inv.texts
     flags = inv.flags
     fl = FlagView(flags)

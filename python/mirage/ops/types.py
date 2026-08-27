@@ -118,9 +118,10 @@ class SessionView:
     needs one, and it is the whole capability: no field reaches the raw
     session behind it.
 
-    A command opts in by naming a ``session_view`` parameter (``env``
-    is taken by the snapshot), which is what makes the dispatcher hand
-    it one.
+    Delivered as the ``session_view`` field of ``CommandOpts`` and of
+    ``CLIDoors``; a command opts in by reading it, and one that never
+    reads it cannot write the session. The name is not ``env`` because
+    the snapshot has that one.
     """
 
     get: EnvGet
@@ -163,8 +164,8 @@ class MountView:
     that needs both (``tar`` prunes by one and warns by the other) reads
     both fields.
 
-    Delivered as the ``mounts`` field of ``NamespaceView``; a command
-    opts in by naming an ``ns`` parameter.
+    Delivered as the ``mounts`` field of ``NamespaceView``, which rides
+    ``CommandOpts.ns``; a command opts in by reading ``opts.ns.mounts``.
     """
 
     # Every mount root strictly under a path, for a caller avoiding one.
@@ -189,8 +190,8 @@ class LinkView:
     builder in the chain, and the generic; it reads another field off
     the view it already receives.
 
-    Delivered as the ``links`` field of ``NamespaceView``; a command
-    opts in by naming an ``ns`` parameter.
+    Delivered as the ``links`` field of ``NamespaceView``, which rides
+    ``CommandOpts.ns``; a command opts in by reading ``opts.ns.links``.
     """
 
     # lstat one path (a link operand: `ls -l link`, `stat link`).
@@ -221,10 +222,12 @@ class NamespaceView:
     adds a field read, not a new keyword threaded through
     ``execute_cmd``, every builder, and the generic.
 
-    A command opts in by naming an ``ns`` parameter, which is what
-    makes the dispatcher hand it one. Fields default to None so a unit
-    test constructs only what it exercises; inside a workspace the
-    dispatcher fills all four.
+    Delivered as ``CommandOpts.ns`` to every command handler and as
+    ``CLIDoors.ns`` to a CLI verb; a command opts in by reading the
+    field it wants, so there is no signature for the dispatcher to
+    inspect and no registry to keep in step. Fields default to None so
+    a unit test constructs only what it exercises; inside a workspace
+    the dispatcher fills all four.
     """
 
     # The symlink facts; None when the namespace holds no links, which

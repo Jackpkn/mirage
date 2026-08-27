@@ -182,7 +182,6 @@ async def branch(
     """
     doors = inv.doors or CLIDoors()
     dispatch = doors.dispatch
-    doors.stat_path
     texts = inv.texts
     flags = inv.flags
     fl = FlagView(flags)
