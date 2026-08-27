@@ -19,6 +19,9 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { MountMode, ResourceName, type PathSpec } from '../types.ts'
 import { BaseResource, type Resource } from '../resource/base.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
+import { LanguageRuntime } from '../runtime/language.ts'
+import type { MountResolver } from '../runtime/resolver.ts'
+import type { BridgeDispatchFn, RunArgs, RunResult } from '../runtime/types.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'
 
@@ -482,6 +485,53 @@ describe('rm/rmdir on a mount prefix is refused (Unix-like)', () => {
     await ws.execute('rm /data')
     // The intercept only triggers for recursive forms; mount stays either way
     expect(ws.mounts().some((m) => m.prefix === '/data/')).toBe(true)
+    await ws.close()
+  })
+})
+
+class ResolverProbe extends LanguageRuntime {
+  readonly language = 'python'
+  readonly name = 'resolver-probe'
+  resolver: MountResolver | null = null
+  constructor() {
+    super({ captures: ['probe-run'] })
+  }
+  override attach(_dispatch: BridgeDispatchFn, resolver: MountResolver): void {
+    this.resolver = resolver
+  }
+  run(_args: RunArgs): Promise<RunResult> {
+    return Promise.resolve({ stdout: new Uint8Array(), stderr: new Uint8Array(), exitCode: 0 })
+  }
+}
+
+describe('runtime-visible mounts', () => {
+  it('attach withholds the history view from runtimes', async () => {
+    // The history view is a shell surface, not a place to put files;
+    // announcing it would make a WASI guest preopen /.bash_history.
+    const probe = new ResolverProbe()
+    const ws = new Workspace({ '/data': new RAMResource() }, { runtimes: [probe] })
+    expect(probe.resolver).not.toBeNull()
+    const prefixes = probe.resolver?.prefixes() ?? []
+    expect(prefixes).toContain('/data/')
+    expect(prefixes.some((p) => p.includes('bash_history'))).toBe(false)
+    await ws.close()
+  })
+
+  it('attach withholds the synthetic root anchor', async () => {
+    // Nobody mounted the anchor; forwarding it would make every
+    // runtime claim a resource the embedder never asked for.
+    const probe = new ResolverProbe()
+    const ws = new Workspace({ '/data': new RAMResource() }, { runtimes: [probe] })
+    expect(probe.resolver?.prefixes() ?? []).not.toContain('/')
+    await ws.close()
+  })
+
+  it('attach forwards an explicit root mount', async () => {
+    // Withheld for being synthetic, never for being `/`: a runtime
+    // that cannot serve the root refuses on its own (pyodide does).
+    const probe = new ResolverProbe()
+    const ws = new Workspace({ '/': new RAMResource() }, { runtimes: [probe] })
+    expect(probe.resolver?.prefixes() ?? []).toContain('/')
     await ws.close()
   })
 })
