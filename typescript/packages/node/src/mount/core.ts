@@ -24,26 +24,8 @@ import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { DIR_MODE, FILE_MODE, mtimeMs } from '@struktoai/mirage-core/utils/stat_view'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import { errnoError } from './errors.ts'
+import type { MountAttrs } from './types.ts'
 import { isMacosMetadata } from './platform/macos.ts'
-
-/**
- * One entry's POSIX attributes, as any kernel adapter needs them.
- *
- * Neutral on purpose: nothing here is libfuse's. It was called
- * `FuseAttr` and lived in the fuse package only because that adapter
- * was written first, which is the same accident that had the nfs
- * adapter importing from `fuse/`.
- */
-export interface MountAttrs {
-  mtime: Date
-  atime: Date
-  ctime: Date
-  nlink: number
-  size: number
-  mode: number
-  uid: number
-  gid: number
-}
 
 export interface Handle {
   path: string

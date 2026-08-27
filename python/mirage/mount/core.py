@@ -21,6 +21,7 @@ from typing import Any
 
 from mirage.mount.errors import NO_XATTR
 from mirage.mount.platform.macos import is_macos_metadata
+from mirage.mount.types import MountAttrs
 from mirage.ops import Ops
 from mirage.runtime.handles import FileTable, merge_writes
 from mirage.types import FileStat, FileType
@@ -51,7 +52,7 @@ class MountCore:
     adapter's constraint rather than this layer's. One whose interface is
     already async, like the nfs delegate, simply awaits.
 
-    Everything here is expressed in POSIX terms (``st_*`` attribute dicts,
+    Everything here is expressed in POSIX terms (``MountAttrs`` rows,
     ordinary Python exceptions) and imports nothing from mfusepy, so it is
     reusable by a non-FUSE adapter (FSKit, File Provider) and unit-testable
     without a kernel or the ``[fuse]`` extra installed.
@@ -132,32 +133,27 @@ class MountCore:
             return self._root
         return self._root + path
 
-    def dir_stat(self) -> dict[str, Any]:
-        return {
-            "st_mode": DIR_MODE,
-            "st_nlink": 2,
-            "st_uid": self._uid,
-            "st_gid": self._gid,
-            "st_size": 0,
-            "st_atime": self._now,
-            "st_mtime": self._now,
-            "st_ctime": self._now,
-        }
+    def dir_stat(self) -> MountAttrs:
+        return MountAttrs(mode=DIR_MODE,
+                          size=0,
+                          nlink=2,
+                          uid=self._uid,
+                          gid=self._gid,
+                          atime=self._now,
+                          mtime=self._now,
+                          ctime=self._now)
 
-    def file_stat(self, size: int) -> dict[str, Any]:
-        return {
-            "st_mode": FILE_MODE,
-            "st_nlink": 1,
-            "st_uid": self._uid,
-            "st_gid": self._gid,
-            "st_size": size,
-            "st_atime": self._now,
-            "st_mtime": self._now,
-            "st_ctime": self._now,
-        }
+    def file_stat(self, size: int) -> MountAttrs:
+        return MountAttrs(mode=FILE_MODE,
+                          size=size,
+                          nlink=1,
+                          uid=self._uid,
+                          gid=self._gid,
+                          atime=self._now,
+                          mtime=self._now,
+                          ctime=self._now)
 
-    def _apply_stat_attrs(self, entry: dict[str, Any],
-                          s: FileStat) -> dict[str, Any]:
+    def _apply_stat_attrs(self, entry: MountAttrs, s: FileStat) -> MountAttrs:
         """Fold merged stat attributes into a POSIX attr dict.
 
         The ops stat already carries the namespace overlay (chmod bits,
@@ -167,26 +163,26 @@ class MountCore:
         to map against.
 
         Args:
-            entry (dict): base attr dict from dir_stat/file_stat.
+            entry (MountAttrs): base row from dir_stat/file_stat.
             s (FileStat): the merged stat returned by the ops facade.
 
         Returns:
-            dict: the attr dict with overlay fields applied.
+            MountAttrs: the row with overlay fields applied.
         """
         if s.mode is not None:
-            entry["st_mode"] = (entry["st_mode"] & ~0o7777) | (s.mode & 0o7777)
+            entry.mode = (entry.mode & ~0o7777) | (s.mode & 0o7777)
         if isinstance(s.uid, int):
-            entry["st_uid"] = s.uid
+            entry.uid = s.uid
         if isinstance(s.gid, int):
-            entry["st_gid"] = s.gid
+            entry.gid = s.gid
         if s.modified is not None:
             # One translator per language: the naive-stamp-is-UTC rule
             # lives in stat_view, never re-parsed here. None means the
             # stamp did not parse; epoch zero is a real time and lands.
             ns = mtime_ns(s)
             if ns is not None:
-                entry["st_mtime"] = ns
-                entry["st_ctime"] = ns
+                entry.mtime = ns
+                entry.ctime = ns
         return entry
 
     def link_target(self, path: str) -> str | None:
@@ -224,7 +220,7 @@ class MountCore:
         parent = path.rsplit("/", 1)[0] or "/"
         return posixpath.relpath(virtual_target, parent)
 
-    def link_stat(self, target: str, virtual: str) -> dict[str, Any]:
+    def link_stat(self, target: str, virtual: str) -> MountAttrs:
         """The attrs a namespace link reports, from its own node row.
 
         Built from the target string alone, every link over a mount
@@ -244,7 +240,7 @@ class MountCore:
         row = None if links is None else links.link_stat_at(virtual)
         if row is not None:
             entry = self._apply_stat_attrs(entry, row)
-        entry["st_mode"] = LINK_MODE
+        entry.mode = LINK_MODE
         return entry
 
     def drain_ops(self) -> list[dict[str, Any]]:
@@ -308,9 +304,7 @@ class MountCore:
         self._prefetch[path] = (data, time.monotonic() + PREFETCH_TTL)
         return data
 
-    async def attrs_for(self,
-                        path: str,
-                        fh: int | None = None) -> dict[str, Any]:
+    async def attrs_for(self, path: str, fh: int | None = None) -> MountAttrs:
         """POSIX attributes for a path, optionally through an open handle.
 
         Args:
@@ -318,7 +312,7 @@ class MountCore:
             fh (int | None): open handle, when the caller is fstat-ing.
 
         Returns:
-            dict: ``st_*`` attribute dict.
+            MountAttrs: the entry's POSIX attributes.
 
         Raises:
             FileNotFoundError: no such entry.
@@ -354,9 +348,7 @@ class MountCore:
             size = 0
         return self._apply_stat_attrs(self.file_stat(size), s)
 
-    async def getattr(self,
-                      path: str,
-                      fh: int | None = None) -> dict[str, Any]:
+    async def getattr(self, path: str, fh: int | None = None) -> MountAttrs:
         """Attributes for a path a caller reached by name.
 
         macOS Finder and Spotlight probe .DS_Store, ._*, .Spotlight-V100
@@ -374,7 +366,7 @@ class MountCore:
             fh (int | None): open handle, when the caller is fstat-ing.
 
         Returns:
-            dict: ``st_*`` attribute dict.
+            MountAttrs: the entry's POSIX attributes.
         """
         name = path.rsplit("/", 1)[-1]
         if is_macos_metadata(name):

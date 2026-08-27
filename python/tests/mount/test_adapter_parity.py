@@ -97,9 +97,9 @@ class Pair:
     async def fuse_attrs(self, path: str) -> tuple[bool, bool, int]:
         """(is_dir, is_symlink, size) for a path, fuse side."""
         entry = await self.core.getattr(path)
-        mode = entry["st_mode"]
+        mode = entry.mode
         return (bool(stat_bits.S_ISDIR(mode)), bool(stat_bits.S_ISLNK(mode)),
-                entry["st_size"])
+                entry.size)
 
 
 async def errno_of(call) -> int:
@@ -276,5 +276,5 @@ async def test_the_post_open_size_is_the_one_deliberate_divergence():
     # a real mount although the adapter would have answered the bytes.
     pair = await Pair.make(sizeless=True)
     fh = await pair.core.open("/a.txt")
-    assert (await pair.core.getattr("/a.txt", fh))["st_size"] == len(HELLO)
+    assert (await pair.core.getattr("/a.txt", fh)).size == len(HELLO)
     assert (await pair.nfs_attrs("a.txt"))[2] == 0

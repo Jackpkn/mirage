@@ -154,7 +154,10 @@ class MirageFS:
         return self.core.drain_ops()
 
     def getattr(self, path: str, fh: int | None = None) -> dict[str, Any]:
-        return self._call(self.core.getattr, path, fh)
+        # mfusepy wants libfuse's st_* spelling; the core answers in a
+        # neutral row, so the translation lives here, in the adapter
+        # whose binding needs it.
+        return self._call(self.core.getattr, path, fh).as_stat_dict()
 
     def readdir(self, path: str, fh: int) -> list[Any]:
         return self._call(self.core.readdir, path)

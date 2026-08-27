@@ -16,7 +16,8 @@ import { runWithSession } from '@struktoai/mirage-core/context/session_context'
 import type { OpRecord } from '@struktoai/mirage-core/observe/record'
 import type { Ops } from '@struktoai/mirage-core/ops/ops'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
-import { type MountAttrs, MountCore } from '../mount/core.ts'
+import { MountCore } from '../mount/core.ts'
+import type { MountAttrs } from '../mount/types.ts'
 import { classifyErrno } from '../mount/errors.ts'
 
 export type { MountAttrs }

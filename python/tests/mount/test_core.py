@@ -21,6 +21,7 @@ import pytest
 import pytest_asyncio
 
 from mirage.mount.core import MountCore
+from mirage.mount.types import MountAttrs
 from mirage.ops.registry import op
 from mirage.resource.ram import RAMResource
 from mirage.types import ContentType, FileStat, FileType, MountMode, PathSpec
@@ -50,13 +51,13 @@ async def test_core_needs_no_fuse_module():
 @pytest.mark.asyncio
 async def test_getattr_file(seeded):
     attrs = await seeded.getattr("/a.txt")
-    assert attrs["st_mode"] & stat.S_IFREG
-    assert attrs["st_size"] == len(b"hello world")
+    assert attrs.mode & stat.S_IFREG
+    assert attrs.size == len(b"hello world")
 
 
 @pytest.mark.asyncio
 async def test_getattr_dir(seeded):
-    assert (await seeded.getattr("/sub"))["st_mode"] & stat.S_IFDIR
+    assert (await seeded.getattr("/sub")).mode & stat.S_IFDIR
 
 
 @pytest.mark.asyncio
@@ -133,9 +134,9 @@ async def test_getattr_of_a_link_reports_the_nodes_own_row():
                       mtime="2020-01-02T03:04:05Z",
                       nofollow=True)
     attrs = await core.getattr("/link")
-    assert attrs["st_mode"] == stat.S_IFLNK | 0o777
-    assert attrs["st_size"] == len("a.txt")
-    assert attrs["st_mtime"] == mtime_ns(
+    assert attrs.mode == stat.S_IFLNK | 0o777
+    assert attrs.size == len("a.txt")
+    assert attrs.mtime == mtime_ns(
         FileStat(name="link",
                  type=FileType.SYMLINK,
                  modified="2020-01-02T03:04:05Z"))
@@ -264,11 +265,22 @@ async def test_overlay_mtime_reads_offsetless_stamps_as_utc(
                      type=FileType.FILE,
                      content=ContentType.TEXT,
                      modified="2026-01-02T03:04:05+00:00")
-    entry = {"st_mode": 0o100644, "st_mtime": 0, "st_ctime": 0}
-    got_naive = seeded._apply_stat_attrs(dict(entry), naive)
-    got_aware = seeded._apply_stat_attrs(dict(entry), aware)
-    assert got_naive["st_mtime"] == got_aware["st_mtime"]
-    assert got_naive["st_mtime"] == mtime_ns(naive)
+
+    def row() -> MountAttrs:
+        # A fresh row per fold: the overlay writes onto what it is given.
+        return MountAttrs(mode=0o100644,
+                          size=0,
+                          nlink=1,
+                          uid=0,
+                          gid=0,
+                          atime=0,
+                          mtime=0,
+                          ctime=0)
+
+    got_naive = seeded._apply_stat_attrs(row(), naive)
+    got_aware = seeded._apply_stat_attrs(row(), aware)
+    assert got_naive.mtime == got_aware.mtime
+    assert got_naive.mtime == mtime_ns(naive)
 
 
 @pytest.mark.asyncio
@@ -280,7 +292,14 @@ async def test_epoch_zero_mtime_lands_instead_of_reading_as_unknown(seeded):
                      type=FileType.FILE,
                      content=ContentType.TEXT,
                      modified="1970-01-01T00:00:00Z")
-    entry = {"st_mode": 0o100644, "st_mtime": 12345, "st_ctime": 12345}
-    got = seeded._apply_stat_attrs(dict(entry), epoch)
-    assert got["st_mtime"] == 0
-    assert got["st_ctime"] == 0
+    row = MountAttrs(mode=0o100644,
+                     size=0,
+                     nlink=1,
+                     uid=0,
+                     gid=0,
+                     atime=12345,
+                     mtime=12345,
+                     ctime=12345)
+    got = seeded._apply_stat_attrs(row, epoch)
+    assert got.mtime == 0
+    assert got.ctime == 0

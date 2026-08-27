@@ -200,7 +200,7 @@ async def test_fuse_readdir_merges_child_mount_and_link():
         core = MountCore(ws.ops)
         names = await core.readdir("/base")
         assert "a.txt" in names and "inner" in names and "lnk" in names
-        assert (await core.getattr("/base/inner"))["st_mode"] & 0o040000
+        assert (await core.getattr("/base/inner")).mode & 0o040000
     finally:
         await ws.close()
 

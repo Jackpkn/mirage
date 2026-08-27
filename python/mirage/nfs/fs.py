@@ -191,7 +191,7 @@ class MirageNFS:
         # its getattr reports a link as a link, which keeps one out of
         # the rmdir arm and lets a broken one be removed at all.
         attrs = await self._core.attrs_for(path)
-        if stat_bits.S_ISDIR(attrs["st_mode"]):
+        if stat_bits.S_ISDIR(attrs.mode):
             await self._core.rmdir(path)
         else:
             await self._core.unlink(path)
@@ -455,13 +455,12 @@ class MirageNFS:
             path (str): the entry's mount-relative path.
         """
         entry = await self._core.attrs_for(path)
-        mode = entry["st_mode"]
+        mode = entry.mode
         is_dir = bool(stat_bits.S_ISDIR(mode))
-        size = 0 if is_dir else self._writes.pending_size(
-            fileid, entry["st_size"])
+        size = 0 if is_dir else self._writes.pending_size(fileid, entry.size)
         return NFSAttrs(fileid=fileid,
                         size=size,
                         is_dir=is_dir,
                         is_symlink=bool(stat_bits.S_ISLNK(mode)),
                         mode=mode & 0o7777,
-                        mtime_epoch=float(entry["st_mtime"]))
+                        mtime_epoch=float(entry.mtime))
