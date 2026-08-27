@@ -183,6 +183,87 @@ def find_unterminated_backtick(command: str) -> str | None:
     return command[opened:] if opened is not None else None
 
 
+_NAME_CONT = frozenset(
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
+_DIGITS = frozenset(b"0123456789")
+
+
+def _orphaned_dollar_offsets(root: tree_sitter.Node, data: bytes) -> list[int]:
+    """Byte offsets of literal ``$`` tokens cut off from their name.
+
+    tree-sitter-bash 0.25.1 stops lexing a later unbraced expansion in a
+    word when a name-terminating character follows it, so
+    ``> /api/$c/$id.json`` parses as ``/api/$c/$`` plus a sibling word
+    ``id.json``: the ``$`` lands in the tree as a literal token and the
+    expansion is gone. A literal ``$`` directly followed by a name
+    character is a shape no correct bash lex produces (bash would have
+    read an expansion), so each one marks a mis-parse. The ``$`` opening
+    a simple_expansion is that expansion's own token and is skipped.
+
+    Args:
+        root (tree_sitter.Node): root of the parsed tree.
+        data (bytes): the source the tree was parsed from.
+    """
+    offsets: list[int] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        for child in node.children:
+            if (not child.is_named and child.type == "$"
+                    and node.type != "simple_expansion"
+                    and data[child.end_byte:child.end_byte + 1]
+                    and data[child.end_byte] in _NAME_CONT):
+                offsets.append(child.start_byte)
+            stack.append(child)
+    return offsets
+
+
+def _rebrace_dollar(data: bytes, offset: int) -> bytes:
+    """Rewrite the expansion at ``offset`` into its braced spelling.
+
+    ``$id.json`` becomes ``${id}.json``, which says the same thing and
+    is the spelling the grammar reads correctly. Bash reads a single
+    digit after ``$`` as one positional parameter, so ``$12`` rebraces
+    as ``${1}2``.
+
+    Args:
+        data (bytes): shell source holding the orphaned ``$``.
+        offset (int): byte offset of the ``$``.
+    """
+    end = offset + 1
+    if data[end] in _DIGITS:
+        end += 1
+    else:
+        while end < len(data) and data[end] in _NAME_CONT:
+            end += 1
+    return data[:offset] + b"${" + data[offset + 1:end] + b"}" + data[end:]
+
+
+def _repair_orphaned_dollars(root: tree_sitter.Node,
+                             data: bytes) -> tree_sitter.Node:
+    """Rebrace mis-lexed expansions and reparse until none remain.
+
+    Every rebrace consumes one bare ``$`` and never writes a new one,
+    so the loop is bounded by the count of ``$`` bytes. A retry that
+    parses worse than what it replaces is discarded.
+
+    Args:
+        root (tree_sitter.Node): tree parsed from ``data``.
+        data (bytes): the source ``root`` was parsed from.
+    """
+    for _ in range(data.count(b"$")):
+        offsets = _orphaned_dollar_offsets(root, data)
+        if not offsets:
+            break
+        for offset in sorted(offsets, reverse=True):
+            data = _rebrace_dollar(data, offset)
+        retried = TS_PARSER.parse(data).root_node
+        if retried.has_error:
+            break
+        root = retried
+    return root
+
+
 def parse(command: str) -> tree_sitter.Node:
     """Parse a shell command string into a tree-sitter AST.
 
@@ -195,6 +276,12 @@ def parse(command: str) -> tree_sitter.Node:
     only if it parses cleanly. Commands that parse today are untouched,
     so no working command's byte offsets move.
 
+    A later unbraced ``$var`` followed by a name-terminating character
+    is mis-lexed by the grammar, leaving a literal ``$`` token behind
+    (see _orphaned_dollar_offsets); those expansions are rebraced and
+    the line reparsed, so the returned tree can spell ``$id`` as
+    ``${id}``.
+
     Args:
         command (str): shell source to parse.
 
@@ -204,25 +291,31 @@ def parse(command: str) -> tree_sitter.Node:
     """
     data = strip_line_continuation(command).encode()
     root = TS_PARSER.parse(data).root_node
-    if not root.has_error:
-        return root
-    # Sitting inside an ERROR is not evidence that an opener is broken:
-    # tree-sitter's error region swallows neighbouring tokens, so a valid
-    # `((i++))` next to a bad opener reports as errored too. Splitting it
-    # would silently turn arithmetic into a subshell running `i++`, which
-    # is a wrong parse rather than a rejected one. Each opener is judged
-    # on its own span instead, in byte space throughout, because the
-    # offsets tree-sitter reports are byte offsets.
-    offsets = [
-        offset for offset in set(_failed_arith_openers(root))
-        if not _is_arithmetic(data, offset)
-    ]
-    if not offsets:
-        return root
-    for offset in sorted(offsets, reverse=True):
-        data = data[:offset + 1] + b" " + data[offset + 1:]
-    retried = TS_PARSER.parse(data).root_node
-    return root if retried.has_error else retried
+    if root.has_error:
+        # Sitting inside an ERROR is not evidence that an opener is
+        # broken: tree-sitter's error region swallows neighbouring
+        # tokens, so a valid `((i++))` next to a bad opener reports as
+        # errored too. Splitting it would silently turn arithmetic into
+        # a subshell running `i++`, which is a wrong parse rather than a
+        # rejected one. Each opener is judged on its own span instead,
+        # in byte space throughout, because the offsets tree-sitter
+        # reports are byte offsets.
+        offsets = [
+            offset for offset in set(_failed_arith_openers(root))
+            if not _is_arithmetic(data, offset)
+        ]
+        if offsets:
+            retried_data = data
+            for offset in sorted(offsets, reverse=True):
+                retried_data = (retried_data[:offset + 1] + b" " +
+                                retried_data[offset + 1:])
+            retried = TS_PARSER.parse(retried_data).root_node
+            if not retried.has_error:
+                root = retried
+                data = retried_data
+    if b"$" in data:
+        root = _repair_orphaned_dollars(root, data)
+    return root
 
 
 _BASH_KEYWORDS = frozenset({

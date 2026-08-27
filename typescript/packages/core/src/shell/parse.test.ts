@@ -15,6 +15,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { getParts, getRedirects, getText } from './helpers.ts'
 import {
   createShellParser,
   findSyntaxError,
@@ -22,6 +23,7 @@ import {
   stripLineContinuation,
   type ShellParser,
 } from './parse.ts'
+import type { TSNodeLike } from './types.ts'
 
 const require = createRequire(import.meta.url)
 const engineWasm = readFileSync(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))
@@ -197,6 +199,49 @@ describe('(( reparse: subshell that immediately opens a subshell', () => {
 
   it('still reports an unrelated syntax error', () => {
     expect(parser.parse('if then').hasError).toBe(true)
+  })
+})
+
+// tree-sitter-bash 0.25.1 drops a later unbraced `$var` out of its word
+// when the name is cut short by a name-terminating character: the `$`
+// stays behind as a literal token and the rest splits into a sibling
+// word (`/api/$c/$id.json` -> `/api/$c/$` + `id.json`). parse() rebraces
+// the orphaned expansion and reparses, so consumers see one whole word.
+describe('$ reparse: later unbraced var cut off from its name', () => {
+  it.each([
+    ['echo hi > /api/$c/$id.json', '/api/$c/${id}.json'],
+    ['echo hi > /api/$c/$id-x', '/api/$c/${id}-x'],
+    ['echo hi > /w/$a/$b/$c', '/w/$a/${b}/$c'],
+    ['echo hi > ${a}.$b.json', '${a}.${b}.json'],
+    ['echo hi > /w/$c/$1.json', '/w/$c/${1}.json'],
+  ])('keeps the redirect target of %j one word', (command, target) => {
+    const statement = parser.parse(command).children[0] as TSNodeLike
+    expect(statement.type).toBe('redirected_statement')
+    const [, redirects] = getRedirects(statement)
+    expect(redirects).toHaveLength(1)
+    expect(redirects[0]?.target).toBe(target)
+  })
+
+  it('keeps a bare word one argument', () => {
+    const command = parser.parse('echo /api/$c/$id.json').children[0] as TSNodeLike
+    expect(getParts(command).map((p) => getText(p))).toEqual(['echo', '/api/$c/${id}.json'])
+  })
+
+  it('keeps an assignment one assignment', () => {
+    // The broken parse split this into an assignment holding
+    // `p=/api/$c/$` plus a command named `id.json`.
+    const node = parser.parse('p=/api/$c/$id.json').namedChildren[0]
+    expect(node?.type).toBe('variable_assignment')
+    expect(getText(node as TSNodeLike)).toBe('p=/api/$c/${id}.json')
+  })
+
+  it.each([
+    // A `$` bash keeps literal is left alone: no name character follows.
+    ['echo a$ b', ['echo', 'a$', 'b']],
+    ['echo $', ['echo', '$']],
+  ])('leaves the literal dollar in %j untouched', (command, words) => {
+    const node = parser.parse(command).children[0] as TSNodeLike
+    expect(getParts(node).map((p) => getText(p))).toEqual(words)
   })
 })
 
