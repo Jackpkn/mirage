@@ -1,0 +1,132 @@
+{
+  "cases": [
+    {
+      "id": "rv_second_var_suffix",
+      "seq": 603220,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "c=aa; id=1; mkdir -p /data/rv/$c && echo hi > /data/rv/$c/$id.json && cat /data/rv/aa/1.json && find /data/rv -type f",
+      "expect": {
+        "exit": 0,
+        "stdout": "hi\n/data/rv/aa/1.json\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "rv_three_vars_no_suffix",
+      "seq": 603221,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "a=x; b=y; c=z; mkdir -p /data/rv/w/$a/$b && echo hi > /data/rv/w/$a/$b/$c && cat /data/rv/w/x/y/z",
+      "expect": {
+        "exit": 0,
+        "stdout": "hi\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "rv_heredoc_target",
+      "seq": 603222,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "c=cc; id=2; mkdir -p /data/rv/$c && cat > /data/rv/$c/$id.json <<EOF\nbody\nEOF\ncat /data/rv/cc/2.json",
+      "expect": {
+        "exit": 0,
+        "stdout": "body\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "rv_word_and_assignment",
+      "seq": 603223,
+      "targets": [
+        "ram",
+        "disk",
+        "redis",
+        "opfs",
+        "s3",
+        "databricks",
+        "gridfs",
+        "s3-prefix",
+        "databricks-prefix",
+        "gridfs-prefix",
+        "dropbox",
+        "dropbox-root",
+        "onedrive",
+        "sharepoint",
+        "sharepoint-prefix",
+        "ssh",
+        "nextcloud",
+        "gdrive",
+        "gdrive-folder",
+        "box"
+      ],
+      "command": "c=bb; id=9; p=/api/$c/$id.json; echo $p; echo /api/$c/$id.json",
+      "expect": {
+        "exit": 0,
+        "stdout": "/api/bb/9.json\n/api/bb/9.json\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

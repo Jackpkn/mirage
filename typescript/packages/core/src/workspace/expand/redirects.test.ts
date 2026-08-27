@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { makeIntegrationWS, run, runResult } from '../fixtures/integration_fixture.ts'
+import { makeIntegrationWS, run, runExit, runResult } from '../fixtures/integration_fixture.ts'
 
 describe('heredoc body expansion', () => {
   it('expands braced vars and command substitutions', async () => {
@@ -248,6 +248,64 @@ describe('quoted redirect targets', () => {
     try {
       await ws.execute("cat <<< 'hi' > /data/HS")
       expect(await run(ws, 'cat /data/HS')).toBe('hi\n')
+    } finally {
+      await ws.close()
+    }
+  })
+})
+
+// tree-sitter-bash 0.25.1 splits a later unbraced `$var` out of a word
+// when a name-terminating character follows it, so `> /api/$c/$id.json`
+// used to write a file literally named `$` under /api/<c>. parse()
+// repairs the tree; these pin the end-to-end behavior.
+describe('later unbraced var in a redirect target', () => {
+  it('writes the fully expanded path', async () => {
+    const { ws } = await makeIntegrationWS()
+    try {
+      await ws.execute('c=aa; id=1; mkdir -p /api/$c')
+      expect(await runExit(ws, 'echo hi > /api/$c/$id.json')).toBe(0)
+      expect(await run(ws, 'cat /api/aa/1.json')).toBe('hi\n')
+      expect(await run(ws, 'find /api -type f')).toBe('/api/aa/1.json\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('delivers a heredoc into the fully expanded path', async () => {
+    const { ws } = await makeIntegrationWS()
+    try {
+      await ws.execute('c=aa; id=1; mkdir -p /api/$c')
+      await ws.execute('cat > /api/$c/$id.json <<EOF\nbody\nEOF')
+      expect(await run(ws, 'cat /api/aa/1.json')).toBe('body\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('expands three suffixless vars in one target', async () => {
+    const { ws } = await makeIntegrationWS()
+    try {
+      await ws.execute('a=x; b=y; c=z; mkdir -p /w/$a/$b')
+      await ws.execute('echo hi > /w/$a/$b/$c')
+      expect(await run(ws, 'cat /w/x/y/z')).toBe('hi\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('keeps a bare word one argument', async () => {
+    const { ws } = await makeIntegrationWS()
+    try {
+      expect(await run(ws, 'c=aa; id=1; echo /api/$c/$id.json')).toBe('/api/aa/1.json\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('keeps an assignment one assignment', async () => {
+    const { ws } = await makeIntegrationWS()
+    try {
+      expect(await run(ws, 'c=aa; id=1; p=/api/$c/$id.json; echo $p')).toBe('/api/aa/1.json\n')
     } finally {
       await ws.close()
     }
