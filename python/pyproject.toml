@@ -269,11 +269,31 @@ dev = [
     "lz4>=4.4.5",
 ]
 
-[tool.flake8]
-exclude = ["mirage/commands/remote/grpc/proto/command_pb2.py", "mirage/commands/remote/grpc/proto/command_pb2_grpc.py"]
-per-file-ignores = [
-    "python/mirage/resource/*/prompt.py:E501",
+[tool.ruff]
+# 79 to match the yapf and isort defaults this repo formats with; ruff's own
+# default is 88, which would disagree with the formatter on every wrapped line.
+line-length = 79
+exclude = [
+    "mirage/commands/remote/grpc/proto/command_pb2.py",
+    "mirage/commands/remote/grpc/proto/command_pb2_grpc.py",
 ]
+
+[tool.ruff.lint]
+# E/W/F is what flake8 enforced; F alone (ruff's default) is what autoflake
+# removed. Deliberately NOT here: `I` and `UP`. Ruff's isort emits one name
+# per line with a trailing comma and cannot produce isort's default grid
+# style, so enabling it would reformat every wrapped import in the repo; and
+# `UP` at this project's py311 floor is stricter than the configured
+# `pyupgrade --py38-plus`, so it would land 168 modernizations. Both are real
+# changes that belong in their own PR, not smuggled into a tooling swap.
+select = ["E", "W", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"mirage/resource/*/prompt.py" = ["E501"]
+# ruff measures E501 in display columns, so an East Asian character counts as
+# two; flake8 counted characters. These two lines are prose fixtures in CJK
+# that flake8 passed and ruff would not.
+"tests/utils/test_sanitize.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
