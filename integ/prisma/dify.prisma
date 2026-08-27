@@ -1,0 +1,81 @@
+// Schema for the dify fake (integ/server/dify/, fixtures/dify/v1.json). The
+// documents, their segments and the retrieval answers were module constants in
+// the python fake this replaces; holding them as rows makes a knowledge-base
+// edit a fixture edit rather than a code edit.
+//
+// Retrieval is the part worth explaining. The python fake decided its answer
+// with an if/elif chain over substrings of the lowercased query, so the rules
+// were ordered and the first match won. That is expressible as rows: a rule
+// carries the substrings that fire it and the hits it answers with, and both
+// carry seq because both orders are caller-visible.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/dify"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model DifyDocument {
+  tenant String
+  id     String
+  name   String
+  // The virtual path this document maps to. Null means the document has no
+  // slug metadata and falls back to its name, which CHANGELOG.md exercises.
+  slug String?
+  // The uploaded source size the vendor reports, which is NOT the rendered
+  // segment text's length. Kept apart for the reason FileStat.size documents.
+  size      Int
+  createdAt Int
+  seq       Int
+
+  segments DifySegment[]
+
+  @@id([tenant, id])
+}
+
+// A chunk of a document, in line order: reading a file rejoins the segments
+// with newlines, so seq is what makes the rendered file deterministic.
+model DifySegment {
+  pk         Int    @id @default(autoincrement())
+  tenant     String
+  documentId String
+  content    String
+  seq        Int
+
+  document DifyDocument @relation(fields: [tenant, documentId], references: [tenant, id])
+
+  @@index([tenant, documentId])
+}
+
+model DifyRetrievalRule {
+  tenant String
+  id     String
+  // Space-separated lowercase substrings. The rule fires when the lowercased
+  // query contains any of them, and the lowest seq that fires wins, which is
+  // what the python if/elif chain did.
+  keywords String
+  seq      Int
+
+  hits DifyRetrievalHit[]
+
+  @@id([tenant, id])
+}
+
+model DifyRetrievalHit {
+  pk         Int    @id @default(autoincrement())
+  tenant     String
+  ruleId     String
+  documentId String
+  content    String
+  score      Float
+  seq        Int
+
+  rule DifyRetrievalRule @relation(fields: [tenant, ruleId], references: [tenant, id])
+
+  @@index([tenant, ruleId])
+}
