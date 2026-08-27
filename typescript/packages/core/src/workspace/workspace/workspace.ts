@@ -959,6 +959,12 @@ export class Workspace {
     command: string,
     options: ExecuteOptions = {},
   ): Promise<ExecuteResult | ProvisionResult> {
+    // The top-level door, so it shuts as soon as a close starts. A line that
+    // got in after `jobTable.killAll()` could submit a background job that
+    // teardown then never stops, and resources would close under it. The
+    // internal dispatch path stays open, which is what the journal replay
+    // uses.
+    if (this.shuttingDown) throw new Error('Workspace is closed')
     return executeLine(this.executeEnv(), command, options)
   }
 

@@ -52,6 +52,23 @@ const STD_STREAM_RDEV: ReadonlyMap<string, number> = new Map([
 // EOF; only /dev/zero hands back an endless run of zeroes, and a stream that
 // did the same would hang `open('/dev/stdin').read()` forever.
 const NULL_RDEV = 0x103
+
+/**
+ * Whether the seed already places a node at this path, by any means.
+ *
+ * Args:
+ *   seed: the tree collected from the mounts before the run.
+ *   path: guest-absolute path to check.
+ */
+function seedHolds(seed: MirageFsSeed, path: string): boolean {
+  return (
+    seed.files.has(path) ||
+    seed.devices.has(path) ||
+    seed.links.has(path) ||
+    seed.unreadable.has(path) ||
+    seed.dirs.includes(path)
+  )
+}
 const EOF_ON_READ_RDEV: ReadonlySet<number> = new Set([NULL_RDEV, ...STD_STREAM_RDEV.values()])
 
 function isCharDevice(mode: number): boolean {
@@ -185,11 +202,16 @@ export class MirageFs {
     if (this.prefix === '/dev') {
       for (const [name, rdev] of STD_STREAM_RDEV) {
         const path = `/dev/${name}`
+        // Only where the mount itself has nothing by that name. `NodeTree.seed`
+        // places devices after files, directories and links, so injecting one
+        // blindly would overwrite a real entry the mount is serving and hand
+        // the guest an empty device instead of its content.
+        if (seedHolds(seed, path)) continue
         // A write is swallowed, as it is for every synthetic character device
         // here. The interpreter's real stderr rides its own capture, not this
         // node, so nothing that used to be reported is lost: before this the
         // path did not exist at all and the open raised.
-        if (!seed.devices.has(path)) seed.charDevice(path, S_IFCHR | 0o666, rdev)
+        seed.charDevice(path, S_IFCHR | 0o666, rdev)
       }
     }
     this.tree.seed(seed)

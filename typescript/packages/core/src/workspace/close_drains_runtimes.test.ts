@@ -54,6 +54,10 @@ describe('Workspace.close', () => {
     const ws = build()
     const closing = ws.close()
     expect(() => ws.addMount('/late', new RAMResource())).toThrow('Workspace is closed')
+    // The top-level door too: a line that got in here could submit a
+    // background job after killAll had already run, and teardown would close
+    // resources out from under it.
+    await expect(ws.execute('echo hi')).rejects.toThrow('Workspace is closed')
     await closing
   })
 
