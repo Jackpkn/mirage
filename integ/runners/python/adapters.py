@@ -333,29 +333,14 @@ def _load_module(path: Path) -> ModuleType:
     return module
 
 
-def _load_onedrive_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "onedrive_server.py")
-
-
 def _load_hf_server() -> ModuleType:
     return _load_module(
         Path(__file__).resolve().parents[2] / "server" / "hf_server.py")
 
 
-def _load_dropbox_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "dropbox_server.py")
-
-
 def _load_ssh_server() -> ModuleType:
     return _load_module(
         Path(__file__).resolve().parents[2] / "server" / "ssh_server.py")
-
-
-def _load_box_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "box_server.py")
 
 
 def _load_dify_server() -> ModuleType:
@@ -820,25 +805,38 @@ class EmailService:
 
 
 class OneDriveService:
+    """Points onedrive mounts at the shared fake Microsoft Graph server.
 
-    def __init__(self, base: str, runner) -> None:
-        self.base = base
-        self.runner = runner
+    The server (integ/server/onedrive/) is external, Prisma-backed and shared
+    across both hosts, replacing the per-run aiohttp server this adapter used
+    to start in-process (and the TypeScript runner used to start as a PYTHON
+    SUBPROCESS). Each target takes its own Graph ACCOUNT: the access token is
+    what the fake reads the account off, which is the ordinary
+    `Authorization: Bearer` header the Graph client already sends on every
+    call, so no mirage-only header reaches the product code.
+
+    Args:
+        token (str): this target's account, sent as the bearer token.
+        url (str): ONEDRIVE_URL origin, used as the Graph service root.
+    """
+
+    def __init__(self, token: str, url: str) -> None:
+        self.token = token
+        self.url = url
 
     @classmethod
-    async def create(cls) -> "OneDriveService":
-        module = _load_onedrive_server()
-        state, _server, runner = await module.start_fake_graph()
-        return cls(state.base, runner)
+    async def create(cls, run_id: str, target: dict) -> "OneDriveService":
+        url = os.environ["ONEDRIVE_URL"].rstrip("/")
+        return cls(f"{run_id}-{target['id']}", url)
 
     def resource(self, mount: dict) -> OneDriveResource:
         return OneDriveResource(
-            OneDriveConfig(access_token="integ-token",
-                           graph_base_url=self.base,
+            OneDriveConfig(access_token=self.token,
+                           graph_base_url=self.url,
                            key_prefix=mount.get("prefix")))
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        return None
 
 
 class Mem0Service:
@@ -920,46 +918,51 @@ class HttpService:
 
 
 class DropboxService:
-    """Per-account fake Dropbox servers.
+    """Points dropbox mounts at the shared fake Dropbox server.
 
-    Mounts sharing a ``bucket`` share one fake account (the -root target
-    mounts three root_path subfolders of a single account, mirroring
-    s3-prefix's shared bucket); distinct buckets get isolated accounts.
+    The server (integ/server/dropbox/) is external, Prisma-backed and shared
+    across both hosts. Mounts sharing a ``bucket`` share one fake ACCOUNT (the
+    -root target mounts three root_path subfolders of a single account,
+    mirroring s3-prefix's shared bucket); distinct buckets get isolated
+    accounts. An account is a tenant on the one server rather than a server of
+    its own: the fake echoes the refresh token back from /oauth2/token as the
+    access token, so the account rides the ordinary Authorization header the
+    Dropbox RPC layer already sends. The run id is part of the token so two
+    runs against the same shared server cannot see each other's writes.
+
     Fixtures seed through the workspace like every writable backend.
+
+    Args:
+        run_id (str): this run's id, which scopes every account name.
+        url (str): DROPBOX_URL origin.
     """
 
-    def __init__(self) -> None:
-        self.accounts: dict[str, object] = {}
-        self.runners: list = []
+    def __init__(self, run_id: str, url: str) -> None:
+        self.run_id = run_id
+        self.url = url
 
     @classmethod
-    async def create(cls, target: dict) -> "DropboxService":
-        service = cls()
-        module = _load_dropbox_server()
-        for mount in target["mounts"]:
-            account = mount.get("bucket") or mount["path"]
-            if account not in service.accounts:
-                fake, runner = await module.start_fake_dropbox()
-                service.accounts[account] = fake
-                service.runners.append(runner)
-        return service
+    async def create(cls, run_id: str) -> "DropboxService":
+        url = os.environ["DROPBOX_URL"].rstrip("/")
+        return cls(run_id, url)
+
+    def account(self, mount: dict) -> str:
+        bucket = mount.get("bucket") or mount["path"].strip("/")
+        return f"{self.run_id}-{bucket}"
 
     def resource(self, mount: dict) -> DropboxResource:
-        account = mount.get("bucket") or mount["path"]
-        fake = self.accounts[account]
         return DropboxResource(
             # The fake supports full-text search_v2, so exercise grep/rg
             # narrowing in the battery.
             DropboxConfig(client_id="integ-client",
                           client_secret="integ-secret",
-                          refresh_token="integ-refresh",
-                          endpoint=fake.endpoint,
+                          refresh_token=self.account(mount),
+                          endpoint=self.url,
                           content_search=True,
                           root_path=mount.get("root") or "/"))
 
     async def teardown(self) -> None:
-        for runner in self.runners:
-            await runner.cleanup()
+        return None
 
 
 class HfService:
@@ -991,50 +994,154 @@ class HfService:
 
 
 class BoxService:
+    """Points box mounts at the shared fake Box API server.
 
-    def __init__(self, run_id: str, state, runner, endpoint: str) -> None:
+    The server (integ/server/box/) is external, Prisma-backed and shared
+    across both hosts. Each run takes its own ACCOUNT: the vendor's
+    developer-token flow sends a pre-fetched access token verbatim, so the
+    token IS the account and the fake reads it off `Authorization`. That
+    replaces naming the mount folder `integ-<runid>-<mount>` inside one shared
+    account, which isolated runs only as far as a name collision.
+
+    Box is read-only through the workspace, so the harness tee-seeding cannot
+    run and the fixture is uploaded over the Box API instead, exactly as the
+    TypeScript host does it.
+
+    Args:
+        run_id (str): this run's id, which names its account.
+        url (str): BOX_URL origin.
+    """
+
+    def __init__(self, run_id: str, url: str) -> None:
         self.run_id = run_id
-        self.state = state
-        self.runner = runner
-        self.endpoint = endpoint
+        self.url = url
+        self.token = f"integ-box-{run_id}"
+        # Mount path -> the id of the folder that mount is rooted at. Filled
+        # in by `create`, because seeding is async and `build_box` is not.
+        self.folders: dict[str, str] = {}
 
     @classmethod
-    async def create(cls, run_id: str) -> "BoxService":
-        module = _load_box_server()
-        state, _server, runner = await module.start_fake_box()
-        return cls(run_id, state, runner, state.base)
+    async def create(cls, run_id: str, target: dict) -> "BoxService":
+        service = cls(run_id, os.environ["BOX_URL"].rstrip("/"))
+        for mount in target["mounts"]:
+            service.folders[mount["path"]] = await service.seed(mount)
+        return service
+
+    def _auth(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.token}"}
+
+    async def _folder(self, session: aiohttp.ClientSession, parent_id: str,
+                      name: str) -> str:
+        """Create a folder, or find the existing one of that name.
+
+        Args:
+            session (aiohttp.ClientSession): open session against the fake.
+            parent_id (str): id of the folder to create under.
+            name (str): the folder's name.
+        """
+        async with session.post(f"{self.url}/2.0/folders",
+                                headers=self._auth(),
+                                json={
+                                    "name": name,
+                                    "parent": {
+                                        "id": parent_id
+                                    }
+                                }) as resp:
+            if resp.status == 201:
+                return (await resp.json())["id"]
+            if resp.status != 409:
+                raise RuntimeError(
+                    f"box folder create {name} -> {resp.status}")
+        async with session.get(
+                f"{self.url}/2.0/folders/{parent_id}/items?limit=1000",
+                headers=self._auth()) as resp:
+            entries = (await resp.json())["entries"]
+        for entry in entries:
+            if entry["type"] == "folder" and entry["name"] == name:
+                return entry["id"]
+        raise RuntimeError(f"box folder {name} neither created nor found")
+
+    async def _upload(self, session: aiohttp.ClientSession, folder_id: str,
+                      name: str, content: bytes) -> None:
+        """Upload one file with the vendor's multipart shape.
+
+        Args:
+            session (aiohttp.ClientSession): open session against the fake.
+            folder_id (str): id of the folder to upload into.
+            name (str): the file's name.
+            content (bytes): the file's bytes.
+        """
+        form = aiohttp.FormData()
+        form.add_field("attributes",
+                       json.dumps({
+                           "name": name,
+                           "parent": {
+                               "id": folder_id
+                           }
+                       }))
+        form.add_field("file",
+                       content,
+                       filename=name,
+                       content_type="application/octet-stream")
+        async with session.post(f"{self.url}/2.0/files/content",
+                                headers=self._auth(),
+                                data=form) as resp:
+            if resp.status != 201:
+                raise RuntimeError(f"box upload {name} -> {resp.status}")
+
+    async def seed(self, mount: dict) -> str:
+        """Create this mount's root folder and upload its fixture into it.
+
+        Args:
+            mount (dict): the mount entry from targets.json.
+        """
+        async with aiohttp.ClientSession() as session:
+            folder_id = await self._folder(session, "0", mount["folder"])
+            seed = mount.get("seed")
+            if seed:
+                base = (Path(__file__).resolve().parents[2] / "fixtures" /
+                        seed)
+                for src in sorted(base.rglob("*")):
+                    if not src.is_file():
+                        continue
+                    rel = src.relative_to(base).as_posix()
+                    parts = rel.split("/")
+                    parent_id = folder_id
+                    for name in parts[:-1]:
+                        parent_id = await self._folder(session, parent_id,
+                                                       name)
+                    await self._upload(session, parent_id, parts[-1],
+                                       src.read_bytes())
+            if seed == "files/v1":
+                # A weblink beside the fixture: sizeless and content-free, so
+                # listings must hide it and a direct stat must ENOENT.
+                async with session.post(f"{self.url}/2.0/web_links",
+                                        headers=self._auth(),
+                                        json={
+                                            "name": "homepage",
+                                            "url": "https://example.com/",
+                                            "parent": {
+                                                "id": folder_id
+                                            },
+                                        }) as resp:
+                    if resp.status != 201:
+                        raise RuntimeError(
+                            f"box web_link seed failed: {resp.status}")
+        return folder_id
 
     def resource(self, mount: dict) -> BoxResource:
-        # Box is read-only through the workspace, so the harness tee-seeding
-        # can't run; each mount gets its own root folder seeded in-process
-        # and mounted by id (mirrors how a real Box app scopes to a folder).
-        folder = self.state.add_folder("0", mount["folder"])
-        seed = mount.get("seed")
-        if seed:
-            base = Path(__file__).resolve().parents[2] / "fixtures" / seed
-            for src in sorted(base.rglob("*")):
-                if not src.is_file():
-                    continue
-                rel = src.relative_to(base).as_posix()
-                self.state.seed_path(f"{mount['folder']}/{rel}",
-                                     src.read_bytes())
-        if seed == "files/v1":
-            # A weblink beside the fixture: sizeless and content-free, so
-            # listings must hide it and a direct stat must ENOENT.
-            self.state.add_web_link(folder["id"], "homepage",
-                                    "https://example.com/")
         return BoxResource(
             BoxConfig(
-                access_token="integ-box-token",
-                endpoint=self.endpoint,
-                root_folder_id=folder["id"],
+                access_token=self.token,
+                endpoint=self.url,
+                root_folder_id=self.folders[mount["path"]],
                 # The fake supports name+content search, so exercise grep/rg
                 # push-down narrowing in the battery.
                 content_search=True,
             ))
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        return None
 
 
 class SlackService:
@@ -1329,36 +1436,84 @@ class LangfuseService:
 
 
 class SharePointService:
+    """Points sharepoint mounts at the shared fake Microsoft Graph server.
 
-    def __init__(self, base: str, server, runner) -> None:
-        self.base = base
-        self.server = server
-        self.runner = runner
+    Same server and same per-target account as :class:`OneDriveService`; what
+    differs is that a SharePoint mount names a DRIVE, and which drives a site
+    has is deployment state. That used to be an in-process `add_drive` call on
+    a server this adapter owned; with the server shared it crosses a socket, as
+    `PUT /drives/{key}`. The prefix folders are created the same way they
+    always were, just over Graph's own mkdir endpoint instead of by reaching
+    into the server's dict.
+
+    Args:
+        token (str): this target's account, sent as the bearer token.
+        url (str): ONEDRIVE_URL origin, used as the Graph service root.
+    """
+
+    def __init__(self, token: str, url: str) -> None:
+        self.token = token
+        self.url = url
 
     @classmethod
-    async def create(cls) -> "SharePointService":
-        module = _load_onedrive_server()
-        state, server, runner = await module.start_fake_graph()
+    async def create(cls, run_id: str, target: dict) -> "SharePointService":
+        service = cls(f"{run_id}-{target['id']}",
+                      os.environ["ONEDRIVE_URL"].rstrip("/"))
         _clear_sharepoint_caches()
-        return cls(state.base, server, runner)
+        for mount in target["mounts"]:
+            await service.provision(mount)
+        return service
+
+    def _auth(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.token}"}
+
+    async def provision(self, mount: dict) -> None:
+        """Declare this mount's drive and create its prefix folders.
+
+        Args:
+            mount (dict): the mount entry from targets.json.
+        """
+        drive = mount["drive"]
+        async with aiohttp.ClientSession() as session:
+            async with session.put(f"{self.url}/drives/{drive}",
+                                   headers=self._auth()) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"sharepoint drive {drive} -> {resp.status}")
+            parent = ""
+            for name in (mount.get("prefix") or "").strip("/").split("/"):
+                if not name:
+                    continue
+                # One level at a time: Graph's mkdir 404s when the parent is
+                # missing, and `replace` on a folder returns the existing one
+                # with its children intact, which is what makes this idempotent
+                # across the two mounts of sharepoint-prefix that share a
+                # `team/reports` ancestor.
+                stem = f"{self.url}/drives/{drive}/root"
+                url = f"{stem}:/{parent}:/children" if parent \
+                    else f"{stem}/children"
+                body = {
+                    "name": name,
+                    "folder": {},
+                    "@microsoft.graph.conflictBehavior": "replace",
+                }
+                async with session.post(url, headers=self._auth(),
+                                        json=body) as resp:
+                    if resp.status != 200:
+                        raise RuntimeError(
+                            f"sharepoint mkdir {name} -> {resp.status}")
+                parent = f"{parent}/{name}" if parent else name
 
     def resource(self, mount: dict) -> SharePointResource:
-        graph = self.server.drives.get(mount["drive"])
-        if graph is None:
-            graph = self.server.add_drive(mount["drive"])
-        key_prefix = mount.get("prefix")
-        if key_prefix:
-            graph._ensure_parents(f"{key_prefix}/placeholder")
         return SharePointResource(
-            SharePointConfig(access_token="integ-token",
-                             graph_base_url=self.base,
+            SharePointConfig(access_token=self.token,
+                             graph_base_url=self.url,
                              site="Main",
                              drive=mount["drive"],
-                             key_prefix=key_prefix))
+                             key_prefix=mount.get("prefix")))
 
     async def teardown(self) -> None:
         _clear_sharepoint_caches()
-        await self.runner.cleanup()
 
 
 class NotionService:
@@ -2203,9 +2358,9 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
     if target.get("service") == "databricks":
         return await DatabricksVolumeService.create(run_id)
     if target.get("service") == "onedrive":
-        return await OneDriveService.create()
+        return await OneDriveService.create(run_id, target)
     if target.get("service") == "sharepoint":
-        return await SharePointService.create()
+        return await SharePointService.create(run_id, target)
     if target.get("service") == "mem0":
         return await Mem0Service.create()
     if target.get("service") == "postgres":
@@ -2231,9 +2386,9 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
     if target.get("service") == "hf":
         return await HfService.create(run_id)
     if target.get("service") == "box":
-        return await BoxService.create(run_id)
+        return await BoxService.create(run_id, target)
     if target.get("service") == "dropbox":
-        return await DropboxService.create(target)
+        return await DropboxService.create(run_id)
     if target.get("service") == "github":
         github = await GitHubService.create()
         # The write battery runs once per host against one shared fake, so

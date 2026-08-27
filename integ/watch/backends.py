@@ -285,22 +285,34 @@ async def build_ssh(spec: dict) -> Pair | None:
 
 
 async def build_dropbox(spec: dict) -> Pair | None:
-    """Dropbox battery against the in-process fake.
+    """Dropbox battery against the external dropbox fake.
 
     Exercises the recursive ``list_folder`` and its cursor pagination,
     and fingerprints on the fake's ``content_hash``.
 
+    The server is TypeScript and shared across runs, so this needs
+    ``DROPBOX_URL``. Each run takes its own ACCOUNT rather than resetting
+    the server: the fake echoes the refresh token back as the access token,
+    so a per-run token is a per-run tenant, and a reset would drop a
+    concurrent run's data.
+
     Args:
         spec (dict): Parsed case file.
     """
-    module = _load(SERVER_DIR / "dropbox_server.py", "integ_watch_dropbox")
-    fake, _runner = await module.start_fake_dropbox()
+    url = os.environ.get("DROPBOX_URL")
+    if not url:
+        return None
+    url = url.rstrip("/")
+    # Minted OUTSIDE the lambda: _pair calls it once per workspace, and a
+    # token minted per call would put the writer and the watcher in two
+    # different accounts, so every poll would see an empty tree.
+    account = f"watch-{uuid.uuid4().hex[:8]}"
     return _pair(
         spec, lambda: DropboxResource(
             DropboxConfig(client_id="integ-client",
                           client_secret="integ-secret",
-                          refresh_token="integ-refresh",
-                          endpoint=fake.endpoint,
+                          refresh_token=account,
+                          endpoint=url,
                           root_path="/")))
 
 
@@ -348,7 +360,7 @@ async def build_gridfs(spec: dict) -> Pair | None:
 
 
 async def build_onedrive(spec: dict) -> Pair | None:
-    """OneDrive battery against the in-process Graph fake.
+    """OneDrive battery against the external Graph fake.
 
     This is the ReaddirWalk path: Graph keys its tree by item id and has
     no whole-subtree listing, so the walk descends one
@@ -357,16 +369,22 @@ async def build_onedrive(spec: dict) -> Pair | None:
     Args:
         spec (dict): Parsed case file.
     """
-    module = _load(SERVER_DIR / "onedrive_server.py", "integ_watch_onedrive")
-    state, _server, _runner = await module.start_fake_graph()
+    url = os.environ.get("ONEDRIVE_URL")
+    if not url:
+        return None
+    url = url.rstrip("/")
+    # Each run takes its own ACCOUNT (the access token is the account on this
+    # fake). Minted OUTSIDE the lambda: _pair calls it once per workspace, and
+    # minting per call would put the writer and the watcher in different
+    # accounts, so every poll would see an empty tree.
+    token = f"watch-{uuid.uuid4().hex[:8]}"
     return _pair(
         spec, lambda: OneDriveResource(
-            OneDriveConfig(access_token="integ-token",
-                           graph_base_url=state.base)))
+            OneDriveConfig(access_token=token, graph_base_url=url)))
 
 
 async def build_box(spec: dict) -> Pair | None:
-    """Box battery against the in-process fake.
+    """Box battery against the external box fake.
 
     The second ReaddirWalk target, and the one that proves the walk is
     not Graph-shaped: Box addresses folders by its own ids and answers a
@@ -375,14 +393,30 @@ async def build_box(spec: dict) -> Pair | None:
     Args:
         spec (dict): Parsed case file.
     """
-    module = _load(SERVER_DIR / "box_server.py", "integ_watch_box")
-    state, _server, _runner = await module.start_fake_box()
-    folder = state.add_folder("0", "watch")
+    url = os.environ.get("BOX_URL")
+    if not url:
+        return None
+    url = url.rstrip("/")
+    # Each run takes its own ACCOUNT (the access token is the account on this
+    # fake) and one folder inside it. Minted OUTSIDE the lambda: _pair calls
+    # it once per workspace, and minting per call would put the writer and the
+    # watcher in different accounts.
+    token = f"watch-{uuid.uuid4().hex[:8]}"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f"{url}/2.0/folders",
+                                headers={"Authorization": f"Bearer {token}"},
+                                json={
+                                    "name": "watch",
+                                    "parent": {
+                                        "id": "0"
+                                    }
+                                }) as resp:
+            resp.raise_for_status()
+            folder_id = (await resp.json())["id"]
     return _pair(
         spec, lambda: BoxResource(
-            BoxConfig(access_token="integ-box-token",
-                      endpoint=state.base,
-                      root_folder_id=folder["id"])))
+            BoxConfig(
+                access_token=token, endpoint=url, root_folder_id=folder_id)))
 
 
 async def build_hf(spec: dict) -> Pair | None:

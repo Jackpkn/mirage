@@ -52,7 +52,7 @@ SERVE_CHUNK_SIZE = 1 << 16
 
 def freeze_clock(base: datetime) -> None:
     # Pin the stamp for suites that print raw mtimes, mirroring
-    # integ/s3.py's moto freeze and onedrive_server.freeze_clock.
+    # integ/s3.py's moto freeze and the kit Clock's `epoch` on /reset.
     global BASE_TIME, MODIFIED
     BASE_TIME = base
     MODIFIED = base.strftime("%Y-%m-%dT%H:%M:%SZ")

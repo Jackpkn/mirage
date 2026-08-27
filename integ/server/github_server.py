@@ -37,7 +37,7 @@ from aiohttp import web
 BIND_HOST = os.environ.get("MIRAGE_BIND_HOST", "127.0.0.1")
 
 # Deliberate divergences from api.github.com, mirroring how
-# integ/server/dropbox.ts documents its Gmail-search shortcuts:
+# integ/server/dropbox/ documents its Gmail-search shortcuts:
 #
 #   - Code search is token-indexed, not substring. Real GitHub tokenises on
 #     non-word characters, so `octo` never matches `octocat`. The fake keeps an
