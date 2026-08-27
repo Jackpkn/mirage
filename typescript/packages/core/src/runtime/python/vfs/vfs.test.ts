@@ -165,6 +165,24 @@ describe('MirageFs', () => {
     return `/m${String(counter)}/`
   }
 
+  // Emscripten's MEMFS makes /dev/stdin, /dev/stdout and /dev/stderr at
+  // startup, and pyodide's own capture reopens /dev/stderr when a run ends.
+  // Mounting mirage's /dev over MEMFS's used to hide them, and that reopen
+  // threw ENOENT out of a callback nobody catches: an unhandled rejection,
+  // which Node turns into a dead process.
+  it('keeps the standard stream devices when it takes over /dev', async () => {
+    await mountPrefix('/dev/')
+    const fs = py.FS as unknown as {
+      stat: (p: string) => { mode: number }
+      open: (p: string, flags: string) => unknown
+    }
+    for (const name of ['stdin', 'stdout', 'stderr']) {
+      expect((fs.stat(`/dev/${name}`).mode & 0o170000) === 0o020000).toBe(true)
+    }
+    // The reopen itself, which is the call that used to throw.
+    expect(fs.open('/dev/stderr', 'w')).toBeTruthy()
+  })
+
   it('serves a seeded file to the guest', async () => {
     const p = prefix()
     store.set(`${p}seed.txt`, enc.encode('ORIGINAL'))

@@ -36,6 +36,18 @@ const ENC = new TextEncoder()
 const S_IFMT = 0o170000
 const S_IFCHR = 0o020000
 
+// Emscripten's MEMFS makes these three at startup and its own stderr capture
+// reopens /dev/stderr when a run ends (`API.restore_stderr`). Mounting mirage's
+// /dev on top hid them, so that reopen raised ENOENT out of a filesystem
+// callback nobody catches, and the unhandled rejection took the process down
+// with it. Recreated here so the interpreter still finds them. rdev matches
+// MEMFS's own numbering.
+const STD_STREAM_RDEV: ReadonlyMap<string, number> = new Map([
+  ['stdin', 6],
+  ['stdout', 7],
+  ['stderr', 8],
+])
+
 function isCharDevice(mode: number): boolean {
   return (mode & S_IFMT) === S_IFCHR
 }
@@ -102,6 +114,7 @@ export class MirageFs {
   private readonly journal: MutationJournal
   private readonly tree: NodeTree
   private readonly mountOf: (path: string) => string | null
+  private readonly prefix: string
   // The file node FS.open just created, whose finalizing chmod is the
   // filesystem's own and not a guest metadata write. Cleared by the
   // first setattr, so it can never outlive the create it belongs to.
@@ -126,6 +139,7 @@ export class MirageFs {
     mountOf: (path: string) => string | null,
   ) {
     this.host = host
+    this.prefix = prefix
     this.errno = errno
     this.journal = journal
     this.mountOf = mountOf
@@ -159,6 +173,15 @@ export class MirageFs {
    *   seed: tree collected from the mounts before the run.
    */
   seed(seed: MirageFsSeed): void {
+    // Only when this shim is what /dev resolves to. The mount's own listing
+    // is untouched: these nodes live in this tree, which is what the
+    // interpreter reads, not what `ls /dev` on the mount reports.
+    if (this.prefix === '/dev') {
+      for (const [name, rdev] of STD_STREAM_RDEV) {
+        const path = `/dev/${name}`
+        if (!seed.devices.has(path)) seed.charDevice(path, S_IFCHR | 0o666, rdev)
+      }
+    }
     this.tree.seed(seed)
   }
 
@@ -231,6 +254,12 @@ export class MirageFs {
     const node = this.tree.makeNode(parent, name, mode)
     node.rdev = rdev
     const path = this.tree.pathOf(node)
+    // A character device is not mount content. pyodide makes one of its own
+    // at runtime -- `API.capture_stderr` calls FS.createDevice, which lands
+    // here as mknod -- and journaling it queued a write of /dev/capture_stderr
+    // against the real mount, which then failed on replay. Devices live in
+    // this tree only.
+    if (isCharDevice(mode)) return node
     if (this.host.isDir(mode)) this.journal.markMkdir(path)
     else {
       // An empty write is what carries a file that is created and never

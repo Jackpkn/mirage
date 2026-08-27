@@ -114,6 +114,7 @@ export class Workspace {
   readonly fs: Ops
   private closed = false
   private readonly closers: (() => Promise<void>)[] = []
+  private closing: Promise<void> | null = null
   private readonly watchManager: WatchManager
   private readonly runtimes: Runtimes
   private readonly policyRouter: PolicyRouter
@@ -1066,7 +1067,16 @@ export class Workspace {
 
   async close(): Promise<void> {
     if (this.closed) return
-    this.closed = true
+    // Re-entry is guarded by the in-flight promise, not by flipping `closed`
+    // up front. A runtime still replaying its journal has to see an open
+    // workspace or its final writes fail, which is how an interrupted python
+    // program used to lose its last mutations. Python guards the same way,
+    // with `_close_lock`, and sets its flags once teardown is done.
+    this.closing ??= this.runClose()
+    await this.closing
+  }
+
+  private async runClose(): Promise<void> {
     await this.scriptPolicy.close()
     await closeWorkspace({
       watch: this.watchManager,
@@ -1080,5 +1090,6 @@ export class Workspace {
       openOrder: this.openOrder,
       sharedResources: this.sharedResources,
     })
+    this.closed = true
   }
 }
