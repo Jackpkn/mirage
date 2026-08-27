@@ -27,6 +27,12 @@ export const config = parseConfig({
   // therefore its own tenant, which is what lets one server answer both hosts.
   tenantKind: 'pk-column',
   tenantFromBearer: true,
+  // The kit defaults to 64 MiB; the python fake this replaces set aiohttp's
+  // client_max_size to 1 GiB, and a volume is the one backend here a case could
+  // plausibly write a large file to. Inheriting the default would have turned
+  // an upload the old fake accepted into a 413, with nothing in the battery
+  // large enough to notice.
+  maxBodyBytes: 1024 ** 3,
 })
 
 // Files whose file_size a directory listing omits, though HEAD still reports
