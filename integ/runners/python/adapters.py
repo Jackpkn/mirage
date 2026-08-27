@@ -848,20 +848,35 @@ class Mem0Service:
 
     @classmethod
     async def create(cls) -> "Mem0Service":
-        script = (Path(__file__).resolve().parents[2] / "server" /
-                  "mem0_server.py")
+        """Start the kit fake and read the port it announces.
+
+        The adapter owns the process rather than reading a URL from the
+        environment, which is what keeps ``--facet mem0`` free of CI setup.
+        The fake moved from aiohttp to the kit, so the interpreter is tsx and
+        the first stdout line is the kit's announce line rather than a bare
+        endpoint.
+
+        Returns:
+            Mem0Service: the running fake.
+        """
+        integ = Path(__file__).resolve().parents[2]
         process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            str(script),
+            str(integ / "node_modules" / ".bin" / "tsx"),
+            str(integ / "server" / "mem0" / "main.ts"),
+            "--port",
+            "0",
+            cwd=str(integ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         assert process.stdout is not None
-        endpoint = (await process.stdout.readline()).decode().strip()
+        line = (await process.stdout.readline()).decode().strip()
+        endpoint = line.partition("=")[2] if line.startswith(
+            "MEM0_URL=") else ""
         if not endpoint:
             assert process.stderr is not None
             detail = (await process.stderr.read()).decode().strip()
-            raise RuntimeError(f"mem0 fake failed to start: {detail}")
+            raise RuntimeError(f"mem0 fake failed to start: {line}{detail}")
         return cls(endpoint, process)
 
     def resource(self, mount: dict) -> Mem0Resource:
@@ -1147,7 +1162,7 @@ class BoxService:
 class SlackService:
     """Points slack mounts at the shared fake Slack Web API server.
 
-    The server (integ/server/slack.ts) is external, Prisma-backed, and shared
+    The server (integ/server/slack/) is external, Prisma-backed, and shared
     across both hosts; /reset re-seeds it to the fixture. The mount uses a
     user token (xoxp-) so the grep/rg search push-down runs against the fake's
     search.messages / search.files endpoints.
@@ -1156,28 +1171,46 @@ class SlackService:
         url (str): SLACK_URL origin (methods live under /api).
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, workspace: str) -> None:
         self.url = url
+        self.workspace = workspace
 
     @classmethod
-    async def create(cls) -> "SlackService":
+    async def create(cls, run_id: str) -> "SlackService":
         url = os.environ["SLACK_URL"].rstrip("/")
+        service = cls(url, f"integ-{run_id}")
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{url}/reset") as resp:
+            async with session.post(f"{url}/reset",
+                                    json={"tenants":
+                                          [service.workspace]}) as resp:
                 resp.raise_for_status()
-        return cls(url)
+        return service
+
+    def _tokens(self) -> tuple[str, str]:
+        """The two tokens one workspace is reached with.
+
+        Both carry the same workspace; only the actor type differs, and the
+        fake strips that prefix to land them on one tenant. They stay distinct
+        because search.* refuses anything but a user token, exactly as real
+        Slack does, and collapsing them would make that refusal untestable.
+
+        Returns:
+            tuple[str, str]: the bot token and the user (search) token.
+        """
+        return f"xoxb-{self.workspace}", f"xoxp-{self.workspace}"
 
     def resource(self, mount: dict) -> SlackResource:
+        bot, search = self._tokens()
         return SlackResource(
-            SlackConfig(token="xoxb-integ",
-                        search_token="xoxp-integ-search",
+            SlackConfig(token=bot,
+                        search_token=search,
                         base_url=f"{self.url}/api"))
 
     def cli_installs(self) -> dict[str, tuple[CLISpec, dict[str, object]]]:
         return {
             "slack": (cli_spec_for("slack"), {
-                "token": "xoxb-integ",
-                "search_token": "xoxp-integ-search",
+                "token": self._tokens()[0],
+                "search_token": self._tokens()[1],
                 "base_url": f"{self.url}/api",
             }),
         }
@@ -1519,36 +1552,47 @@ class SharePointService:
 class NotionService:
     """Points notion mounts at the shared fake Notion REST API.
 
-    The server (integ/server/notion_server.ts) is external, Prisma-backed and
-    shared across both hosts; /reset re-seeds it to the fixture. The api key
-    doubles as the workspace id on that server, the way a real Notion
-    integration token scopes you to one workspace, so scenarios that use
-    different keys do not see each other's writes.
+    The server (integ/server/notion/) is external, Prisma-backed and shared
+    across both hosts. The token doubles as the workspace id, the way a real
+    Notion integration token scopes you to one workspace.
+
+    It is NOT minted per run, and notion is the only kit fake that cannot be:
+    the token is observable. `ntn auth token` prints the CLI's configured value
+    without contacting the server, integ/cli/ntn.json pins that literal, and
+    integ/ntn_conformance.ts asserts the same line against the real ntn binary,
+    which it configures with this same fixed token. A per-run token would make
+    those two runs print different things with one golden between them. So the
+    hosts share this workspace and must not reset it concurrently; the scoped
+    reset still buys the sequential case, where a reset no longer destroys the
+    whole run file out from under the other host.
 
     Args:
         url (str): NOTION_URL origin (the REST surface lives under /v1).
+        token (str): the shared workspace token.
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, token: str) -> None:
         self.url = url
+        self.token = token
 
     @classmethod
     async def create(cls) -> "NotionService":
         url = os.environ["NOTION_URL"].rstrip("/")
+        token = NOTION_TOKEN
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{url}/reset",
-                                    json={"workspace": NOTION_TOKEN}) as resp:
+            async with session.post(f"{url}/reset", json={"tenants":
+                                                          [token]}) as resp:
                 resp.raise_for_status()
-        return cls(url)
+        return cls(url, token)
 
     def resource(self, mount: dict) -> NotionResource:
-        return NotionResource(config=NotionConfig(api_key=NOTION_TOKEN,
-                                                  base_url=f"{self.url}/v1"))
+        return NotionResource(
+            config=NotionConfig(api_key=self.token, base_url=f"{self.url}/v1"))
 
     def cli_installs(self) -> dict[str, tuple[CLISpec, dict[str, object]]]:
         return {
             "ntn": (cli_spec_for("ntn"), {
-                "api_key": NOTION_TOKEN,
+                "api_key": self.token,
                 "base_url": f"{self.url}/v1",
             }),
         }
@@ -2397,7 +2441,7 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
             await github.reset()
         return github
     if target.get("service") == "slack":
-        return await SlackService.create()
+        return await SlackService.create(run_id)
     if target.get("service") == "trello":
         return await TrelloService.create()
     if target.get("service") == "discord":

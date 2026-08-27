@@ -27,7 +27,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { startMockServer } from './server/notion_server.ts'
+import { start } from './server/kit/typescript/index.ts'
+import { notionFake } from './server/notion/fake.ts'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const BATTERY = join(HERE, 'cli', 'ntn.json')
@@ -139,7 +140,11 @@ async function main(): Promise<void> {
 
   const battery = JSON.parse(readFileSync(BATTERY, 'utf8')) as { cases: Case[] }
   const cases = [...battery.cases].sort((a, b) => a.seq - b.seq)
-  const { server, port } = await startMockServer()
+  // Asynchronous on purpose: the fake is served by THIS event loop, so a
+  // synchronous spawn below would deadlock the loop that has to answer the
+  // child's request.
+  const fake = await start(notionFake, 0)
+  const port = fake.port
   const home = mkdtempSync(join(tmpdir(), 'ntn-conformance-'))
   const env = {
     ...process.env,
@@ -183,7 +188,7 @@ async function main(): Promise<void> {
     if (diffs.length > 0) failures.push(`${one.id} (${one.command})\n${diffs.join('\n')}`)
   }
 
-  server.close()
+  await fake.close()
   rmSync(home, { recursive: true, force: true })
 
   console.log(

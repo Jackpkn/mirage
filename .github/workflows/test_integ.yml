@@ -333,11 +333,8 @@ jobs:
 
       - name: Start fake Notion API (Prisma)
         working-directory: integ
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-notion-ci.db
         run: |
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-          nohup ./node_modules/.bin/tsx server/notion_server.ts --port 5091 > /tmp/notionsrv.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/notion/main.ts --port 5091 > /tmp/notionsrv.log 2>&1 &
           for i in $(seq 1 30); do grep -q "NOTION_URL=" /tmp/notionsrv.log && break; sleep 1; done
           cat /tmp/notionsrv.log
           echo "NOTION_URL=http://127.0.0.1:5091" >> "$GITHUB_ENV"
@@ -718,7 +715,7 @@ jobs:
 
       # The notion fake is a Node server shared by both hosts, so this
       # otherwise python-only job needs node to start it. No package build is
-      # required: notion_server.ts imports only node, prisma and the MCP sdk.
+      # required: the notion fake imports only node, prisma and the MCP sdk.
       - name: Set up pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
@@ -745,11 +742,8 @@ jobs:
 
       - name: Start fake Notion API (Prisma)
         working-directory: integ
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-notion-ci.db
         run: |
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-          nohup ./node_modules/.bin/tsx server/notion_server.ts --port 5091 > /tmp/notionsrv.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/notion/main.ts --port 5091 > /tmp/notionsrv.log 2>&1 &
           for i in $(seq 1 30); do grep -q "NOTION_URL=" /tmp/notionsrv.log && break; sleep 1; done
           cat /tmp/notionsrv.log
           echo "NOTION_URL=http://127.0.0.1:5091" >> "$GITHUB_ENV"
@@ -1423,10 +1417,7 @@ jobs:
       - name: Start fake Trello and Linear APIs
         if: matrix.facet == 'project'
         working-directory: integ
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-trello-ci.db
         run: |
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
           nohup ./node_modules/.bin/tsx server/trello/main.ts --port 5095 > /tmp/trello.log 2>&1 &
           nohup ./node_modules/.bin/tsx server/linear/main.ts --port 5094 > /tmp/linear.log 2>&1 &
           for f in trello linear; do
@@ -1459,11 +1450,8 @@ jobs:
       - name: Start fake Slack Web API
         if: matrix.facet == 'chat' || matrix.facet == 'cli'
         working-directory: integ
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-slack-ci.db
         run: |
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-          nohup ./node_modules/.bin/tsx server/slack.ts --port 5097 > /tmp/slack.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/slack/main.ts --port 5097 > /tmp/slack.log 2>&1 &
           for i in $(seq 1 30); do grep -q "SLACK_URL=" /tmp/slack.log && break; sleep 1; done
           cat /tmp/slack.log
           echo "SLACK_URL=http://127.0.0.1:5097" >> "$GITHUB_ENV"
@@ -1492,16 +1480,13 @@ jobs:
       # runner under NOTION_ENABLED) and the fake Linear GraphQL server.
       - name: Start fake Linear API and the Notion mock
         if: matrix.facet == 'cli'
-        env:
-          INTEG_DB_URL: file:/tmp/mirage-notion-ci.db
         run: |
           cd integ
           nohup ./node_modules/.bin/tsx server/linear/main.ts --port 5094 > /tmp/linear.log 2>&1 &
           for i in $(seq 1 30); do grep -q "LINEAR_URL=" /tmp/linear.log && break; sleep 1; done
           cat /tmp/linear.log
           echo "LINEAR_URL=http://127.0.0.1:5094" >> "$GITHUB_ENV"
-          ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-          nohup ./node_modules/.bin/tsx server/notion_server.ts --port 5091 > /tmp/notion.log 2>&1 &
+          nohup ./node_modules/.bin/tsx server/notion/main.ts --port 5091 > /tmp/notion.log 2>&1 &
           for i in $(seq 1 30); do grep -q "NOTION_URL=" /tmp/notion.log && break; sleep 1; done
           cat /tmp/notion.log
           echo "NOTION_URL=http://127.0.0.1:5091" >> "$GITHUB_ENV"

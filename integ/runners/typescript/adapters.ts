@@ -105,6 +105,8 @@ import {
 } from '../../../typescript/packages/browser/src/test-utils.ts'
 import { integRoot, walkFiles } from './harness.ts'
 import type { ExecWorkspace, Mount, Target } from './harness.ts'
+import { start as startKitFake } from '../../server/kit/typescript/index.ts'
+import { mem0Fake } from '../../server/mem0/fake.ts'
 import { startPythonServer } from './server_process.ts'
 
 export interface Open {
@@ -892,10 +894,20 @@ async function openNotion(target: Target): Promise<Open> {
   let base = process.env.NOTION_URL ?? ''
   while (base.endsWith('/')) base = base.slice(0, -1)
   if (base === '') throw new Error('notion target requires NOTION_URL')
+  // NOT minted per run, and notion is the only kit fake that cannot be. Its
+  // tenant channel is the bearer token, and the token is OBSERVABLE: `ntn auth
+  // token` prints the CLI's configured value without contacting the server at
+  // all, and integ/cli/ntn.json pins that literal, asserted a second time
+  // against the real ntn binary by integ/ntn_conformance.ts. A per-run token
+  // makes the battery print one value and the conformance run another, with
+  // one golden between them. So the two hosts share this workspace and must
+  // not reset it concurrently; the scoped reset still buys the sequential
+  // case, where a reset no longer destroys the whole run file.
+  const token = NOTION_TOKEN
   const reset = await fetch(`${base}/reset`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workspace: NOTION_TOKEN }),
+    body: JSON.stringify({ tenants: [token] }),
   })
   if (!reset.ok) throw new Error(`notion /reset failed: ${String(reset.status)}`)
   const mounts: Record<string, NotionResource | RAMResource | [NotionResource, MountMode]> = {}
@@ -905,7 +917,7 @@ async function openNotion(target: Target): Promise<Open> {
       continue
     }
     const resource = new NotionResource({
-      apiKey: NOTION_TOKEN,
+      apiKey: token,
       baseUrl: `${base}/v1`,
     })
     mounts[mount.path] = mount.mode === 'read' ? [resource, MountMode.READ] : resource
@@ -913,7 +925,7 @@ async function openNotion(target: Target): Promise<Open> {
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
   if (target.clis?.includes('ntn') === true) {
     ws.registerCli('ntn', NTN, {
-      api_key: NOTION_TOKEN,
+      api_key: token,
       base_url: `${base}/v1`,
     })
   }
@@ -1244,8 +1256,11 @@ async function openPostgres(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup }
 }
 
+// No subprocess: the fake is a kit fake now and this host is already a node
+// process, so it starts in-process on an ephemeral port. That is one fewer
+// interpreter hop than spawning it, and `close` disposes the SQLite pool too.
 async function openMem0(target: Target): Promise<Open> {
-  const server = await startPythonServer('mem0_server.py')
+  const server = await startKitFake(mem0Fake)
   const mounts: Record<string, Mem0Resource> = {}
   for (const mount of target.mounts) {
     mounts[mount.path] = new Mem0Resource({
@@ -1606,7 +1621,16 @@ async function openSlack(target: Target): Promise<Open> {
   let base = process.env.SLACK_URL ?? ''
   while (base.endsWith('/')) base = base.slice(0, -1)
   if (base === '') throw new Error('slack target requires SLACK_URL')
-  const reset = await fetch(`${base}/reset`, { method: 'POST' })
+  // One workspace per run, carried by the token. Both spellings name the same
+  // workspace and only the actor type differs: the fake strips that prefix, so
+  // search.* (which refuses anything but a user token, exactly as real Slack
+  // does) still reaches the same tenant the bot token wrote to.
+  const workspace = `integ-${runId()}`
+  const reset = await fetch(`${base}/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tenants: [workspace] }),
+  })
   if (!reset.ok) throw new Error(`slack /reset failed: ${String(reset.status)}`)
   const mounts: Record<string, SlackResource | RAMResource> = {}
   for (const m of target.mounts) {
@@ -1615,16 +1639,16 @@ async function openSlack(target: Target): Promise<Open> {
       continue
     }
     mounts[m.path] = new SlackResource({
-      token: 'xoxb-integ',
-      searchToken: 'xoxp-integ-search',
+      token: `xoxb-${workspace}`,
+      searchToken: `xoxp-${workspace}`,
       baseUrl: `${base}/api`,
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
   if (target.clis?.includes('slack') === true) {
     ws.registerCli('slack', SLACK, {
-      token: 'xoxb-integ',
-      search_token: 'xoxp-integ-search',
+      token: `xoxb-${workspace}`,
+      search_token: `xoxp-${workspace}`,
       base_url: `${base}/api`,
     })
   }

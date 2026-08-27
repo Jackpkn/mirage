@@ -1,0 +1,120 @@
+// Schema for the notion fake (integ/server/notion/, fixtures/notion/v1.json).
+// One SQLite file per run, one `tenant` column per row, exactly as every other
+// kit schema: a tenant here is a Notion WORKSPACE, reached with its own token.
+//
+// The models are flat scalar columns with no @relation on purpose. A Notion
+// page's parent may be a page, a database, a data source or the workspace
+// itself, so `parentId` is not a foreign key into any one table and modelling
+// it as one would need four nullable relations to say what one string says.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/notion"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+// What the workspace calls itself. It used to be the bearer token echoed back
+// (`workspace_name: ws`), which meant the token could not become per-run
+// without changing what `ntn whoami` prints, and that string is pinned in
+// integ/cli/ntn.json AND asserted against the real ntn binary by
+// integ/ntn_conformance.ts. Holding it as seeded data decouples the two: the
+// name stays `integ-test` for every run while the token identifies the tenant.
+// This is the fixture's old `defaults` block plus the workspace identity, held
+// as data per tenant. The timestamps are read at CREATE time as well as at seed
+// time, deliberately: a page created by the battery carries the fixture's
+// timestamp rather than the clock's, which is what keeps the goldens stable.
+model NotionMeta {
+  tenant         String @id
+  workspaceName  String
+  workspaceId    String
+  botId          String
+  botName        String
+  maxUploadSize  Int
+  urlBase        String
+  createdTime    String
+  lastEditedTime String
+  createdBy      String
+  lastEditedBy   String
+}
+
+model NotionPage {
+  tenant         String
+  id             String
+  parentType     String
+  parentId       String?
+  titleText      String
+  propertiesJson String
+  iconJson       String?
+  coverJson      String?
+  inTrash        Boolean @default(false)
+  createdTime    String
+  lastEditedTime String
+  createdBy      String
+  lastEditedBy   String
+  url            String
+  position       Int     @default(0)
+
+  @@id([tenant, id])
+  @@index([tenant, parentId])
+}
+
+model NotionDatabase {
+  tenant          String
+  id              String
+  parentType      String
+  parentId        String?
+  titleText       String
+  titleJson       String
+  descriptionJson String?
+  propertiesJson  String
+  isInline        Boolean @default(false)
+  inTrash         Boolean @default(false)
+  createdTime     String
+  lastEditedTime  String
+  createdBy       String
+  lastEditedBy    String
+  url             String
+  position        Int     @default(0)
+
+  @@id([tenant, id])
+  @@index([tenant, parentId])
+}
+
+model NotionBlock {
+  tenant         String
+  id             String
+  parentId       String
+  position       Int
+  type           String
+  payloadJson    String
+  hasChildren    Boolean @default(false)
+  inTrash        Boolean @default(false)
+  createdTime    String
+  lastEditedTime String
+  createdBy      String
+  lastEditedBy   String
+
+  @@id([tenant, id])
+  @@index([tenant, parentId, position])
+}
+
+model NotionComment {
+  tenant         String
+  id             String
+  parentType     String
+  parentId       String
+  discussionId   String
+  richTextJson   String
+  createdTime    String
+  lastEditedTime String
+  createdBy      String
+  position       Int    @default(0)
+
+  @@id([tenant, id])
+  @@index([tenant, parentId])
+}

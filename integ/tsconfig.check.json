@@ -8,6 +8,9 @@
     "server/gws/**/*.ts",
     "server/dropbox/**/*.ts",
     "server/box/**/*.ts",
-    "server/onedrive/**/*.ts"
+    "server/onedrive/**/*.ts",
+    "server/slack/**/*.ts",
+    "server/notion/**/*.ts",
+    "server/mem0/**/*.ts"
   ]
 }

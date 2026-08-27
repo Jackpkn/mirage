@@ -19,7 +19,7 @@ import type { ClientCtor, MinimalClient } from './db.ts'
 import type { KitConfig } from './config.ts'
 import type { Dmmf } from './seed.ts'
 import type { KitRoute } from './route.ts'
-import type { JsonValue, ResetResponse } from './types.ts'
+import type { JsonValue, MintSharing, ResetResponse } from './types.ts'
 
 // What a service implements. Everything else in the kit is machinery around
 // these five members: there is no base class to extend and no lifecycle to
@@ -44,12 +44,46 @@ export interface Fake<C extends MinimalClient> {
   defaultTenants?: string[]
 }
 
-// Per-run mutable state. A run is a whole isolated world, so its
-// clock and its minter are its own: two runs served by one process must
-// not advance each other's ids.
-export interface RunState {
+// Per-TENANT mutable state. These were per-run until /reset learned to scope
+// itself, and the move is not cosmetic: a second host resetting its own tenant
+// called `minter.reset()` on the counters the first host was still minting
+// from, so that host's next id repeated one it had already handed out, and
+// `clock.setEpoch()` rebased its timestamps backwards mid-run. A tenant is one
+// caller's whole world, so its clock and its minter are its own.
+export interface TenantState {
   clock: Clock
   minter: Minter
+}
+
+// Per-run mutable state: the tenants living in one SQLite file. A run is still
+// a whole isolated world, so two runs served by one process never advance each
+// other's ids; this is now that guarantee one level finer.
+export class RunState {
+  private readonly tenants = new Map<string, TenantState>()
+  private readonly sharing: MintSharing
+  private readonly format: string
+
+  constructor(sharing: MintSharing, format: string) {
+    this.sharing = sharing
+    this.format = format
+  }
+
+  of(tenant: string): TenantState {
+    const live = this.tenants.get(tenant)
+    if (live !== undefined) return live
+    const made = {
+      clock: new Clock(),
+      minter: new Minter(this.sharing, this.format),
+    }
+    this.tenants.set(tenant, made)
+    return made
+  }
+
+  reset(tenant: string, epoch?: string): void {
+    const st = this.of(tenant)
+    st.clock.setEpoch(epoch)
+    st.minter.reset()
+  }
 }
 
 export interface Runtime<C extends MinimalClient> {
@@ -61,10 +95,7 @@ export interface Runtime<C extends MinimalClient> {
 }
 
 export function makeState<C extends MinimalClient>(fake: Fake<C>): RunState {
-  return {
-    clock: new Clock(),
-    minter: new Minter(fake.config.mintSharing, fake.config.mintFormat),
-  }
+  return new RunState(fake.config.mintSharing, fake.config.mintFormat)
 }
 
 export function makePool<C extends MinimalClient>(fake: Fake<C>): ClientPool<C> {

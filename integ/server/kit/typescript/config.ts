@@ -21,6 +21,7 @@ export interface KitConfig {
   schema: string
   tenantKind: TenantKind
   tenantFromBearer: boolean
+  tenantTokenPattern: string
   mintSharing: MintSharing
   mintFormat: string
   maxBodyBytes: number
@@ -30,6 +31,7 @@ const DEFAULTS = {
   defaultPort: 0,
   tenantKind: 'none' as TenantKind,
   tenantFromBearer: false,
+  tenantTokenPattern: '',
   mintSharing: 'global' as MintSharing,
   mintFormat: '{kind}_new_{n}',
   maxBodyBytes: 64 * 1024 * 1024,
