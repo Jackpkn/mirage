@@ -229,8 +229,9 @@ const deleteContents = withRepo(async (ctx, repo) => {
 
 const readme = withRepo(async (ctx, repo) => {
   const files = await treeOf(ctx.db, ctx.tenant, repo, ctx.query.get('ref') ?? '')
-  if (files === null) return fail(404, 'No commit found for the ref')
-  for (const name of ['README.md', 'README', 'readme.md']) {
+  if (files === null) return fail(404, 'Not Found')
+  // GitHub picks the first of several spellings; the fake checks the same ones.
+  for (const name of ['README.md', 'README', 'README.rst', 'README.txt', 'readme.md']) {
     const hit = files.get(name)
     if (hit !== undefined) return { status: 200, body: fileJson(name, hit) }
   }
