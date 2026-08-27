@@ -176,6 +176,8 @@ describe('MirageFs', () => {
       stat: (p: string) => { mode: number }
       open: (p: string, flags: string) => unknown
       readFile: (p: string) => Uint8Array
+      createDevice: (dir: string, name: string, i?: unknown, o?: unknown) => unknown
+      chmod: (p: string, m: number) => void
     }
     for (const name of ['stdin', 'stdout', 'stderr']) {
       expect((fs.stat(`/dev/${name}`).mode & 0o170000) === 0o020000).toBe(true)
@@ -189,6 +191,14 @@ describe('MirageFs', () => {
     for (const name of ['stdin', 'stdout', 'stderr']) {
       expect(fs.readFile(`/dev/${name}`).length).toBe(0)
     }
+    // And nothing about a device reaches the journal. pyodide makes one at
+    // runtime (API.capture_stderr calls FS.createDevice) and chmods it right
+    // after; replaying either wrote a device path against the real mount,
+    // which is what failed during teardown.
+    fs.createDevice('/dev', 'probe_dev', undefined, () => true)
+    fs.chmod('/dev/probe_dev', 0o600)
+    const touched = journal.takeMutations().map((m) => m.path)
+    expect(touched.filter((path) => path.includes('probe_dev'))).toEqual([])
   })
 
   it('serves a seeded file to the guest', async () => {

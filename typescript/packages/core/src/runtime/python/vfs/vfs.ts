@@ -53,6 +53,8 @@ const STD_STREAM_RDEV: ReadonlyMap<string, number> = new Map([
 // did the same would hang `open('/dev/stdin').read()` forever.
 const NULL_RDEV = 0x103
 
+const EOF_ON_READ_RDEV: ReadonlySet<number> = new Set([NULL_RDEV, ...STD_STREAM_RDEV.values()])
+
 /**
  * Whether the seed already places a node at this path, by any means.
  *
@@ -69,7 +71,6 @@ function seedHolds(seed: MirageFsSeed, path: string): boolean {
     seed.dirs.includes(path)
   )
 }
-const EOF_ON_READ_RDEV: ReadonlySet<number> = new Set([NULL_RDEV, ...STD_STREAM_RDEV.values()])
 
 function isCharDevice(mode: number): boolean {
   return (mode & S_IFMT) === S_IFCHR
@@ -250,7 +251,12 @@ export class MirageFs {
     // a stamp write that changes nothing.
     const finalizing = this.fresh === node
     this.fresh = null
-    const fields = finalizing ? null : changedAttrs(node, attr)
+    // Read before the mode below is applied. A character device is not mount
+    // content, so none of its metadata is a guest write: Emscripten chmods one
+    // right after creating it, and journaling that queued a setattr against
+    // the real mount for a node the mount does not have.
+    const isDevice = isCharDevice(node.mode)
+    const fields = finalizing || isDevice ? null : changedAttrs(node, attr)
     if (attr.mode !== undefined) node.mode = attr.mode
     if (attr.atime !== undefined) node.atime = attr.atime
     if (attr.mtime !== undefined) node.mtime = attr.mtime
@@ -261,7 +267,7 @@ export class MirageFs {
       if (this.host.isLink(node.mode)) fields.nofollow = true
       this.journal.markSetattr(this.tree.pathOf(node), fields)
     }
-    if (attr.size === undefined) return
+    if (attr.size === undefined || isDevice) return
     const old = node.contents ?? new Uint8Array(0)
     const next = new Uint8Array(attr.size)
     next.set(old.subarray(0, Math.min(old.length, attr.size)))
@@ -285,13 +291,13 @@ export class MirageFs {
   private mknod(parent: FSNode, name: string, mode: number, rdev: number): FSNode {
     const node = this.tree.makeNode(parent, name, mode)
     node.rdev = rdev
-    const path = this.tree.pathOf(node)
     // A character device is not mount content. pyodide makes one of its own
     // at runtime -- `API.capture_stderr` calls FS.createDevice, which lands
     // here as mknod -- and journaling it queued a write of /dev/capture_stderr
     // against the real mount, which then failed on replay. Devices live in
     // this tree only.
     if (isCharDevice(mode)) return node
+    const path = this.tree.pathOf(node)
     if (this.host.isDir(mode)) this.journal.markMkdir(path)
     else {
       // An empty write is what carries a file that is created and never
