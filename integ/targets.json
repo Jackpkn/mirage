@@ -18,15 +18,11 @@
     },
     "databricks": {
       "python": [],
-      "typescript": [
-        "DATABRICKS_ENDPOINT"
-      ]
+      "typescript": []
     },
     "dify": {
       "python": [],
-      "typescript": [
-        "DIFY_ENDPOINT"
-      ]
+      "typescript": []
     },
     "discord": {
       "python": [

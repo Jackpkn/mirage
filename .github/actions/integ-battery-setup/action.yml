@@ -227,17 +227,6 @@ runs:
         cat /tmp/linearsrv.log
         echo "LINEAR_URL=http://127.0.0.1:5094" >> "$GITHUB_ENV"
 
-    - name: Start fake Dify API
-      shell: bash
-      run: |
-        nohup ./python/.venv/bin/python integ/server/dify_server.py --port 5093 > /tmp/difysrv.log 2>&1 &
-        for i in $(seq 1 30); do
-          grep -q "DIFY_ENDPOINT=" /tmp/difysrv.log && break
-          sleep 1
-        done
-        cat /tmp/difysrv.log
-        echo "DIFY_ENDPOINT=http://127.0.0.1:5093" >> "$GITHUB_ENV"
-
     - name: Start jaeger all-in-one and seed traces over OTLP
       shell: bash
       run: |
@@ -251,14 +240,3 @@ runs:
         ./python/.venv/bin/python integ/server/jaeger_seed.py \
           --host http://localhost:16686 --otlp http://localhost:4318
         echo "JAEGER_URL=http://localhost:16686" >> "$GITHUB_ENV"
-
-    - name: Start fake Databricks API
-      shell: bash
-      run: |
-        nohup ./python/.venv/bin/python integ/server/databricks_server.py --port 5092 > /tmp/databrickssrv.log 2>&1 &
-        for i in $(seq 1 30); do
-          grep -q "DATABRICKS_ENDPOINT=" /tmp/databrickssrv.log && break
-          sleep 1
-        done
-        cat /tmp/databrickssrv.log
-        echo "DATABRICKS_ENDPOINT=http://127.0.0.1:5092" >> "$GITHUB_ENV"

@@ -1,0 +1,35 @@
+{
+  "responses": [
+    {
+      "path": "/hello",
+      "status": 200,
+      "contentType": "text/plain",
+      "body": "hello from http\n"
+    },
+    {
+      "path": "/data.json",
+      "status": 200,
+      "contentType": "application/json",
+      "body": "{\"ok\": true, \"name\": \"mirage\"}\n"
+    },
+    {
+      "path": "/bytes.bin",
+      "status": 200,
+      "contentType": "application/octet-stream",
+      "encoding": "base64",
+      "body": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    },
+    {
+      "path": "/missing",
+      "status": 404,
+      "contentType": "text/plain; charset=utf-8",
+      "body": "not found\n"
+    },
+    {
+      "path": "/boom",
+      "status": 500,
+      "contentType": "text/plain; charset=utf-8",
+      "body": "server error\n"
+    }
+  ]
+}

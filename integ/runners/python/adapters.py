@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import shutil
-import sys
 import tempfile
 import uuid
 from collections.abc import Awaitable, Callable
@@ -38,6 +37,7 @@ import asyncpg
 import boto3
 import chromadb
 import lancedb
+from databricks_client import HttpFilesClient
 from moto.server import ThreadedMotoServer
 from pymongo import AsyncMongoClient
 from qdrant_client import AsyncQdrantClient, models
@@ -294,20 +294,34 @@ class GridFSService:
 
 
 class DatabricksVolumeService:
+    """Points databricks mounts at the kit fake for volume files.
 
-    def __init__(self, run_id: str, module: ModuleType, store: object,
-                 runner: object, base: str) -> None:
+    The fake is a TypeScript kit service now, so the adapter spawns it the way
+    the mem0 one does instead of importing an aiohttp app. The volume root is
+    created over HTTP rather than by reaching into the server's own store,
+    which is the same PUT the TypeScript host already sends and the only way
+    to say it once the fake is another process.
+
+    Each run takes its own bearer token, which the fake reads as its tenant,
+    so two runs sharing one server cannot see each other's writes.
+
+    Args:
+        run_id (str): this run's id, which scopes the token and the volumes.
+        base (str): the fake's origin.
+        process (asyncio.subprocess.Process): the running fake.
+    """
+
+    def __init__(self, run_id: str, base: str,
+                 process: asyncio.subprocess.Process) -> None:
         self.run_id = run_id
-        self.module = module
-        self.store = store
-        self.runner = runner
         self.base = base
+        self.process = process
+        self.token = f"integ-{run_id}"
 
     @classmethod
     async def create(cls, run_id: str) -> "DatabricksVolumeService":
-        module = _load_databricks_server()
-        store, runner, base = await module.start_fake_databricks()
-        return cls(run_id, module, store, runner, base)
+        base, process = await start_kit_fake("databricks")
+        return cls(run_id, base, process)
 
     def resource(self, mount: dict) -> DatabricksVolumeResource:
         volume = f"mirage-integ-{self.run_id}-{mount['volume']}"
@@ -315,12 +329,59 @@ class DatabricksVolumeService:
                                         schema="default",
                                         volume=volume,
                                         root_path=mount.get("prefix") or "/")
-        self.store.make_dir(configured_root(config))
-        client = self.module.HttpFilesClient(self.base, "integ-token")
+        client = HttpFilesClient(self.base, self.token)
+        client.files.create_directory(configured_root(config))
         return DatabricksVolumeResource(config, client=client)
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        await stop_kit_fake(self.process)
+
+
+async def start_kit_fake(
+        service: str) -> tuple[str, asyncio.subprocess.Process]:
+    """Start integ/server/<service>/main.ts and read the endpoint it announces.
+
+    The adapter owns the process rather than reading a URL from the
+    environment, which is what keeps a single-target run free of CI setup.
+    Every kit fake announces ``<SERVICE>_URL=<origin>`` on its first stdout
+    line, so one reader serves all of them instead of one per service.
+
+    Args:
+        service (str): directory under integ/server/ holding main.ts.
+
+    Returns:
+        tuple[str, asyncio.subprocess.Process]: the endpoint and the process.
+    """
+    integ = Path(__file__).resolve().parents[2]
+    process = await asyncio.create_subprocess_exec(
+        str(integ / "node_modules" / ".bin" / "tsx"),
+        str(integ / "server" / service / "main.ts"),
+        "--port",
+        "0",
+        cwd=str(integ),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    token = f"{service.upper().replace('-', '_')}_URL"
+    line = (await process.stdout.readline()).decode().strip()
+    endpoint = line.partition("=")[2] if line.startswith(f"{token}=") else ""
+    if not endpoint:
+        assert process.stderr is not None
+        detail = (await process.stderr.read()).decode().strip()
+        raise RuntimeError(f"{service} fake failed to start: {line}{detail}")
+    return endpoint, process
+
+
+async def stop_kit_fake(process: asyncio.subprocess.Process) -> None:
+    """Terminate a fake started by :func:`start_kit_fake`.
+
+    Args:
+        process (asyncio.subprocess.Process): the running fake.
+    """
+    if process.returncode is None:
+        process.terminate()
+        await process.wait()
 
 
 def _load_module(path: Path) -> ModuleType:
@@ -341,17 +402,6 @@ def _load_hf_server() -> ModuleType:
 def _load_ssh_server() -> ModuleType:
     return _load_module(
         Path(__file__).resolve().parents[2] / "server" / "ssh_server.py")
-
-
-def _load_dify_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "dify_server.py")
-
-
-def _load_databricks_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" /
-        "databricks_server.py")
 
 
 async def _admin_exec(ws: Workspace, command: str) -> None:
@@ -898,6 +948,7 @@ class HttpService:
     Exported through ``HTTP_ENDPOINT`` rather than a mount, because the cases
     name it as a URL in the command text (the ``{http}`` token) instead of a
     path. Owning the process here means ``--facet http`` needs no CI setup.
+    The fake is a TypeScript kit service, so the interpreter is tsx.
     """
 
     def __init__(self, endpoint: str,
@@ -907,29 +958,13 @@ class HttpService:
 
     @classmethod
     async def create(cls) -> "HttpService":
-        script = (Path(__file__).resolve().parents[2] / "server" /
-                  "http_server.py")
-        process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            str(script),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        assert process.stdout is not None
-        line = (await process.stdout.readline()).decode().strip()
-        if not line.startswith("HTTP_ENDPOINT="):
-            assert process.stderr is not None
-            detail = (await process.stderr.read()).decode().strip()
-            raise RuntimeError(f"http fixture failed to start: {detail}")
-        endpoint = line.split("=", 1)[1]
+        endpoint, process = await start_kit_fake("http")
         os.environ["HTTP_ENDPOINT"] = endpoint
         return cls(endpoint, process)
 
     async def teardown(self) -> None:
         os.environ.pop("HTTP_ENDPOINT", None)
-        if self.process.returncode is None:
-            self.process.terminate()
-            await self.process.wait()
+        await stop_kit_fake(self.process)
 
 
 class DropboxService:
@@ -1275,17 +1310,28 @@ class GitHubService:
 
 
 class DifyService:
+    """Points dify mounts at the kit fake for the knowledge base.
 
-    def __init__(self, runner, base: str, dataset: str) -> None:
-        self.runner = runner
+    The adapter owns the process for the reason the mem0 one does: the fake is
+    a TypeScript kit service now, and spawning it here keeps ``--facet dify``
+    free of CI setup.
+
+    Args:
+        base (str): the fake's origin.
+        dataset (str): the dataset id the mounts read.
+        process (asyncio.subprocess.Process): the running fake.
+    """
+
+    def __init__(self, base: str, dataset: str,
+                 process: asyncio.subprocess.Process) -> None:
         self.base = base
         self.dataset = dataset
+        self.process = process
 
     @classmethod
     async def create(cls, target: dict) -> "DifyService":
-        module = _load_dify_server()
-        state, _server, runner = await module.start_fake_dify()
-        return cls(runner, state.base, target.get("dataset", "kb-7f3a"))
+        base, process = await start_kit_fake("dify")
+        return cls(base, target.get("dataset", "kb-7f3a"), process)
 
     def resource(self, mount: dict) -> DifyResource:
         return DifyResource(
@@ -1294,7 +1340,7 @@ class DifyService:
                        dataset_id=self.dataset))
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        await stop_kit_fake(self.process)
 
 
 class TrelloService:

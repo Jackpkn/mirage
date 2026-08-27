@@ -106,7 +106,6 @@ import {
 import { integRoot, walkFiles } from './harness.ts'
 import type { ExecWorkspace, Mount, Target } from './harness.ts'
 import { start as startKitFake } from '../../server/kit/typescript/index.ts'
-import { startPythonServer } from './server_process.ts'
 
 export interface Open {
   ws: ExecWorkspace
@@ -167,7 +166,6 @@ const S3_ENDPOINT = process.env.S3_ENDPOINT
 const S3_REGION = process.env.S3_REGION ?? 'us-east-1'
 const S3_ACCESS = process.env.AWS_ACCESS_KEY_ID ?? 'testing'
 const S3_SECRET = process.env.AWS_SECRET_ACCESS_KEY ?? 'testing'
-const DATABRICKS_ENDPOINT = process.env.DATABRICKS_ENDPOINT
 const NEXTCLOUD_URL = process.env.NEXTCLOUD_URL
 const NEXTCLOUD_USERNAME = process.env.NEXTCLOUD_USERNAME ?? 'admin'
 const NEXTCLOUD_PASSWORD = process.env.NEXTCLOUD_PASSWORD ?? 'admin123'
@@ -349,13 +347,18 @@ async function openGridfs(target: Target, options?: OpenOptions): Promise<Open> 
   return { ws: opened.ws, shadow: opened.shadow, cleanup }
 }
 
+// No subprocess and no CI setup: the fake is a kit fake now and this host is
+// already a node process, so it starts in-process on an ephemeral port. The
+// token is per-run because the fake reads it as its tenant.
 async function openDatabricksVolume(target: Target): Promise<Open> {
-  if (DATABRICKS_ENDPOINT === undefined || DATABRICKS_ENDPOINT === '') {
-    throw new Error('databricks target requires DATABRICKS_ENDPOINT')
-  }
-  const endpoint = DATABRICKS_ENDPOINT
+  // Imported here rather than at the top of the file, because this module is
+  // loaded for every target and a kit fake's module reaches its generated
+  // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
+  const { databricksFake } = await import('../../server/databricks/fake.ts')
+  const server = await startKitFake(databricksFake)
+  const endpoint = server.endpoint
   const id = runId()
-  const token = 'integ-token'
+  const token = `integ-${id}`
   const mounts: Record<string, DatabricksVolumeResource> = {}
   for (const m of target.mounts) {
     const volume = `mirage-integ-${id}-${String(m.volume)}`
@@ -377,7 +380,11 @@ async function openDatabricksVolume(target: Target): Promise<Open> {
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
+  const cleanup = async (): Promise<void> => {
+    await ws.close()
+    await server.close()
+  }
+  return { ws: ws as unknown as ExecWorkspace, cleanup }
 }
 
 function objectStorageResource(
@@ -1709,19 +1716,28 @@ async function openGitHub(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
+// In-process for the reason openMem0 is: the fake is a kit fake and this host
+// is already a node process, so the target needs no CI setup at all.
 async function openDify(target: Target): Promise<Open> {
-  const endpoint = process.env.DIFY_ENDPOINT
-  if (!endpoint) throw new Error('dify target requires DIFY_ENDPOINT')
+  // Imported here rather than at the top of the file, because this module is
+  // loaded for every target and a kit fake's module reaches its generated
+  // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
+  const { difyFake } = await import('../../server/dify/fake.ts')
+  const server = await startKitFake(difyFake)
   const mounts: Record<string, DifyResource> = {}
   for (const m of target.mounts) {
     mounts[m.path] = new DifyResource({
       apiKey: 'integ-key',
-      baseUrl: endpoint,
+      baseUrl: server.endpoint,
       datasetId: target.dataset ?? 'kb-7f3a',
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
+  const cleanup = async (): Promise<void> => {
+    await ws.close()
+    await server.close()
+  }
+  return { ws: ws as unknown as ExecWorkspace, cleanup }
 }
 
 async function openTrello(target: Target): Promise<Open> {
@@ -1884,11 +1900,15 @@ const ARG_ERROR_RESOURCES: Record<string, () => Resource> = {
 
 // The fixture web server curl and wget fetch from. Exported through
 // HTTP_ENDPOINT rather than a mount, because the cases name it as a URL in the
-// command text (the {http} token) instead of a path. Owning the process here
-// means --facet http needs no CI setup.
+// command text (the {http} token) instead of a path. Starting it in-process
+// means --facet http needs no CI setup and no python interpreter.
 async function openHttp(target: Target): Promise<Open> {
-  const server = await startPythonServer('http_server.py')
-  process.env.HTTP_ENDPOINT = server.endpoint.replace(/^HTTP_ENDPOINT=/, '')
+  // Imported here rather than at the top of the file, because this module is
+  // loaded for every target and a kit fake's module reaches its generated
+  // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
+  const { httpFake } = await import('../../server/http/fake.ts')
+  const server = await startKitFake(httpFake)
+  process.env.HTTP_ENDPOINT = server.endpoint
   const mounts: Record<string, RAMResource | [RAMResource, MountMode]> = {}
   for (const m of target.mounts) {
     const resource = new RAMResource()
