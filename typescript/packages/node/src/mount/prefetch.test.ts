@@ -61,22 +61,18 @@ describe('PrefetchCache', () => {
   it('joins a second claim to the first fetch', async () => {
     // The asymmetry with python: a TS mount is served by one event loop
     // and two opens of a path can interleave, so the second must not
-    // start a second fetch.
+    // start a second fetch. Both claims are made before either awaits,
+    // which is exactly the interleaving a mount produces.
     const cache = new PrefetchCache()
     let fills = 0
-    let release: (() => void) | null = null
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
     const fill = async (): Promise<Uint8Array> => {
       fills += 1
-      await gate
+      await Promise.resolve()
       return HELLO
     }
 
     const first = cache.claim('/a.txt', fill)
     const second = cache.claim('/a.txt', fill)
-    release?.()
 
     expect(await first).toEqual(HELLO)
     expect(await second).toEqual(HELLO)
