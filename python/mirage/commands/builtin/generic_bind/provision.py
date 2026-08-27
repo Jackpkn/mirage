@@ -667,13 +667,17 @@ def with_default_provisions(
         list[Callable]: the same commands, provisions filled in.
     """
     for fn in commands:
+        updated = []
         for registered in getattr(fn, "_registered_commands", []):
             if (registered.filetype is not None
                     or registered.provision_fn is not None):
+                updated.append(registered)
                 continue
             provision = default_provision(registered.name, stat, resolve_glob,
                                           readdir)
             if provision is None:
+                updated.append(registered)
                 continue
-            registered.provision_fn = provision
+            updated.append(registered.with_overrides(provision=provision))
+        setattr(fn, "_registered_commands", updated)
     return commands

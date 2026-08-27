@@ -335,10 +335,13 @@ def _provision_of(fn):
 
 def test_with_default_provisions_fills_in_the_family_default():
     cat = _make_command("cat")
-    assert _provision_of(cat) is None
+    original = cat._registered_commands[0]
+    assert original.provision_fn is None
     with_default_provisions([cat], _noop_stat)
     family = _provision_of(cat).__qualname__.split(".")[0]
     assert family == "make_file_read_provision"
+    assert cat._registered_commands[0] is not original
+    assert original.provision_fn is None
 
 
 def test_with_default_provisions_keeps_a_declared_provision():

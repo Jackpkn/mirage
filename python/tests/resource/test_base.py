@@ -17,6 +17,8 @@ import pytest
 from mirage.accessor.base import Accessor
 from mirage.cache.index import (RAMIndexCacheStore, RedisIndexCacheStore,
                                 RedisIndexConfig)
+from mirage.commands.config import RegisteredCommand
+from mirage.commands.spec import CommandSpec
 from mirage.resource.base import BaseResource
 from mirage.resource.ram import RAMResource
 
@@ -51,6 +53,19 @@ def test_set_index_none_resets_to_ram():
 def test_missing_accessor_attribute_raises():
     with pytest.raises(AttributeError):
         Accessor().missing_operation
+
+
+def test_register_accepts_a_command_definition():
+    resource = BaseResource()
+    registered = RegisteredCommand(name="cat",
+                                   spec=CommandSpec(),
+                                   resource="ram",
+                                   filetype=None,
+                                   fn=lambda *args, **kwargs: None)
+
+    resource.register(registered)
+
+    assert resource.commands() == [registered]
 
 
 @pytest.mark.asyncio

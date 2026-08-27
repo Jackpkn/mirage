@@ -15,6 +15,7 @@
 import dataclasses
 import errno
 import inspect
+from collections.abc import Iterable
 from typing import Any, Callable
 
 from mirage.cache.context import push_cache_manager
@@ -308,11 +309,12 @@ class MountEntry:
                     fns[ft] = rc.fn
         return fns
 
-    def register_fns(self, fns: list[Any]) -> None:
-        """Register commands and ops from decorated functions.
+    def register_fns(self, fns: Iterable[Any]) -> None:
+        """Register decorated functions or command/op definitions.
 
         Args:
-            fns (list): Functions decorated with @command and/or @op.
+            fns (iterable): Decorated functions, RegisteredCommand values,
+                and/or RegisteredOp values.
 
         Raises:
             ValueError: If a command/op's resource doesn't match
@@ -320,27 +322,34 @@ class MountEntry:
         """
         pname = self.resource.name
         for fn in fns:
-            if hasattr(fn, "_registered_commands"):
-                rcs = fn._registered_commands
+            rcs: list[RegisteredCommand] = ([fn] if isinstance(
+                fn, RegisteredCommand) else getattr(fn, "_registered_commands",
+                                                    []))
+            if rcs:
                 matching = [
                     rc for rc in rcs
                     if rc.resource is None or rc.resource == pname
                 ]
                 if rcs and not matching:
-                    resources = sorted({rc.resource for rc in rcs})
+                    resources = sorted(
+                        {rc.resource
+                         for rc in rcs if rc.resource is not None})
                     raise ValueError(
                         f"command {rcs[0].name!r} is for resource(s) "
                         f"{resources!r}, not {pname!r}")
                 for rc in matching:
                     self.register(rc)
-            if hasattr(fn, "_registered_ops"):
-                ros = fn._registered_ops
+            ros: list[RegisteredOp] = ([fn] if isinstance(fn, RegisteredOp)
+                                       else getattr(fn, "_registered_ops", []))
+            if ros:
                 matching_ops = [
                     ro for ro in ros
                     if ro.resource is None or ro.resource == pname
                 ]
                 if ros and not matching_ops:
-                    resources = sorted({ro.resource for ro in ros})
+                    resources = sorted(
+                        {ro.resource
+                         for ro in ros if ro.resource is not None})
                     raise ValueError(f"op {ros[0].name!r} is for resource(s) "
                                      f"{resources!r}, not {pname!r}")
                 for ro in matching_ops:

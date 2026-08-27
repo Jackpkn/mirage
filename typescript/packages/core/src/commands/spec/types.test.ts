@@ -52,6 +52,32 @@ describe('CommandSpec', () => {
     expect(s.positional).toEqual([])
     expect(s.rest).toBeNull()
   })
+
+  it('owns immutable copies of nested collections', () => {
+    const choices = ['one']
+    const providedBy = ['--expr']
+    const options = [new Option({ long: '--mode', choices })]
+    const positional = [new Operand({ providedBy })]
+    const ignoreTokens = ['!']
+    const spec = new CommandSpec({ options, positional, ignoreTokens })
+
+    choices.push('two')
+    providedBy.push('--file')
+    options.push(new Option({ long: '--later' }))
+    positional.push(new Operand())
+    ignoreTokens.push('?')
+
+    expect(spec.options).toHaveLength(1)
+    expect(spec.options[0]?.choices).toEqual(['one'])
+    expect(spec.positional).toHaveLength(1)
+    expect(spec.positional[0]?.providedBy).toEqual(['--expr'])
+    expect([...spec.ignoreTokens]).toEqual(['!'])
+    expect(() => (spec.options as Option[]).push(new Option())).toThrow()
+    expect(() => (spec.options[0]?.choices as string[]).push('three')).toThrow()
+    expect(() => (spec.positional as Operand[]).push(new Operand())).toThrow()
+    expect(() => (spec.positional[0]?.providedBy as string[]).push('--pattern')).toThrow()
+    expect(() => (spec.ignoreTokens as Set<string>).add('?')).toThrow()
+  })
 })
 
 describe('CommandSpec.description', () => {

@@ -22,7 +22,7 @@ import uuid
 from dotenv import load_dotenv
 
 from mirage import MountMode, Workspace
-from mirage.commands.config import command
+from mirage.commands.builtin.s3 import COMMANDS as S3_COMMANDS
 from mirage.resource.ram import RAMResource
 from mirage.resource.s3 import S3Config, S3Resource
 from mirage.types import PathSpec
@@ -81,28 +81,22 @@ def _price_wrap(original):
     return priced
 
 
-_BUILTIN_CAT = ws.mount("/s3/").resolve_command("cat", None)
-
-
-@command("cat",
-         resource="s3",
-         spec=_BUILTIN_CAT.spec,
-         provision=_price_wrap(_BUILTIN_CAT.provision_fn))
-async def priced_cat(accessor, paths, *texts, **kwargs):
-    return await _BUILTIN_CAT.fn(accessor, paths, *texts, **kwargs)
+_BUILTIN_CAT = S3_COMMANDS.require("cat")
+assert _BUILTIN_CAT.provision_fn is not None
+priced_cat = _BUILTIN_CAT.with_overrides(
+    provision=_price_wrap(_BUILTIN_CAT.provision_fn))
 
 
 def price_cat_reads(workspace: Workspace, mount_path: str) -> None:
     """Attach an S3 price model to cat on one mount.
 
-    The builtin estimator already computes bytes and request counts;
-    the @command decorator registers a cat that keeps the builtin
-    execution fn but carries a wrapped estimator converting them into
-    estimated_cost_usd, which the planner then combines across pipes,
-    branches, and loops like any other field (all-or-nothing: a stage
-    without a cost drops the total).
+    The backend catalog is available before a workspace exists. The copied
+    definition keeps the builtin execution function but carries a wrapped
+    estimator converting bytes and requests into estimated_cost_usd, which
+    the planner then combines across pipes, branches, and loops like any
+    other field (all-or-nothing: a stage without a cost drops the total).
     """
-    workspace.mount(mount_path).register_fns([priced_cat])
+    workspace.mount(mount_path).register(priced_cat)
 
 
 async def main():

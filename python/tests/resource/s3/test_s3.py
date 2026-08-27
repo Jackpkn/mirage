@@ -80,12 +80,13 @@ def test_s3_write_commands_tagged():
         "iconv",
         "truncate",
     }
-    for fn in COMMANDS:
-        for rc in fn._registered_commands:
-            if rc.name in write_names:
-                assert rc.write is True, (f"{rc.name} should be write=True")
-            else:
-                assert rc.write is False, (f"{rc.name} should be write=False")
+    for registered in COMMANDS:
+        if registered.name in write_names:
+            assert registered.write is True, (
+                f"{registered.name} should be write=True")
+        else:
+            assert registered.write is False, (
+                f"{registered.name} should be write=False")
 
 
 def test_s3_write_ops_tagged():

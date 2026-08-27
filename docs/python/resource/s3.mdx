@@ -119,6 +119,30 @@ The S3 resource supports the full set of shell commands since it operates
 on real file content (text, binary, JSON, CSV, etc.). Large files benefit
 from range reads to avoid downloading entire objects.
 
+### Customize a builtin command
+
+Backend command definitions are available before a workspace is created. Copy
+the definition with the behavior you want to change, then register that copy on
+one mount:
+
+```python
+from mirage.commands.builtin.s3 import COMMANDS as S3_COMMANDS
+
+cat = S3_COMMANDS.require("cat")
+
+
+async def logged_cat(accessor, paths, texts, opts):
+    print("reading", [path.virtual for path in paths])
+    return await cat.fn(accessor, paths, texts, opts)
+
+
+ws.mount("/s3/").register(cat.with_overrides(fn=logged_cat))
+```
+
+The builtin definition and other mounts stay unchanged. Registration is a host
+application action; an agent can discover and run the resulting `cat` command,
+but cannot alter the command table.
+
 ### Read Commands
 
 | Command         | Notes                                      |
