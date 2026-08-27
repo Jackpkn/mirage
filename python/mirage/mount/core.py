@@ -12,17 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
 import errno
 import os
 import posixpath
-import threading
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Coroutine, cast
+from typing import Any
 
-from mirage.bridge.sync import run_async_from_sync
-from mirage.context import reset_current_session, set_current_session
 from mirage.mount.errors import NO_XATTR
 from mirage.mount.platform.macos import is_macos_metadata
 from mirage.ops import Ops
@@ -48,6 +44,12 @@ class Handle:
 
 class MountCore:
     """Protocol-neutral mount logic shared by every kernel adapter.
+
+    Async-native: every method that reaches the op facade awaits it. An
+    adapter whose kernel interface is synchronous -- libfuse's callbacks
+    are -- owns the bridge and the loop it runs on, because that is the
+    adapter's constraint rather than this layer's. One whose interface is
+    already async, like the nfs delegate, simply awaits.
 
     Everything here is expressed in POSIX terms (``st_*`` attribute dicts,
     ordinary Python exceptions) and imports nothing from mfusepy, so it is
@@ -86,14 +88,21 @@ class MountCore:
         # as owned by the mounting user (see mount.py). Mirrors fs.ts.
         self._uid = os.getuid() if hasattr(os, "getuid") else 0
         self._gid = os.getgid() if hasattr(os, "getgid") else 0
-        self._loop = asyncio.new_event_loop()
-        self._loop_thread = threading.Thread(target=self._loop.run_forever,
-                                             daemon=True)
-        self._loop_thread.start()
 
     @property
     def ops(self) -> Ops:
         return self._ops
+
+    @property
+    def session(self) -> "Session | None":
+        """The session every op runs under, or None for an unscoped mount.
+
+        Read by the adapter, not used here: binding has to happen where
+        the call is made, and for a synchronous adapter that means inside
+        the coroutine it schedules. TypeScript's core carries it the same
+        way, for the same reason.
+        """
+        return self._session
 
     @property
     def handles(self) -> FileTable[Handle]:
@@ -107,30 +116,6 @@ class MountCore:
                 kernel op arrived without one.
         """
         return self._handles.get(fh) if fh is not None else None
-
-    def _run(self, coro: Coroutine[Any, Any, Any]) -> Any:
-        if self._session is not None:
-            coro = self._bind_session(coro)
-        return run_async_from_sync(coro, self._loop)
-
-    async def _bind_session(self, coro: Coroutine[Any, Any, Any]) -> Any:
-        """Run one op under the bound session's mount grants.
-
-        The session context is set inside the coroutine so it lands on
-        the event-loop task that executes the op, mirroring how
-        ``execute`` brackets a command with the session token.
-
-        Args:
-            coro (Coroutine): the op coroutine to run under the session.
-
-        Returns:
-            Any: whatever the wrapped coroutine returns.
-        """
-        token = set_current_session(self._session)
-        try:
-            return await coro
-        finally:
-            reset_current_session(token)
 
     def resolve(self, path: str) -> str:
         """Map a mount path onto the workspace, honoring the mount root.
@@ -300,7 +285,7 @@ class MountCore:
         data = self.cached_data(path)
         return len(data) if data is not None else None
 
-    def prefetch_read(self, path: str) -> bytes | None:
+    async def prefetch_read(self, path: str) -> bytes | None:
         """Fetch and cache the bytes of a size-unknown file.
 
         Args:
@@ -315,11 +300,7 @@ class MountCore:
         if cached is not None:
             return cached
         try:
-            # Cast because the sync bridge answers Any, which mypy 2.3
-            # refuses to return from a typed function; the bridge cannot
-            # narrow it for every caller, so each one names what it asked
-            # the ops facade for.
-            data = cast(bytes, self._run(self._ops.read(self.resolve(path))))
+            data = await self._ops.read(self.resolve(path))
         except (FileNotFoundError, ValueError):
             return None
         # No inflight dedup: FUSE mounts run nothreads=True, so callbacks are
@@ -327,7 +308,9 @@ class MountCore:
         self._prefetch[path] = (data, time.monotonic() + PREFETCH_TTL)
         return data
 
-    def getattr(self, path: str, fh: int | None = None) -> dict[str, Any]:
+    async def attrs_for(self,
+                        path: str,
+                        fh: int | None = None) -> dict[str, Any]:
         """POSIX attributes for a path, optionally through an open handle.
 
         Args:
@@ -350,18 +333,12 @@ class MountCore:
                 return self.file_stat(len(ctx.data))
         if path == "/":
             return self.dir_stat()
-        # macOS Finder/Spotlight probes .DS_Store, ._*, .Spotlight-V100, etc.
-        # Reject early to avoid hitting the ops layer.
-        name = path.rsplit("/", 1)[-1]
-        if is_macos_metadata(name):
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
-                                    path)
         # Link check must precede the ops stat: the ops facade follows
         # namespace links, so stat on a link path reports the target.
         target = self.link_target(path)
         if target is not None:
             return self.link_stat(target, self.resolve(path))
-        s = self._run(self._ops.stat(self.resolve(path)))
+        s = await self._ops.stat(self.resolve(path))
         if s.type == FileType.DIRECTORY:
             return self._apply_stat_attrs(self.dir_stat(), s)
         size = s.size
@@ -377,7 +354,35 @@ class MountCore:
             size = 0
         return self._apply_stat_attrs(self.file_stat(size), s)
 
-    def readdir(self, path: str) -> list[str]:
+    async def getattr(self,
+                      path: str,
+                      fh: int | None = None) -> dict[str, Any]:
+        """Attributes for a path a caller reached by name.
+
+        macOS Finder and Spotlight probe .DS_Store, ._*, .Spotlight-V100
+        and friends on every listing; refusing here keeps the probe off
+        the backend entirely.
+
+        Split from ``attrs_for`` because refusing a name and describing
+        an entry are different questions, and only one protocol fuses
+        them: libfuse has no LOOKUP, so its getattr is the lookup, while
+        NFSv3 addresses an entry by a handle it already minted. Applying
+        a name policy there makes a file the client just created vanish.
+
+        Args:
+            path (str): mount path to stat.
+            fh (int | None): open handle, when the caller is fstat-ing.
+
+        Returns:
+            dict: ``st_*`` attribute dict.
+        """
+        name = path.rsplit("/", 1)[-1]
+        if is_macos_metadata(name):
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                    path)
+        return await self.attrs_for(path, fh)
+
+    async def readdir(self, path: str) -> list[str]:
         """Entry names under a directory, including "." and "..".
 
         Args:
@@ -394,14 +399,15 @@ class MountCore:
         # itself, so the core only normalizes entry shapes and drops
         # macOS metadata names.
         names = set()
-        entries = self._run(self._ops.readdir(self.resolve(path)))
+        entries = await self._ops.readdir(self.resolve(path))
         for e in entries:
             part = e.rstrip("/").rsplit("/", 1)[-1]
             if part and not is_macos_metadata(part):
                 names.add(part)
         return [".", ".."] + sorted(names)
 
-    def read(self, path: str, size: int, offset: int, fh: int | None) -> bytes:
+    async def read(self, path: str, size: int, offset: int,
+                   fh: int | None) -> bytes:
         """Read a slice of a file.
 
         Args:
@@ -418,12 +424,12 @@ class MountCore:
             return ctx.data[offset:offset + size]
         data = self.cached_data(path)
         if data is None:
-            data = self._run(self._ops.read(self.resolve(path)))
+            data = await self._ops.read(self.resolve(path))
         if ctx is not None:
             ctx.data = data
         return data[offset:offset + size]
 
-    def _apply_writes(self, path: str, writes: WriteBuf) -> None:
+    async def _apply_writes(self, path: str, writes: WriteBuf) -> None:
         """Merge buffered writes over the raw base and persist the result.
 
         The base is read raw so a flush never stores a rendered view
@@ -435,16 +441,16 @@ class MountCore:
         """
         existing = b""
         try:
-            existing = self._run(self._ops.read(self.resolve(path), raw=True))
+            existing = await self._ops.read(self.resolve(path), raw=True)
         except FileNotFoundError:
             # missing file: start from empty; the write creates it
             pass
         merged = merge_writes(existing, writes)
-        self._run(self._ops.write(self.resolve(path), merged))
+        await self._ops.write(self.resolve(path), merged)
         self._prefetch.pop(path, None)
 
-    def write(self, path: str, data: bytes, offset: int,
-              fh: int | None) -> int:
+    async def write(self, path: str, data: bytes, offset: int,
+                    fh: int | None) -> int:
         """Write bytes at an offset, buffering when a handle is open.
 
         Args:
@@ -460,10 +466,10 @@ class MountCore:
         if ctx is not None:
             ctx.write_buf.append((offset, data))
             return len(data)
-        self._apply_writes(path, [(offset, data)])
+        await self._apply_writes(path, [(offset, data)])
         return len(data)
 
-    def create(self, path: str) -> int:
+    async def create(self, path: str) -> int:
         """Create an empty file and return a fresh handle.
 
         Args:
@@ -472,12 +478,12 @@ class MountCore:
         Returns:
             int: the new handle id.
         """
-        self._run(self._ops.create(self.resolve(path)))
+        await self._ops.create(self.resolve(path))
         self._prefetch.pop(path, None)
         return self._handles.add(Handle(path=path))
 
-    def mkdir(self, path: str) -> None:
-        self._run(self._ops.mkdir(self.resolve(path)))
+    async def mkdir(self, path: str) -> None:
+        await self._ops.mkdir(self.resolve(path))
 
     def readlink(self, path: str) -> str:
         """The stored target of a namespace link.
@@ -496,7 +502,7 @@ class MountCore:
             raise OSError(errno.EINVAL, os.strerror(errno.EINVAL), path)
         return target
 
-    def symlink(self, target: str, source: str) -> None:
+    async def symlink(self, target: str, source: str) -> None:
         """Create namespace link ``target -> source`` (ln -s source target).
 
         Relative sources are stored verbatim (resolved at follow time,
@@ -516,27 +522,27 @@ class MountCore:
         if self._ops.links is None:
             raise OSError(errno.EROFS, os.strerror(errno.EROFS), target)
         stored = self.resolve(source) if source.startswith("/") else source
-        self._run(self._ops.symlink(self.resolve(target), stored))
+        await self._ops.symlink(self.resolve(target), stored)
 
-    def unlink(self, path: str) -> None:
+    async def unlink(self, path: str) -> None:
         links = self._ops.links
         if links is not None and links.is_link(self.resolve(path)):
-            self._run(links.unlink(self.resolve(path)))
+            await links.unlink(self.resolve(path))
             self._forget(path)
             return
-        self._run(self._ops.unlink(self.resolve(path)))
+        await self._ops.unlink(self.resolve(path))
         self._forget(path)
 
-    def rename(self, old: str, new: str) -> None:
-        self._run(self._ops.rename(self.resolve(old), self.resolve(new)))
+    async def rename(self, old: str, new: str) -> None:
+        await self._ops.rename(self.resolve(old), self.resolve(new))
         moved = self._xattrs.pop(old, None)
         if moved is not None:
             self._xattrs[new] = moved
         self._prefetch.pop(old, None)
         self._prefetch.pop(new, None)
 
-    def rmdir(self, path: str) -> None:
-        self._run(self._ops.rmdir(self.resolve(path)))
+    async def rmdir(self, path: str) -> None:
+        await self._ops.rmdir(self.resolve(path))
         self._xattrs.pop(path, None)
 
     def statfs(self) -> dict[str, Any]:
@@ -552,7 +558,7 @@ class MountCore:
             "f_namemax": 255,
         }
 
-    def setxattr(self, path: str, name: str, value: bytes) -> None:
+    async def setxattr(self, path: str, name: str, value: bytes) -> None:
         """Record an advisory extended attribute for this mount's lifetime.
 
         Mirage backends (S3, etc.) have no POSIX extended attributes, so
@@ -567,10 +573,10 @@ class MountCore:
             name (str): attribute name.
             value (bytes): attribute payload.
         """
-        self.getattr(path)
+        await self.getattr(path)
         self._xattrs.setdefault(path, {})[name] = bytes(value)
 
-    def getxattr(self, path: str, name: str) -> bytes:
+    async def getxattr(self, path: str, name: str) -> bytes:
         """Read an advisory extended attribute.
 
         Args:
@@ -583,21 +589,21 @@ class MountCore:
         Raises:
             OSError: ENOATTR/ENODATA when the attribute is not set.
         """
-        self.getattr(path)
+        await self.getattr(path)
         attrs = self._xattrs.get(path)
         if attrs is None or name not in attrs:
             raise OSError(NO_XATTR, os.strerror(NO_XATTR), path)
         return attrs[name]
 
-    def listxattr(self, path: str) -> list[str]:
-        self.getattr(path)
+    async def listxattr(self, path: str) -> list[str]:
+        await self.getattr(path)
         return list(self._xattrs.get(path, {}).keys())
 
-    def removexattr(self, path: str, name: str) -> None:
-        self.getattr(path)
+    async def removexattr(self, path: str, name: str) -> None:
+        await self.getattr(path)
         self._xattrs.get(path, {}).pop(name, None)
 
-    def flush(self, path: str, fh: int | None) -> None:
+    async def flush(self, path: str, fh: int | None) -> None:
         """Merge a handle's buffered writes and persist them.
 
         Args:
@@ -607,10 +613,10 @@ class MountCore:
         ctx = self._ctx(fh)
         if ctx is None or not ctx.write_buf:
             return
-        self._apply_writes(path, ctx.write_buf)
+        await self._apply_writes(path, ctx.write_buf)
         ctx.write_buf = []
 
-    def open(self, path: str) -> int:
+    async def open(self, path: str) -> int:
         """Open a path, hydrating it when its size is unknown.
 
         Args:
@@ -622,27 +628,27 @@ class MountCore:
         Raises:
             FileNotFoundError: no such entry.
         """
-        s = self._run(self._ops.stat(self.resolve(path)))
+        s = await self._ops.stat(self.resolve(path))
         ctx = Handle(path=path)
         if s.size is None and s.type != FileType.DIRECTORY:
             # API resources cannot size a file without fetching it, so hydrate
             # now: getattr(fh) and read() then serve real bytes, and the TTL
             # cache keeps release-then-stat bursts from refetching.
-            ctx.data = self.prefetch_read(path)
+            ctx.data = await self.prefetch_read(path)
         return self._handles.add(ctx)
 
-    def release(self, fh: int) -> None:
+    async def release(self, fh: int) -> None:
         ctx = self._handles.get(fh)
         if ctx is not None and ctx.write_buf:
             # The macFUSE FSKit shim issues WRITE then RELEASE with no FLUSH
             # in between (the kext always flushes on close), so a handle can
             # still hold buffered writes here. Dropping them would silently
             # lose data written through an fskit mount.
-            self.flush(ctx.path, fh)
+            await self.flush(ctx.path, fh)
         self._handles.pop(fh)
 
-    def truncate(self, path: str, length: int) -> None:
-        self._run(self._ops.truncate(self.resolve(path), length))
+    async def truncate(self, path: str, length: int) -> None:
+        await self._ops.truncate(self.resolve(path), length)
         self._prefetch.pop(path, None)
 
     def _forget(self, path: str) -> None:

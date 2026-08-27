@@ -37,7 +37,8 @@ async def seeded():
     return MountCore(ws.ops)
 
 
-def test_core_needs_no_fuse_module():
+@pytest.mark.asyncio
+async def test_core_needs_no_fuse_module():
     # The whole point of the split: MountCore imports nothing from mfusepy,
     # so the mount layer is exercisable without the [fuse] extra or a kernel.
     import mirage.mount.core as core
@@ -48,14 +49,14 @@ def test_core_needs_no_fuse_module():
 
 @pytest.mark.asyncio
 async def test_getattr_file(seeded):
-    attrs = seeded.getattr("/a.txt")
+    attrs = await seeded.getattr("/a.txt")
     assert attrs["st_mode"] & stat.S_IFREG
     assert attrs["st_size"] == len(b"hello world")
 
 
 @pytest.mark.asyncio
 async def test_getattr_dir(seeded):
-    assert seeded.getattr("/sub")["st_mode"] & stat.S_IFDIR
+    assert (await seeded.getattr("/sub"))["st_mode"] & stat.S_IFDIR
 
 
 @pytest.mark.asyncio
@@ -63,12 +64,12 @@ async def test_getattr_missing_raises_native_exception(seeded):
     # Native exception, not FuseOSError: an adapter classifies it, the core
     # does not know what a FUSE error code is.
     with pytest.raises((FileNotFoundError, ValueError)):
-        seeded.getattr("/nope.txt")
+        await seeded.getattr("/nope.txt")
 
 
 @pytest.mark.asyncio
 async def test_readdir_lists_children(seeded):
-    entries = seeded.readdir("/")
+    entries = await seeded.readdir("/")
     assert entries[:2] == [".", ".."]
     assert "a.txt" in entries
     assert "sub" in entries
@@ -76,15 +77,15 @@ async def test_readdir_lists_children(seeded):
 
 @pytest.mark.asyncio
 async def test_read_slices(seeded):
-    assert seeded.read("/a.txt", 5, 0, None) == b"hello"
-    assert seeded.read("/a.txt", 100, 6, None) == b"world"
+    assert await seeded.read("/a.txt", 5, 0, None) == b"hello"
+    assert await seeded.read("/a.txt", 100, 6, None) == b"world"
 
 
 @pytest.mark.asyncio
 async def test_open_release_tracks_handles(seeded):
-    fh = seeded.open("/a.txt")
+    fh = await seeded.open("/a.txt")
     assert fh in seeded.handles
-    seeded.release(fh)
+    await seeded.release(fh)
     assert fh not in seeded.handles
 
 
@@ -93,16 +94,17 @@ async def test_release_flushes_buffered_writes(seeded):
     # The macFUSE FSKit shim issues WRITE then RELEASE with no FLUSH in
     # between (the kext always flushes on close); dropping the buffer at
     # release silently lost data written through an fskit mount.
-    fh = seeded.open("/a.txt")
-    seeded.write("/a.txt", b"hello world, appended", 0, fh)
-    seeded.release(fh)
-    assert seeded.read("/a.txt", 100, 0, None) == b"hello world, appended"
+    fh = await seeded.open("/a.txt")
+    await seeded.write("/a.txt", b"hello world, appended", 0, fh)
+    await seeded.release(fh)
+    assert await seeded.read("/a.txt", 100, 0,
+                             None) == b"hello world, appended"
 
 
 @pytest.mark.asyncio
 async def test_write_then_read(seeded):
-    seeded.write("/new.txt", b"written", 0, None)
-    assert seeded.read("/new.txt", 100, 0, None) == b"written"
+    await seeded.write("/new.txt", b"written", 0, None)
+    assert await seeded.read("/new.txt", 100, 0, None) == b"written"
 
 
 @pytest.mark.asyncio
@@ -130,7 +132,7 @@ async def test_getattr_of_a_link_reports_the_nodes_own_row():
                       atime=None,
                       mtime="2020-01-02T03:04:05Z",
                       nofollow=True)
-    attrs = core.getattr("/link")
+    attrs = await core.getattr("/link")
     assert attrs["st_mode"] == stat.S_IFLNK | 0o777
     assert attrs["st_size"] == len("a.txt")
     assert attrs["st_mtime"] == mtime_ns(
@@ -141,11 +143,11 @@ async def test_getattr_of_a_link_reports_the_nodes_own_row():
 
 @pytest.mark.asyncio
 async def test_xattrs_round_trip(seeded):
-    seeded.setxattr("/a.txt", "user.tag", b"v1")
-    assert seeded.getxattr("/a.txt", "user.tag") == b"v1"
-    assert "user.tag" in seeded.listxattr("/a.txt")
-    seeded.removexattr("/a.txt", "user.tag")
-    assert seeded.listxattr("/a.txt") == []
+    await seeded.setxattr("/a.txt", "user.tag", b"v1")
+    assert await seeded.getxattr("/a.txt", "user.tag") == b"v1"
+    assert "user.tag" in await seeded.listxattr("/a.txt")
+    await seeded.removexattr("/a.txt", "user.tag")
+    assert await seeded.listxattr("/a.txt") == []
 
 
 @pytest.mark.asyncio
@@ -153,7 +155,7 @@ async def test_getxattr_missing_raises_no_xattr(seeded):
     from mirage.mount.errors import NO_XATTR
 
     with pytest.raises(OSError) as exc:
-        seeded.getxattr("/a.txt", "user.absent")
+        await seeded.getxattr("/a.txt", "user.absent")
     assert exc.value.errno == NO_XATTR
 
 
@@ -176,11 +178,11 @@ async def test_rename_across_mounts_reports_exdev():
     },
                    mode=MountMode.WRITE)
     core = MountCore(ws.ops)
-    core.write("/data/x.txt", b"body", 0, None)
+    await core.write("/data/x.txt", b"body", 0, None)
     with pytest.raises(OSError) as exc:
-        core.rename("/data/x.txt", "/other/x.txt")
+        await core.rename("/data/x.txt", "/other/x.txt")
     assert exc.value.errno == errno.EXDEV
-    assert core.read("/data/x.txt", 100, 0, None) == b"body"
+    assert await core.read("/data/x.txt", 100, 0, None) == b"body"
 
 
 @op("read", resource="ram", filetype=".tally")
@@ -202,9 +204,9 @@ async def test_partial_write_merges_against_stored_bytes():
     # mount that renders this extension would otherwise have the
     # rendering written over the file on any partial write.
     core = _tally_core()
-    core.write("/data/books.tally", b"0123456789", 0, None)
-    core.write("/data/books.tally", b"XY", 4, None)
-    stored = core._run(core._ops.read("/data/books.tally", raw=True))
+    await core.write("/data/books.tally", b"0123456789", 0, None)
+    await core.write("/data/books.tally", b"XY", 4, None)
+    stored = await core._ops.read("/data/books.tally", raw=True)
     assert stored == b"0123XY6789"
 
 
@@ -212,20 +214,20 @@ async def test_partial_write_merges_against_stored_bytes():
 async def test_read_still_renders_after_a_partial_write():
     # The other half of the same rule: only the write path reads raw.
     core = _tally_core()
-    core.write("/data/books.tally", b"0123456789", 0, None)
-    core.write("/data/books.tally", b"XY", 4, None)
-    body = core.read("/data/books.tally", 100, 0, None)
+    await core.write("/data/books.tally", b"0123456789", 0, None)
+    await core.write("/data/books.tally", b"XY", 4, None)
+    body = await core.read("/data/books.tally", 100, 0, None)
     assert body == b"RENDERED-AND-MUCH-LONGER"
 
 
 @pytest.mark.asyncio
 async def test_buffered_write_flush_merges_against_stored_bytes():
     core = _tally_core()
-    core.write("/data/books.tally", b"0123456789", 0, None)
-    fh = core.open("/data/books.tally")
-    core.write("/data/books.tally", b"XY", 4, fh)
-    core.release(fh)
-    stored = core._run(core._ops.read("/data/books.tally", raw=True))
+    await core.write("/data/books.tally", b"0123456789", 0, None)
+    fh = await core.open("/data/books.tally")
+    await core.write("/data/books.tally", b"XY", 4, fh)
+    await core.release(fh)
+    stored = await core._ops.read("/data/books.tally", raw=True)
     assert stored == b"0123XY6789"
 
 

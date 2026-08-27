@@ -38,6 +38,22 @@ class FakeLinks:
     def readlink(self, path: str) -> str | None:
         return self._table.get(path)
 
+    async def unlink(self, path: str) -> None:
+        """Remove a link entry, the way the door special-cases one."""
+        self._table.pop(path, None)
+
+    def link_stat_at(self, path: str) -> FileStat | None:
+        """The node row for a link, or None when the table has no
+        overlay for it.
+
+        Present because the real facade has it and the mount core asks:
+        a fake that carries only what one adapter happened to call is
+        how an adapter that starts sharing the core meets an
+        AttributeError instead of an answer.
+        """
+        del path
+        return None
+
 
 class FakeOps:
     """Faithful to the real facade: ``stat`` follows namespace links and
@@ -454,13 +470,16 @@ def test_attrs_carry_a_real_mtime():
     assert attrs.mtime_epoch > 1_000_000_000
 
 
-def test_attrs_report_zero_when_the_row_has_no_time():
-    # Honest rather than fabricated: a backend that cannot date a file
-    # leaves the client reading 1970 instead of a plausible lie.
+def test_an_undated_row_is_dated_from_the_mount():
+    # This asserted the epoch, on the argument that a fabricated time is
+    # a lie. Sharing the core settles it the other way: the fuse tier has
+    # always answered its mount time for a row the backend cannot date,
+    # and two kernel mounts of one tree disagreeing about a file's age is
+    # worse than either answer. Neither says 1970 when the backend knows.
     fs, ops = make()
     ops.stamp = None
     attrs = run(fs.getattr(run(fs.lookup(fs.root_dir(), "a.txt"))))
-    assert attrs.mtime_epoch == 0.0
+    assert attrs.mtime_epoch > 1_000_000_000
 
 
 def test_overlapping_flushes_do_not_lose_an_acknowledged_write():

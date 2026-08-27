@@ -16,38 +16,24 @@ import asyncio
 import errno
 import os
 import posixpath
+import stat as stat_bits
 
-from mirage.mount.platform.macos import is_macos_metadata
+from mirage.mount.core import MountCore
 from mirage.nfs.config import NFSConfig
 from mirage.nfs.errors import StaleHandleError
 from mirage.nfs.ids import ROOT_PATH, IdTable
 from mirage.nfs.types import DirEntry, NFSAttrs, SetAttrs
 from mirage.nfs.writebuf import WriteBuffer
 from mirage.ops import Ops
-from mirage.types import FileStat, FileType
-from mirage.utils.stat_view import mtime_ns
+
+# The core slices to the end when asked for more than the file holds,
+# which is how a whole-file read is spelled through a sized API.
+_WHOLE_FILE = 1 << 62
 
 
 def _join(parent: str, name: str) -> str:
     return posixpath.join(parent,
                           name) if parent != ROOT_PATH else ROOT_PATH + name
-
-
-def _epoch(stat: FileStat) -> float:
-    """Modification time in seconds since the epoch, or 0 when unknown.
-
-    The wire needs an ``nfstime3``, and a backend that cannot date a
-    file leaves the client reading 1970 -- which is honest, and is why
-    this is one conversion rather than a fabricated "now".
-
-    Args:
-        stat (FileStat): the row to read the time from.
-
-    Returns:
-        float: seconds since the epoch, 0.0 when the row has no time.
-    """
-    stamp = mtime_ns(stat)
-    return 0.0 if stamp is None else stamp / 1_000_000_000
 
 
 class MirageNFS:
@@ -66,6 +52,12 @@ class MirageNFS:
 
     def __init__(self, ops: Ops, config: NFSConfig | None = None) -> None:
         self._ops = ops
+        # The shared mount core. Every filesystem semantic the two
+        # kernel tiers agree on -- link display, macOS metadata, entry
+        # naming, stat shaping, the size-unknown rules -- is decided
+        # there, so the adapters cannot drift. What stays here is what
+        # NFSv3 alone needs: ids, the write buffer, the wire attrs.
+        self._core = MountCore(ops)
         self._config = config or NFSConfig()
         self._ids = IdTable()
         self._writes = WriteBuffer()
@@ -93,15 +85,10 @@ class MirageNFS:
             StaleHandleError: the parent id is unknown.
             FileNotFoundError: no such entry.
         """
-        if is_macos_metadata(name):
-            # Finder and Spotlight probe these on every listing;
-            # answering here keeps the probe off the backend, exactly
-            # as MountCore.getattr does.
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
-                                    name)
         path = _join(self._ids.resolve(dirid), name)
-        if self._link_target(path) is None:
-            await self._ops.stat(path)
+        # getattr refuses macOS metadata names and reports a link as a
+        # link rather than following it, both of which this repeated.
+        await self._core.getattr(path)
         return self._ids.alloc(path)
 
     async def getattr(self, fileid: int) -> NFSAttrs:
@@ -152,8 +139,7 @@ class MirageNFS:
                                    max_bytes=self._config.max_buffered_bytes)
         if full:
             await self._flush_one(fileid, path)
-        stat = await self._ops.stat(path)
-        return self._attrs(fileid, stat)
+        return await self._entry_attrs(fileid, path)
 
     async def create(self, dirid: int, name: str) -> int:
         """Create an empty file and return its id.
@@ -166,7 +152,9 @@ class MirageNFS:
             int: the new file's id.
         """
         path = _join(self._ids.resolve(dirid), name)
-        await self._ops.create(path)
+        fh = await self._core.create(path)
+        # NFSv3 is handle-free; the core's handle would leak.
+        await self._core.release(fh)
         return self._ids.alloc(path)
 
     async def mkdir(self, dirid: int, name: str) -> int:
@@ -180,7 +168,7 @@ class MirageNFS:
             int: the new directory's id.
         """
         path = _join(self._ids.resolve(dirid), name)
-        await self._ops.mkdir(path)
+        await self._core.mkdir(path)
         return self._ids.alloc(path)
 
     async def remove(self, dirid: int, name: str) -> None:
@@ -196,28 +184,17 @@ class MirageNFS:
         """
         path = _join(self._ids.resolve(dirid), name)
         fileid = self._ids.id_for(path)
-        if self._link_target(path) is not None:
-            # The entry itself is a link, so it is unlinked whatever it
-            # points at: stat would follow it, and following a link to
-            # a directory would rmdir the target instead of the link.
-            # The door special-cases the unlink of a link, so no stat
-            # is needed -- which is also what lets a broken link be
-            # removed at all.
-            if fileid is not None:
-                self._writes.drop(fileid)
-                self._flush_locks.pop(fileid, None)
-            await self._ops.unlink(path)
-            if fileid is not None:
-                self._ids.invalidate(fileid)
-            return
-        stat = await self._ops.stat(path)
         if fileid is not None:
             self._writes.drop(fileid)
             self._flush_locks.pop(fileid, None)
-        if stat.type == FileType.DIRECTORY:
-            await self._ops.rmdir(path)
+        # The core's unlink unlinks a link rather than following it, and
+        # its getattr reports a link as a link, which keeps one out of
+        # the rmdir arm and lets a broken one be removed at all.
+        attrs = await self._core.attrs_for(path)
+        if stat_bits.S_ISDIR(attrs["st_mode"]):
+            await self._core.rmdir(path)
         else:
-            await self._ops.unlink(path)
+            await self._core.unlink(path)
         if fileid is not None:
             self._ids.invalidate(fileid)
 
@@ -245,7 +222,7 @@ class MirageNFS:
         fileid = self._ids.id_for(src)
         if fileid is not None and self._writes.has_pending(fileid):
             await self._flush_one(fileid, src)
-        await self._ops.rename(src, dst)
+        await self._core.rename(src, dst)
         self._ids.rename(src, dst)
 
     async def setattr(self, fileid: int, attrs: SetAttrs) -> NFSAttrs:
@@ -266,9 +243,8 @@ class MirageNFS:
         size = attrs.size
         if size is not None:
             self._writes.clip(fileid, size)
-            await self._ops.truncate(path, size)
-        stat = await self._ops.stat(path)
-        return self._attrs(fileid, stat)
+            await self._core.truncate(path, size)
+        return await self._entry_attrs(fileid, path)
 
     async def set_size(self, fileid: int, size: int | None) -> NFSAttrs:
         """The wire layer's SETATTR entry point, on primitives.
@@ -298,7 +274,7 @@ class MirageNFS:
             int: the link's file id.
         """
         path = _join(self._ids.resolve(dirid), name)
-        await self._ops.symlink(path, target)
+        await self._core.symlink(path, target)
         return self._ids.alloc(path)
 
     async def readlink(self, fileid: int) -> str:
@@ -318,7 +294,7 @@ class MirageNFS:
             OSError: EINVAL when the id does not name a link.
         """
         path = self._ids.resolve(fileid)
-        target = self._link_target(path)
+        target = self._core.link_target(path)
         if target is None:
             raise OSError(errno.EINVAL, os.strerror(errno.EINVAL), path)
         return target
@@ -349,12 +325,12 @@ class MirageNFS:
         # The facade answers in paths -- a child mount with a trailing
         # slash -- so names are derived the way MountCore.readdir does,
         # and macOS metadata names are dropped the same way.
-        found = set()
-        for entry in await self._ops.readdir(path):
-            part = entry.rstrip("/").rsplit("/", 1)[-1]
-            if part and not is_macos_metadata(part):
-                found.add(part)
-        names = sorted(found)
+        # The core derives names from the facade's paths and drops
+        # macOS metadata; "." and ".." are libfuse's to emit, and NFSv3
+        # carries them in the reply header instead.
+        names = [
+            n for n in await self._core.readdir(path) if n not in (".", "..")
+        ]
         entries: list[DirEntry] = []
         resuming = cookie != 0
         for name in names:
@@ -457,56 +433,35 @@ class MirageNFS:
 
     async def _read_base(self, path: str) -> bytes:
         try:
-            return await self._ops.read(path, raw=True)
+            return await self._core.read(path, _WHOLE_FILE, 0, None)
         except (FileNotFoundError, IsADirectoryError):
             return b""
 
-    def _link_target(self, path: str) -> str | None:
-        """The target to present for a namespace link, None otherwise.
-
-        The link check must precede any ops stat, exactly as in
-        ``MountCore.getattr``: the op facade follows namespace links,
-        so a stat on a link path reports the target and the link
-        itself becomes invisible. Relative targets are stored verbatim
-        and returned as-is; absolute targets name virtual paths and are
-        rewritten relative to the link's directory.
-
-        Args:
-            path (str): mount-relative path to inspect.
-        """
-        links = self._ops.links
-        if links is None:
-            return None
-        target = links.readlink(path)
-        if target is None:
-            return None
-        if not target.startswith("/"):
-            return target
-        parent = path.rsplit("/", 1)[0] or "/"
-        return posixpath.relpath(target, parent)
-
     async def _entry_attrs(self, fileid: int, path: str) -> NFSAttrs:
-        """Attributes for one entry, seeing a link as itself.
+        """The wire attributes for one entry, over the core's POSIX ones.
+
+        The core decides what the entry *is* -- a link reported as a
+        link rather than followed, a size-unknown file reported as 0,
+        macOS metadata refused -- and this converts that answer into the
+        three facts NFSv3 puts on the wire, plus the size a client
+        should see, which counts writes buffered but not yet stored.
+
+        ``attrs_for`` rather than ``getattr``: the id was minted by a
+        lookup that already applied the name policy, and re-applying it
+        here would disappear an entry the client just created.
 
         Args:
             fileid (int): the entry's id.
             path (str): the entry's mount-relative path.
         """
-        target = self._link_target(path)
-        if target is not None:
-            return NFSAttrs(fileid=fileid,
-                            size=len(target.encode()),
-                            is_dir=False,
-                            is_symlink=True)
-        return self._attrs(fileid, await self._ops.stat(path))
-
-    def _attrs(self, fileid: int, stat: FileStat) -> NFSAttrs:
-        is_dir = stat.type == FileType.DIRECTORY
+        entry = await self._core.attrs_for(path)
+        mode = entry["st_mode"]
+        is_dir = bool(stat_bits.S_ISDIR(mode))
         size = 0 if is_dir else self._writes.pending_size(
-            fileid, stat.size or 0)
+            fileid, entry["st_size"])
         return NFSAttrs(fileid=fileid,
                         size=size,
                         is_dir=is_dir,
-                        is_symlink=stat.type == FileType.SYMLINK,
-                        mode=stat.mode,
-                        mtime_epoch=_epoch(stat))
+                        is_symlink=bool(stat_bits.S_ISLNK(mode)),
+                        mode=mode & 0o7777,
+                        mtime_epoch=float(entry["st_mtime"]))
