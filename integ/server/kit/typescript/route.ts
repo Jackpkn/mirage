@@ -42,15 +42,32 @@ export interface KitRoute<C> {
 }
 
 const PARAM_RE = /:([A-Za-z_][A-Za-z0-9_]*)/g
+// A wildcard segment, `*name`, captures the REST of the path including its
+// slashes. `:name` deliberately does not, and that is right for a vendor that
+// addresses items by id; Microsoft Graph addresses them by PATH, wedged into
+// the URL between `/root:` and `:/`, so a route for it cannot be written with
+// slash-free parameters at all.
+const SPLAT_RE = /\\\*([A-Za-z_][A-Za-z0-9_]*)/g
 const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g
 
 export function compilePath(path: string): { pattern: RegExp; params: string[] } {
   if (!path.startsWith('/')) throw new RouteError(`route path must start with /: ${path}`)
   const params: string[] = []
-  const body = path.replace(ESCAPE_RE, '\\$&').replace(PARAM_RE, (_all, name: string) => {
-    params.push(name)
-    return '([^/]+)'
-  })
+  // Escaping runs first, so a `*` in the source is `\\*` by the time the
+  // wildcard pattern looks for it; both replacements run in ONE pass so their
+  // names are pushed left to right, which is the order the matcher reads the
+  // capture groups back.
+  const both = new RegExp(`${SPLAT_RE.source}|${PARAM_RE.source}`, 'g')
+  const body = path
+    .replace(ESCAPE_RE, '\\$&')
+    .replace(both, (_all, splat: string | undefined, name: string | undefined) => {
+      if (splat !== undefined) {
+        params.push(splat)
+        return '(.*)'
+      }
+      params.push(name ?? '')
+      return '([^/]+)'
+    })
   // No `/?` here. A vendor API answers the path it documents, not that path
   // with a trailing slash, and the fakes this kit replaces 404'd on one. The
   // permissive spelling made every route match both, which is a divergence on

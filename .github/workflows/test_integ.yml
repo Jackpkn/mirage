@@ -327,6 +327,10 @@ jobs:
         working-directory: integ
         run: pnpm exec tsx cross_commands.ts
 
+      - name: Generate integ Prisma clients
+        working-directory: integ
+        run: pnpm run prisma:clients
+
       - name: Start fake Notion API (Prisma)
         working-directory: integ
         env:
@@ -764,9 +768,10 @@ jobs:
       - name: Run declarative battery on nextcloud
         run: ./python/.venv/bin/python integ/runners/python/main.py --target nextcloud --strict
 
-      # disk, ssh and dropbox need nothing (tempdir, in-process SFTP
-      # server, in-process fake); s3 and gridfs need a real service each,
-      # and skip when the env is absent rather than failing.
+      # disk and ssh need nothing (tempdir, in-process SFTP server);
+      # dropbox is an out-of-process fake started below; s3 and gridfs need a
+      # real service each, and skip when the env is absent rather than
+      # failing.
       - name: Start MinIO for the watch battery
         run: |
           docker run -d --name minio-watch -p 9000:9000 \
@@ -790,8 +795,11 @@ jobs:
             sleep 1
           done
 
-      # gdrive is the one watch target whose fake is TypeScript and
-      # out-of-process; the other five in-process fakes need nothing.
+      # gdrive, dropbox, box and onedrive are the watch targets whose fakes are
+      # TypeScript and out-of-process; the other two in-process fakes (github,
+      # ssh) need nothing. Every one of these backends SKIPS ITSELF when its
+      # URL is unset, so a server that is not started here costs coverage in
+      # silence rather than failing the job.
       - name: Start the fake Google Workspace server
         run: |
           cd integ && nohup pnpm exec tsx server/gws/main.ts --port 19999 \
@@ -801,6 +809,39 @@ jobs:
             sleep 1
           done
           cat /tmp/gws.log
+
+      - name: Start the fake Dropbox server
+        working-directory: integ
+        run: |
+          nohup pnpm exec tsx server/dropbox/main.ts --port 5088 \
+            > /tmp/dropbox-watch.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "DROPBOX_URL=" /tmp/dropbox-watch.log && break
+            sleep 1
+          done
+          cat /tmp/dropbox-watch.log
+
+      - name: Start the fake Box server
+        working-directory: integ
+        run: |
+          nohup pnpm exec tsx server/box/main.ts --port 5096 \
+            > /tmp/box-watch.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "BOX_URL=" /tmp/box-watch.log && break
+            sleep 1
+          done
+          cat /tmp/box-watch.log
+
+      - name: Start the fake Microsoft Graph server
+        working-directory: integ
+        run: |
+          nohup pnpm exec tsx server/onedrive/main.ts --port 5089 \
+            > /tmp/onedrive-watch.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "ONEDRIVE_URL=" /tmp/onedrive-watch.log && break
+            sleep 1
+          done
+          cat /tmp/onedrive-watch.log
 
       - name: Run watch battery
         env:
@@ -814,6 +855,9 @@ jobs:
           AWS_SECRET_ACCESS_KEY: minio123
           MONGODB_URI: mongodb://localhost:27017
           GWS_URL: http://127.0.0.1:19999
+          DROPBOX_URL: http://127.0.0.1:5088
+          BOX_URL: http://127.0.0.1:5096
+          ONEDRIVE_URL: http://127.0.0.1:5089
         run: ./python/.venv/bin/python integ/watch/run.py
 
   integ-fuse:

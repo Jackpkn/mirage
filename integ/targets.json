@@ -1,9 +1,11 @@
 {
   "services": {
     "box": {
-      "python": [],
+      "python": [
+        "BOX_URL"
+      ],
       "typescript": [
-        "BOX_ENDPOINT"
+        "BOX_URL"
       ]
     },
     "chroma": {
@@ -35,8 +37,12 @@
       ]
     },
     "dropbox": {
-      "python": [],
-      "typescript": []
+      "python": [
+        "DROPBOX_URL"
+      ],
+      "typescript": [
+        "DROPBOX_URL"
+      ]
     },
     "email": {
       "python": [
@@ -137,8 +143,12 @@
       ]
     },
     "onedrive": {
-      "python": [],
-      "typescript": []
+      "python": [
+        "ONEDRIVE_URL"
+      ],
+      "typescript": [
+        "ONEDRIVE_URL"
+      ]
     },
     "postgres": {
       "python": [
@@ -173,8 +183,12 @@
       ]
     },
     "sharepoint": {
-      "python": [],
-      "typescript": []
+      "python": [
+        "ONEDRIVE_URL"
+      ],
+      "typescript": [
+        "ONEDRIVE_URL"
+      ]
     },
     "slack": {
       "python": [

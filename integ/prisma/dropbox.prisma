@@ -1,0 +1,72 @@
+// Schema for the Dropbox fake (integ/server/dropbox/). The vendor addresses
+// every item by its full path rather than by an id, so the path IS the key and
+// there is no parent column: a listing is a prefix query and a subtree delete
+// is a prefix delete. `id:<path>` is what the vendor's own `id` field looks
+// like on this fake, which is why nothing else needs to be stored for it.
+//
+// A folder is a row with isFolder, not the absence of one. Real Dropbox has
+// explicit folder objects (create_folder_v2 answers with metadata for one), so
+// an empty folder has to survive a listing, which a derived-from-file-paths
+// folder set cannot do.
+//
+// Content is a BLOB. The alternative -- a path on the host holding the bytes --
+// would put a second source of truth outside the run's SQLite file, and the
+// point of one file per run is that copying it copies the whole account.
+//
+// `tenant` is one Dropbox ACCOUNT. The fake echoes the caller's refresh token
+// back from /oauth2/token as the access token, so `tenantFromBearer` reads the
+// account off the ordinary `Authorization: Bearer` header every RPC already
+// carries. That is faithful to OAuth (a refresh token identifies an account)
+// and it is what lets one shared server serve the several isolated accounts a
+// target mounts, which previously took several server PROCESSES.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/dropbox"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model DropboxItem {
+  tenant   String
+  // Always leading-slash, never trailing, exactly as the caller typed it.
+  // `path_lower` is derived on render rather than stored: SQLite's LIKE is
+  // case-insensitive for ASCII but its `=` is not, and storing both invites
+  // the two to disagree after a move.
+  path     String
+  isFolder Boolean
+  content  Bytes?
+  // Rendered verbatim as `server_modified`. A file's stamp is the clock's at
+  // write time; a folder has none, because the vendor's folder metadata has no
+  // timestamp field at all.
+  modified String?
+  seq      Int
+
+  @@id([tenant, path])
+}
+
+// list_folder and search_v2 both hand out an opaque cursor and both are
+// resumed on a later request, so the page they hold has to outlive the
+// request that made it. It lives in the run's own file rather than in process
+// memory so that a cursor is exactly as durable as the account it pages over.
+//
+// `payload` is the remaining page as JSON. The vendor's cursor is opaque, so
+// the shape behind it is the fake's business; storing the snapshot is what
+// makes a listing stable against a concurrent write, which is what the vendor
+// documents (a cursor reads the tree as of when it was issued).
+model DropboxCursor {
+  tenant  String
+  token   String
+  // `list` or `search`. One table rather than two because the two differ only
+  // in what the payload holds, and a single `token` namespace is what the
+  // vendor presents.
+  kind    String
+  payload String
+  seq     Int
+
+  @@id([tenant, token])
+}
