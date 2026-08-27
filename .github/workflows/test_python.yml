@@ -155,7 +155,6 @@ jobs:
           independent=(
             integ/truth/python/ram.json
             integ/truth/python/ram_vfs.json
-            integ/truth/python/ram_python.json
             integ/truth/python/disk.json
             integ/truth/python/disk_vfs.json
             integ/truth/watch_delta.json
@@ -169,6 +168,12 @@ jobs:
             | xargs -P 4 -I{} python3 integ/check_example.py {} --variant python \
             || bad=1
           variant integ/truth/python/ram_vfs.json python_utf8_off
+
+          # ram_python boots the monty language runtime. Four of those loading
+          # at once on a 4 vCPU runner crashed it with SIGABRT (exit -6) in
+          # https://github.com/strukto-ai/mirage/actions/runs/33043622744 while
+          # every other example passed, so it runs on its own.
+          run integ/truth/python/ram_python.json
 
           # These four share one redis server, so they stay serial: running
           # them together would have them racing on the same keyspace.
