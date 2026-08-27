@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { KitRoute } from '../kit/typescript/index.ts'
+import type { Ctx, JsonValue, KitRoute } from '../kit/typescript/index.ts'
 import { API_PREFIXES } from './config.ts'
 import type { C } from './config.ts'
 import { blobSha, treeSha } from './wire.ts'
@@ -174,28 +174,59 @@ const updateRef = withRepo(async (ctx, repo) => {
   return { status: 200, body: { ref: `refs/${ref}`, object: { sha, type: 'commit' } } }
 })
 
+// Looked up in the default branch's history rather than in the commit table,
+// because the root commit is synthesized from the tree and never stored: a
+// caller resolving a ref and then asking for that commit would 404 on the one
+// commit every repository has. A commit that named no tree of its own points
+// at the whole-tree sha, which is what a write through /contents produces.
 const gitCommit = withRepo(async (ctx, repo) => {
   const sha = param(ctx, 'sha')
-  const row = await ctx.db.githubCommit.findFirst({
-    where: { tenant: ctx.tenant, repo: repo.fullName, sha },
-  })
-  if (row === null) return fail(404, 'Not Found')
+  const history = await commitList(ctx.db, ctx.tenant, repo, repo.defaultBranch)
+  const row = history.find((c) => c.sha === sha)
+  if (row === undefined) return fail(404, 'Not Found')
   return {
     status: 200,
-    body: { sha, message: row.message, tree: { sha: row.treeSha } },
+    body: {
+      sha,
+      message: row.message,
+      tree: { sha: row.treeSha === '' ? treeSha('') : row.treeSha },
+    },
   }
 })
 
+async function headSha(ctx: Ctx<C>, repo: RepoRow, branch: string): Promise<string> {
+  const head = await commitList(ctx.db, ctx.tenant, repo, branch)
+  return head[0]?.sha ?? ''
+}
+
+// `git/ref/<full-ref>` returns ONE object and `git/refs/<prefix>` a LIST of
+// everything beneath it. They are different endpoints, and a caller picks
+// whichever it expects, so serving only the singular makes the plural read as
+// "no such ref". A prefix that matches nothing is a 404 rather than an empty
+// list, which is what the vendor answers.
 const showRef = withRepo(async (ctx, repo) => {
   const ref = param(ctx, 'ref').replace(/^\/+|\/+$/g, '')
-  const name = ref.startsWith('heads/') ? ref.slice('heads/'.length) : ref
+  const name = ref.startsWith('heads/') ? ref.slice('heads/'.length) : ''
   const names = await branchNames(ctx.db, ctx.tenant, repo)
   if (!names.includes(name)) return fail(404, 'Not Found')
-  const head = await commitList(ctx.db, ctx.tenant, repo, name)
   return {
     status: 200,
-    body: { ref: `refs/heads/${name}`, object: { sha: head[0]?.sha ?? '', type: 'commit' } },
+    body: { ref: `refs/${ref}`, object: { sha: await headSha(ctx, repo, name), type: 'commit' } },
   }
+})
+
+const listRefs = withRepo(async (ctx, repo) => {
+  const prefix = param(ctx, 'ref').replace(/^\/+|\/+$/g, '')
+  const items: JsonValue[] = []
+  for (const name of await branchNames(ctx.db, ctx.tenant, repo)) {
+    if (!`heads/${name}`.startsWith(prefix)) continue
+    items.push({
+      ref: `refs/heads/${name}`,
+      object: { sha: await headSha(ctx, repo, name), type: 'commit' },
+    })
+  }
+  if (items.length === 0) return fail(404, 'Not Found')
+  return { status: 200, body: items }
 })
 
 export function gitRoutes(): KitRoute<C>[] {
@@ -210,6 +241,6 @@ export function gitRoutes(): KitRoute<C>[] {
       write: true,
     }),
     route<C>('GET', `${p}/repos/:owner/:repo/git/ref/*ref`, authedRoute(showRef)),
-    route<C>('GET', `${p}/repos/:owner/:repo/git/refs/*ref`, authedRoute(showRef)),
+    route<C>('GET', `${p}/repos/:owner/:repo/git/refs/*ref`, authedRoute(listRefs)),
   ])
 }

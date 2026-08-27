@@ -50,6 +50,15 @@ export async function allRepos(db: C, tenant: string): Promise<RepoRow[]> {
   })) as RepoRow[]
 }
 
+// Issues and pull requests share one counter, because on GitHub they share one
+// number space: a repository with issue 1 numbers its first pull request 2.
+export async function nextNumber(db: C, tenant: string, repo: RepoRow): Promise<number> {
+  const where = { ...scope(tenant), repo: repo.fullName }
+  const issue = await db.githubIssue.findFirst({ where, orderBy: { number: 'desc' } })
+  const pull = await db.githubPull.findFirst({ where, orderBy: { number: 'desc' } })
+  return Math.max(issue?.number ?? 0, pull?.number ?? 0) + 1
+}
+
 export function metaOf(repo: RepoRow): Record<string, JsonValue> {
   const parsed = JSON.parse(repo.metaJson) as JsonValue
   return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {}
@@ -158,9 +167,20 @@ export async function submodulesOf(db: C, tenant: string, repo: RepoRow): Promis
 
 // Recursive tree entries, optionally rooted at a subdirectory: blobs carry a
 // size, trees carry none, and a gitlink is mode 160000 with no blob behind it.
-export function treeItems(files: Tree, submodules: string[], at = ''): JsonValue {
+// One git tree entry. Typed rather than JsonValue because the tree route reads
+// `path` back to filter a truncated listing, and a caller that has to cast for
+// that is a caller the shape was never declared to.
+// A blob entry carries a size and a tree or gitlink entry carries none, so the
+// two are spelled as a union rather than as one shape with an optional field:
+// an optional property widens to `| undefined`, which is not a JSON value, and
+// the whole entry then stops being one.
+export type TreeItem =
+  | { path: string; mode: string; type: string; sha: string }
+  | { path: string; mode: string; type: string; sha: string; size: number }
+
+export function treeItems(files: Tree, submodules: string[], at = ''): TreeItem[] {
   const prefix = at === '' ? '' : `${at}/`
-  const items: Array<Record<string, JsonValue>> = []
+  const items: TreeItem[] = []
   for (const path of [...directoriesOf(files)].sort()) {
     if (!path.startsWith(prefix) || path === at) continue
     items.push({
@@ -190,7 +210,7 @@ export function treeItems(files: Tree, submodules: string[], at = ''): JsonValue
       sha: commitSha(path),
     })
   }
-  items.sort((a, b) => (String(a.path) < String(b.path) ? -1 : 1))
+  items.sort((a, b) => (a.path < b.path ? -1 : 1))
   return items
 }
 

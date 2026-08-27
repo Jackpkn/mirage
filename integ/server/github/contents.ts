@@ -221,6 +221,11 @@ const deleteContents = withRepo(async (ctx, repo) => {
     where: { tenant: ctx.tenant, repo: repo.fullName, branch, path },
   })
   if (row === null) return fail(404, 'Not Found')
+  // GitHub requires the current blob sha here exactly as it does for a
+  // replace, so a delete racing another writer is refused rather than applied.
+  if (str(body, 'sha') !== blobSha(Buffer.from(row.data))) {
+    return fail(409, `${path} does not match`)
+  }
   await ctx.db.githubFile.delete({ where: { pk: row.pk } })
   const message = str(body, 'message') === '' ? `Delete ${path}` : str(body, 'message')
   const commit = await recordCommit(ctx.db, ctx.tenant, repo, message, [path], branch)
@@ -256,6 +261,41 @@ const oneCommit = withRepo(async (ctx, repo) => {
   return fail(404, 'Not Found')
 })
 
+// The backend passes either a ref name (a recursive whole-tree fetch) or a tree
+// sha from a previous listing (the truncation fallback). A ref is resolved
+// through `branchFor`, which accepts a commit sha too, because a client that
+// resolves a ref to a commit then asks for the tree by that sha: git accepts
+// it, since a commit names its root tree.
+const gitTree = withRepo(async (ctx, repo) => {
+  const ref = param(ctx, 'ref')
+  const subs = await submodulesOf(ctx.db, ctx.tenant, repo)
+  const files = await treeOf(ctx.db, ctx.tenant, repo, ref)
+  if (files === null) {
+    // Not a ref, so it may be one directory's tree sha. A per-sha tree GET is
+    // one level deep in git; only the ref-name request carries recursive=1.
+    const whole = await treeOfBranch(ctx.db, ctx.tenant, repo, repo.defaultBranch)
+    const at = [...directoriesOf(whole)].sort().find((d) => treeSha(d) === ref)
+    if (at === undefined) return fail(404, 'Not Found')
+    const shallow = treeItems(whole, subs, at).filter((it) => !it.path.includes('/'))
+    return { status: 200, body: { sha: treeSha(at), tree: shallow, truncated: false } }
+  }
+  // A truncated recursive tree keeps only the top-level entries, the way git
+  // drops deep paths past its entry cap.
+  let items = treeItems(files, subs)
+  if (repo.truncated) items = items.filter((it) => !it.path.includes('/'))
+  return { status: 200, body: { sha: treeSha(''), tree: items, truncated: repo.truncated } }
+})
+
+// GitHub wraps a base64 payload rather than emitting one long line, and so
+// does python's base64.encodebytes: 76 columns and a trailing newline. A
+// decoder ignores the breaks, but a golden renders them.
+function wrapped(data: Buffer): string {
+  const raw = data.toString('base64')
+  const lines: string[] = []
+  for (let i = 0; i < raw.length; i += 76) lines.push(raw.slice(i, i + 76))
+  return `${lines.join('\n')}\n`
+}
+
 export function contentRoutes(): KitRoute<C>[] {
   return everywhere<C>(API_PREFIXES, (p) => [
     // Both spellings of the repository root: GitHub serves `/contents` as well
@@ -270,25 +310,7 @@ export function contentRoutes(): KitRoute<C>[] {
     }),
     route<C>('GET', `${p}/repos/:owner/:repo/readme`, authedRoute(readme)),
     route<C>('GET', `${p}/repos/:owner/:repo/commits/*ref`, authedRoute(oneCommit)),
-    route<C>(
-      'GET',
-      `${p}/repos/:owner/:repo/git/trees/:ref`,
-      authedRoute(
-        withRepo(async (ctx, repo) => {
-          const files = await treeOf(ctx.db, ctx.tenant, repo, param(ctx, 'ref'))
-          if (files === null) return fail(404, 'Not Found')
-          const subs = await submodulesOf(ctx.db, ctx.tenant, repo)
-          return {
-            status: 200,
-            body: {
-              sha: treeSha(param(ctx, 'ref')),
-              truncated: repo.truncated,
-              tree: treeItems(files, subs),
-            },
-          }
-        }),
-      ),
-    ),
+    route<C>('GET', `${p}/repos/:owner/:repo/git/trees/:ref`, authedRoute(gitTree)),
     route<C>(
       'GET',
       `${p}/repos/:owner/:repo/git/blobs/:sha`,
@@ -304,8 +326,8 @@ export function contentRoutes(): KitRoute<C>[] {
                 body: {
                   sha: want,
                   size: data.length,
+                  content: wrapped(data),
                   encoding: 'base64',
-                  content: data.toString('base64'),
                 },
               }
             }

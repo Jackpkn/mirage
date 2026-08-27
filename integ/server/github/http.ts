@@ -44,6 +44,13 @@ export function param(ctx: Ctx<C>, name: string): string {
   return ctx.params[name] ?? ''
 }
 
+// A path segment that is not a number can never name an issue or a pull, and
+// parsing it as one would make `/issues/abc` read as issue NaN.
+export function numberParam(ctx: Ctx<C>): number | null {
+  const raw = param(ctx, 'number')
+  return /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : null
+}
+
 // Every repository route resolves owner/name the same way, so the lookup and
 // its 404 live here rather than at the top of sixty handlers.
 export function withRepo(fn: (ctx: Ctx<C>, repo: RepoRow) => Promise<Reply> | Reply): Handler {

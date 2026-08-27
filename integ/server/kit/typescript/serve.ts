@@ -18,7 +18,7 @@ import type { Fake, Runtime } from './base.ts'
 import { bindHost } from './bind.ts'
 import type { MinimalClient } from './db.ts'
 import { createKitServer, makeRuntime } from './http.ts'
-import { parsePort } from './port.ts'
+import { parseFixture, parsePort } from './port.ts'
 
 export interface Started<C extends MinimalClient> {
   endpoint: string
@@ -31,7 +31,11 @@ export interface Started<C extends MinimalClient> {
 // In-process: a host that already has an event loop starts the fake on an
 // ephemeral port and gets a real teardown back. `close` disposes the pool as
 // well as the socket, so a run leaves no SQLite files behind.
-export async function start<C extends MinimalClient>(fake: Fake<C>, port = 0): Promise<Started<C>> {
+export async function start<C extends MinimalClient>(
+  fake: Fake<C>,
+  port = 0,
+  fixture?: string,
+): Promise<Started<C>> {
   const runtime = makeRuntime(fake)
   // Seed the default run BEFORE listening. Every fake this kit replaces called
   // seed() inside its own startServer, so it answered the fixture the instant
@@ -39,7 +43,7 @@ export async function start<C extends MinimalClient>(fake: Fake<C>, port = 0): P
   // would be empty for any caller that does not reset first, which is a
   // behaviour change no test asks for. Seeding before listen also means there
   // is no window where the port is open and the data is not there.
-  await runtime.reset({})
+  await runtime.reset(fixture === undefined ? {} : { fixture })
   const server = createKitServer(runtime)
   await new Promise<void>((resolve) => {
     server.listen(port, bindHost(), () => {
@@ -71,7 +75,8 @@ export async function start<C extends MinimalClient>(fake: Fake<C>, port = 0): P
 // signals a supervisor sends. The announce line is the only thing a runner
 // parses, so it is written after listen resolves and never before.
 export async function serve<C extends MinimalClient>(fake: Fake<C>): Promise<Started<C>> {
-  const started = await start(fake, parsePort(process.argv.slice(2), fake.config.defaultPort))
+  const argv = process.argv.slice(2)
+  const started = await start(fake, parsePort(argv, fake.config.defaultPort), parseFixture(argv))
   emit(announceFor(fake.config.service, started.port))
   const bye = (): void => {
     void started.close().then(() => {

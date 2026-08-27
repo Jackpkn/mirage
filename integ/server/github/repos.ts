@@ -104,9 +104,13 @@ export function repoRoutes(): KitRoute<C>[] {
     // The python fake registers the root as "/" bare and as "/api/v3/" with a
     // trailing slash, and the kit router matches a path exactly, so the two
     // spellings are not interchangeable.
+    // The URL map is built from the bare origin at BOTH spellings: the python
+    // fake answers its own base URL, which never carried the Enterprise prefix,
+    // and a template that suddenly gained one would send a client somewhere it
+    // was not sent before.
     route<C>('GET', p === '' ? '/' : `${p}/`, (ctx) => {
       const host = ctx.headers.host ?? '127.0.0.1'
-      const base = `http://${String(host)}${p}`
+      const base = `http://${String(host)}`
       return {
         status: 200,
         body: {

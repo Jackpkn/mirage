@@ -62,7 +62,12 @@ export function pathsOf(row: { filesJson: string }): string[] {
 // shapes carry no `files` key at all; serving one handed clients bare strings
 // where the contract has objects, which broke history enumeration after the
 // first write.
+// A write records a commit carrying only a message, so its rendering omits the
+// author blocks a seeded one has: the two shapes are not a default apart, and a
+// golden renders the difference. An empty author is what tells them apart,
+// because that is what `recordCommit` stores.
 export function commitJson(row: CommitRow): JsonValue {
+  if (row.authorLogin === '') return writtenCommitJson(row)
   return {
     sha: row.sha,
     commit: {
@@ -74,9 +79,6 @@ export function commitJson(row: CommitRow): JsonValue {
   }
 }
 
-// A write records a commit whose stored shape carries only a message, so its
-// rendering omits the author blocks the seeded ones have. Kept apart rather
-// than defaulted, because a golden renders the difference.
 export function writtenCommitJson(row: { sha: string; message: string }): JsonValue {
   return { sha: row.sha, commit: { message: row.message } }
 }

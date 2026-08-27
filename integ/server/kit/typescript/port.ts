@@ -28,3 +28,15 @@ export function parsePort(argv: string[] = process.argv.slice(2), fallback = 0):
   }
   return port
 }
+
+// The fixture a standalone fake seeds at startup, so one server binary can
+// serve two scenarios without two launch scripts editing a config. `/reset`
+// has taken a fixture name since the kit existed; this is the same name asked
+// for once, before the socket opens.
+export function parseFixture(argv: string[] = process.argv.slice(2)): string | undefined {
+  const i = argv.indexOf('--fixture')
+  if (i === -1) return undefined
+  const raw = argv[i + 1]
+  if (raw === undefined) throw new KitError('--fixture requires a value')
+  return raw
+}

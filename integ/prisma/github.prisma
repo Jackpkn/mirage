@@ -24,7 +24,7 @@ datasource db {
 }
 
 model GithubRepo {
-  tenant String
+  tenant        String
   // "owner/name". The vendor's own key, and what every route resolves by.
   fullName      String
   owner         String
@@ -34,20 +34,20 @@ model GithubRepo {
   // defaults: description, stargazers_count, language, topics. Free-form
   // because a fixture states only the fields its task reads, and the renderer
   // fills the rest.
-  metaJson String @default("{}")
+  metaJson      String  @default("{}")
   // Answer /contents listings with GitHub's truncation marker, which is a
   // property of the repository as the fixture declares it, not of a request.
-  truncated Boolean @default(false)
+  truncated     Boolean @default(false)
   // Directory under integ/fixtures/ whose files are this repository's contents,
   // or "" for a metadata-only repository. A fixture cannot state 120 files of
   // sample source as JSON and stay reviewable, so it names the directory and
   // afterSeed walks it into GithubFile rows. This is also the column the
   // python fake's `--repo owner/name=<dir>` flag set.
-  sourceDir String @default("")
+  sourceDir     String  @default("")
   // The branch that directory loads into, for a fixture whose repository has a
   // second branch: the python fake spelled this `:into=<branch>`.
-  sourceBranch String @default("")
-  seq          Int
+  sourceBranch  String  @default("")
+  seq           Int
 
   files       GithubFile[]
   submodules  GithubSubmodule[]
@@ -94,10 +94,10 @@ model GithubSubmodule {
 }
 
 model GithubCommit {
-  pk     Int    @id @default(autoincrement())
-  tenant String
-  repo   String
-  branch String
+  pk          Int    @id @default(autoincrement())
+  tenant      String
+  repo        String
+  branch      String
   // Derived from the content rather than stored by the fixture, so a mirror of
   // a fixture answers the same sha twice.
   sha         String
@@ -107,11 +107,11 @@ model GithubCommit {
   // Paths this commit touched, as a JSON array of strings. The vendor reports
   // them as objects carrying a status; the fixture states the paths and the
   // renderer adds the rest.
-  filesJson String @default("[]")
+  filesJson   String @default("[]")
   // The staged tree this commit points at, for the git plumbing write path.
   // Empty on a seeded commit, which has no staged tree behind it.
-  treeSha String @default("")
-  seq     Int
+  treeSha     String @default("")
+  seq         Int
 
   repository GithubRepo @relation(fields: [tenant, repo], references: [tenant, fullName])
 
@@ -119,14 +119,14 @@ model GithubCommit {
 }
 
 model GithubIssue {
-  pk       Int    @id @default(autoincrement())
-  tenant   String
-  repo     String
-  number   Int
-  title    String
-  body     String @default("")
-  state    String @default("open")
-  user     String
+  pk            Int    @id @default(autoincrement())
+  tenant        String
+  repo          String
+  number        Int
+  title         String
+  body          String @default("")
+  state         String @default("open")
+  user          String
   // JSON arrays, because the vendor takes and reports them as lists of names
   // and a link table would restate an order the caller already fixed.
   labelsJson    String @default("[]")
@@ -157,20 +157,20 @@ model GithubComment {
 }
 
 model GithubPull {
-  pk     Int    @id @default(autoincrement())
-  tenant String
-  repo   String
-  number Int
-  title  String
-  body   String @default("")
-  state  String @default("open")
-  user   String
-  head   String
-  base   String
-  draft  Boolean @default(false)
-  merged Boolean @default(false)
+  pk        Int     @id @default(autoincrement())
+  tenant    String
+  repo      String
+  number    Int
+  title     String
+  body      String  @default("")
+  state     String  @default("open")
+  user      String
+  head      String
+  base      String
+  draft     Boolean @default(false)
+  merged    Boolean @default(false)
   // The sha `gh pr checks` resolves its check runs and statuses against.
-  headSha   String @default("")
+  headSha   String  @default("")
   createdAt String
   updatedAt String
   seq       Int
@@ -181,17 +181,20 @@ model GithubPull {
 }
 
 model GithubRelease {
-  pk         Int     @id @default(autoincrement())
-  tenant     String
-  repo       String
-  id         Int
-  tagName    String
-  name       String  @default("")
-  body       String  @default("")
-  draft      Boolean @default(false)
-  prerelease Boolean @default(false)
-  createdAt  String
-  seq        Int
+  pk              Int     @id @default(autoincrement())
+  tenant          String
+  repo            String
+  id              Int
+  tagName         String
+  name            String  @default("")
+  // The commitish a release points at. Stored rather than derived, because a
+  // caller may name one and the default branch is only the fallback.
+  targetCommitish String
+  body            String  @default("")
+  draft           Boolean @default(false)
+  prerelease      Boolean @default(false)
+  createdAt       String
+  seq             Int
 
   repository GithubRepo @relation(fields: [tenant, repo], references: [tenant, fullName])
 
@@ -214,24 +217,26 @@ model GithubWorkflow {
 }
 
 model GithubRun {
-  pk            Int    @id @default(autoincrement())
-  tenant        String
-  repo          String
-  id            Int
-  name          String
-  displayTitle  String @default("")
-  workflowId    Int
-  runNumber     Int
-  runAttempt    Int    @default(1)
-  event         String @default("push")
-  headBranch    String
-  headSha       String
-  status        String @default("completed")
-  conclusion    String @default("success")
-  createdAt     String
-  updatedAt     String
-  runStartedAt  String
-  seq           Int
+  pk           Int     @id @default(autoincrement())
+  tenant       String
+  repo         String
+  id           Int
+  name         String
+  displayTitle String  @default("")
+  workflowId   Int
+  runNumber    Int
+  runAttempt   Int     @default(1)
+  event        String  @default("push")
+  headBranch   String
+  headSha      String
+  status       String  @default("completed")
+  // Both are null while a run is queued, which is what a dispatched run is
+  // until something completes it, so neither can be a plain String.
+  conclusion   String?
+  createdAt    String
+  updatedAt    String
+  runStartedAt String?
+  seq          Int
 
   repository GithubRepo @relation(fields: [tenant, repo], references: [tenant, fullName])
 
@@ -311,7 +316,7 @@ model GithubStagedEntry {
 // `cli` fixture can refuse repository creation the way a fine-grained token
 // without Administration:write does while the default fixture allows it.
 model GithubSetting {
-  tenant String @id
+  tenant      String  @id
   // POST /user/repos answers 403 when false; fork and rename stay available.
   createRepos Boolean @default(true)
 }
