@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest'
 import { MountCore } from './core.ts'
 import { classifyErrno } from './errors.ts'
 import { Workspace } from '../workspace.ts'
-import { MirageNFS } from '../nfs/fs.ts'
+import { MirageNFS } from '../nfs/delegate.ts'
 
 const HELLO = 'hello world'
 // No handle: both cores treat an unknown fd as "apply directly", which

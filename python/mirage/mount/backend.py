@@ -12,7 +12,59 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from enum import Enum
+
 from mirage.types import KERNEL_BACKENDS, MountBackend
+
+
+class KernelRoute(Enum):
+    """How a backend's mount is brought up, and by whom.
+
+    The distinction is not cosmetic: it decides which call can mount a
+    prefix at all. A THREAD backend hands the kernel a file descriptor
+    and services it from a daemon thread, so it comes up inside a
+    synchronous constructor. A LOOP backend is served by the caller's
+    own event loop, so mounting one from a synchronous call would
+    deadlock the loop that has to answer the kernel's first request.
+    NONE never reaches the kernel at all.
+    """
+
+    NONE = "none"
+    THREAD = "thread"
+    LOOP = "loop"
+
+
+# One row per MountBackend member. Exhaustive on purpose and checked as
+# such: without the check, a backend added to the enum falls into
+# whatever the last else branch happened to be, which is how a
+# loop-served mount would end up being started from a constructor.
+_ROUTES: dict[MountBackend, KernelRoute] = {
+    MountBackend.VFS: KernelRoute.NONE,
+    MountBackend.FUSE: KernelRoute.THREAD,
+    MountBackend.FSKIT: KernelRoute.THREAD,
+    MountBackend.NFS: KernelRoute.LOOP,
+}
+
+
+def route_of(backend: MountBackend) -> KernelRoute:
+    """How this backend's mount has to be brought up.
+
+    Args:
+        backend (MountBackend): the resolved backend.
+
+    Returns:
+        KernelRoute: the route that mounts it.
+
+    Raises:
+        ValueError: the backend declares no route, which means the table
+            above was not updated when the enum was.
+    """
+    route = _ROUTES.get(backend)
+    if route is None:
+        raise ValueError(
+            f"backend {backend.value!r} declares no kernel route; add one to "
+            "mirage/mount/backend.py rather than letting it default")
+    return route
 
 
 def resolve_backend(value: "str | MountBackend | None") -> MountBackend:

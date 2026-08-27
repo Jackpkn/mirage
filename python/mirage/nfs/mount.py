@@ -22,7 +22,7 @@ from typing import Any
 
 from mirage.nfs.backend import prepare_nfs_mount
 from mirage.nfs.config import NFSConfig
-from mirage.nfs.fs import MirageNFS
+from mirage.nfs.delegate import MirageNFS
 from mirage.nfs.session import NFSDelegate, scoped
 from mirage.ops import Ops
 from mirage.workspace.session.session import Session

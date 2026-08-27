@@ -395,17 +395,63 @@ sits inline in the inode and occupies no data blocks (`stat` reports
 option it can express; comparing against it would also make every regular file
 look wrong (a 6-byte file is `6` in bytes, `4` in 1 KiB blocks).
 
+## Mount
+
+`mirage/mount/` (`packages/node/src/mount/`) is the protocol-neutral half of
+every kernel mount, and it names no binding: not mfusepy, not
+`@zkochan/fuse-native`, not nfsserve. Each adapter package beside it —
+`mirage/fuse/`, `mirage/nfs/` — owns exactly one protocol's vocabulary. The
+split is what stopped the nfs adapter from importing out of `fuse/`, which it
+did when the fuse adapter was simply the one written first.
+
+- **`core.py` / `core.ts` is `MountCore`**, which decides what the filesystem
+  *does*: name policy, link handling, write buffering, the size-unknown
+  path. It is **async-native**. An adapter whose kernel interface is
+  synchronous owns the bridge and the loop it runs on, because that is the
+  adapter's constraint and not this layer's: `MirageFS` holds the loop thread
+  and the `run_coroutine_threadsafe` call, and `MirageNFS` simply awaits.
+- **`types.py` / `types.ts`** holds `MountAttrs`, `MountEntry` and `SetAttrs` —
+  the answers, in POSIX terms rather than any binding's. The core used to
+  answer in libfuse's own `st_*` dict, so the nfs delegate read `entry["st_mode"]`
+  out of a shape named for a library it does not use. `MountAttrs.as_stat_dict`
+  is where that spelling lives now, and only the libfuse adapter calls it.
+- **`stat.py` / `stat.ts`** is `dir_stat` / `file_stat` / `link_stat` /
+  `apply_stat_attrs` as pure functions of `(uid, gid, now)`. Pure because a row
+  is worth testing without a workspace behind it, and because `link_stat` is
+  the one place a link's own node row overrides the mount's defaults — which is
+  what makes `chown -h` and `touch -h` visible through a kernel mount.
+- **`prefetch.py` / `prefetch.ts`** is the TTL cache for size-unknown files.
+  Sync: expiry is a clock read and eviction is a dict delete. Only the *fill*
+  is async, and it stays in the core, which is the layer that can reach a
+  backend. **Every mutation invalidates** — write, create, truncate, rename,
+  unlink — because serving a stale read for the rest of a 30s window is worse
+  than the refetch it saves. TS's twin additionally dedups in-flight fills
+  (`claim`), which python does not need: its FUSE mounts run `nothreads=True`,
+  so two opens of one path cannot interleave.
+- **`writebuf.py` / `writebuf.ts`** is `WriteBuffer`, and it lives here rather
+  than in `nfs/` although NFS is the only adapter using one today: nothing in
+  it is NFSv3's, and the reason it exists (a protocol that acknowledges a write
+  before the bytes are stored) is not either.
+- **`backend.py` / `backend.ts`** resolves a backend name and answers
+  `route_of` / `routeOf`: `NONE`, `THREAD` or `LOOP`, one row per
+  `MountBackend` member. The table is exhaustive on purpose — python raises
+  when a member has no row, TypeScript's `Record<MountBackend, KernelRoute>`
+  fails to compile — because a backend that silently inherits the last `else`
+  branch is how a loop-served mount ends up being started from a constructor.
+  `KernelMounts` routes on this, never on `backend is NFS`.
+- **`platform/macos.py` / `platform/macos.ts`** is `is_macos_metadata`, the
+  one name policy, so both adapters refuse `._foo`/`.DS_Store` identically.
+
 ## FUSE
 
 - **The mount layer is split core/adapter in both languages.** `MountCore`
-  (`python/mirage/fuse/core.py`, `typescript/packages/node/src/fuse/core.ts`)
-  owns all filesystem semantics in POSIX terms and imports nothing from
-  mfusepy or `@zkochan/fuse-native`; `MirageFS` in `fs.py`/`fs.ts` is the
-  libfuse adapter and owns only the callback signatures plus errno
+  (see **Mount** above) owns all filesystem semantics in POSIX terms;
+  `MirageFS` in `fuse/fs.py`/`fuse/fs.ts` is the libfuse adapter and owns only
+  the callback signatures, the sync bridge onto its own loop thread, and errno
   translation. Core methods raise ordinary exceptions; adapters classify them
-  through `classify_error`/`classifyErrno` (`fuse/errors.py`, `fuse/errors.ts`),
-  which is one shared table, not per-method `except` arms. Put new filesystem
-  behavior in the core, not the adapter.
+  through `classify_error`/`classifyErrno` (`mount/errors.py`,
+  `mount/errors.ts`), which is one shared table, not per-method `except` arms.
+  Put new filesystem behavior in the core, not the adapter.
 - **One `backend` field per mount: `vfs | fuse | fskit | nfs`** (`MountBackend`
   in `mirage/types.py`, beside `MountMode`). `vfs` is the default and means the
   mount lives only inside mirage's own filesystem; `fuse`, `fskit` and `nfs`
@@ -469,19 +515,23 @@ one protocol implementation sits behind both adapters exactly as libfuse does.
 The wrapper is a dumb pipe: ids, paths, buffering and every semantic live in
 the adapter, where they are unit-testable without a mount.
 
-- **The adapter awaits `Ops`; it does not call `MountCore`.** libfuse's
-  callbacks are sync, which is the only reason `MountCore` has a sync bridge at
-  all. The nfsserve trait is async and every callback is scheduled onto the
-  workspace's own event loop, so `MirageNFS` (`nfs/fs.py`, `nfs/fs.ts`) awaits
-  the op facade directly. `MountCore`'s stateless helpers (stat shaping, the
-  macOS-metadata filter, link handling) are reused; its sync path is not. Do
-  not route NFS through `MountCore`. Two adapters answering the same questions
-  is a thing that drifts, so both are driven over identically seeded workspaces
-  and diffed case by case (`tests/nfs/test_fuse_parity.py`,
-  `nfs/fuse_parity.test.ts`), including the one divergence that is deliberate:
-  a size-unknown file reads the same bytes through either adapter, but only
-  FUSE can restate its size afterwards, because it hydrates on OPEN and NFSv3
-  has no OPEN to hydrate on.
+- **`MirageNFS` is a delegate over `MountCore`, not a second filesystem.**
+  It lives in `nfs/delegate.py` / `nfs/delegate.ts` — named for what it does,
+  since `fs.py` beside `fuse/fs.py` invited exactly the copy that used to be
+  there. It holds a core and forwards to it; what it owns is only what NFSv3
+  has and mirage does not: file ids, cookies, the write buffer's wire-visible
+  size, and `NFSAttrs`. `_wire_attrs` / `wireAttrs` is the whole conversion,
+  and it is sync, so `readdir` converts a listing the core already described
+  (`readdir_entries` / `readdirEntries`) without a second stat per name.
+  The core being async is what makes this work: the nfsserve trait is async
+  and every callback runs on the workspace's own loop, so the delegate awaits
+  the core, which awaits the op facade, and no bridge is involved anywhere.
+  Two adapters answering the same questions is still a thing that drifts, so
+  both are driven over identically seeded workspaces and diffed case by case
+  (`tests/mount/test_adapter_parity.py`, `mount/adapter_parity.test.ts`),
+  including the one divergence that is deliberate: a size-unknown file reads
+  the same bytes through either adapter, but only FUSE can restate its size
+  afterwards, because it hydrates on OPEN and NFSv3 has no OPEN to hydrate on.
 - **One server, many mounts.** The MOUNT protocol takes a path, so a single
   server exporting the whole tree backs any number of mountpoints
   (`127.0.0.1:/` here, `:/docs` there) — the macOS one-FUSE-mount-per-process
@@ -499,11 +549,13 @@ the adapter, where they are unit-testable without a mount.
   call sites still serves the seventeenth with the workspace's full reach, and
   nothing at the missing call site looks wrong. `tests/nfs/test_session.py`
   fails if the adapter grows a method the bound list does not name.
-- **Python's sync `KernelMounts.add` refuses `nfs`; TypeScript's async one
-  routes it.** Not a divergence to fix: python's seam is synchronous and this
-  server needs a running loop, so the only honest answer there is to name
-  `add_nfs_mount`. TypeScript's `add` is already async, so it forwards, and
-  its constructor route reaches the same place.
+- **Python's sync `KernelMounts.add` refuses a `LOOP`-routed backend;
+  TypeScript's async one forwards it.** Not a divergence to fix: python's seam
+  is synchronous and this server needs a running loop, so the only honest
+  answer there is to name `add_nfs_mount`. TypeScript's `add` is already async,
+  so it forwards, and its constructor route reaches the same place. Both ask
+  `route_of` / `routeOf` rather than testing for `nfs`, so the next
+  loop-served backend inherits the refusal instead of silently deadlocking.
 - **The self-touch rule reaches Python here.** Under FUSE, python is immune
   because libfuse runs its loop on a thread; under NFS the server is served by
   the workspace's loop in *both* languages, so a synchronous stat of your own

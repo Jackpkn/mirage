@@ -21,10 +21,11 @@ import type { FileStat } from '@struktoai/mirage-core/types'
 import { isMissingOp } from '@struktoai/mirage-core/utils/errors'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
-import { DIR_MODE, FILE_MODE, mtimeMs } from '@struktoai/mirage-core/utils/stat_view'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
 import { errnoError } from './errors.ts'
-import type { MountAttrs } from './types.ts'
+import { PrefetchCache } from './prefetch.ts'
+import { applyStatAttrs, dirStat, fileStat, linkStat } from './stat.ts'
+import type { MountAttrs, MountEntry } from './types.ts'
 import { isMacosMetadata } from './platform/macos.ts'
 
 export interface Handle {
@@ -32,13 +33,6 @@ export interface Handle {
   data?: Uint8Array
   writeBuf?: [number, Uint8Array][]
 }
-
-interface PrefetchEntry {
-  data: Uint8Array
-  expires: number
-}
-
-const PREFETCH_TTL_MS = 30_000
 
 export interface MountCoreOptions {
   rootPrefix?: string
@@ -78,8 +72,7 @@ export class MountCore {
   // In-memory extended attributes, keyed by path. Backends have no POSIX
   // xattrs, so these are advisory and never persisted; see setxattr.
   readonly xattrs = new Map<string, Map<string, Buffer>>()
-  readonly prefetchCache = new Map<string, PrefetchEntry>()
-  private readonly prefetchInflight = new Map<string, Promise<Uint8Array | null>>()
+  private readonly prefetchCache = new PrefetchCache()
   private readonly uid: number
   private readonly gid: number
 
@@ -99,57 +92,19 @@ export class MountCore {
     return path === '/' ? this.root : this.root + path
   }
 
+  /** This mount's base directory row, before any namespace overlay. */
   dirStat(): MountAttrs {
-    return {
-      mtime: this.now,
-      atime: this.now,
-      ctime: this.now,
-      nlink: 2,
-      size: 0,
-      mode: DIR_MODE,
-      uid: this.uid,
-      gid: this.gid,
-    }
+    return dirStat(this.uid, this.gid, this.now)
   }
 
+  /** This mount's base row for a regular file of `size` bytes. */
   fileStat(size: number): MountAttrs {
-    return {
-      mtime: this.now,
-      atime: this.now,
-      ctime: this.now,
-      nlink: 1,
-      size,
-      mode: FILE_MODE,
-      uid: this.uid,
-      gid: this.gid,
-    }
+    return fileStat(size, this.uid, this.gid, this.now)
   }
 
-  /**
-   * Fold merged stat attributes into an attr record. The workspace stat
-   * already carries the namespace overlay (chmod bits, chown ids, touched
-   * mtime), so honoring these fields here is what makes metadata ops
-   * visible through a mount. String uid/gid (names) are skipped: the kernel
-   * wants numeric ids and there is no user db to map against.
-   */
+  /** See {@link applyStatAttrs}; kept as a method for the adapters. */
   applyStatAttrs(entry: MountAttrs, s: FileStat): MountAttrs {
-    if (s.mode !== null) {
-      entry.mode = (entry.mode & ~0o7777) | (s.mode & 0o7777)
-    }
-    if (typeof s.uid === 'number') entry.uid = s.uid
-    if (typeof s.gid === 'number') entry.gid = s.gid
-    if (s.modified !== null) {
-      // One translator per language: the naive-stamp-is-UTC rule lives
-      // in core's stat view, never re-parsed here with a bare Date.
-      // Null means the stamp did not parse; epoch zero is a real time
-      // and lands.
-      const ms = mtimeMs(s)
-      if (ms !== null) {
-        entry.mtime = new Date(ms)
-        entry.ctime = new Date(ms)
-      }
-    }
-    return entry
+    return applyStatAttrs(entry, s)
   }
 
   /**
@@ -182,42 +137,25 @@ export class MountCore {
     return posix.relative(parent, virtualTarget)
   }
 
-  /**
-   * The attrs a namespace link reports, from its own node row.
-   *
-   * Built from the target string alone, every link over a mount answered
-   * the mount's construction time and the mounting user, so what
-   * `chown -h` and `touch -h` wrote was invisible through the kernel.
-   * The row is the same one the door answers a no-follow stat with. Size
-   * stays the displayable target's length (what this mount's readlink
-   * returns), and the mode is always lrwxrwxrwx: a symlink's permission
-   * bits are not consulted by any POSIX system.
-   */
+  /** The row a namespace link at `path` reports; see {@link linkStat}. */
   linkStat(target: string, virtual: string): MountAttrs {
-    const entry = this.fileStat(new TextEncoder().encode(target).byteLength)
     const row = this.ops.links?.linkStatAt(virtual) ?? null
-    if (row !== null) this.applyStatAttrs(entry, row)
-    entry.mode = 0o120777
-    return entry
+    return linkStat(target, row, this.uid, this.gid, this.now)
   }
 
   cachedSize(path: string): number | null {
     for (const ctx of this.handles.values()) {
       if (ctx.path === path && ctx.data !== undefined) return ctx.data.byteLength
     }
-    const entry = this.prefetchCache.get(path)
-    if (entry !== undefined && entry.expires > Date.now()) return entry.data.byteLength
-    return null
+    const data = this.prefetchCache.get(path)
+    return data === null ? null : data.byteLength
   }
 
   cachedData(path: string): Uint8Array | null {
     for (const ctx of this.handles.values()) {
       if (ctx.path === path && ctx.data !== undefined) return ctx.data
     }
-    const entry = this.prefetchCache.get(path)
-    if (entry !== undefined && entry.expires > Date.now()) return entry.data
-    if (entry !== undefined) this.prefetchCache.delete(path)
-    return null
+    return this.prefetchCache.get(path)
   }
 
   /**
@@ -230,21 +168,13 @@ export class MountCore {
   async prefetch(path: string): Promise<Uint8Array | null> {
     const cached = this.cachedData(path)
     if (cached !== null) return cached
-    const inflight = this.prefetchInflight.get(path)
-    if (inflight !== undefined) return inflight
-    const promise = (async (): Promise<Uint8Array | null> => {
+    return this.prefetchCache.claim(path, async () => {
       try {
-        const data = await this.ops.readFile(this.resolve(path))
-        this.prefetchCache.set(path, { data, expires: Date.now() + PREFETCH_TTL_MS })
-        return data
+        return await this.ops.readFile(this.resolve(path))
       } catch {
         return null
-      } finally {
-        this.prefetchInflight.delete(path)
       }
-    })()
-    this.prefetchInflight.set(path, promise)
-    return promise
+    })
   }
 
   /** Drain and return accumulated op records (mirrors Python's drainOps). */
@@ -256,6 +186,10 @@ export class MountCore {
 
   private async writeFile(path: string, data: Uint8Array): Promise<void> {
     await this.ops.writeFile(this.resolve(path), data)
+    // Every write funnels through here, so this one call is what keeps a
+    // size-unknown file from reading back its pre-write bytes for the
+    // rest of the TTL. Python invalidates at the same points.
+    this.prefetchCache.invalidate(path)
   }
 
   /**
@@ -346,6 +280,26 @@ export class MountCore {
     return ['.', '..', ...[...names].sort(compareCodePoints)]
   }
 
+  /**
+   * The same listing as {@link readdir}, described per entry.
+   *
+   * A protocol that lists with attributes would otherwise stat every
+   * name again, once per entry per listing, and would have to join each
+   * child path itself -- which is how an adapter ends up disagreeing
+   * with the core about what a name resolves to. `.` and `..` are
+   * absent: they are the caller's to emit, and libfuse and NFSv3 emit
+   * them differently.
+   */
+  async readdirEntries(path: string): Promise<MountEntry[]> {
+    const entries: MountEntry[] = []
+    for (const name of await this.readdir(path)) {
+      if (name === '.' || name === '..') continue
+      const child = posix.join(path, name)
+      entries.push({ name, path: child, attrs: await this.attrsFor(child) })
+    }
+    return entries
+  }
+
   async read(path: string, fd: number, pos: number, len: number): Promise<Uint8Array> {
     const ctx = this.handles.get(fd)
     // Filetype-aware read: no `raw: true`, so an extension with a
@@ -381,6 +335,7 @@ export class MountCore {
       if (!isMissingOp(dispatchErr, 'create')) throw dispatchErr
       await this.writeFile(path, new Uint8Array(0))
     }
+    this.prefetchCache.invalidate(path)
     return this.handles.add({ path })
   }
 
@@ -415,7 +370,7 @@ export class MountCore {
     if (links?.isLink(this.resolve(path)) === true) {
       await links.unlink(this.resolve(path))
       this.xattrs.delete(path)
-      this.prefetchCache.delete(path)
+      this.prefetchCache.invalidate(path)
       return
     }
     await this.ops.unlink(this.resolve(path))
@@ -428,6 +383,7 @@ export class MountCore {
     // copy+unlink instead of addressing the destination against the
     // source's backend.
     await this.ops.rename(this.resolve(src), this.resolve(dst))
+    this.prefetchCache.invalidate(src, dst)
     const moved = this.xattrs.get(src)
     if (moved !== undefined) {
       this.xattrs.delete(src)
@@ -448,6 +404,7 @@ export class MountCore {
     // Prefer the resource's dedicated `truncate` op (atomic on most
     // backends). Fall back to read/resize/write for resources that don't
     // expose one.
+    this.prefetchCache.invalidate(path)
     try {
       await this.ops.truncate(this.resolve(path), size)
     } catch (dispatchErr) {

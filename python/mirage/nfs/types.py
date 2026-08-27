@@ -62,18 +62,3 @@ class DirEntry:
     fileid: int
     cookie: int
     attrs: NFSAttrs
-
-
-@dataclass(frozen=True, slots=True)
-class SetAttrs:
-    """The attribute change a SETATTR carries.
-
-    Only ``size`` acts. Mode, owner and timestamps are accepted and
-    discarded, exactly as the FUSE adapter does: a mirage backend has
-    nowhere to persist them, and refusing would fail ordinary tools.
-
-    Args:
-        size (int | None): new length in bytes, or None to leave it.
-    """
-
-    size: int | None = None

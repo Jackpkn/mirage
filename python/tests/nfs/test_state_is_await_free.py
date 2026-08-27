@@ -16,8 +16,8 @@ import ast
 import inspect
 import textwrap
 
+from mirage.mount.writebuf import WriteBuffer
 from mirage.nfs.ids import IdTable
-from mirage.nfs.writebuf import WriteBuffer
 
 STATE_CLASSES = (IdTable, WriteBuffer)
 

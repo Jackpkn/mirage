@@ -15,7 +15,8 @@
 import logging
 import sys
 
-from mirage.fuse.backend import resolve_backend
+from mirage.mount.backend import (KernelRoute, require_kernel_backend,
+                                  resolve_backend, route_of)
 from mirage.nfs.config import NFSConfig
 from mirage.ops import Ops
 from mirage.types import MountBackend
@@ -78,10 +79,14 @@ class KernelMounts:
             RuntimeError: the nfs backend was asked for on this route.
         """
         resolved_backend = resolve_backend(backend)
-        if resolved_backend is MountBackend.NFS:
+        route = route_of(resolved_backend)
+        if route is KernelRoute.LOOP:
             raise RuntimeError(
-                "the nfs backend is served by the caller's event loop, not "
-                "by a mount thread; use await ws.add_nfs_mount(prefix)")
+                f"the {resolved_backend.value} backend is served by the "
+                "caller's event loop, not by a mount thread; use "
+                "await ws.add_nfs_mount(prefix)")
+        if route is KernelRoute.NONE:
+            require_kernel_backend(resolved_backend)
         # Register a pinned path BEFORE mounting so a collision is
         # rejected without leaving a partial mount.
         session = (self._sessions.get(session_id)
@@ -201,7 +206,7 @@ class KernelMounts:
                 on the caller's event loop.
         """
         key = prefix if session_id is None else f"{prefix}@{session_id}"
-        if self._backends.get(key) is MountBackend.NFS:
+        if self._route_of(key) is KernelRoute.LOOP:
             raise RuntimeError(
                 f"prefix {prefix!r} is served over nfs; use await "
                 "ws.remove_nfs_mount(prefix)")
@@ -257,12 +262,12 @@ class KernelMounts:
                 "nfs mounts still live at close: %s; they are unmounted by "
                 "the async close, not this one", sorted(live))
             for key in list(self._mountpoints):
-                if self._backends.get(key) is not MountBackend.NFS:
+                if self._route_of(key) is not KernelRoute.LOOP:
                     self._mountpoints.pop(key, None)
             self._backends = {
                 key: backend
                 for key, backend in self._backends.items()
-                if backend is MountBackend.NFS
+                if route_of(backend) is KernelRoute.LOOP
             }
             return
         self._mountpoints.clear()
@@ -276,7 +281,7 @@ class KernelMounts:
         for manager in list(self._nfs.values()):
             await manager.close()
         for key, backend in list(self._backends.items()):
-            if backend is MountBackend.NFS:
+            if route_of(backend) is KernelRoute.LOOP:
                 self._mountpoints.pop(key, None)
                 self._backends.pop(key, None)
         self._nfs.clear()
@@ -303,7 +308,7 @@ class KernelMounts:
         return {
             key: path
             for key, path in self._mountpoints.items()
-            if self._backends.get(key) is not MountBackend.NFS
+            if self._route_of(key) is KernelRoute.THREAD
         }
 
     @property
@@ -312,8 +317,23 @@ class KernelMounts:
         return {
             key: path
             for key, path in self._mountpoints.items()
-            if self._backends.get(key) is MountBackend.NFS
+            if self._route_of(key) is KernelRoute.LOOP
         }
+
+    def _route_of(self, key: str) -> KernelRoute:
+        """How the mount registered under ``key`` was brought up.
+
+        A key with no backend recorded is one nothing mounted, which is
+        the same answer as a vfs mount: no kernel route.
+
+        Args:
+            key (str): the mount key, ``prefix`` or ``prefix@session``.
+
+        Returns:
+            KernelRoute: the route, or NONE when the key is unknown.
+        """
+        backend = self._backends.get(key)
+        return KernelRoute.NONE if backend is None else route_of(backend)
 
     def _register(self, key: str, mountpoint: str) -> None:
         for other_key, other_mountpoint in self._mountpoints.items():

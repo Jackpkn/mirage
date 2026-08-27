@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { Workspace } from '../workspace.ts'
 import { RenameIntoSelfError, StaleHandleError } from './errors.ts'
-import { MirageNFS } from './fs.ts'
+import { MirageNFS } from './delegate.ts'
 
 // The adapter is driven against a real workspace rather than a fake
 // facade: every wire bug this port hit came from a fake that was not

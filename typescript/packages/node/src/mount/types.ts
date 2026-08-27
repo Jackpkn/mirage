@@ -30,3 +30,31 @@ export interface MountAttrs {
   uid: number
   gid: number
 }
+
+/**
+ * One listing entry, described as it is listed.
+ *
+ * A protocol that lists with attributes (NFSv3's READDIRPLUS, and
+ * libfuse's readdir-plus) would otherwise stat every name a second
+ * time, once per entry per listing. Carrying the path as well as the
+ * name is what lets an adapter address the entry -- mint a file handle
+ * for it, cache it -- without rejoining the parent itself and
+ * disagreeing with the core about how a name becomes a path.
+ */
+export interface MountEntry {
+  name: string
+  path: string
+  attrs: MountAttrs
+}
+
+/**
+ * The attribute change a set-attributes request carries.
+ *
+ * Only `size` acts. Mode, owner and timestamps are accepted and
+ * discarded: a mirage backend has nowhere to persist them, and refusing
+ * would fail ordinary tools. Neutral rather than nfs's, because every
+ * kernel protocol asks the same narrow question here.
+ */
+export interface SetAttrs {
+  size: number | null
+}

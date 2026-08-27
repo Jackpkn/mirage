@@ -19,11 +19,12 @@ import posixpath
 import stat as stat_bits
 
 from mirage.mount.core import MountCore
+from mirage.mount.types import MountAttrs, SetAttrs
+from mirage.mount.writebuf import WriteBuffer
 from mirage.nfs.config import NFSConfig
 from mirage.nfs.errors import StaleHandleError
 from mirage.nfs.ids import ROOT_PATH, IdTable
-from mirage.nfs.types import DirEntry, NFSAttrs, SetAttrs
-from mirage.nfs.writebuf import WriteBuffer
+from mirage.nfs.types import DirEntry, NFSAttrs
 from mirage.ops import Ops
 
 # The core slices to the end when asked for more than the file holds,
@@ -322,29 +323,24 @@ class MirageNFS:
             ``cookie == fileid`` on every entry.
         """
         path = self._ids.resolve(dirid)
-        # The facade answers in paths -- a child mount with a trailing
-        # slash -- so names are derived the way MountCore.readdir does,
-        # and macOS metadata names are dropped the same way.
-        # The core derives names from the facade's paths and drops
-        # macOS metadata; "." and ".." are libfuse's to emit, and NFSv3
-        # carries them in the reply header instead.
-        names = [
-            n for n in await self._core.readdir(path) if n not in (".", "..")
-        ]
+        # The core joins each child and describes it, so this loop adds
+        # only what NFSv3 has and mirage does not: the file id, and the
+        # cookie a client resumes from. "." and ".." are absent from the
+        # core's per-entry listing because NFSv3 carries them in the
+        # reply header rather than as entries.
         entries: list[DirEntry] = []
         resuming = cookie != 0
-        for name in names:
-            child = _join(path, name)
-            fileid = self._ids.alloc(child)
+        for entry in await self._core.readdir_entries(path):
+            fileid = self._ids.alloc(entry.path)
             if resuming:
                 if fileid == cookie:
                     resuming = False
                 continue
             entries.append(
-                DirEntry(name=name,
+                DirEntry(name=entry.name,
                          fileid=fileid,
                          cookie=fileid,
-                         attrs=await self._entry_attrs(fileid, child)))
+                         attrs=self._wire_attrs(fileid, entry.attrs)))
             if max_entries is not None and len(entries) >= max_entries:
                 break
         return entries
@@ -454,7 +450,22 @@ class MirageNFS:
             fileid (int): the entry's id.
             path (str): the entry's mount-relative path.
         """
-        entry = await self._core.attrs_for(path)
+        return self._wire_attrs(fileid, await self._core.attrs_for(path))
+
+    def _wire_attrs(self, fileid: int, entry: MountAttrs) -> NFSAttrs:
+        """Convert one POSIX row into the facts NFSv3 puts on the wire.
+
+        Split from :meth:`_entry_attrs` so a listing, which already has
+        every row from the core, converts them without a second stat per
+        name. Sync, and therefore safe to call inside a listing loop.
+
+        Args:
+            fileid (int): the entry's id.
+            entry (MountAttrs): the row the core answered with.
+
+        Returns:
+            NFSAttrs: the wire attributes for that entry.
+        """
         mode = entry.mode
         is_dir = bool(stat_bits.S_ISDIR(mode))
         size = 0 if is_dir else self._writes.pending_size(fileid, entry.size)

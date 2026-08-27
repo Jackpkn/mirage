@@ -37,6 +37,49 @@ export function resolveBackend(value?: string | null): MountBackend {
   return lowered
 }
 
+/**
+ * How a backend's mount is brought up, and by whom.
+ *
+ * The distinction is not cosmetic: it decides which call can mount a
+ * prefix at all. A `thread` backend hands the kernel a file descriptor
+ * and services it from a daemon thread, so it comes up inside a
+ * synchronous constructor. A `loop` backend is served by the caller's
+ * own event loop, so mounting one from a synchronous call would deadlock
+ * the loop that has to answer the kernel's first request. `none` never
+ * reaches the kernel at all.
+ */
+export const KernelRoute = Object.freeze({
+  NONE: 'none',
+  THREAD: 'thread',
+  LOOP: 'loop',
+} as const)
+
+export type KernelRoute = (typeof KernelRoute)[keyof typeof KernelRoute]
+
+// One row per MountBackend member. `Record` makes it exhaustive at
+// compile time: a backend added to the enum fails to typecheck until it
+// declares how it is mounted, rather than falling into whatever the last
+// else branch happened to be -- which is how a loop-served mount would
+// end up being started from a constructor.
+const ROUTES: Record<MountBackend, KernelRoute> = {
+  [MountBackend.VFS]: KernelRoute.NONE,
+  [MountBackend.FUSE]: KernelRoute.THREAD,
+  [MountBackend.FSKIT]: KernelRoute.THREAD,
+  [MountBackend.NFS]: KernelRoute.LOOP,
+}
+
+/** How this backend's mount has to be brought up. */
+export function routeOf(backend: MountBackend): KernelRoute {
+  const route = ROUTES[backend] as KernelRoute | undefined
+  if (route === undefined) {
+    throw new Error(
+      `backend ${JSON.stringify(backend)} declares no kernel route; add one to ` +
+        'mount/backend.ts rather than letting it default',
+    )
+  }
+  return route
+}
+
 /** Reject a backend that registers nothing with the kernel. */
 export function requireKernelBackend(backend: MountBackend): void {
   if (!KERNEL_BACKENDS.includes(backend)) {

@@ -16,9 +16,9 @@ import asyncio
 
 import pytest
 
+from mirage.mount.types import SetAttrs
+from mirage.nfs.delegate import MirageNFS
 from mirage.nfs.errors import StaleHandleError
-from mirage.nfs.fs import MirageNFS
-from mirage.nfs.types import SetAttrs
 from mirage.types import FileStat, FileType
 
 

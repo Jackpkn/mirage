@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from mirage.context import reset_current_session, set_current_session
-from mirage.nfs.fs import MirageNFS
+from mirage.nfs.delegate import MirageNFS
 from mirage.workspace.session.session import Session
 
 BOUND_METHODS: tuple[str, ...] = (

@@ -16,12 +16,13 @@ import { posix } from 'node:path'
 
 import type { Ops } from '@struktoai/mirage-core/ops/ops'
 import { MountCore } from '../mount/core.ts'
+import type { MountAttrs, SetAttrs } from '../mount/types.ts'
 
 import { NFSConfig } from './config.ts'
 import { StaleHandleError } from './errors.ts'
 import { IdTable, ROOT_PATH } from './ids.ts'
 import type { DirEntry, NFSAttrs } from './types.ts'
-import { WriteBuffer } from './writebuf.ts'
+import { WriteBuffer } from '../mount/writebuf.ts'
 
 // The core treats an unknown handle as "no handle", which is what a
 // handle-free protocol wants: read and write apply straight through.
@@ -197,13 +198,23 @@ export class MirageNFS {
    * exactly as the FUSE adapter does -- a mirage backend has nowhere
    * to persist them, and refusing would fail ordinary tools.
    */
-  async setSize(fileid: number, size: number | null): Promise<NFSAttrs> {
+  async setattr(fileid: number, attrs: SetAttrs): Promise<NFSAttrs> {
     const path = this.ids.resolve(fileid)
+    const size = attrs.size
     if (size !== null) {
       this.writes.clip(fileid, size)
       await this.core.truncate(path, size)
     }
     return this.entryAttrs(fileid, path)
+  }
+
+  /**
+   * The wire layer's SETATTR entry point, on primitives. The Rust
+   * boundary crosses on primitives, so it calls this rather than
+   * building a {@link SetAttrs}.
+   */
+  async setSize(fileid: number, size: number | null): Promise<NFSAttrs> {
+    return this.setattr(fileid, { size })
   }
 
   /** Create a symlink and return its id. */
@@ -240,24 +251,24 @@ export class MirageNFS {
    */
   async readdir(dirid: number, cookie = 0, maxEntries?: number): Promise<DirEntry[]> {
     const path = this.ids.resolve(dirid)
-    // The core derives names from the facade's paths and drops macOS
-    // metadata; "." and ".." are libfuse's to emit, and NFSv3 carries
-    // them in the reply header instead.
-    const names = (await this.core.readdir(path)).filter((n: string) => n !== '.' && n !== '..')
+    // The core joins each child and describes it, so this loop adds
+    // only what NFSv3 has and mirage does not: the file id, and the
+    // cookie a client resumes from. '.' and '..' are absent from the
+    // core's per-entry listing because NFSv3 carries them in the reply
+    // header rather than as entries.
     const entries: DirEntry[] = []
     let resuming = cookie !== 0
-    for (const name of names) {
-      const child = joinPath(path, name)
-      const fileid = this.ids.alloc(child)
+    for (const entry of await this.core.readdirEntries(path)) {
+      const fileid = this.ids.alloc(entry.path)
       if (resuming) {
         if (fileid === cookie) resuming = false
         continue
       }
       entries.push({
-        name,
+        name: entry.name,
         fileid,
         cookie: fileid,
-        attrs: await this.entryAttrs(fileid, child),
+        attrs: this.wireAttrs(fileid, entry.attrs),
       })
       if (maxEntries !== undefined && entries.length >= maxEntries) break
     }
@@ -362,7 +373,17 @@ export class MirageNFS {
     // attrsFor, not getattr: this id was minted by a lookup that
     // already applied the name policy, and re-applying it here would
     // disappear an entry the client created.
-    const attrs = await this.core.attrsFor(path)
+    return this.wireAttrs(fileid, await this.core.attrsFor(path))
+  }
+
+  /**
+   * Convert one POSIX row into the facts NFSv3 puts on the wire.
+   *
+   * Split from {@link entryAttrs} so a listing, which already has every
+   * row from the core, converts them without a second stat per name.
+   * Sync, and therefore safe to call inside a listing loop.
+   */
+  private wireAttrs(fileid: number, attrs: MountAttrs): NFSAttrs {
     const isDir = isDirMode(attrs.mode)
     const out: NFSAttrs = {
       fileid,

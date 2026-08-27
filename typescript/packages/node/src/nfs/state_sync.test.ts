@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest'
 
 const STATE_CLASSES: [string, string][] = [
   ['IdTable', 'ids.ts'],
-  ['WriteBuffer', 'writebuf.ts'],
+  ['WriteBuffer', '../mount/writebuf.ts'],
 ]
 
 // The python twin walks an AST, which never sees a comment; this reads

@@ -80,7 +80,7 @@ export {
 } from './fuse/mount.ts'
 export { isMacosMetadata } from './mount/platform/macos.ts'
 export { NFSManager, type NFSManagerOptions } from './workspace/nfs.ts'
-export { MirageNFS } from './nfs/fs.ts'
+export { MirageNFS } from './nfs/delegate.ts'
 export { NFSConfig, type NFSConfigInit } from './nfs/config.ts'
 export {
   ESTALE_WIRE,

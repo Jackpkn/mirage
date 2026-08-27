@@ -21,17 +21,13 @@ from typing import Any
 
 from mirage.mount.errors import NO_XATTR
 from mirage.mount.platform.macos import is_macos_metadata
-from mirage.mount.types import MountAttrs
+from mirage.mount.prefetch import PrefetchCache
+from mirage.mount.stat import apply_stat_attrs, dir_stat, file_stat, link_stat
+from mirage.mount.types import MountAttrs, MountEntry
 from mirage.ops import Ops
 from mirage.runtime.handles import FileTable, merge_writes
-from mirage.types import FileStat, FileType
-from mirage.utils.stat_view import DIR_MODE, FILE_MODE, LINK_MODE, mtime_ns
+from mirage.types import FileType
 from mirage.workspace.session.session import Session
-
-# How long prefetched bytes for size-unknown files outlive their handle, so a
-# release-then-stat burst (ls right after cat) neither refetches nor reports
-# an unknown size. Mirrors the TS PREFETCH_TTL_MS.
-PREFETCH_TTL = 30.0
 
 WriteBuf = list[tuple[int, bytes]]
 
@@ -80,7 +76,7 @@ class MountCore:
         self._root = root_prefix.rstrip("/")
         self._handles: FileTable[Handle] = FileTable()
         # Prefetched content for size-unknown files: path -> (data, expiry).
-        self._prefetch: dict[str, tuple[bytes, float]] = {}
+        self._prefetch = PrefetchCache()
         # In-memory extended attributes, keyed by path. Backends have no
         # POSIX xattrs, so these are advisory, not persisted (see setxattr).
         self._xattrs: dict[str, dict[str, bytes]] = {}
@@ -134,56 +130,26 @@ class MountCore:
         return self._root + path
 
     def dir_stat(self) -> MountAttrs:
-        return MountAttrs(mode=DIR_MODE,
-                          size=0,
-                          nlink=2,
-                          uid=self._uid,
-                          gid=self._gid,
-                          atime=self._now,
-                          mtime=self._now,
-                          ctime=self._now)
-
-    def file_stat(self, size: int) -> MountAttrs:
-        return MountAttrs(mode=FILE_MODE,
-                          size=size,
-                          nlink=1,
-                          uid=self._uid,
-                          gid=self._gid,
-                          atime=self._now,
-                          mtime=self._now,
-                          ctime=self._now)
-
-    def _apply_stat_attrs(self, entry: MountAttrs, s: FileStat) -> MountAttrs:
-        """Fold merged stat attributes into a POSIX attr dict.
-
-        The ops stat already carries the namespace overlay (chmod bits,
-        chown ids, touched mtime), so honoring these fields here is what
-        makes metadata ops visible through a mount. String uid/gid (names)
-        are skipped: the kernel wants numeric ids and there is no user db
-        to map against.
+        """This mount's base directory row.
 
         Args:
-            entry (MountAttrs): base row from dir_stat/file_stat.
-            s (FileStat): the merged stat returned by the ops facade.
+            None
 
         Returns:
-            MountAttrs: the row with overlay fields applied.
+            MountAttrs: the row, before any namespace overlay.
         """
-        if s.mode is not None:
-            entry.mode = (entry.mode & ~0o7777) | (s.mode & 0o7777)
-        if isinstance(s.uid, int):
-            entry.uid = s.uid
-        if isinstance(s.gid, int):
-            entry.gid = s.gid
-        if s.modified is not None:
-            # One translator per language: the naive-stamp-is-UTC rule
-            # lives in stat_view, never re-parsed here. None means the
-            # stamp did not parse; epoch zero is a real time and lands.
-            ns = mtime_ns(s)
-            if ns is not None:
-                entry.mtime = ns
-                entry.ctime = ns
-        return entry
+        return dir_stat(self._uid, self._gid, self._now)
+
+    def file_stat(self, size: int) -> MountAttrs:
+        """This mount's base row for a regular file.
+
+        Args:
+            size (int): byte length the client should see.
+
+        Returns:
+            MountAttrs: the row, before any namespace overlay.
+        """
+        return file_stat(size, self._uid, self._gid, self._now)
 
     def link_target(self, path: str) -> str | None:
         """The target to present for a namespace link at a mount path.
@@ -221,27 +187,18 @@ class MountCore:
         return posixpath.relpath(virtual_target, parent)
 
     def link_stat(self, target: str, virtual: str) -> MountAttrs:
-        """The attrs a namespace link reports, from its own node row.
-
-        Built from the target string alone, every link over a mount
-        answered the mount's construction time and the mounting user, so
-        what ``chown -h`` and ``touch -h`` wrote was invisible through
-        the kernel. The row is the same one the door answers a no-follow
-        stat with. Size stays the displayable target's length (what this
-        mount's readlink returns), and the mode is always lrwxrwxrwx: a
-        symlink's permission bits are not consulted by any POSIX system.
+        """The row a namespace link reports at a mount path.
 
         Args:
             target (str): the target as this mount presents it.
             virtual (str): the link's virtual path, for the node row.
+
+        Returns:
+            MountAttrs: the link's own row, overlay applied.
         """
-        entry = self.file_stat(len(target.encode()))
         links = self._ops.links
         row = None if links is None else links.link_stat_at(virtual)
-        if row is not None:
-            entry = self._apply_stat_attrs(entry, row)
-        entry.mode = LINK_MODE
-        return entry
+        return link_stat(target, row, self._uid, self._gid, self._now)
 
     def drain_ops(self) -> list[dict[str, Any]]:
         records = [asdict(r) for r in self._ops.records]
@@ -260,14 +217,7 @@ class MountCore:
         for ctx in self._handles.values():
             if ctx.path == path and ctx.data is not None:
                 return ctx.data
-        entry = self._prefetch.get(path)
-        if entry is None:
-            return None
-        data, expires = entry
-        if time.monotonic() >= expires:
-            del self._prefetch[path]
-            return None
-        return data
+        return self._prefetch.get(path)
 
     def cached_size(self, path: str) -> int | None:
         """Return the real size of prefetched data, if any is cached.
@@ -301,7 +251,7 @@ class MountCore:
             return None
         # No inflight dedup: FUSE mounts run nothreads=True, so callbacks are
         # serialized and two opens cannot race (TS needs the dedup map).
-        self._prefetch[path] = (data, time.monotonic() + PREFETCH_TTL)
+        self._prefetch.put(path, data)
         return data
 
     async def attrs_for(self, path: str, fh: int | None = None) -> MountAttrs:
@@ -334,7 +284,7 @@ class MountCore:
             return self.link_stat(target, self.resolve(path))
         s = await self._ops.stat(self.resolve(path))
         if s.type == FileType.DIRECTORY:
-            return self._apply_stat_attrs(self.dir_stat(), s)
+            return apply_stat_attrs(self.dir_stat(), s)
         size = s.size
         if size is None:
             size = self.cached_size(path)
@@ -346,7 +296,7 @@ class MountCore:
             # and never fetch content here: getattr runs once per entry on
             # every ls -l.
             size = 0
-        return self._apply_stat_attrs(self.file_stat(size), s)
+        return apply_stat_attrs(self.file_stat(size), s)
 
     async def getattr(self, path: str, fh: int | None = None) -> MountAttrs:
         """Attributes for a path a caller reached by name.
@@ -398,6 +348,36 @@ class MountCore:
                 names.add(part)
         return [".", ".."] + sorted(names)
 
+    async def readdir_entries(self, path: str) -> list[MountEntry]:
+        """The same listing as :meth:`readdir`, described per entry.
+
+        A protocol that lists with attributes would otherwise stat every
+        name again, once per entry per listing, and would have to join
+        each child path itself -- which is how an adapter ends up
+        disagreeing with the core about what a name resolves to. "." and
+        ".." are absent: they are the caller's to emit, and libfuse and
+        NFSv3 emit them differently.
+
+        Args:
+            path (str): mount path of the directory.
+
+        Returns:
+            list[MountEntry]: name, path and attributes per entry.
+
+        Raises:
+            FileNotFoundError: no such directory and nothing virtual there.
+        """
+        entries = []
+        for name in await self.readdir(path):
+            if name in (".", ".."):
+                continue
+            child = posixpath.join(path, name)
+            entries.append(
+                MountEntry(name=name,
+                           path=child,
+                           attrs=await self.attrs_for(child)))
+        return entries
+
     async def read(self, path: str, size: int, offset: int,
                    fh: int | None) -> bytes:
         """Read a slice of a file.
@@ -439,7 +419,7 @@ class MountCore:
             pass
         merged = merge_writes(existing, writes)
         await self._ops.write(self.resolve(path), merged)
-        self._prefetch.pop(path, None)
+        self._prefetch.invalidate(path)
 
     async def write(self, path: str, data: bytes, offset: int,
                     fh: int | None) -> int:
@@ -471,7 +451,7 @@ class MountCore:
             int: the new handle id.
         """
         await self._ops.create(self.resolve(path))
-        self._prefetch.pop(path, None)
+        self._prefetch.invalidate(path)
         return self._handles.add(Handle(path=path))
 
     async def mkdir(self, path: str) -> None:
@@ -530,8 +510,7 @@ class MountCore:
         moved = self._xattrs.pop(old, None)
         if moved is not None:
             self._xattrs[new] = moved
-        self._prefetch.pop(old, None)
-        self._prefetch.pop(new, None)
+        self._prefetch.invalidate(old, new)
 
     async def rmdir(self, path: str) -> None:
         await self._ops.rmdir(self.resolve(path))
@@ -641,8 +620,8 @@ class MountCore:
 
     async def truncate(self, path: str, length: int) -> None:
         await self._ops.truncate(self.resolve(path), length)
-        self._prefetch.pop(path, None)
+        self._prefetch.invalidate(path)
 
     def _forget(self, path: str) -> None:
         self._xattrs.pop(path, None)
-        self._prefetch.pop(path, None)
+        self._prefetch.invalidate(path)

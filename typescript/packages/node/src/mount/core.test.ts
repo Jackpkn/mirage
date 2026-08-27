@@ -33,6 +33,30 @@ async function mkCore(): Promise<MountCore> {
 }
 
 describe('MountCore', () => {
+  it('drops a prefetched file from the cache on every mutation', async () => {
+    // Size-unknown backends are read through the prefetch cache, and a
+    // mutation that left the entry in place made the next read answer
+    // pre-write bytes for the rest of the TTL. Python invalidated at
+    // each of these points; this side only did on unlink.
+    const core = await mkCore()
+    const path = '/data/greeting.txt'
+
+    const mutations: [string, () => Promise<unknown>][] = [
+      ['write', () => core.write(path, -1, new TextEncoder().encode('x'), 0)],
+      ['truncate', () => core.truncate(path, 4)],
+      ['create', () => core.create(path)],
+      ['rename', () => core.rename(path, path)],
+    ]
+    for (const [name, mutate] of mutations) {
+      await core.prefetch(path)
+      expect(core.cachedData(path), `${name}: nothing was cached to begin with`).not.toBeNull()
+
+      await mutate()
+
+      expect(core.cachedData(path), `${name} served a stale read`).toBeNull()
+    }
+  })
+
   it('refuses a symlink on hidden turf for a scoped session', async () => {
     // The R8 hole: a session-scoped kernel mount could create a link on
     // a mount the profile hides, because the FUSE symlink path wrote the

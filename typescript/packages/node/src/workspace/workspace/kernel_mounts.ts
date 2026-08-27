@@ -15,6 +15,7 @@
 import { MountBackend } from '@struktoai/mirage-core/types'
 import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import type { NFSConfig } from '../../nfs/config.ts'
+import { KernelRoute, routeOf } from '../../mount/backend.ts'
 import { FuseManager } from '../fuse.ts'
 import { NFSManager } from '../nfs.ts'
 
@@ -69,7 +70,9 @@ export class KernelMounts {
     sessionId?: string,
     backend?: MountBackend,
   ): Promise<string> {
-    if (backend === MountBackend.NFS) return this.addNfs(prefix, mountpoint, sessionId)
+    if (routeOf(backend ?? MountBackend.FUSE) === KernelRoute.LOOP) {
+      return this.addNfs(prefix, mountpoint, sessionId)
+    }
     const session = sessionId !== undefined ? this.workspace.getSession(sessionId) : undefined
     const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`
     // Register a pinned path BEFORE mounting so a collision is rejected
@@ -144,7 +147,7 @@ export class KernelMounts {
    */
   async remove(prefix: string, sessionId?: string): Promise<void> {
     const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`
-    if (this.backends.get(key) === MountBackend.NFS) {
+    if (this.routeOfKey(key) === KernelRoute.LOOP) {
       const managerKey = sessionId ?? ''
       const nfs = this.nfs.get(managerKey)
       if (nfs !== undefined) {
@@ -199,7 +202,7 @@ export class KernelMounts {
   get mountpoints(): Record<string, string> {
     const out: Record<string, string> = {}
     for (const [key, path] of this.mountpointsMap) {
-      if (this.backends.get(key) !== MountBackend.NFS) out[key] = path
+      if (this.routeOfKey(key) === KernelRoute.THREAD) out[key] = path
     }
     return out
   }
@@ -208,9 +211,19 @@ export class KernelMounts {
   get nfsMountpoints(): Record<string, string> {
     const out: Record<string, string> = {}
     for (const [key, path] of this.mountpointsMap) {
-      if (this.backends.get(key) === MountBackend.NFS) out[key] = path
+      if (this.routeOfKey(key) === KernelRoute.LOOP) out[key] = path
     }
     return out
+  }
+
+  /**
+   * How the mount registered under `key` was brought up. A key with no
+   * backend recorded is one nothing mounted, which is the same answer
+   * as a vfs mount: no kernel route.
+   */
+  private routeOfKey(key: string): KernelRoute {
+    const backend = this.backends.get(key)
+    return backend === undefined ? KernelRoute.NONE : routeOf(backend)
   }
 
   private register(key: string, mountpoint: string): void {

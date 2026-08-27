@@ -74,3 +74,41 @@ class MountAttrs:
             "st_mtime": self.mtime,
             "st_ctime": self.ctime,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class MountEntry:
+    """One listing entry, described as it is listed.
+
+    A protocol that lists with attributes (NFSv3's READDIRPLUS, and
+    libfuse's readdir-plus) would otherwise stat every name a second
+    time, once per entry per listing. Carrying the path as well as the
+    name is what lets an adapter address the entry -- mint a file
+    handle for it, cache it -- without rejoining the parent itself and
+    disagreeing with the core about how a name becomes a path.
+
+    Args:
+        name (str): the entry's name within its directory.
+        path (str): the entry's mount path, joined by the core.
+        attrs (MountAttrs): the entry's attributes.
+    """
+
+    name: str
+    path: str
+    attrs: MountAttrs
+
+
+@dataclass(frozen=True, slots=True)
+class SetAttrs:
+    """The attribute change a set-attributes request carries.
+
+    Only ``size`` acts. Mode, owner and timestamps are accepted and
+    discarded: a mirage backend has nowhere to persist them, and
+    refusing would fail ordinary tools. Neutral rather than nfs's,
+    because every kernel protocol asks the same narrow question here.
+
+    Args:
+        size (int | None): new length in bytes, or None to leave it.
+    """
+
+    size: int | None = None

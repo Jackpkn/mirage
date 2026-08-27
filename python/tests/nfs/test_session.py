@@ -16,7 +16,7 @@ import asyncio
 import inspect
 
 from mirage.context import get_current_session
-from mirage.nfs.fs import MirageNFS
+from mirage.nfs.delegate import MirageNFS
 from mirage.nfs.session import BOUND_METHODS, SessionBoundNFS, scoped
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode

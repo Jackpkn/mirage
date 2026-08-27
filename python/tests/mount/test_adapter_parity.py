@@ -18,7 +18,7 @@ import pytest
 
 from mirage.mount.core import MountCore
 from mirage.mount.errors import classify_error
-from mirage.nfs.fs import MirageNFS
+from mirage.nfs.delegate import MirageNFS
 from mirage.resource.ram import RAMResource
 from mirage.types import FileStat, MountMode
 from mirage.workspace import Workspace

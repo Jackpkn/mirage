@@ -28,7 +28,7 @@ import { NFSConfig } from './config.ts'
 import { nfsErrno } from './errors.ts'
 import { bindSession, scopedFlush } from './session.ts'
 import type { NFSFlushable } from './session.ts'
-import { MirageNFS } from './fs.ts'
+import { MirageNFS } from './delegate.ts'
 import type { DirEntry, NFSAttrs } from './types.ts'
 
 const run = promisify(execFile)

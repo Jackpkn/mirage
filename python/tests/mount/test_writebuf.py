@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.nfs.writebuf import WriteBuffer
+from mirage.mount.writebuf import WriteBuffer
 
 
 def _buffer() -> WriteBuffer:
