@@ -897,31 +897,11 @@ class Mem0Service:
 
         The adapter owns the process rather than reading a URL from the
         environment, which is what keeps ``--facet mem0`` free of CI setup.
-        The fake moved from aiohttp to the kit, so the interpreter is tsx and
-        the first stdout line is the kit's announce line rather than a bare
-        endpoint.
 
         Returns:
             Mem0Service: the running fake.
         """
-        integ = Path(__file__).resolve().parents[2]
-        process = await asyncio.create_subprocess_exec(
-            str(integ / "node_modules" / ".bin" / "tsx"),
-            str(integ / "server" / "mem0" / "main.ts"),
-            "--port",
-            "0",
-            cwd=str(integ),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        assert process.stdout is not None
-        line = (await process.stdout.readline()).decode().strip()
-        endpoint = line.partition("=")[2] if line.startswith(
-            "MEM0_URL=") else ""
-        if not endpoint:
-            assert process.stderr is not None
-            detail = (await process.stderr.read()).decode().strip()
-            raise RuntimeError(f"mem0 fake failed to start: {line}{detail}")
+        endpoint, process = await start_kit_fake("mem0")
         return cls(endpoint, process)
 
     def resource(self, mount: dict) -> Mem0Resource:
@@ -932,9 +912,7 @@ class Mem0Service:
                        default_page_size=2))
 
     async def teardown(self) -> None:
-        if self.process.returncode is None:
-            self.process.terminate()
-            await self.process.wait()
+        await stop_kit_fake(self.process)
 
 
 class HttpService:
