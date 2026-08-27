@@ -132,6 +132,17 @@ describe('CLISpec', () => {
     ).toThrow(/subcommands belong to fn trees/)
   })
 
+  it('script excludes configModel', () => {
+    expect(
+      () =>
+        new CLISpec({
+          name: 'pager',
+          script: new ScriptSource('1'),
+          configModel,
+        }),
+    ).toThrow(/configModel/)
+  })
+
   it('runtime takes script', () => {
     expect(() => new CLISpec({ name: 'pager', fn: verb, runtime: 'monty' })).toThrow(
       /it takes script/,
@@ -190,6 +201,17 @@ describe('CLISpec', () => {
           subcommands: [new CLISpec({ name: 'gmail', fn: verb, configModel })],
         }),
     ).toThrow(/only the root of a tree may/)
+  })
+
+  it('validates leaf option grammar at construction', () => {
+    expect(
+      () =>
+        new CLISpec({
+          name: 'mine',
+          fn: verb,
+          options: [new Option({ long: '--mode', choices: ['a', 'b'] })],
+        }),
+    ).toThrow(/choices and default require a value flag/)
   })
 
   it('rejects an option colliding between a node and a descendant', () => {

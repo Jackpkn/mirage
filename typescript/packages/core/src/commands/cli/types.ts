@@ -148,15 +148,17 @@ export type CLIConfigModel = ZodObject<ZodRawShape> | ((input: Record<string, un
  * identity, behavior, and nesting. A leaf carries `fn`; a group carries
  * `subcommands`; the root of an installable program may carry
  * `configModel` (the zod-backed `normalize*Config` shape resources already
- * use, doubling as the redaction schema). Every level of the tree parses
- * with the ordinary spec machinery because every level is a CommandSpec.
+ * use, doubling as the redaction schema). A script's config is opaque, so a
+ * script cannot declare `configModel`. Every level of the tree parses with
+ * the ordinary spec machinery because every level is a CommandSpec.
  *
  * The constructor validates the node at module-import time: the name must
  * be a single word, a node takes exactly one of `fn`, `subcommands`, or
  * `script` (a script root stands alone: the program re-parses argv
- * natively), a group declares no positional/rest (its operand is the
- * subcommand word), child names must be unique, and only a tree's root may
- * declare `configModel` or `script`.
+ * natively), every node's inherited CommandSpec grammar compiles, a group
+ * declares no positional/rest (its operand is the subcommand word), child
+ * names must be unique, and only a tree's root may declare `configModel` or
+ * `script`.
  */
 export class CLISpec extends CommandSpec {
   readonly name: string
@@ -226,6 +228,9 @@ export class CLISpec extends CommandSpec {
         `cli '${this.name}': a script serves the whole program; subcommands belong to fn trees`,
       )
     }
+    if (this.script !== null && this.configModel !== null) {
+      throw new Error(`cli '${this.name}': script config is opaque; it cannot declare configModel`)
+    }
     if (this.runtime !== null && this.script === null) {
       throw new Error(
         `cli '${this.name}': runtime names the entry that runs script; it takes script`,
@@ -243,6 +248,7 @@ export class CLISpec extends CommandSpec {
           'positional/rest belong on leaves',
       )
     }
+    const compiled = compileSpec(this)
     // Names and aliases share one sibling namespace (argparse refuses a
     // conflicting subparser alias the same way).
     const seen = new Set<string>()
@@ -267,7 +273,7 @@ export class CLISpec extends CommandSpec {
       }
     }
     if (this.options.length > 0 && this.subcommands.length > 0) {
-      const own = new Set(compileSpec(this).dest.values())
+      const own = new Set(compiled.dest.values())
       for (const child of this.subcommands) {
         checkCollisions(this.name, own, child, [child.name])
       }
