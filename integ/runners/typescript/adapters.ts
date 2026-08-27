@@ -618,17 +618,23 @@ async function openEmail(target: Target): Promise<Open> {
 }
 
 async function openHf(target: Target, options?: OpenOptions): Promise<Open> {
-  const endpoint = process.env.HF_ENDPOINT
-  if (!endpoint) throw new Error('hf target requires HF_ENDPOINT')
-  const id = runId()
+  let endpoint = process.env.HF_URL ?? ''
+  while (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1)
+  if (endpoint === '') throw new Error('hf target requires HF_URL')
+  // Each run takes its own ACCOUNT on the shared fake. The client sends the
+  // user's token verbatim on every Hub call, so the token IS the account,
+  // which replaces naming the bucket `integ/<runid>-<mount>` inside one shared
+  // process: that isolated runs only as far as a name collision, and a bucket
+  // named after the run is not a name any real deployment would carry.
+  const token = `integ-hf-${runId()}`
   const build = (): MountMap => {
     const mounts: Record<string, HfBucketsResource> = {}
     for (const m of target.mounts) {
-      // Buckets auto-create on first touch in the fake hub, so a per-run
-      // bucket name is enough isolation.
+      // Buckets auto-create on first touch, exactly as a real one does for a
+      // namespace the token owns.
       mounts[m.path] = new HfBucketsResource({
-        bucket: `integ/${id}-${String(m.bucket)}`,
-        token: 'integ-token',
+        bucket: `integ/${String(m.bucket)}`,
+        token,
         endpoint,
         keyPrefix: m.prefix,
       })

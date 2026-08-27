@@ -151,7 +151,10 @@ repos:
         name: Type check (integ mock servers)
         entry: bash -c 'cd integ && pnpm exec tsc -p tsconfig.check.json'
         language: system
-        files: ^integ/(server/(kit|discord|linear|trello|gws)/.*\.ts|tsconfig(\.check)?\.json)$
+        # Every server directory, not a hand-kept list: the list had already
+        # fallen five fakes behind tsconfig.check.json, so editing one of those
+        # skipped the only hook that type checks it.
+        files: ^integ/(server/.*\.ts|tsconfig(\.check)?\.json)$
         pass_filenames: false
       - id: py-mypy
         name: Type check (mypy)

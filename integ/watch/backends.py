@@ -420,23 +420,27 @@ async def build_box(spec: dict) -> Pair | None:
 
 
 async def build_hf(spec: dict) -> Pair | None:
-    """Hugging Face battery against the in-process Hub fake.
+    """Hugging Face battery against the external hub fake.
 
     Covers the shared opendal walk on a lister that omits per-entry
     metadata, which is the stat-backfill branch Nextcloud never reaches.
-    The fake freezes ``modified``, so only the ETag can move: a case that
-    passes here passes on the ETag alone.
+    opendal reports no last_modified for a Hub object at all, so only the
+    ETag can move: a case that passes here passes on the ETag alone.
+
+    The fake is TypeScript and shared across runs, so this needs ``HF_URL``
+    and each run takes its own account -- the token is the account here.
 
     Args:
         spec (dict): Parsed case file.
     """
-    module = _load(SERVER_DIR / "hf_server.py", "integ_watch_hf")
-    _hub, server, _runner = await module.start_fake_hub()
-    bucket = f"integ/watch-{uuid.uuid4().hex[:8]}"
+    url = os.environ.get("HF_URL")
+    if not url:
+        return None
+    token = f"watch-hf-{uuid.uuid4().hex[:8]}"
     return _pair(
         spec, lambda: HfBucketsResource(
             HfBucketsConfig(
-                bucket=bucket, token="integ-token", endpoint=server.endpoint)))
+                bucket="integ/watch", token=token, endpoint=url.rstrip("/"))))
 
 
 async def build_gdrive(spec: dict) -> Pair | None:

@@ -6,6 +6,7 @@
     "server/linear/**/*.ts",
     "server/trello/**/*.ts",
     "server/gws/**/*.ts",
+    "server/hf/**/*.ts",
     "server/dropbox/**/*.ts",
     "server/box/**/*.ts",
     "server/onedrive/**/*.ts",
