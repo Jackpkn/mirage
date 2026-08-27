@@ -1,0 +1,123 @@
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+from enum import Enum
+from typing import Any
+from urllib.parse import quote
+
+from mirage.accessor.hf_hub import HfHubAccessor
+from mirage.core.hf_hub.client import HfHubError, api_url, hub_get
+from mirage.types import JsonValue
+
+
+class Absence(Enum):
+    """What the Hub says is missing when a listing came back empty."""
+
+    PRESENT = "present"
+    REPO = "repo"
+    REVISION = "revision"
+
+
+async def repo_info(accessor: HfHubAccessor) -> dict[str, Any]:
+    """The repository object: sha, lastModified, tags, gated, card data.
+
+    Args:
+        accessor (HfHubAccessor): the mount's accessor.
+
+    Returns:
+        dict[str, Any]: the decoded repo object, empty when the Hub
+        answered something that is not one.
+    """
+    url = api_url(accessor.endpoint, accessor.repo_type, accessor.repo_id, "")
+    data: JsonValue = await hub_get(accessor.token, url)
+    return data if isinstance(data, dict) else {}
+
+
+async def fetch_refs(accessor: HfHubAccessor) -> dict[str, Any]:
+    """The repository's branches, tags and conversion refs.
+
+    Args:
+        accessor (HfHubAccessor): the mount's accessor.
+
+    Returns:
+        dict[str, Any]: the decoded /refs object.
+    """
+    url = api_url(accessor.endpoint, accessor.repo_type, accessor.repo_id,
+                  "/refs")
+    data: JsonValue = await hub_get(accessor.token, url)
+    return data if isinstance(data, dict) else {}
+
+
+async def head_commit(accessor: HfHubAccessor) -> str:
+    """The commit the mount's revision currently points at.
+
+    Read from the repo object rather than from /refs because the repo
+    object answers it for a tag and a commit-pinned mount too, where
+    /refs only enumerates branches.
+
+    Args:
+        accessor (HfHubAccessor): the mount's accessor.
+
+    Returns:
+        str: the commit sha, or "" when the Hub reported none.
+    """
+    info = await repo_info(accessor)
+    sha = info.get("sha")
+    return sha if isinstance(sha, str) else ""
+
+
+async def classify_absence(accessor: HfHubAccessor) -> Absence:
+    """Why a listing came back empty, asked of the Hub directly.
+
+    ``fetch_tree`` folds 401/403/404 into an empty listing on purpose: a
+    mount's readdir over a repository it cannot see has to render an
+    empty directory rather than raise. A CLI verb wants the opposite, so
+    it asks this on the failure path only, which costs one request and
+    only when something already went wrong.
+
+    The status cannot answer it. A missing repository, a missing
+    revision and a missing file are all 404, and only the Hub's
+    ``X-Error-Code`` header tells them apart; probed against the live
+    Hub, not inferred.
+
+    Args:
+        accessor (HfHubAccessor): the Hub handle naming the repository
+            and revision.
+
+    Returns:
+        Absence: which of the two the Hub reports, PRESENT when the
+        revision resolves and the empty listing means an empty subtree.
+    """
+    try:
+        await hub_get(accessor.token, revision_url(accessor))
+    except HfHubError as exc:
+        if exc.error_code == "RepoNotFound":
+            return Absence.REPO
+        if exc.error_code == "RevisionNotFound":
+            return Absence.REVISION
+        raise
+    return Absence.PRESENT
+
+
+def revision_url(accessor: HfHubAccessor) -> str:
+    """The endpoint whose url upstream names in its not-found messages.
+
+    Args:
+        accessor (HfHubAccessor): the Hub handle.
+
+    Returns:
+        str: the absolute ``/api/<kind>s/<id>/revision/<rev>`` url.
+    """
+    return api_url(accessor.endpoint, accessor.repo_type, accessor.repo_id,
+                   f"/revision/{quote(accessor.revision, safe='')}")

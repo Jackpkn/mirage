@@ -12,49 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
-
-from mirage.accessor._hf import _HfAccessor
-from mirage.utils import key_prefix as kp
+from mirage.accessor.hf_hub import HfHubAccessor, HfRepoConfig
 
 
-class HfSpacesConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    repo_id: str
-    token: SecretStr | None = None
-    endpoint: str = "https://huggingface.co"
-    timeout: int = 30
-    key_prefix: str | None = None
-    revision: str | None = None
-
-    @field_validator("repo_id")
-    @classmethod
-    def _validate_repo_id(cls, v: str) -> str:
-        parts = v.split("/")
-        if len(parts) != 2 or not parts[0] or not parts[1]:
-            raise ValueError(
-                f"repo_id must be in 'namespace/name' form; got {v!r}")
-        return v
-
-    @field_validator("key_prefix")
-    @classmethod
-    def _normalize_key_prefix(cls, v: str | None) -> str | None:
-        return kp.normalize(v) or None
-
-    @property
-    def namespace(self) -> str:
-        return self.repo_id.split("/", 1)[0]
-
-    @property
-    def repo_name(self) -> str:
-        return self.repo_id.split("/", 1)[1]
+class HfSpacesConfig(HfRepoConfig):
+    """Configuration for a Hugging Face Space repository mount."""
 
 
-class HfSpacesAccessor(_HfAccessor):
+class HfSpacesAccessor(HfHubAccessor):
     REPO_TYPE = "space"
     RESOURCE_NAME = "hf_spaces"
-
-    @property
-    def bucket_uri(self) -> str:
-        return f"hf://spaces/{self.config.repo_id}"

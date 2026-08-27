@@ -43,6 +43,12 @@
         "has_provision": false,
         "has_write": true
       },
+      "hf_hub": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": false,
+        "has_write": true
+      },
       "nextcloud": {
         "filetypes": [],
         "has_aggregate": false,
@@ -98,6 +104,7 @@
       "gdrive",
       "gridfs",
       "hf_buckets",
+      "hf_hub",
       "nextcloud",
       "onedrive",
       "ram",

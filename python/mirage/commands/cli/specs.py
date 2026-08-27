@@ -33,6 +33,7 @@ BUILTIN_CLI_SPECS: dict[str, str] = {
     "gh": "mirage.commands.cli.builtin.gh:GH",
     "git": "mirage.commands.cli.builtin.git:GIT",
     "gws": "mirage.commands.cli.builtin.gws:GWS",
+    "hf": "mirage.commands.cli.builtin.hf:HF",
     "himalaya": "mirage.commands.cli.builtin.himalaya:HIMALAYA",
     "linear": "mirage.commands.cli.builtin.linear:LINEAR",
     "ntn": "mirage.commands.cli.builtin.ntn:NTN",

@@ -103,6 +103,12 @@
         "has_provision": true,
         "has_write": false
       },
+      "hf_hub": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": true,
+        "has_write": false
+      },
       "history": {
         "filetypes": [],
         "has_aggregate": true,
@@ -240,6 +246,7 @@
       "gsheets",
       "gslides",
       "hf_buckets",
+      "hf_hub",
       "history",
       "jaeger",
       "lancedb",

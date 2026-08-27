@@ -14,14 +14,14 @@
 
 import { normalizeKeyPrefix } from '@struktoai/mirage-core/resource/s3/config'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { HfSpacesAccessor } from '../../accessor/hf.ts'
-import { HfResource } from '../hf_buckets/base.ts'
+import { HfSpacesHubAccessor } from '../../accessor/hf_hub.ts'
 import {
-  assertHfRepoId,
+  assertHfRepoRef,
   type HfRepoConfig,
   type HfRepoConfigRedacted,
   redactHfRepoConfig,
 } from '../hf_buckets/config.ts'
+import { HfHubResource } from '../hf_hub/base.ts'
 import { HF_SPACES_PROMPT } from './prompt.ts'
 
 export interface HfSpacesResourceState {
@@ -29,15 +29,15 @@ export interface HfSpacesResourceState {
   config: HfRepoConfigRedacted
 }
 
-export class HfSpacesResource extends HfResource {
+export class HfSpacesResource extends HfHubResource {
   readonly kind: string = ResourceName.HF_SPACES
   readonly prompt: string = HF_SPACES_PROMPT
   readonly config: HfRepoConfig
-  readonly accessor: HfSpacesAccessor
+  readonly accessor: HfSpacesHubAccessor
 
   constructor(config: HfRepoConfig) {
     super()
-    assertHfRepoId(config.repoId, 'repo_id')
+    assertHfRepoRef(config.repoId, 'repo_id')
     const normalized = normalizeKeyPrefix(config.keyPrefix)
     const cfg: HfRepoConfig = { ...config }
     if (normalized !== undefined) {
@@ -46,7 +46,7 @@ export class HfSpacesResource extends HfResource {
       delete cfg.keyPrefix
     }
     this.config = cfg
-    this.accessor = new HfSpacesAccessor(this.config)
+    this.accessor = new HfSpacesHubAccessor(this.config)
   }
 
   getState(): Promise<HfSpacesResourceState> {

@@ -1,0 +1,205 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import { describe, expect, it, vi } from 'vitest'
+import { HfHubAccessor } from '../../accessor/hf_hub.ts'
+import { HfHubError } from './client.ts'
+import { collect, fetchTree, indexRows, nextCursor, parseEntry, treeUrl } from './tree.ts'
+import * as client from './client.ts'
+import type { TreeEntry } from './tree_entry.ts'
+
+function accessor(config: Record<string, unknown> = {}): HfHubAccessor {
+  return new HfHubAccessor({ repoId: 'acme/widget', ...config } as never)
+}
+
+function fileRow(path: string, size = 10, extra: Record<string, unknown> = {}) {
+  return { type: 'file', oid: `oid-${path}`, size, path, ...extra }
+}
+
+function dirRow(path: string) {
+  return { type: 'directory', oid: `tree-${path}`, size: 0, path }
+}
+
+function page(rows: unknown[], next = '') {
+  return {
+    data: rows,
+    status: 200,
+    headers: next === '' ? {} : { link: `<${next}>; rel="next"` },
+  }
+}
+
+describe('parseEntry', () => {
+  it('keeps the LFS content size, not the pointer size', () => {
+    // An LFS row carries both: `size` is the real content length and
+    // `lfs.pointerSize` is the 135-byte stub git actually stores. Reporting
+    // the stub makes wc -c and ls -l lie and risks a truncated copy.
+    const entry = parseEntry({
+      type: 'file',
+      oid: 'abc',
+      size: 4798702184,
+      path: 'model.safetensors',
+      lfs: { oid: 'sha256hex', size: 4798702184, pointerSize: 135 },
+      xetHash: 'xethash',
+    })
+    expect(entry.size).toBe(4798702184)
+    expect(entry.lfsOid).toBe('sha256hex')
+    expect(entry.xetHash).toBe('xethash')
+  })
+
+  it('reads the last commit when expanded', () => {
+    const entry = parseEntry({
+      type: 'file',
+      oid: 'abc',
+      size: 1,
+      path: 'f',
+      lastCommit: { id: 'c1', date: '2025-01-01T00:00:00.000Z' },
+    })
+    expect(entry.lastModified).toBe('2025-01-01T00:00:00.000Z')
+    expect(entry.lastCommit).toBe('c1')
+  })
+
+  it('leaves mtime empty without expansion', () => {
+    expect(parseEntry(fileRow('f')).lastModified).toBe('')
+  })
+})
+
+describe('nextCursor', () => {
+  it('reads the link header', () => {
+    expect(nextCursor({ link: '<https://h/next>; rel="next"' })).toBe('https://h/next')
+  })
+
+  it('is empty on the last page', () => {
+    expect(nextCursor({})).toBe('')
+    expect(nextCursor({ link: '<https://h/prev>; rel="prev"' })).toBe('')
+  })
+})
+
+describe('treeUrl', () => {
+  it('appends the key prefix without its trailing slash', () => {
+    expect(treeUrl(accessor())).toContain('/api/models/acme/widget/tree/main')
+    const prefixed = accessor({ keyPrefix: 'sub/dir/' })
+    expect(prefixed.keyPrefix).toBe('sub/dir/')
+    expect(treeUrl(prefixed)).toContain('/tree/main/sub/dir')
+  })
+})
+
+describe('collect', () => {
+  it('strips the key prefix', () => {
+    const into = new Map<string, TreeEntry>()
+    collect([fileRow('sub/dir/a.txt')], 'sub/dir/', into)
+    expect([...into.keys()]).toEqual(['a.txt'])
+  })
+
+  it('drops the row naming the prefix itself', () => {
+    // `kp.strip` cannot drop it: the prefix carries a trailing slash, so the
+    // bare directory path does not start with it and comes back unchanged.
+    const into = new Map<string, TreeEntry>()
+    collect([dirRow('sub/dir'), fileRow('sub/dir/a.txt')], 'sub/dir/', into)
+    expect([...into.keys()]).toEqual(['a.txt'])
+  })
+})
+
+describe('fetchTree', () => {
+  it('keeps one expanded page when the repo fits in it', async () => {
+    const spy = vi
+      .spyOn(client, 'hubGetResponse')
+      .mockResolvedValue(
+        page([{ ...fileRow('a.txt'), lastCommit: { id: 'c', date: '2025-01-01T00:00:00.000Z' } }]),
+      )
+    const tree = await fetchTree(accessor())
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0]?.[2]?.expand).toBe('true')
+    expect(tree.get('a.txt')?.lastModified).toBe('2025-01-01T00:00:00.000Z')
+    spy.mockRestore()
+  })
+
+  it('falls back to a bare walk when it does not fit', async () => {
+    // Expansion drops the page from 1000 rows to 50, so a repo too big for one
+    // expanded page re-walks bare rather than paying twenty times the requests.
+    const spy = vi
+      .spyOn(client, 'hubGetResponse')
+      .mockResolvedValueOnce(page([fileRow('a.txt')], 'https://h/p2'))
+      .mockResolvedValueOnce(page([fileRow('a.txt'), fileRow('b.txt')]))
+    const tree = await fetchTree(accessor())
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(spy.mock.calls[1]?.[2]?.expand).toBe('false')
+    expect([...tree.keys()].sort()).toEqual(['a.txt', 'b.txt'])
+    spy.mockRestore()
+  })
+
+  it('forced expansion pages through the cursor', async () => {
+    const spy = vi
+      .spyOn(client, 'hubGetResponse')
+      .mockResolvedValueOnce(page([fileRow('a.txt')], 'https://h/p2'))
+      .mockResolvedValueOnce(page([fileRow('b.txt')]))
+    const tree = await fetchTree(accessor({ expandCommits: true }))
+    expect(spy.mock.calls[1]?.[1]).toBe('https://h/p2')
+    // The cursor URL carries the whole query already.
+    expect(spy.mock.calls[1]?.[2]).toBeUndefined()
+    expect([...tree.keys()].sort()).toEqual(['a.txt', 'b.txt'])
+    spy.mockRestore()
+  })
+
+  it('forced bare never expands', async () => {
+    const spy = vi.spyOn(client, 'hubGetResponse').mockResolvedValue(page([fileRow('a.txt')]))
+    await fetchTree(accessor({ expandCommits: false }))
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0]?.[2]?.expand).toBe('false')
+    spy.mockRestore()
+  })
+
+  it.each([401, 403, 404])('reads status %i as an empty tree', async (status) => {
+    // The Hub answers 401 rather than 404 for a repo an anonymous caller may
+    // not know exists, so all three mean the same thing here.
+    const spy = vi.spyOn(client, 'hubGetResponse').mockRejectedValue(new HfHubError('nope', status))
+    expect((await fetchTree(accessor())).size).toBe(0)
+    spy.mockRestore()
+  })
+
+  it('rethrows a real failure', async () => {
+    const spy = vi.spyOn(client, 'hubGetResponse').mockRejectedValue(new HfHubError('boom', 500))
+    await expect(fetchTree(accessor())).rejects.toThrow('boom')
+    spy.mockRestore()
+  })
+})
+
+describe('indexRows', () => {
+  it('gives the root a listing for an empty repo', () => {
+    // Without it an empty repository is byte for byte a dropped index.
+    const { entries, children } = indexRows(new Map(), '')
+    expect(entries.size).toBe(0)
+    expect(children.get('/')).toEqual([])
+  })
+
+  it('keys mount-absolute under a prefix', () => {
+    const tree = new Map([['a.txt', parseEntry(fileRow('a.txt', 7))]])
+    const { entries, children } = indexRows(tree, '/m')
+    expect(entries.get('/m/a.txt')?.size).toBe(7)
+    expect(children.get('/m')).toEqual(['/m/a.txt'])
+  })
+
+  it('implies a parent a page boundary split off', () => {
+    const tree = new Map([['d/a.txt', parseEntry(fileRow('d/a.txt'))]])
+    const { entries, children } = indexRows(tree, '')
+    expect(children.get('/d')).toEqual(['/d/a.txt'])
+    expect(entries.has('/d')).toBe(false)
+  })
+
+  it('leaves a directory size unset', () => {
+    const tree = new Map([['d', parseEntry(dirRow('d'))]])
+    const { entries } = indexRows(tree, '')
+    expect(entries.get('/d')?.size).toBeNull()
+    expect(entries.get('/d')?.resourceType).toBe('folder')
+  })
+})

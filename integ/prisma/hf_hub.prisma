@@ -1,0 +1,104 @@
+// Schema for the Hugging Face Hub fake (integ/server/hf_hub/). This is the
+// git-repository Hub (models, datasets, spaces), NOT the Buckets object store
+// that integ/server/hf_server.py already fakes; the two share a vendor and
+// nothing else, so they do not share a table.
+//
+// The Hub is git, and the tests exercise revisions: `--revision` pins a branch
+// or a tag, `repo tag create` makes one, and a commit has to move `main`
+// without moving a tag. So content is keyed by COMMIT, and a ref is a name
+// pointing at one. Keying blobs by branch name instead would make a tag a copy
+// rather than a pointer, and pinning a sha impossible.
+//
+// `repo` is the flat key "{kind}s/{namespace}/{name}" on every child row.
+// relationMode = "prisma" moves referential integrity into the client, so a
+// composite foreign key would buy checking at the cost of a join the fake
+// never needs; every lookup here already knows the repo it is inside.
+//
+// `tenant` is one Hub ACCOUNT, read off the bearer token, so two hosts sharing
+// this server never see each other's repositories.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/hf_hub"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model HfRepo {
+  tenant    String
+  // models | datasets | spaces, the plural the api path spells.
+  kind      String
+  namespace String
+  name      String
+  private   Boolean @default(false)
+  // Spaces only; the Hub requires it for one and rejects it for the others.
+  sdk       String?
+  createdAt String
+  seq       Int
+
+  @@id([tenant, kind, namespace, name])
+}
+
+model HfCommit {
+  tenant      String
+  repo        String
+  sha         String
+  message     String
+  description String  @default("")
+  createdAt   String
+  // Empty for the root commit. Kept so /commits can render a history and a
+  // fixture can state one without the fake inventing an order.
+  parent      String  @default("")
+  seq         Int
+
+  @@id([tenant, repo, sha])
+}
+
+model HfRef {
+  tenant String
+  repo   String
+  // branch | tag. The Hub's /refs answers them under separate keys and
+  // `filter=tags` reads only the second, so the kind is data, not a prefix
+  // convention on the name.
+  refType String
+  name   String
+  sha    String
+  // Tag annotation, "" for a branch and for a bare tag.
+  message String @default("")
+
+  @@id([tenant, repo, refType, name])
+}
+
+model HfBlob {
+  tenant String
+  repo   String
+  // The commit this row belongs to. A commit copies its parent's rows
+  // forward with the change applied, which is what makes a tag a pointer:
+  // two refs on one sha read the same rows rather than two copies.
+  sha    String
+  path   String
+  content Bytes
+  // The git blob sha, which is what a non-LFS file's ETag carries and what
+  // the cache names its blob. Stored rather than derived so a fixture can
+  // pin one.
+  oid    String
+  // The LFS sha256, "" for an ordinary git blob. A file with one is served
+  // with `lfs` on its tree row, and its ETag is this rather than `oid`,
+  // which is the difference the download cache keys on.
+  lfsOid String @default("")
+  // Set only on an LFS row. 135 in the wild, and the trap this fake exists
+  // to keep honest: `size` is the CONTENT length, and reporting the pointer
+  // length there makes wc -c lie and truncates a copy.
+  pointerSize Int @default(0)
+  // The commit that last touched this path, which `expand=true` renders and
+  // which is a Hub file's only source of an mtime.
+  lastCommit String
+  lastModified String
+  seq    Int
+
+  @@id([tenant, repo, sha, path])
+}

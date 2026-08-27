@@ -67,6 +67,12 @@
         "has_provision": true,
         "has_write": true
       },
+      "hf_hub": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": true,
+        "has_write": true
+      },
       "nextcloud": {
         "filetypes": [],
         "has_aggregate": false,
@@ -126,6 +132,7 @@
       "gsheets",
       "gslides",
       "hf_buckets",
+      "hf_hub",
       "nextcloud",
       "onedrive",
       "ram",
