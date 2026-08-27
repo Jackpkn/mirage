@@ -797,11 +797,11 @@ jobs:
             sleep 1
           done
 
-      # gdrive, dropbox, box and onedrive are the watch targets whose fakes are
-      # TypeScript and out-of-process; the other two in-process fakes (github,
-      # ssh) need nothing. Every one of these backends SKIPS ITSELF when its
-      # URL is unset, so a server that is not started here costs coverage in
-      # silence rather than failing the job.
+      # gdrive, dropbox, box, onedrive and hf are the watch targets whose fakes
+      # are TypeScript and out-of-process; the other two in-process fakes
+      # (github, ssh) need nothing. Every one of these backends SKIPS ITSELF
+      # when its URL is unset, so a server that is not started here costs
+      # coverage in silence rather than failing the job.
       - name: Start the fake Google Workspace server
         run: |
           cd integ && nohup pnpm exec tsx server/gws/main.ts --port 19999 \
@@ -857,6 +857,21 @@ jobs:
           # if the only thing it does is cat the log.
           grep -q "ONEDRIVE_URL=" /tmp/onedrive-watch.log
 
+      - name: Start the fake Hugging Face hub
+        working-directory: integ
+        run: |
+          nohup pnpm exec tsx server/hf/main.ts --port 5099 \
+            > /tmp/hf-watch.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "HF_URL=" /tmp/hf-watch.log && break
+            sleep 1
+          done
+          cat /tmp/hf-watch.log
+          # Fail HERE, not 20 minutes later as a connection refused inside the
+          # battery: a server that died on startup still leaves this step green
+          # if the only thing it does is cat the log.
+          grep -q "HF_URL=" /tmp/hf-watch.log
+
       - name: Run watch battery
         env:
           NEXTCLOUD_URL: http://localhost:8080/remote.php/dav/files/admin/
@@ -872,6 +887,7 @@ jobs:
           DROPBOX_URL: http://127.0.0.1:5088
           BOX_URL: http://127.0.0.1:5096
           ONEDRIVE_URL: http://127.0.0.1:5089
+          HF_URL: http://127.0.0.1:5099
         run: ./python/.venv/bin/python integ/watch/run.py
 
   integ-fuse:

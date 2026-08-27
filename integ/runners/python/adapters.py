@@ -333,11 +333,6 @@ def _load_module(path: Path) -> ModuleType:
     return module
 
 
-def _load_hf_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "hf_server.py")
-
-
 def _load_ssh_server() -> ModuleType:
     return _load_module(
         Path(__file__).resolve().parents[2] / "server" / "ssh_server.py")
@@ -981,31 +976,42 @@ class DropboxService:
 
 
 class HfService:
+    """Points hf mounts at the shared fake Hugging Face hub.
 
-    def __init__(self, run_id: str, runner, endpoint: str) -> None:
+    The server (integ/server/hf/) is external, Prisma-backed and shared across
+    both hosts. Each run takes its own ACCOUNT: the client sends the user's
+    token verbatim on every Hub call, so the token IS the account and the fake
+    reads it off `Authorization`. That replaces naming the bucket
+    `integ/<runid>-<mount>` inside one shared process, which isolated runs only
+    as far as a name collision.
+
+    Args:
+        run_id (str): this run's id, which names its account.
+        endpoint (str): HF_URL origin.
+    """
+
+    def __init__(self, run_id: str, endpoint: str) -> None:
         self.run_id = run_id
-        self.runner = runner
         self.endpoint = endpoint
+        self.token = f"integ-hf-{run_id}"
 
     @classmethod
     async def create(cls, run_id: str) -> "HfService":
-        module = _load_hf_server()
-        _hub, server, runner = await module.start_fake_hub()
-        return cls(run_id, runner, server.endpoint)
+        return cls(run_id, os.environ["HF_URL"].rstrip("/"))
 
     def resource(self, mount: dict) -> HfBucketsResource:
-        # Buckets auto-create on first touch in the fake, so a per-run
-        # bucket name is enough isolation.
+        # Buckets auto-create on first touch, exactly as a real one does for a
+        # namespace the token owns.
         return HfBucketsResource(
             HfBucketsConfig(
-                bucket=f"integ/{self.run_id}-{mount['bucket']}",
-                token="integ-token",
+                bucket=f"integ/{mount['bucket']}",
+                token=self.token,
                 endpoint=self.endpoint,
                 key_prefix=mount.get("prefix"),
             ))
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        return None
 
 
 class BoxService:
