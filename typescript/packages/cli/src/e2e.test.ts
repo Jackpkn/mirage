@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -226,6 +226,34 @@ describe('mirage CLI end-to-end', () => {
     expect(result.stdout.trim()).toBe('json-out')
 
     await runCli(env, ['workspace', 'delete', 'exec-json'])
+  }, 30000)
+
+  it('execute record=false over HTTP leaves no history entry', async () => {
+    const cfgPath = writeRamConfig(tmp, 'record-cfg.yaml')
+    await runCli(env, ['workspace', 'create', cfgPath, '--id', 'record-ws'])
+
+    await runCli(env, ['execute', '-w', 'record-ws', '-c', 'echo recorded'])
+    // The CLI has no record flag; the option rides the HTTP body, so an
+    // unrecorded run is what a harness does directly against the daemon.
+    const token = readFileSync(join(tmp, 'auth_token'), 'utf-8').trim()
+    const base = env.MIRAGE_DAEMON_URL ?? ''
+    const res = await fetch(`${base}/v1/workspaces/record-ws/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ command: 'echo hidden', record: false }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { stdout: string; exitCode: number }
+    expect(body.exitCode).toBe(0)
+    expect(body.stdout).toBe('hidden\n')
+
+    const history = (await runCli(env, ['execute', '-w', 'record-ws', '-c', 'history'])) as {
+      stdout: string
+    }
+    expect(history.stdout).toContain('echo recorded')
+    expect(history.stdout).not.toContain('echo hidden')
+
+    await runCli(env, ['workspace', 'delete', 'record-ws'])
   }, 30000)
 
   it('execute consumes piped stdin', async () => {

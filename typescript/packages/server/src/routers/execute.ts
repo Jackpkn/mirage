@@ -35,6 +35,7 @@ interface ExecuteBody {
   cwd?: string
   runtime?: string
   stdinBase64?: string
+  record?: boolean
 }
 
 interface ExecuteQuery {
@@ -58,6 +59,7 @@ export function registerExecuteRoutes(app: FastifyInstance, deps: ExecuteRoutesD
           ...(body.agentId !== undefined ? { agentId: body.agentId } : {}),
           ...(body.cwd !== undefined ? { cwd: body.cwd } : {}),
           ...(body.runtime !== undefined ? { runtime: body.runtime } : {}),
+          ...(body.record !== undefined ? { record: body.record } : {}),
           ...(body.provision === true ? { provision: true as const } : {}),
           ...(body.stdinBase64 !== undefined
             ? { stdin: new Uint8Array(Buffer.from(body.stdinBase64, 'base64')) }
