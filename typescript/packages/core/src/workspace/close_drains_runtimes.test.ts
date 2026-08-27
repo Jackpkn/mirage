@@ -15,10 +15,14 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { CLISpec } from '../commands/cli/types.ts'
+import { IOResult } from '../io/types.ts'
 import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
+import type { FileEvent, PathSpec } from '../types.ts'
 import { MountMode } from '../types.ts'
+import type { WatchRuntime } from '../watch/base.ts'
 import { Workspace } from './workspace/workspace.ts'
 
 const require = createRequire(import.meta.url)
@@ -41,6 +45,32 @@ function build(): Workspace {
   )
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = (): void => undefined
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+class BlockingWatchRuntime implements WatchRuntime {
+  readonly closeStarted = deferred()
+  readonly allowClose = deferred()
+
+  watch(_path: PathSpec | readonly PathSpec[]): AsyncIterable<FileEvent> {
+    throw new Error('not used')
+  }
+
+  notify(_change: FileEvent): Promise<void> {
+    return Promise.resolve()
+  }
+
+  async close(): Promise<void> {
+    this.closeStarted.resolve()
+    await this.allowClose.promise
+  }
+}
+
 describe('Workspace.close', () => {
   // Re-entry is guarded by the in-flight promise rather than by setting
   // `closed` before the first await. A runtime replaying its journal during
@@ -59,6 +89,63 @@ describe('Workspace.close', () => {
     // resources out from under it.
     await expect(ws.execute('echo hi')).rejects.toThrow('Workspace is closed')
     await closing
+  })
+
+  it('refuses public filesystem operations while close is in progress', async () => {
+    const ws = build()
+    const watch = new BlockingWatchRuntime()
+    ws.attachWatchRuntime(watch)
+    const closing = ws.close()
+    await watch.closeStarted.promise
+
+    const attempts = await Promise.allSettled([
+      ws.resolve('/data'),
+      ws.dispatch('readdir', '/data'),
+      ws.stat('/data'),
+      ws.readdir('/data'),
+      ws.fs.stat('/data'),
+    ])
+
+    watch.allowClose.resolve()
+    await closing
+    expect(
+      attempts.map((attempt) =>
+        attempt.status === 'rejected' && attempt.reason instanceof Error
+          ? attempt.reason.message
+          : attempt.status,
+      ),
+    ).toEqual(Array.from({ length: attempts.length }, () => 'Workspace is closed'))
+  })
+
+  it('lets an admitted line finish recursive execution during close', async () => {
+    const ws = build()
+    const watch = new BlockingWatchRuntime()
+    const entered = deferred()
+    const resume = deferred()
+    ws.attachWatchRuntime(watch)
+    ws.registerCli(
+      'pause',
+      new CLISpec({
+        name: 'pause',
+        fn: async () => {
+          entered.resolve()
+          await resume.promise
+          return [null, new IOResult()]
+        },
+      }),
+    )
+
+    const running = ws.execute("pause; eval 'echo hi'")
+    await entered.promise
+    const closing = ws.close()
+    await watch.closeStarted.promise
+    resume.resolve()
+    const result = await running
+    watch.allowClose.resolve()
+    await closing
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdoutText).toBe('hi\n')
   })
 
   it('runs teardown once when two callers race it', async () => {

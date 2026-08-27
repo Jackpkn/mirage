@@ -123,8 +123,8 @@ export class Workspace {
    * finishes. The two differ because `closed` is now set at the end so a
    * runtime can still replay its journal, and that window would otherwise let
    * a caller start a job after `killAll`, or add a mount after the close list
-   * was taken. `resolve` is deliberately not guarded on this: the replay
-   * dispatches through it while teardown is running.
+   * was taken. Internal dispatch and recursive execution stay open until
+   * teardown finishes; their public doors do not.
    */
   private get shuttingDown(): boolean {
     return this.closing !== null || this.closed
@@ -258,7 +258,7 @@ export class Workspace {
     // adopts whatever identity the namespace store holds.
     this.namespace = new Namespace(
       this.registry,
-      (p) => this.resolve(p),
+      (p) => this.resolveInternal(p),
       stores.namespace,
       options.agentId ?? null,
     )
@@ -323,7 +323,10 @@ export class Workspace {
     // the policy gates fire exactly once, at that door. It keeps the
     // ledger, which is its own; the sink is only the observer's copy.
     this.fs = new Ops(
-      this.dispatcher.dispatch,
+      (op, path, args, kwargs, report) => {
+        if (this.shuttingDown) throw new Error('Workspace is closed')
+        return this.dispatcher.dispatch(op, path, args, kwargs, report)
+      },
       async (rec) => {
         await this.observer.logOp(rec, this.agentId ?? '', this.sessionManager.defaultId)
       },
@@ -402,8 +405,9 @@ export class Workspace {
   }
 
   // The sandboxed runtimes' sole data path (quickjs, pyodide, monty).
-  // Routes through `dispatch`, not the raw Ops facade, so sandbox I/O
-  // takes the same path as shell commands — cache read-through on
+  // Routes through the private dispatch continuation, not the raw Ops facade,
+  // so runtime journal replay stays open during close and sandbox I/O takes
+  // the same path as shell commands — cache read-through on
   // reads, post-write invalidation, and mount-mode enforcement narrowed
   // by the current session all come from the Dispatcher. Reads are raw
   // bytes (no filetype rendering), matching the Python WasmVFS.
@@ -411,19 +415,19 @@ export class Workspace {
     return async (op, path, bytes, dst, attrs) => {
       switch (op) {
         case 'read':
-          return (await this.dispatch('read', path)) as Uint8Array
+          return (await this.dispatchInternal('read', path)) as Uint8Array
         case 'write': {
           if (bytes === undefined) throw new Error('write op requires bytes')
           const buf =
             bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayLike<number>)
-          await this.dispatch('write', path, [buf])
+          await this.dispatchInternal('write', path, [buf])
           return undefined
         }
         case 'append': {
           if (bytes === undefined) throw new Error('append op requires bytes')
           const buf =
             bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayLike<number>)
-          await this.dispatch('append', path, [buf])
+          await this.dispatchInternal('append', path, [buf])
           return undefined
         }
         case 'stat':
@@ -432,32 +436,37 @@ export class Workspace {
           // tiers cannot drift into two translations of one fact.
           // `nofollow` is the only attrs field a stat carries, and it
           // is the caller's lstat; the dispatcher consumes it.
-          return await this.dispatch(
+          return await this.dispatchInternal(
             'stat',
             path,
             [],
             attrs?.nofollow === true ? { nofollow: true } : undefined,
           )
         case 'create':
-          await this.dispatch('create', path)
+          await this.dispatchInternal('create', path)
           return undefined
         case 'truncate':
-          await this.dispatch('truncate', path, [0])
+          await this.dispatchInternal('truncate', path, [0])
           return undefined
         case 'unlink':
-          await this.dispatch('unlink', path)
+          await this.dispatchInternal('unlink', path)
           return undefined
         case 'mkdir':
           // `parents` is pathlib's mkdir(parents=True), riding to the
           // backend op as a kwarg the way python's dispatch carries it.
-          await this.dispatch('mkdir', path, [], attrs?.parents === true ? { parents: true } : {})
+          await this.dispatchInternal(
+            'mkdir',
+            path,
+            [],
+            attrs?.parents === true ? { parents: true } : {},
+          )
           return undefined
         case 'rmdir':
-          await this.dispatch('rmdir', path)
+          await this.dispatchInternal('rmdir', path)
           return undefined
         case 'rename': {
           if (dst === undefined) throw new Error('rename op requires dst')
-          await this.dispatch('rename', path, [PathSpec.fromStrPath(dst)])
+          await this.dispatchInternal('rename', path, [PathSpec.fromStrPath(dst)])
           return undefined
         }
         case 'symlink': {
@@ -465,14 +474,14 @@ export class Workspace {
           // relative or dangling, and resolving it here would record a
           // different link than the guest asked for.
           if (dst === undefined) throw new Error('symlink op requires dst')
-          await this.dispatch('symlink', path, [], { target: dst })
+          await this.dispatchInternal('symlink', path, [], { target: dst })
           return undefined
         }
         case 'readlink':
-          return (await this.dispatch('readlink', path)) as string
+          return (await this.dispatchInternal('readlink', path)) as string
         case 'setattr': {
           if (attrs === undefined) throw new Error('setattr op requires attrs')
-          await this.dispatch('setattr', path, [], attrs as Record<string, unknown>)
+          await this.dispatchInternal('setattr', path, [], attrs as Record<string, unknown>)
           return undefined
         }
         case 'readdir':
@@ -480,7 +489,7 @@ export class Workspace {
           // runtime door (`RuntimeVFS.readdir`) stats each entry and
           // marks the links, so a row is built in one tier and in one
           // shape in both languages.
-          return ((await this.dispatch('readdir', path)) as string[] | null) ?? []
+          return ((await this.dispatchInternal('readdir', path)) as string[] | null) ?? []
       }
     }
   }
@@ -842,9 +851,19 @@ export class Workspace {
     args: readonly unknown[] = [],
     kwargs: OpKwargs = {},
   ): Promise<unknown> {
+    if (this.shuttingDown) throw new Error('Workspace is closed')
+    return this.dispatchInternal(opName, path, args, kwargs)
+  }
+
+  private async dispatchInternal(
+    opName: string,
+    path: string,
+    args: readonly unknown[] = [],
+    kwargs: OpKwargs = {},
+  ): Promise<unknown> {
     // The Dispatcher owns the whole pipeline: pre-dispatch
     // initialization (namespace load, pending drift checks), symlink
-    // follow, resolution (its resolveFn is Workspace.resolve, so lazy
+    // follow, resolution (its resolveFn is resolveInternal, so lazy
     // open and mount grants happen there), cache read-through, mode
     // enforcement, per-op commandLimits on the executing mount,
     // revisions, overlay stat, and post-write invalidation. The same
@@ -859,6 +878,11 @@ export class Workspace {
   }
 
   async resolve(path: string): Promise<[Resource, PathSpec, MountMode]> {
+    if (this.shuttingDown) throw new Error('Workspace is closed')
+    return this.resolveInternal(path)
+  }
+
+  private async resolveInternal(path: string): Promise<[Resource, PathSpec, MountMode]> {
     if (this.closed) {
       throw new Error('Workspace is closed')
     }
@@ -923,7 +947,7 @@ export class Workspace {
       parser: () => this.getShellParser(),
       meta: this.meta,
       drift: this.drift,
-      statFn: (p) => this.dispatch('stat', p),
+      statFn: (p) => this.dispatchInternal('stat', p),
       namespace: this.namespace,
       sessions: this.sessionManager,
       registry: this.registry,
@@ -942,7 +966,7 @@ export class Workspace {
       invalidateAllAfterRemote: () => this.invalidateAllAfterRemote(),
       provision: (cmd) => this.provision(cmd),
       execute: (cmd, opts) =>
-        this.execute(cmd, opts as ExecuteOptions & { provision?: false | undefined }),
+        this.executeInternal(cmd, opts as ExecuteOptions & { provision?: false | undefined }),
     }
   }
 
@@ -965,6 +989,24 @@ export class Workspace {
     // internal dispatch path stays open, which is what the journal replay
     // uses.
     if (this.shuttingDown) throw new Error('Workspace is closed')
+    return this.executeInternal(command, options)
+  }
+
+  private async executeInternal(
+    command: string,
+    options: ExecuteOptions & { provision?: false | undefined },
+  ): Promise<ExecuteResult>
+  private async executeInternal(
+    command: string,
+    options: ExecuteOptions,
+  ): Promise<ExecuteResult | ProvisionResult>
+  private async executeInternal(
+    command: string,
+    options: ExecuteOptions,
+  ): Promise<ExecuteResult | ProvisionResult> {
+    // A line admitted before close may still recurse through eval/source/$(),
+    // but no continuation can start after teardown has finished.
+    if (this.closed) throw new Error('Workspace is closed')
     return executeLine(this.executeEnv(), command, options)
   }
 
