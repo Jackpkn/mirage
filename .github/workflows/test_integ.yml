@@ -801,11 +801,11 @@ jobs:
             sleep 1
           done
 
-      # gdrive, dropbox, box, onedrive and hf are the watch targets whose fakes
-      # are TypeScript and out-of-process; the other two in-process fakes
-      # (github, ssh) need nothing. Every one of these backends SKIPS ITSELF
-      # when its URL is unset, so a server that is not started here costs
-      # coverage in silence rather than failing the job.
+      # gdrive, dropbox, box, onedrive, hf and github are the watch targets
+      # whose fakes are TypeScript and out-of-process; the one in-process fake
+      # (ssh) needs nothing. Every one of these backends SKIPS ITSELF when its
+      # URL is unset, so a server that is not started here costs coverage in
+      # silence rather than failing the job.
       - name: Start the fake Google Workspace server
         run: |
           cd integ && nohup pnpm exec tsx server/gws/main.ts --port 19999 \
@@ -876,6 +876,21 @@ jobs:
           # if the only thing it does is cat the log.
           grep -q "HF_URL=" /tmp/hf-watch.log
 
+      # Its own process on its own port, and seeded EMPTY: the watch battery
+      # creates the one repository it watches, where the corpus batteries read
+      # a seeded tree.
+      - name: Start the fake GitHub server
+        working-directory: integ
+        run: |
+          nohup pnpm exec tsx server/github/main.ts --port 5087 --fixture empty \
+            > /tmp/github-watch.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "GITHUB_URL=" /tmp/github-watch.log && break
+            sleep 1
+          done
+          cat /tmp/github-watch.log
+          grep -q "GITHUB_URL=" /tmp/github-watch.log
+
       - name: Run watch battery
         env:
           NEXTCLOUD_URL: http://localhost:8080/remote.php/dav/files/admin/
@@ -892,6 +907,7 @@ jobs:
           BOX_URL: http://127.0.0.1:5096
           ONEDRIVE_URL: http://127.0.0.1:5089
           HF_URL: http://127.0.0.1:5099
+          GITHUB_URL: http://127.0.0.1:5087
         run: ./python/.venv/bin/python integ/watch/run.py
 
   integ-fuse:
@@ -1485,14 +1501,17 @@ jobs:
           cat /tmp/discord.log
           echo "DISCORD_URL=http://127.0.0.1:5090" >> "$GITHUB_ENV"
 
+      # The `cli` fixture is the second github scenario: one repository and
+      # no repository creation, where the shared setup seeds three and allows
+      # it. Same server binary, named at startup and replayed by every later
+      # bare /reset.
       - name: Start fake GitHub API
         if: matrix.facet == 'cli'
         run: |
-          nohup ./python/.venv/bin/python integ/server/github_server.py \
-            --port 5098 --repo integ/repo-cli=github/repo-v1 \
-            --no-create-repos \
-            > /tmp/github.log 2>&1 &
-          for i in $(seq 1 30); do grep -q "GITHUB_ENDPOINT=" /tmp/github.log && break; sleep 1; done
+          cd integ
+          nohup ./node_modules/.bin/tsx server/github/main.ts \
+            --port 5098 --fixture cli > /tmp/github.log 2>&1 &
+          for i in $(seq 1 30); do grep -q "GITHUB_URL=" /tmp/github.log && break; sleep 1; done
           cat /tmp/github.log
           echo "GITHUB_URL=http://127.0.0.1:5098" >> "$GITHUB_ENV"
 

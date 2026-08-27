@@ -1241,9 +1241,9 @@ class SlackService:
 class GitHubService:
     """Points github mounts at the fake api.github.com server.
 
-    The server (integ/server/github_server.py) runs out of process on
-    GITHUB_URL, mirroring the fake Slack and Google Workspace servers and
-    shared with the typescript host. It used to be out of process by
+    The server (integ/server/github) is a kit fake running out of process
+    on GITHUB_URL, mirroring the fake Slack and Google Workspace servers
+    and shared with the typescript host. It used to be out of process by
     necessity — GitHubResource fetched the repo tree with a blocking
     urlopen from its constructor, which would starve an aiohttp fake on
     the runner's loop. That constraint is gone now that the constructor
