@@ -15,29 +15,33 @@
 import { posix } from 'node:path'
 
 import type { Ops } from '@struktoai/mirage-core/ops/ops'
-import { FileType } from '@struktoai/mirage-core/types'
-import { mtimeMs } from '@struktoai/mirage-core/utils/stat_view'
-import type { FileStat } from '@struktoai/mirage-core/types'
-import { sortedByCodePoints } from '@struktoai/mirage-core/utils/sort'
+import { MountCore } from '../mount/core.ts'
 
-import { errnoError } from '../mount/errors.ts'
-import { isMacosMetadata } from '../mount/platform/macos.ts'
 import { NFSConfig } from './config.ts'
 import { StaleHandleError } from './errors.ts'
 import { IdTable, ROOT_PATH } from './ids.ts'
 import type { DirEntry, NFSAttrs } from './types.ts'
 import { WriteBuffer } from './writebuf.ts'
 
+// The core treats an unknown handle as "no handle", which is what a
+// handle-free protocol wants: read and write apply straight through.
+const NO_HANDLE = -1
+// S_IFMT masks the type out of a mode; the core answers in POSIX modes
+// and NFSv3 wants the type as two booleans.
+const S_IFMT = 0o170000
+const S_IFDIR = 0o040000
+const S_IFLNK = 0o120000
+
+function isDirMode(mode: number): boolean {
+  return (mode & S_IFMT) === S_IFDIR
+}
+
+function isLinkMode(mode: number): boolean {
+  return (mode & S_IFMT) === S_IFLNK
+}
+
 function joinPath(parent: string, name: string): string {
   return parent === ROOT_PATH ? ROOT_PATH + name : posix.join(parent, name)
-}
-
-function enoent(path: string): Error {
-  return errnoError('ENOENT', `no such file or directory: ${path}`)
-}
-
-function einval(path: string): Error {
-  return errnoError('EINVAL', `invalid argument: ${path}`)
 }
 
 /**
@@ -57,6 +61,15 @@ function einval(path: string): Error {
 export class MirageNFS {
   private readonly ops: Ops
   private readonly config: NFSConfig
+  /**
+   * The shared mount core. Every filesystem semantic the two kernel
+   * tiers agree on -- link display, macOS metadata, entry naming, stat
+   * shaping, the size-unknown rules -- is decided there and nowhere
+   * here, so the adapters cannot drift. What stays this adapter's own
+   * is what NFSv3 alone needs: the id table, the write buffer, and the
+   * wire attribute shape.
+   */
+  private readonly core: MountCore
   private readonly ids = new IdTable()
   private readonly writes = new WriteBuffer()
   // One chain per file that has been written, cleared with the buffer it
@@ -65,6 +78,7 @@ export class MirageNFS {
   private readonly root: number
 
   constructor(ops: Ops, config: NFSConfig = new NFSConfig()) {
+    this.core = new MountCore(ops)
     this.ops = ops
     this.config = config
     this.root = this.ids.alloc(ROOT_PATH)
@@ -77,13 +91,10 @@ export class MirageNFS {
 
   /** Resolve a name inside a directory to a file id. */
   async lookup(dirid: number, name: string): Promise<number> {
-    if (isMacosMetadata(name)) {
-      // Finder and Spotlight probe these on every listing; answering
-      // here keeps the probe off the backend, as MountCore does.
-      throw enoent(name)
-    }
     const path = joinPath(this.ids.resolve(dirid), name)
-    if (this.linkTarget(path) === null) await this.ops.stat(path)
+    // getattr refuses macOS metadata names and reports a link as a link
+    // rather than following it, both of which this used to repeat.
+    await this.core.getattr(path)
     return this.ids.alloc(path)
   }
 
@@ -116,14 +127,16 @@ export class MirageNFS {
   /** Create an empty file and return its id. */
   async create(dirid: number, name: string): Promise<number> {
     const path = joinPath(this.ids.resolve(dirid), name)
-    await this.ops.create(path)
+    const fd = await this.core.create(path)
+    // NFSv3 is handle-free; the core's handle would leak otherwise.
+    await this.core.release(fd)
     return this.ids.alloc(path)
   }
 
   /** Create a directory and return its id. */
   async mkdir(dirid: number, name: string): Promise<number> {
     const path = joinPath(this.ids.resolve(dirid), name)
-    await this.ops.mkdir(path)
+    await this.core.mkdir(path)
     return this.ids.alloc(path)
   }
 
@@ -140,18 +153,15 @@ export class MirageNFS {
   async remove(dirid: number, name: string): Promise<void> {
     const path = joinPath(this.ids.resolve(dirid), name)
     const fileid = this.ids.idFor(path)
-    if (this.linkTarget(path) !== null) {
-      if (fileid !== undefined) this.dropBuffered(fileid)
-      await this.ops.unlink(path)
-      if (fileid !== undefined) this.ids.invalidate(fileid)
-      return
-    }
-    const stat = await this.ops.stat(path)
     if (fileid !== undefined) this.dropBuffered(fileid)
-    if (stat.type === FileType.DIRECTORY) {
-      await this.ops.rmdir(path)
+    // The core's unlink unlinks a link rather than following it, so the
+    // branch here is only file-or-directory. getattr reports a link as
+    // a link, which keeps it out of the rmdir arm.
+    const attrs = await this.core.getattr(path)
+    if (isDirMode(attrs.mode)) {
+      await this.core.rmdir(path)
     } else {
-      await this.ops.unlink(path)
+      await this.core.unlink(path)
     }
     if (fileid !== undefined) this.ids.invalidate(fileid)
   }
@@ -176,7 +186,7 @@ export class MirageNFS {
     if (fileid !== undefined && this.writes.hasPending(fileid)) {
       await this.flushOne(fileid, src)
     }
-    await this.ops.rename(src, dst)
+    await this.core.rename(src, dst)
     this.ids.rename(src, dst)
   }
 
@@ -191,7 +201,7 @@ export class MirageNFS {
     const path = this.ids.resolve(fileid)
     if (size !== null) {
       this.writes.clip(fileid, size)
-      await this.ops.truncate(path, size)
+      await this.core.truncate(path, size)
     }
     return this.entryAttrs(fileid, path)
   }
@@ -199,7 +209,7 @@ export class MirageNFS {
   /** Create a symlink and return its id. */
   async symlink(dirid: number, name: string, target: string): Promise<number> {
     const path = joinPath(this.ids.resolve(dirid), name)
-    await this.ops.symlink(path, target)
+    await this.core.symlink(target, path)
     return this.ids.alloc(path)
   }
 
@@ -216,9 +226,7 @@ export class MirageNFS {
   // eslint-disable-next-line @typescript-eslint/require-await
   async readlink(fileid: number): Promise<string> {
     const path = this.ids.resolve(fileid)
-    const target = this.linkTarget(path)
-    if (target === null) throw einval(path)
-    return target
+    return this.core.readlink(path)
   }
 
   /**
@@ -232,17 +240,13 @@ export class MirageNFS {
    */
   async readdir(dirid: number, cookie = 0, maxEntries?: number): Promise<DirEntry[]> {
     const path = this.ids.resolve(dirid)
-    // The facade answers in paths -- a child mount with a trailing
-    // slash -- so names are derived the way MountCore.readdir does,
-    // and macOS metadata names are dropped the same way.
-    const found = new Set<string>()
-    for (const entry of await this.ops.readdir(path)) {
-      const part = entry.replace(/\/+$/, '').split('/').pop() ?? ''
-      if (part !== '' && !isMacosMetadata(part)) found.add(part)
-    }
+    // The core derives names from the facade's paths and drops macOS
+    // metadata; "." and ".." are libfuse's to emit, and NFSv3 carries
+    // them in the reply header instead.
+    const names = (await this.core.readdir(path)).filter((n: string) => n !== '.' && n !== '..')
     const entries: DirEntry[] = []
     let resuming = cookie !== 0
-    for (const name of sortedByCodePoints(found)) {
+    for (const name of names) {
       const child = joinPath(path, name)
       const fileid = this.ids.alloc(child)
       if (resuming) {
@@ -337,60 +341,41 @@ export class MirageNFS {
 
   private async readBase(path: string): Promise<Buffer> {
     try {
-      return Buffer.from(await this.ops.readFile(path, { raw: true }))
+      return Buffer.from(await this.core.read(path, NO_HANDLE, 0, Number.MAX_SAFE_INTEGER))
     } catch {
       // missing file or a directory: the write starts from empty
       return Buffer.alloc(0)
     }
   }
 
-  /**
-   * The target to present for a namespace link, null otherwise.
-   *
-   * The link check must precede any ops stat, exactly as in
-   * MountCore.getattr: the op facade follows namespace links, so a
-   * stat on a link path reports the target and the link itself
-   * becomes invisible.
-   */
-  private linkTarget(path: string): string | null {
-    const links = this.ops.links
-    if (links === null) return null
-    const target = links.readlink(path)
-    if (target === null) return null
-    if (!target.startsWith('/')) return target
-    const parent = path.split('/').slice(0, -1).join('/') || '/'
-    return posix.relative(parent, target)
-  }
-
   /** Attributes for one entry, seeing a link as itself. */
+  /**
+   * The wire attributes for one entry, over the core's POSIX ones.
+   *
+   * The core decides what the entry *is* -- a link reported as a link
+   * rather than followed, a size-unknown file reported as 0, macOS
+   * metadata refused outright -- and this converts that answer into the
+   * three facts NFSv3 puts on the wire, plus the size a client should
+   * see, which counts writes this adapter has buffered but not stored.
+   */
   private async entryAttrs(fileid: number, path: string): Promise<NFSAttrs> {
-    const target = this.linkTarget(path)
-    if (target !== null) {
-      return {
-        fileid,
-        size: Buffer.byteLength(target),
-        isDir: false,
-        isSymlink: true,
-      }
-    }
-    return this.attrs(fileid, await this.ops.stat(path))
-  }
-
-  private attrs(fileid: number, stat: FileStat): NFSAttrs {
-    const isDir = stat.type === FileType.DIRECTORY
-    const size = isDir ? 0 : this.writes.pendingSize(fileid, stat.size ?? 0)
+    // attrsFor, not getattr: this id was minted by a lookup that
+    // already applied the name policy, and re-applying it here would
+    // disappear an entry the client created.
+    const attrs = await this.core.attrsFor(path)
+    const isDir = isDirMode(attrs.mode)
     const out: NFSAttrs = {
       fileid,
-      size,
+      size: isDir ? 0 : this.writes.pendingSize(fileid, attrs.size),
       isDir,
-      isSymlink: stat.type === FileType.SYMLINK,
+      isSymlink: isLinkMode(attrs.mode),
+      mode: attrs.mode & 0o7777,
     }
-    if (stat.mode !== null) out.mode = stat.mode
-    // The wire needs an nfstime3 and vfs.rs reads exactly this field; a
-    // row with no time leaves it unset, and the client reads 1970, which
-    // is honest where a fabricated "now" would not be.
-    const ms = mtimeMs(stat)
-    if (ms !== null) out.mtimeEpoch = ms / 1000
+    // vfs.rs reads exactly this field; the core dates an entry it cannot
+    // date at the epoch, and passing that through is honest where a
+    // fabricated "now" would not be.
+    const epoch = attrs.mtime.getTime() / 1000
+    if (epoch > 0) out.mtimeEpoch = epoch
     return out
   }
 }

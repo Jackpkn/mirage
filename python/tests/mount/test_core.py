@@ -20,7 +20,7 @@ import time
 import pytest
 import pytest_asyncio
 
-from mirage.fuse.core import MountCore
+from mirage.mount.core import MountCore
 from mirage.ops.registry import op
 from mirage.resource.ram import RAMResource
 from mirage.types import ContentType, FileStat, FileType, MountMode, PathSpec
@@ -40,7 +40,7 @@ async def seeded():
 def test_core_needs_no_fuse_module():
     # The whole point of the split: MountCore imports nothing from mfusepy,
     # so the mount layer is exercisable without the [fuse] extra or a kernel.
-    import mirage.fuse.core as core
+    import mirage.mount.core as core
 
     assert not hasattr(core, "fuse")
     assert "mfusepy" not in str(core.__dict__.keys())

@@ -61,8 +61,8 @@ export {
 } from './commands/builtin/redis/_provision.ts'
 export { RedisFileCacheStore, type RedisFileCacheOptions } from './cache/file/redis.ts'
 export { FuseManager } from './workspace/fuse.ts'
-export { MirageFS, type MirageFSOptions, type FuseAttr } from './fuse/fs.ts'
-export { MountCore, type MountCoreOptions } from './fuse/core.ts'
+export { MirageFS, type MirageFSOptions, type MountAttrs } from './fuse/fs.ts'
+export { MountCore, type MountCoreOptions } from './mount/core.ts'
 export { classifyErrno } from './mount/errors.ts'
 export { requireKernelBackend, resolveBackend, unsizedMounts } from './mount/backend.ts'
 export {

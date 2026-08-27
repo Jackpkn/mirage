@@ -17,7 +17,7 @@ import stat as stat_bits
 
 import pytest
 
-from mirage.fuse.core import MountCore
+from mirage.mount.core import MountCore
 from mirage.mount.errors import classify_error
 from mirage.nfs.fs import MirageNFS
 from mirage.resource.ram import RAMResource

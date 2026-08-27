@@ -19,7 +19,7 @@ import posixpath
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Coroutine
+from typing import Any, Coroutine, cast
 
 from mirage.bridge.sync import run_async_from_sync
 from mirage.context import reset_current_session, set_current_session
@@ -311,11 +311,15 @@ class MountCore:
             (open() stays permissive; the subsequent read() surfaces the
             error to the caller).
         """
-        data = self.cached_data(path)
-        if data is not None:
-            return data
+        cached = self.cached_data(path)
+        if cached is not None:
+            return cached
         try:
-            data = self._run(self._ops.read(self.resolve(path)))
+            # Cast because the sync bridge answers Any, which mypy 2.3
+            # refuses to return from a typed function; the bridge cannot
+            # narrow it for every caller, so each one names what it asked
+            # the ops facade for.
+            data = cast(bytes, self._run(self._ops.read(self.resolve(path))))
         except (FileNotFoundError, ValueError):
             return None
         # No inflight dedup: FUSE mounts run nothreads=True, so callbacks are

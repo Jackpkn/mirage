@@ -17,8 +17,8 @@ import logging
 import os
 from typing import Any, Callable
 
-from mirage.fuse.core import MountCore
 from mirage.fuse.darwin import rename_flags_check
+from mirage.mount.core import MountCore
 from mirage.mount.errors import classify_error
 from mirage.ops import Ops
 from mirage.types import JsonValue

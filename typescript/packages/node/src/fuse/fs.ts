@@ -16,10 +16,10 @@ import { runWithSession } from '@struktoai/mirage-core/context/session_context'
 import type { OpRecord } from '@struktoai/mirage-core/observe/record'
 import type { Ops } from '@struktoai/mirage-core/ops/ops'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
-import { type FuseAttr, MountCore } from './core.ts'
+import { type MountAttrs, MountCore } from '../mount/core.ts'
 import { classifyErrno } from '../mount/errors.ts'
 
-export type { FuseAttr }
+export type { MountAttrs }
 
 type Cb<T> = (code: number, result?: T) => void
 
@@ -112,7 +112,7 @@ export class MirageFS {
     return bound
   }
 
-  private getattr(path: string, cb: Cb<FuseAttr>): void {
+  private getattr(path: string, cb: Cb<MountAttrs>): void {
     void this.core.getattr(path).then(
       (attr) => {
         cb(0, attr)
@@ -123,7 +123,7 @@ export class MirageFS {
     )
   }
 
-  private fgetattr(path: string, fd: number, cb: Cb<FuseAttr>): void {
+  private fgetattr(path: string, fd: number, cb: Cb<MountAttrs>): void {
     void this.core.fgetattr(path, fd).then(
       (attr) => {
         cb(0, attr)

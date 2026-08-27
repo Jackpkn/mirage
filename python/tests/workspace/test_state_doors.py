@@ -19,8 +19,8 @@ import pytest
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import CommandSpec
-from mirage.fuse.core import MountCore
 from mirage.io.types import IOResult
+from mirage.mount.core import MountCore
 from mirage.policy import Action, Deny, OpsContext, Policy
 from mirage.policy.types import SessionContext
 from mirage.resource.ram import RAMResource

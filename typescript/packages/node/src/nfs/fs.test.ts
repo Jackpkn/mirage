@@ -317,16 +317,20 @@ describe('readdir', () => {
     expect(attrs.mtimeEpoch).toBeGreaterThan(1_000_000_000)
   })
 
-  it('leaves the mtime unset when the row has no time', async () => {
-    // Honest rather than fabricated: a backend that cannot date a file
-    // leaves the client reading 1970 instead of a plausible lie.
+  it('dates an undated row from the mount, the way fuse does', async () => {
+    // This used to report the epoch, on the argument that a fabricated
+    // time is a lie. Sharing the core settles it the other way: the
+    // fuse tier has always answered its mount time for a row the
+    // backend cannot date, and two kernel mounts of one tree disagreeing
+    // about a file's age is worse than either answer alone. What matters
+    // is that neither says 1970 when the backend does know.
     const real = ws.fs.stat.bind(ws.fs)
     ws.fs.stat = async (path: string) => {
       const row = await real(path)
       return new FileStat({ name: row.name, type: row.type, size: row.size })
     }
     const attrs = await fs.getattr(await fs.lookup(root, 'a.txt'))
-    expect(attrs.mtimeEpoch).toBeUndefined()
+    expect(attrs.mtimeEpoch).toBeGreaterThan(1_000_000_000)
   })
 
   it('does not lose an acknowledged write when flushes overlap', async () => {

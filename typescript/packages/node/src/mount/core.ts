@@ -23,10 +23,18 @@ import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import { DIR_MODE, FILE_MODE, mtimeMs } from '@struktoai/mirage-core/utils/stat_view'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
-import { errnoError } from '../mount/errors.ts'
-import { isMacosMetadata } from '../mount/platform/macos.ts'
+import { errnoError } from './errors.ts'
+import { isMacosMetadata } from './platform/macos.ts'
 
-export interface FuseAttr {
+/**
+ * One entry's POSIX attributes, as any kernel adapter needs them.
+ *
+ * Neutral on purpose: nothing here is libfuse's. It was called
+ * `FuseAttr` and lived in the fuse package only because that adapter
+ * was written first, which is the same accident that had the nfs
+ * adapter importing from `fuse/`.
+ */
+export interface MountAttrs {
   mtime: Date
   atime: Date
   ctime: Date
@@ -109,7 +117,7 @@ export class MountCore {
     return path === '/' ? this.root : this.root + path
   }
 
-  dirStat(): FuseAttr {
+  dirStat(): MountAttrs {
     return {
       mtime: this.now,
       atime: this.now,
@@ -122,7 +130,7 @@ export class MountCore {
     }
   }
 
-  fileStat(size: number): FuseAttr {
+  fileStat(size: number): MountAttrs {
     return {
       mtime: this.now,
       atime: this.now,
@@ -142,7 +150,7 @@ export class MountCore {
    * visible through a mount. String uid/gid (names) are skipped: the kernel
    * wants numeric ids and there is no user db to map against.
    */
-  applyStatAttrs(entry: FuseAttr, s: FileStat): FuseAttr {
+  applyStatAttrs(entry: MountAttrs, s: FileStat): MountAttrs {
     if (s.mode !== null) {
       entry.mode = (entry.mode & ~0o7777) | (s.mode & 0o7777)
     }
@@ -203,7 +211,7 @@ export class MountCore {
    * returns), and the mode is always lrwxrwxrwx: a symlink's permission
    * bits are not consulted by any POSIX system.
    */
-  linkStat(target: string, virtual: string): FuseAttr {
+  linkStat(target: string, virtual: string): MountAttrs {
     const entry = this.fileStat(new TextEncoder().encode(target).byteLength)
     const row = this.ops.links?.linkStatAt(virtual) ?? null
     if (row !== null) this.applyStatAttrs(entry, row)
@@ -285,14 +293,20 @@ export class MountCore {
 
   // ── POSIX surface (throws; adapters classify) ────────────────────
 
-  async getattr(path: string): Promise<FuseAttr> {
+  /**
+   * Attributes for a path, with no name policy applied.
+   *
+   * Split from `getattr` because refusing a name and describing an
+   * entry are two different questions, and only one protocol fuses
+   * them. libfuse has no LOOKUP: its getattr *is* the lookup, so the
+   * refusal belongs there. NFSv3 looks a name up once and then addresses
+   * the entry by handle, so re-applying a name policy to a handle it
+   * already minted makes a file the client just created vanish -- which
+   * is what macOS `cp` hit, since it copies extended attributes through
+   * an AppleDouble `._name` the filter matches.
+   */
+  async attrsFor(path: string): Promise<MountAttrs> {
     if (path === '/') return this.dirStat()
-    // macOS Finder/Spotlight probes .DS_Store, ._*, .Spotlight-V100, etc.
-    // Reject early to avoid hitting the ops layer.
-    const name = path.slice(path.lastIndexOf('/') + 1)
-    if (isMacosMetadata(name)) {
-      throw errnoError('ENOENT', `no such file or directory: ${path}`)
-    }
     // Link check must precede the workspace stat: the fs facade follows
     // namespace links, so stat on a link path reports the target.
     const target = this.linkTarget(path)
@@ -311,8 +325,23 @@ export class MountCore {
     return this.applyStatAttrs(this.fileStat(size), s)
   }
 
+  /**
+   * Attributes for a path a caller reached by name.
+   *
+   * macOS Finder and Spotlight probe .DS_Store, ._*, .Spotlight-V100 and
+   * friends on every listing; refusing here keeps the probe off the
+   * backend entirely.
+   */
+  async getattr(path: string): Promise<MountAttrs> {
+    const name = path.slice(path.lastIndexOf('/') + 1)
+    if (isMacosMetadata(name)) {
+      throw errnoError('ENOENT', `no such file or directory: ${path}`)
+    }
+    return this.attrsFor(path)
+  }
+
   /** Attributes through an open handle, or path-based when not hydrated. */
-  async fgetattr(path: string, fd: number): Promise<FuseAttr> {
+  async fgetattr(path: string, fd: number): Promise<MountAttrs> {
     // fstat(fd) after open: the open handler prefetched size-unknown files
     // into the handle, so answer with the real byte length instead of the
     // 0 that path-based getattr reported before open.
