@@ -18,6 +18,9 @@ import type { Readable } from 'node:stream'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ANNOUNCE_RE } from '../typescript/announce.ts'
+import { Prisma } from '../../../generated/selftest/index.js'
+import { clearTenants, deleteOrder, untenanted } from '../typescript/clear.ts'
+import type { Dmmf } from '../typescript/seed.ts'
 import { unroutedLine } from '../typescript/unrouted.ts'
 import type { JsonValue } from '../typescript/types.ts'
 
@@ -332,6 +335,116 @@ async function main(): Promise<void> {
       body: { run: 'f', fixture: 'nope' },
     })
     check('unknown fixture name is 400', missing.status === 400, JSON.stringify(missing.json))
+
+    // The reason two hosts may share one server. A reset used to recreate the
+    // whole run FILE, so the second host's /reset destroyed the first host's
+    // world; both hosts land on run `default` because no adapter sends one, so
+    // this was not a corner case, it was the normal path.
+    process.stdout.write('\n12. a scoped reset touches only the tenants it names\n')
+    const two = await call(fake, '/reset', {
+      method: 'POST',
+      body: { run: 'g', tenants: ['h1', 'h2'], epoch },
+    })
+    eq('reset reports it was scoped', (two.json as { scoped: JsonValue }).scoped, true)
+    const kept = await call(fake, '/boards/brd_1/cards', {
+      method: 'POST',
+      run: 'g',
+      tenant: 'h1',
+      body: { title: 'host-1-work' },
+    })
+    eq('h1 wrote and minted the first id', (kept.json as { id: JsonValue }).id, 'crd_new_1')
+
+    const solo = await call(fake, '/reset', {
+      method: 'POST',
+      body: { run: 'g', tenants: ['h2'], epoch },
+    })
+    eq('resetting h2 alone is 200', solo.status as unknown as JsonValue, 200)
+    eq(
+      'and it reseeded ONLY h2',
+      (solo.json as { seeded: { tenant: string }[] }).seeded.map((x) => x.tenant),
+      ['h2'],
+    )
+    eq(
+      "h1's row SURVIVED h2's reset",
+      titles((await call(fake, '/boards/brd_1/cards', { run: 'g', tenant: 'h1' })).json),
+      ['zebra', 'apple', 'mango', 'host-1-work'],
+    )
+    eq(
+      'h2 is back at the fixture',
+      titles((await call(fake, '/boards/brd_1/cards', { run: 'g', tenant: 'h2' })).json),
+      ['zebra', 'apple', 'mango'],
+    )
+
+    // The half that a row check cannot see. The minter and the clock were
+    // per-RUN, so h2's reset cleared the counter h1 was still minting from and
+    // h1's next id repeated crd_new_1 -- a duplicate id inside one tenant, from
+    // a reset that never named it.
+    const after = await call(fake, '/boards/brd_1/cards', {
+      method: 'POST',
+      run: 'g',
+      tenant: 'h1',
+      body: { title: 'host-1-again' },
+    })
+    eq(
+      "h1's minter was NOT rewound by h2's reset",
+      (after.json as { id: JsonValue }).id,
+      'crd_new_2',
+    )
+    const fresh2 = await call(fake, '/boards/brd_1/cards', {
+      method: 'POST',
+      run: 'g',
+      tenant: 'h2',
+      body: { title: 'host-2-first' },
+    })
+    eq("h2's own minter DID restart, at its own epoch", fresh2.json, {
+      id: 'crd_new_1',
+      title: 'host-2-first',
+      seq: 3,
+      createdAt: '2026-01-01T00:00:01.000Z',
+    })
+
+    // The guard that keeps the scoped delete as exhaustive as recreating the
+    // file was: a model with no tenant column cannot be cleared per tenant, so
+    // the reset refuses rather than leaving rows behind for the next seed.
+    process.stdout.write('\n13. a schema a scoped reset cannot honor is refused\n')
+    const shared: Dmmf = {
+      datamodel: {
+        models: [
+          {
+            name: 'Scoped',
+            fields: [{ name: 'tenant', kind: 'scalar', isList: false, type: 'String' }],
+          },
+          {
+            name: 'Global',
+            fields: [{ name: 'id', kind: 'scalar', isList: false, type: 'String' }],
+          },
+        ],
+      },
+    }
+    eq('untenanted() names the offending model', untenanted(shared) as unknown as JsonValue, [
+      'Global',
+    ])
+    // The order is the whole trick, and it is easy to get backwards: this is an
+    // insert order read in reverse, so the FK holders (Card, Owner) must come
+    // out before what they point at (Board). Deleting Board first is what the
+    // required-relation refusal above looks like from the caller's side.
+    eq('deleteOrder puts FK holders before their parent', deleteOrder(Prisma.dmmf), [
+      'Owner',
+      'Card',
+      'Board',
+    ])
+
+    let refused = ''
+    try {
+      await clearTenants({}, shared, ['h1'])
+    } catch (err: unknown) {
+      refused = (err as Error).message
+    }
+    check(
+      'and clearTenants refuses that schema by name',
+      refused.includes('Global') && refused.includes('tenant'),
+      refused === '' ? 'did NOT throw' : refused,
+    )
 
     process.stdout.write(`\nselftest: ${String(checks)} checks passed\n`)
   } finally {

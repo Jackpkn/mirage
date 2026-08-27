@@ -22,6 +22,7 @@ export interface DmmfField {
   name: string
   kind: string
   isList: boolean
+  isRequired?: boolean
   type: string
   relationName?: string | null
   relationFromFields?: readonly string[] | null
@@ -58,8 +59,8 @@ export function delegateName(model: string): string {
 // `prisma generate` is stale. Reaching through the index without this check
 // answered `Cannot read properties of undefined (reading 'create')`, which
 // names neither the model nor the real cause.
-function delegateFor(db: Record<string, CreateDelegate>, model: string): CreateDelegate {
-  const found = db[delegateName(model)]
+export function delegateFor<D>(db: unknown, model: string): D {
+  const found = (db as Record<string, D | undefined>)[delegateName(model)]
   if (found === undefined) throw new SeedError(`client has no delegate for model ${model}`)
   return found
 }
@@ -167,7 +168,7 @@ export async function seedFixture(
     for (const row of rows) {
       if (!isRow(row)) throw new SeedError(`fixture ${key}[${String(seq)}] is not an object`)
       const data = build(opts.dmmf, model, row, seq, true, opts, counts)
-      await delegateFor(delegates, model.name).create({ data })
+      await delegateFor<CreateDelegate>(delegates, model.name).create({ data })
       seq += 1
     }
   }

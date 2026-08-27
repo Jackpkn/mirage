@@ -38,9 +38,10 @@ export interface CloseDeps {
  * `workspace/lifecycle.py`.
  *
  * Order matters: the watch runtime goes first (it reads mounts), then
- * background jobs, then in-flight cache drains settle, then the state
- * store if this workspace built it, then the runtime closers, and
- * finally every resource not shared with a sibling workspace.
+ * background jobs, then the runtime closers (their journals still write
+ * to mounts), then in-flight cache drains settle, then the state store if
+ * this workspace built it, and finally every resource not shared with a
+ * sibling workspace.
  */
 export async function closeWorkspace(deps: CloseDeps): Promise<void> {
   await deps.watch.detach()
@@ -53,6 +54,19 @@ export async function closeWorkspace(deps: CloseDeps): Promise<void> {
   // that is already gone.
   await deps.jobTable.killAll()
   await deps.jobTable.closeConsoles()
+  // Runtimes next, and before the cache or any resource closes. A runtime
+  // that was interrupted mid-run still has a journal to replay, and that
+  // replay writes to mounts: draining it after the cache had gone made every
+  // one of those writes fail with "Workspace is closed", so a python program
+  // killed by its timeout silently lost its last mutations. Python has always
+  // ordered it this way (`close_async` closes line runtimes before resources).
+  for (const fn of deps.closers.splice(0)) {
+    try {
+      await fn()
+    } catch {
+      // keep tearing down; swallow subsystem-cleanup failures
+    }
+  }
   const drainTasks = [...(deps.cache.drainTasks?.values() ?? [])]
   for (const task of drainTasks) {
     await task
@@ -71,13 +85,6 @@ export async function closeWorkspace(deps: CloseDeps): Promise<void> {
     // nothing else would release, and clear() above connects to it.
     // Mirrors the try/finally pairing in Python's `close_async`.
     await deps.cache.close()
-  }
-  for (const fn of deps.closers.splice(0)) {
-    try {
-      await fn()
-    } catch {
-      // keep tearing down; swallow subsystem-cleanup failures
-    }
   }
   const toClose = new Set<Resource>(deps.openOrder)
   for (const mount of deps.registry.allMounts()) {

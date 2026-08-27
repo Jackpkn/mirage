@@ -25,6 +25,25 @@ export default tseslint.config(
     languageOptions: { globals: { TextEncoder: 'readonly', TextDecoder: 'readonly' } },
   },
   {
+    // adapters.ts is loaded once per battery run whatever the target is, and a
+    // kit fake's module reaches its generated Prisma client at import time. A
+    // static import here therefore makes `--target nextcloud` die with
+    // ERR_MODULE_NOT_FOUND on a job that has no reason to generate that
+    // client, which is invisible locally because a developer tree always has
+    // one. Load an in-process fake with `await import(...)` inside its opener.
+    files: ['runners/typescript/adapters.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: String.raw`ImportDeclaration[source.value=/^\.\.\/\.\.\/server\/.*\/fake\.ts$/]`,
+          message:
+            "Import a kit fake lazily (await import(...)) inside its opener; a static import here forces every target to have that fake's generated Prisma client.",
+        },
+      ],
+    },
+  },
+  {
     rules: {
       '@typescript-eslint/consistent-type-imports': 'error',
       // varsIgnorePattern as well as argsIgnorePattern: the runners omit a key

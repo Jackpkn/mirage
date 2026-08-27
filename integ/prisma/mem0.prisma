@@ -1,0 +1,32 @@
+// Schema for the mem0 fake (integ/server/mem0/, fixtures/mem0/v1.json). The
+// memories and their search scores were module constants in the python fake
+// this replaces; holding them as rows makes them a fixture edit rather than a
+// code edit, and gives the fake the tenant column every other kit fake has.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/mem0"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model Mem0Memory {
+  tenant       String
+  id           String
+  userId       String
+  memory       String
+  metadataJson String
+  createdAt    String
+  updatedAt    String
+  // The similarity the fake reports for this row. A real vector store computes
+  // one; pinning it is what lets a golden assert ordering and --threshold.
+  score        Float
+  seq          Int
+
+  @@id([tenant, id])
+  @@index([tenant, userId])
+}

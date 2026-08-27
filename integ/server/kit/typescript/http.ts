@@ -122,16 +122,17 @@ async function answer<C extends MinimalClient>(
   headers: Headers,
   raw: Buffer,
 ): Promise<Reply> {
-  const { service, tenantKind, tenantFromBearer } = rt.fake.config
+  const { service, tenantKind, tenantFromBearer, tenantTokenPattern } = rt.fake.config
   if (url.pathname === HEALTH_PATH && (method === 'GET' || method === 'HEAD')) {
     return { status: 200, body: { ok: true, service, runs: rt.pool.runs() } }
   }
   if (url.pathname === RESET_PATH && method === 'POST') {
     try {
-      // Enqueued on the run's own write queue. A reset recreates the SQLite
-      // file, so running it beside an in-flight write unlinked the database
-      // under that write: the request 500'd and every later request on the
-      // run failed forever. It is a write like any other and queues like one.
+      // Enqueued on the run's own write queue. A reset deletes and reseeds
+      // rows, and for a fake with no tenant column recreates the SQLite file
+      // outright, so running it beside an in-flight write unlinked the
+      // database under that write: the request 500'd and every later request
+      // on the run failed forever. It is a write and queues like one.
       const body = parseResetRequest(raw)
       const done = await router.enqueue(runOfReset(body), () => rt.reset(body))
       return { status: 200, body: JSON.parse(JSON.stringify(done)) as JsonValue }
@@ -156,7 +157,7 @@ async function answer<C extends MinimalClient>(
   let tenant: string
   try {
     run = resolveRun(headers, url)
-    tenant = resolveTenant(headers, url, tenantKind, tenantFromBearer)
+    tenant = resolveTenant(headers, url, tenantKind, tenantFromBearer, tenantTokenPattern)
   } catch (err: unknown) {
     // Same shape /reset already used, just reached from the request path. An
     // illegal `?_run=..%2Fx` or `?_tenant=bad name` reached the 500 envelope
@@ -171,7 +172,7 @@ async function answer<C extends MinimalClient>(
   }
   const hit = router.match(method, url.pathname)
   if (hit === null) return unrouted(service, method, url.pathname)
-  const st = rt.state(run)
+  const st = rt.state(run).of(tenant)
   const ctx: Ctx<C> = {
     params: hit.params,
     query: url.searchParams,

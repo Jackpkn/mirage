@@ -1,0 +1,100 @@
+// Schema for the Slack Web API fake (integ/server/slack/).
+//
+// `tenant` is what this fake never had. Its models used a bare `@id`, so one
+// server held ONE global workspace and every run wrote into it: two hosts
+// pointed at one server clobbered each other, and each host's /reset dropped
+// the other's data mid-run. The column participates in every `@@id` so two
+// runs can seed the same fixture ids side by side.
+//
+// The tenant is read off the ordinary Authorization header, but not from the
+// token verbatim: one workspace is reached with `xoxb-<id>` for most methods
+// and `xoxp-<id>` for search.*, so `tenantTokenPattern` strips the actor type
+// and both spellings land on the same workspace.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/slack"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model Channel {
+  tenant     String
+  id         String
+  name       String
+  kind       String
+  created    Int
+  isArchived Boolean @default(false)
+  isPrivate  Boolean @default(false)
+  dmUserId   String?
+  seq        Int
+
+  @@id([tenant, id])
+}
+
+model User {
+  tenant   String
+  id       String
+  name     String
+  realName String
+  email    String
+  isBot    Boolean @default(false)
+  deleted  Boolean @default(false)
+  seq      Int
+
+  @@id([tenant, id])
+}
+
+// `ts` is Slack's own message key inside a channel, so (tenant, channel, ts) is
+// the natural identity; the autoincrement pk the shared schema used cannot be
+// scoped by tenant at all.
+model Message {
+  tenant        String
+  channelId     String
+  ts            String
+  userId        String
+  text          String
+  type          String  @default("message")
+  threadTs      String?
+  reactionsJson String?
+  seq           Int
+
+  @@id([tenant, channelId, ts])
+}
+
+model SlackFile {
+  tenant      String
+  id          String
+  channelId   String
+  messageTs   String
+  name        String
+  title       String
+  mimetype    String
+  filetype    String
+  // Both DERIVED, so the fixture does not state them: `timestamp` is the
+  // message ts floored, and `size` is the byte length of `content` or of the
+  // file `contentPath` names. Baking them into the fixture would let a changed
+  // content file leave a stale size behind; afterSeed recomputes on every seed.
+  size        Int     @default(0)
+  timestamp   Int     @default(0)
+  content     String  @default("")
+  contentPath String?
+  seq         Int
+
+  @@id([tenant, id])
+}
+
+model Pin {
+  tenant    String
+  channelId String
+  ts        String
+  createdBy String @default("UBOT")
+  created   Int    @default(0)
+  seq       Int
+
+  @@id([tenant, channelId, ts])
+}
