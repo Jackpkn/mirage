@@ -18,11 +18,10 @@ import time
 
 import pytest
 
-from mirage.mount.stat import (apply_stat_attrs, dir_stat, file_stat,
-                               link_stat)
+from mirage.mount.stat import apply_stat_attrs, dir_stat, file_stat, link_stat
 from mirage.mount.types import MountAttrs
 from mirage.types import ContentType, FileStat, FileType
-from mirage.utils.stat_view import mtime_ns
+from mirage.utils.dates import iso_timestamp
 
 NOW = 1_700_000_000.0
 
@@ -54,9 +53,7 @@ def test_link_stat_is_lrwxrwxrwx_sized_by_the_target_string():
 def test_link_stat_keeps_the_link_mode_even_when_the_row_sets_one():
     # A symlink's permission bits are not consulted by any POSIX system,
     # so an overlaid chmod must not make the row read as a regular file.
-    row = FileStat(name="lnk",
-                   type=FileType.SYMLINK,
-                   mode=0o600)
+    row = FileStat(name="lnk", type=FileType.SYMLINK, mode=0o600)
 
     entry = link_stat("a.txt", row, uid=0, gid=0, now=NOW)
 
@@ -72,7 +69,7 @@ def test_link_stat_takes_the_rows_owner_and_stamp():
     entry = link_stat("a.txt", row, uid=0, gid=0, now=NOW)
 
     assert entry.uid == 1234
-    assert entry.mtime == mtime_ns(row)
+    assert entry.mtime == iso_timestamp(row.modified)
 
 
 def test_apply_stat_attrs_ignores_named_owners():
@@ -90,9 +87,7 @@ def test_apply_stat_attrs_ignores_named_owners():
 
 
 def test_apply_stat_attrs_keeps_the_type_bits_and_takes_the_permissions():
-    row = FileStat(name="d",
-                   type=FileType.DIRECTORY,
-                   mode=0o700)
+    row = FileStat(name="d", type=FileType.DIRECTORY, mode=0o700)
 
     entry = apply_stat_attrs(dir_stat(uid=0, gid=0, now=NOW), row)
 
@@ -146,7 +141,7 @@ def test_overlay_mtime_reads_offsetless_stamps_as_utc(new_york_clock):
     got_naive = apply_stat_attrs(row(), naive)
     got_aware = apply_stat_attrs(row(), aware)
     assert got_naive.mtime == got_aware.mtime
-    assert got_naive.mtime == mtime_ns(naive)
+    assert got_naive.mtime == iso_timestamp(naive.modified)
 
 
 def test_epoch_zero_mtime_lands_instead_of_reading_as_unknown():
@@ -168,3 +163,22 @@ def test_epoch_zero_mtime_lands_instead_of_reading_as_unknown():
     got = apply_stat_attrs(row, epoch)
     assert got.mtime == 0
     assert got.ctime == 0
+
+
+def test_the_times_are_seconds_and_fit_the_wire():
+    # The unit is load-bearing and neither consumer can state it:
+    # libfuse's st_mtime is seconds, and nfstime3.seconds is a u32, so
+    # nanoseconds saturate it and date every file 2106-02-07. Both
+    # rows are checked because a fresh one and an overlaid one took
+    # their stamp from different places, and only one was ever wrong.
+    fresh = file_stat(0, uid=0, gid=0, now=NOW)
+    overlaid = apply_stat_attrs(
+        file_stat(0, uid=0, gid=0, now=NOW),
+        FileStat(name="f",
+                 type=FileType.FILE,
+                 content=ContentType.TEXT,
+                 modified="2026-01-02T03:04:05Z"))
+
+    for entry in (fresh, overlaid):
+        assert 1_000_000_000 < entry.mtime < 2**32
+        assert entry.mtime == entry.ctime

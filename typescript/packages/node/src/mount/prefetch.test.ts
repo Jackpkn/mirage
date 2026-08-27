@@ -64,7 +64,7 @@ describe('PrefetchCache', () => {
     // start a second fetch.
     const cache = new PrefetchCache()
     let fills = 0
-    let release: () => void = () => {}
+    let release: (() => void) | null = null
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
@@ -76,7 +76,7 @@ describe('PrefetchCache', () => {
 
     const first = cache.claim('/a.txt', fill)
     const second = cache.claim('/a.txt', fill)
-    release()
+    release?.()
 
     expect(await first).toEqual(HELLO)
     expect(await second).toEqual(HELLO)

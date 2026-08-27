@@ -72,10 +72,10 @@ class MountCore:
                  session: Session | None = None) -> None:
         self._ops = ops
         self._session = session
-        self._now = time.time_ns()
+        # Seconds, matching MountAttrs and the TypeScript twin's Date.
+        self._now = time.time()
         self._root = root_prefix.rstrip("/")
         self._handles: FileTable[Handle] = FileTable()
-        # Prefetched content for size-unknown files: path -> (data, expiry).
         self._prefetch = PrefetchCache()
         # In-memory extended attributes, keyed by path. Backends have no
         # POSIX xattrs, so these are advisory, not persisted (see setxattr).

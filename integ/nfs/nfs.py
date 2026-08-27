@@ -22,6 +22,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 from mirage import Mount, MountBackend, MountMode, Workspace
 from mirage.nfs.backend import check_platform_nfs
@@ -233,11 +234,18 @@ async def run_battery(result: dict[str, object]) -> None:
         # leaves every file dated 1970 -- which reads as a broken mount
         # to rsync, make, and any incremental copy. BSD stat spells it
         # -f %m and GNU -c %Y.
+        #
+        # Compared against this process's own clock rather than against
+        # a floor: the file was seeded seconds ago, so its mtime is now.
+        # A floor ("after 2001") passes on 1970's two failure modes as
+        # well as its own -- nfstime3.seconds is a u32, so an adapter
+        # sending nanoseconds saturates it and dates every file
+        # 2106-02-07, which cleared a floor for months.
         code, out = await sh("stat", "-f", "%m", f"{whole}/a.txt")
         if code != 0:
             code, out = await sh("stat", "-c", "%Y", f"{whole}/a.txt")
         stamp = int(out) if out.isdigit() else 0
-        result["mtime_after_2001"] = stamp > 1_000_000_000
+        result["mtime_matches_clock"] = abs(stamp - time.time()) < 3600
 
         try:
             await track(manager, ws.ops, "/dev", whole)

@@ -21,8 +21,8 @@ import pytest_asyncio
 from mirage.mount.core import MountCore
 from mirage.ops.registry import op
 from mirage.resource.ram import RAMResource
-from mirage.types import FileStat, FileType, MountMode, PathSpec
-from mirage.utils.stat_view import mtime_ns
+from mirage.types import MountMode, PathSpec
+from mirage.utils.dates import iso_timestamp
 from mirage.workspace import Workspace
 
 
@@ -133,10 +133,7 @@ async def test_getattr_of_a_link_reports_the_nodes_own_row():
     attrs = await core.getattr("/link")
     assert attrs.mode == stat.S_IFLNK | 0o777
     assert attrs.size == len("a.txt")
-    assert attrs.mtime == mtime_ns(
-        FileStat(name="link",
-                 type=FileType.SYMLINK,
-                 modified="2020-01-02T03:04:05Z"))
+    assert attrs.mtime == iso_timestamp("2020-01-02T03:04:05Z")
 
 
 @pytest.mark.asyncio

@@ -315,6 +315,11 @@ describe('readdir', () => {
     // shipped before this test existed.
     const attrs = await fs.getattr(await fs.lookup(root, 'a.txt'))
     expect(attrs.mtimeEpoch).toBeGreaterThan(1_000_000_000)
+    // Seconds, and bounded above as well as below: nfstime3.seconds is
+    // a u32, so an adapter handing it milliseconds or nanoseconds
+    // saturates it and dates every file 2106-02-07 -- which clears a
+    // bare floor. Python's twin shipped exactly that for months.
+    expect(attrs.mtimeEpoch).toBeLessThan(2 ** 32)
   })
 
   it('dates an undated row from the mount, the way fuse does', async () => {

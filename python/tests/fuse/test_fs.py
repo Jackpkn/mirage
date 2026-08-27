@@ -716,7 +716,10 @@ async def test_getattr_honors_touch_mtime(seed_ws):
     await seed_ws.execute("touch -t 202603041200 /a.txt")
     fs = MirageFS(seed_ws.ops)
     stamp = datetime(2026, 3, 4, 12, 0, tzinfo=timezone.utc)
-    assert fs.getattr("/a.txt")["st_mtime"] == int(stamp.timestamp()) * 10**9
+    # Seconds, which is what libfuse's st_mtime is. This asserted
+    # nanoseconds until 2026-08, and so pinned as correct a mount whose
+    # every file was dated far past 2106.
+    assert fs.getattr("/a.txt")["st_mtime"] == stamp.timestamp()
 
 
 @pytest.mark.asyncio

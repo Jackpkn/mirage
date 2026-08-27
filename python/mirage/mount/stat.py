@@ -14,7 +14,8 @@
 
 from mirage.mount.types import MountAttrs
 from mirage.types import FileStat
-from mirage.utils.stat_view import DIR_MODE, FILE_MODE, LINK_MODE, mtime_ns
+from mirage.utils.dates import iso_timestamp
+from mirage.utils.stat_view import DIR_MODE, FILE_MODE, LINK_MODE
 
 
 def dir_stat(uid: int, gid: int, now: float) -> MountAttrs:
@@ -84,13 +85,17 @@ def apply_stat_attrs(entry: MountAttrs, s: FileStat) -> MountAttrs:
     if isinstance(s.gid, int):
         entry.gid = s.gid
     if s.modified is not None:
-        # One translator per language: the naive-stamp-is-UTC rule lives
-        # in stat_view, never re-parsed here. None means the stamp did
-        # not parse; epoch zero is a real time and lands.
-        ns = mtime_ns(s)
-        if ns is not None:
-            entry.mtime = ns
-            entry.ctime = ns
+        # Seconds, because that is what MountAttrs holds and what every
+        # consumer of it wants: libfuse's st_mtime and nfstime3.seconds
+        # are both seconds, and the nfs one is a u32 that saturates at
+        # 2106 if it is handed nanoseconds. One translator per language:
+        # the naive-stamp-is-UTC rule lives in dates.iso_timestamp,
+        # never re-parsed here. None means the stamp did not parse;
+        # epoch zero is a real time and lands.
+        epoch = iso_timestamp(s.modified)
+        if epoch is not None:
+            entry.mtime = epoch
+            entry.ctime = epoch
     return entry
 
 

@@ -42,6 +42,13 @@ class MountAttrs:
         atime (float): access time, seconds since the epoch.
         mtime (float): modification time, seconds since the epoch.
         ctime (float): change time, seconds since the epoch.
+
+    Seconds is load-bearing, not a preference. Both consumers want
+    seconds and neither can say so: libfuse's ``st_mtime`` is seconds,
+    and NFSv3's ``nfstime3.seconds`` is a **u32**, so a nanosecond value
+    handed to it saturates and every file over the mount reads
+    2106-02-07 -- which is the 1970 bug with a different date on it.
+    The TypeScript twin holds a ``Date`` for the same reason.
     """
 
     mode: int
