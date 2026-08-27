@@ -29,6 +29,17 @@ export function fail(status: number, message: string): Reply {
   return { status, body: errorBody(message) }
 }
 
+// Every repository route refuses an unauthenticated caller before it looks
+// anything up, which is what the vendor does and what a golden pins: an
+// anonymous read of a private-by-default fake is 401, not 404.
+export function authedRoute(fn: Handler): Handler {
+  return async (ctx: Ctx<C>): Promise<Reply> => {
+    const auth = ctx.headers.authorization
+    if (auth === undefined || auth === '') return fail(401, 'Requires authentication')
+    return await fn(ctx)
+  }
+}
+
 export function param(ctx: Ctx<C>, name: string): string {
   return ctx.params[name] ?? ''
 }

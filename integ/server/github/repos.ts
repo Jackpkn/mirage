@@ -19,6 +19,7 @@ import { commitJson } from './wire.ts'
 import { createReposAllowed } from './seed.ts'
 import {
   allRepos,
+  branchFor,
   branchNames,
   commitList,
   metaOf,
@@ -26,19 +27,18 @@ import {
   treeOfBranch,
 } from './store.ts'
 import type { RepoRow } from './store.ts'
-import { everywhere, fail, jsonBodyOf, pagedReply, param, route, str, withRepo } from './http.ts'
+import {
+  authedRoute as authed,
+  everywhere,
+  fail,
+  jsonBodyOf,
+  pagedReply,
+  param,
+  route,
+  str,
+  withRepo,
+} from './http.ts'
 import type { Handler } from './http.ts'
-
-// Every route here refuses an unauthenticated caller before it looks anything
-// up, which is what the vendor does and what a golden pins: an anonymous read
-// of a private-by-default fake is 401, not 404.
-function authed(fn: Handler): Handler {
-  return async (ctx) => {
-    const auth = ctx.headers.authorization
-    if (auth === undefined || auth === '') return fail(401, 'Requires authentication')
-    return await fn(ctx)
-  }
-}
 
 // The repository shape every route returns. A fixture's own values win, except
 // default_branch, which seeding decides.
@@ -124,7 +124,11 @@ export function repoRoutes(): KitRoute<C>[] {
     route<C>('GET', `${p}/orgs/:owner/repos`, authed(listRepos)),
     route<C>('POST', `${p}/user/repos`, authed(createRepo), { write: true }),
     route<C>('POST', `${p}/orgs/:owner/repos`, authed(createRepo), { write: true }),
-    route<C>('GET', `${p}/repos/:owner/:repo`, authed(withRepo((_c, r) => ({ status: 200, body: repoJson(r) })))),
+    route<C>(
+      'GET',
+      `${p}/repos/:owner/:repo`,
+      authed(withRepo((_c, r) => ({ status: 200, body: repoJson(r) }))),
+    ),
     route<C>('PATCH', `${p}/repos/:owner/:repo`, authed(updateRepo), { write: true }),
     route<C>('DELETE', `${p}/repos/:owner/:repo`, authed(deleteRepo), { write: true }),
     route<C>('POST', `${p}/repos/:owner/:repo/forks`, authed(forkRepo), { write: true }),
@@ -156,13 +160,15 @@ export function repoRoutes(): KitRoute<C>[] {
       'GET',
       `${p}/repos/:owner/:repo/commits`,
       authed(
+        // Not paged, unlike the repository list: the vendor pages this one and
+        // the fake this replaces answered the whole history, which is what the
+        // goldens record. An unresolvable `sha` falls back to the default
+        // branch rather than 404ing, also matching it.
         withRepo(async (ctx, repo) => {
-          const ref = ctx.query.get('sha') ?? ctx.query.get('ref')
-          const branch = ref === null || ref === '' ? repo.defaultBranch : ref
-          const names = await branchNames(ctx.db, ctx.tenant, repo)
-          if (!names.includes(branch)) return fail(404, 'Not Found')
+          const asked = ctx.query.get('sha') ?? ''
+          const branch = (await branchFor(ctx.db, ctx.tenant, repo, asked)) ?? repo.defaultBranch
           const list = await commitList(ctx.db, ctx.tenant, repo, branch)
-          return pagedReply(ctx, list.map(commitJson))
+          return { status: 200, body: list.map(commitJson) }
         }),
       ),
     ),
