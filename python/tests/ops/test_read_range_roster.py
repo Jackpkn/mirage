@@ -38,6 +38,7 @@ NATIVE_RANGE = {
     "gdrive",
     "gridfs",
     "hf_buckets",
+    "hf_hub",
     "nextcloud",
     "onedrive",
     "ram",

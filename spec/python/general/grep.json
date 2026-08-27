@@ -103,6 +103,24 @@
         "has_provision": true,
         "has_write": false
       },
+      "hf_datasets": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": true,
+        "has_write": false
+      },
+      "hf_models": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": true,
+        "has_write": false
+      },
+      "hf_spaces": {
+        "filetypes": [],
+        "has_aggregate": false,
+        "has_provision": true,
+        "has_write": false
+      },
       "history": {
         "filetypes": [],
         "has_aggregate": true,
@@ -240,6 +258,9 @@
       "gsheets",
       "gslides",
       "hf_buckets",
+      "hf_datasets",
+      "hf_models",
+      "hf_spaces",
       "history",
       "jaeger",
       "lancedb",
