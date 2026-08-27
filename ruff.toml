@@ -1,0 +1,27 @@
+# Match the yapf and isort defaults. Ruff's default of 88 would disagree with
+# the formatter on wrapped lines.
+line-length = 79
+target-version = "py311"
+force-exclude = true
+exclude = [
+    "python/mirage/commands/remote/grpc/proto/command_pb2.py",
+    "python/mirage/commands/remote/grpc/proto/command_pb2_grpc.py",
+]
+
+[lint]
+# Match the E/W/F rules enforced by flake8. Import sorting and syntax upgrades
+# remain with isort and pyupgrade because their Ruff equivalents produce
+# broader source changes under this repository's current configuration.
+select = ["E", "W", "F"]
+# Match autoflake's unused-variable cleanup without enabling every unsafe Ruff
+# fix. F601 duplicate keys remain errors but are corrected manually.
+extend-safe-fixes = ["F841"]
+# Ruff does not implement E125; Yapf owns indentation checks in this hook stack.
+# Keep existing suppressions valid instead of warning about an unknown code.
+external = ["E125"]
+
+[lint.per-file-ignores]
+"python/mirage/resource/*/prompt.py" = ["E501"]
+# Ruff measures E501 in display columns, so East Asian characters count as two.
+# These CJK prose fixtures passed flake8's character-based measurement.
+"python/tests/utils/test_sanitize.py" = ["E501"]

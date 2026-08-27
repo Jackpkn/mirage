@@ -121,16 +121,17 @@ runs:
         cat /tmp/gws.log
         echo "GWS_URL=http://127.0.0.1:19999" >> "$GITHUB_ENV"
 
-    - name: Start fake Hugging Face hub
+    - name: Start fake Hugging Face hub (Prisma)
+      working-directory: integ
       shell: bash
       run: |
-        nohup ./python/.venv/bin/python integ/server/hf_server.py --port 5099 > /tmp/hfsrv.log 2>&1 &
+        nohup ./node_modules/.bin/tsx server/hf/main.ts --port 5099 > /tmp/hfsrv.log 2>&1 &
         for i in $(seq 1 30); do
-          grep -q "HF_ENDPOINT=" /tmp/hfsrv.log && break
+          grep -q "HF_URL=" /tmp/hfsrv.log && break
           sleep 1
         done
         cat /tmp/hfsrv.log
-        echo "HF_ENDPOINT=http://127.0.0.1:5099" >> "$GITHUB_ENV"
+        echo "HF_URL=http://127.0.0.1:5099" >> "$GITHUB_ENV"
 
     - name: Wait for GreenMail
       shell: bash

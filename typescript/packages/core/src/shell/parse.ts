@@ -161,6 +161,81 @@ export function findUnterminatedBacktick(command: string): string | null {
   return opened !== null ? command.slice(opened) : null
 }
 
+const NAME_CONT = /[A-Za-z0-9_]/
+const DIGIT = /[0-9]/
+
+/**
+ * Offsets of literal `$` tokens cut off from their variable name.
+ *
+ * tree-sitter-bash 0.25.1 stops lexing a later unbraced expansion in a
+ * word when a name-terminating character follows it, so
+ * `> /api/$c/$id.json` parses as `/api/$c/$` plus a sibling word
+ * `id.json`: the `$` lands in the tree as a literal token and the
+ * expansion is gone. A literal `$` directly followed by a name
+ * character is a shape no correct bash lex produces (bash would have
+ * read an expansion), so each one marks a mis-parse. The `$` opening a
+ * simple_expansion is that expansion's own token and is skipped.
+ */
+function orphanedDollarOffsets(root: Node, text: string): number[] {
+  const offsets: number[] = []
+  const stack: Node[] = [root]
+  for (;;) {
+    const node = stack.pop()
+    if (node === undefined) break
+    for (const child of node.children) {
+      if (
+        !child.isNamed &&
+        child.type === '$' &&
+        node.type !== 'simple_expansion' &&
+        NAME_CONT.test(text[child.endIndex] ?? '')
+      ) {
+        offsets.push(child.startIndex)
+      }
+      stack.push(child)
+    }
+  }
+  return offsets
+}
+
+/**
+ * Rewrite the expansion at `offset` into its braced spelling.
+ *
+ * `$id.json` becomes `${id}.json`, which says the same thing and is the
+ * spelling the grammar reads correctly. Bash reads a single digit after
+ * `$` as one positional parameter, so `$12` rebraces as `${1}2`.
+ */
+function rebraceDollar(text: string, offset: number): string {
+  let end = offset + 1
+  if (DIGIT.test(text[end] ?? '')) {
+    end += 1
+  } else {
+    while (end < text.length && NAME_CONT.test(text[end] ?? '')) end += 1
+  }
+  return `${text.slice(0, offset)}\${${text.slice(offset + 1, end)}}${text.slice(end)}`
+}
+
+/**
+ * Rebrace mis-lexed expansions and reparse until none remain.
+ *
+ * Every rebrace consumes one bare `$` and never writes a new one, so
+ * the loop is bounded by the count of `$` characters. A retry that
+ * parses worse than what it replaces is discarded.
+ */
+function repairOrphanedDollars(parser: Parser, root: Node, text: string): Node {
+  const bound = text.split('$').length - 1
+  for (let i = 0; i < bound; i += 1) {
+    const offsets = orphanedDollarOffsets(root, text)
+    if (offsets.length === 0) break
+    for (const offset of offsets.sort((a, b) => b - a)) {
+      text = rebraceDollar(text, offset)
+    }
+    const retried = parser.parse(text)
+    if (retried === null || retried.rootNode.hasError) break
+    root = retried.rootNode
+  }
+  return root
+}
+
 // `Parser.init` boots one wasm module for the whole process, so two callers
 // that start at the same time used to race it: the second read the language
 // out of a half-built module and threw "Incompatible language version 0".
@@ -191,6 +266,12 @@ export async function createShellParser(config: ShellParserConfig): Promise<Shel
      * only openers that already sit inside an error and keeping the
      * retry only if it parses cleanly. Commands that parse today are
      * untouched, so no working command's offsets move.
+     *
+     * A later unbraced `$var` followed by a name-terminating character
+     * is mis-lexed by the grammar, leaving a literal `$` token behind
+     * (see orphanedDollarOffsets); those expansions are rebraced and
+     * the line reparsed, so the returned tree can spell `$id` as
+     * `${id}`.
      */
     parse(command: string): Node {
       const source = stripLineContinuation(command)
@@ -198,25 +279,34 @@ export async function createShellParser(config: ShellParserConfig): Promise<Shel
       if (tree === null) {
         throw new Error('shell parse returned null')
       }
-      const root = tree.rootNode
-      if (!root.hasError) return root
-      // Sitting inside an ERROR is not evidence that an opener is
-      // broken: tree-sitter's error region swallows neighbouring tokens,
-      // so a valid `((i++))` next to a bad opener reports as errored
-      // too. Splitting it would silently turn arithmetic into a subshell
-      // running `i++`, which is a wrong parse rather than a rejected
-      // one. Each opener is judged on its own span instead.
-      const offsets = [...new Set(failedArithOpeners(root))].filter(
-        (o) => !isArithmetic(parser, source, o),
-      )
-      if (offsets.length === 0) return root
+      let root = tree.rootNode
       let text = source
-      for (const offset of offsets.sort((a, b) => b - a)) {
-        text = `${text.slice(0, offset + 1)} ${text.slice(offset + 1)}`
+      if (root.hasError) {
+        // Sitting inside an ERROR is not evidence that an opener is
+        // broken: tree-sitter's error region swallows neighbouring tokens,
+        // so a valid `((i++))` next to a bad opener reports as errored
+        // too. Splitting it would silently turn arithmetic into a subshell
+        // running `i++`, which is a wrong parse rather than a rejected
+        // one. Each opener is judged on its own span instead.
+        const offsets = [...new Set(failedArithOpeners(root))].filter(
+          (o) => !isArithmetic(parser, source, o),
+        )
+        if (offsets.length > 0) {
+          let split = source
+          for (const offset of offsets.sort((a, b) => b - a)) {
+            split = `${split.slice(0, offset + 1)} ${split.slice(offset + 1)}`
+          }
+          const retried = parser.parse(split)
+          if (retried !== null && !retried.rootNode.hasError) {
+            root = retried.rootNode
+            text = split
+          }
+        }
       }
-      const retried = parser.parse(text)
-      if (retried === null) return root
-      return retried.rootNode.hasError ? root : retried.rootNode
+      if (text.includes('$')) {
+        root = repairOrphanedDollars(parser, root, text)
+      }
+      return root
     },
   }
 }

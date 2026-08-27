@@ -69,9 +69,11 @@
       ]
     },
     "hf": {
-      "python": [],
+      "python": [
+        "HF_URL"
+      ],
       "typescript": [
-        "HF_ENDPOINT"
+        "HF_URL"
       ]
     },
     "http": {
