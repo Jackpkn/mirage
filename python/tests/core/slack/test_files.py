@@ -19,8 +19,13 @@ import pytest
 from mirage.accessor.slack import SlackAccessor
 from mirage.cache.index import IndexEntry, RAMIndexCacheStore
 from mirage.core.slack.config import SlackConfig
+from mirage.core.slack.files import file_blob_name
 from mirage.core.slack.readdir import readdir
 from mirage.types import PathSpec
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len
+
+BLOB_ID = "F0123456789"
+KEY = "name"
 
 
 @pytest.fixture
@@ -184,3 +189,21 @@ async def test_file_blob_index_entry_stores_url(accessor, index,
     assert "url_private_download" in blob.entry.extra
     assert blob.entry.extra["filetype"] == "pdf"
     assert blob.entry.extra["ts"] == "1712707200.0"
+
+
+@pytest.mark.parametrize("raw_name,expected_tail", [
+    ("会議" * 100 + ".txt", ".txt"),
+    ("会議" * 100, ""),
+])
+def test_a_long_filename_fits_name_max_and_keeps_id_and_extension(
+        raw_name, expected_tail):
+    """The stem is the only part that gives.
+
+    A trimmed id stops addressing the file and a trimmed extension changes
+    its type, so both are spent before the stem gets its budget.
+    """
+    name = file_blob_name({KEY: raw_name, "id": BLOB_ID})
+
+    assert byte_len(name) <= NAME_MAX_BYTES
+    assert name.endswith(f"{BLOB_ID}{expected_tail}")
+    assert "�" not in name

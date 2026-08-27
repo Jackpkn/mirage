@@ -178,11 +178,11 @@
     "=== wc -c /dev/null ===",
     "0 /dev/null",
     "",
-    "=== wc -c /dev/zero ===",
-    "1048576 /dev/zero",
+    "=== head -c 2M /dev/zero | wc -c ===",
+    "2097152",
     "",
-    "=== md5 /dev/zero ===",
-    "b6d81b360a5672d80c27430f39153e2c  /dev/zero",
+    "=== stat -c '%F %t %T' /dev/null ===",
+    "character special file 1 3",
     "",
     "=== head -c 8 /dev/zero | xxd ===",
     "00000000: 0000 0000 0000 0000                      ........",
@@ -191,11 +191,11 @@
     "=== HISTORY (/.bash_history) ===",
     "  every executed command is recorded in GNU bash histfile format",
     "",
-    "wc -c /dev/zero",
+    "head -c 2M /dev/zero | wc -c",
     {
       "re": "\\#\\d+"
     },
-    "md5 /dev/zero",
+    "stat -c '%F %t %T' /dev/null",
     {
       "re": "\\#\\d+"
     },

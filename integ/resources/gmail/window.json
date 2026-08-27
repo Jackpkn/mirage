@@ -1,0 +1,43 @@
+{
+  "cases": [
+    {
+      "id": "gmail_label_glob_lists_the_days_in_the_span",
+      "seq": 530400,
+      "targets": [
+        "gmail"
+      ],
+      "command": "ls -d /mail/INBOX/2026-01-*",
+      "expect": {
+        "exit": 0,
+        "stdout": "/mail/INBOX/2026-01-05\n/mail/INBOX/2026-01-07\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "gmail_label_glob_outside_the_span_matches_nothing",
+      "seq": 530401,
+      "targets": [
+        "gmail"
+      ],
+      "command": "ls -d /mail/INBOX/2025-12-*",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "ls: cannot access '/mail/INBOX/2025-12-*': No such file or directory\n"
+      }
+    },
+    {
+      "id": "gmail_label_glob_reads_a_day_through_the_span",
+      "seq": 530402,
+      "targets": [
+        "gmail"
+      ],
+      "command": "ls /mail/INBOX/2026-01-07*/",
+      "expect": {
+        "exit": 0,
+        "stdout": "Server_alert_worker-3__msg0003.gmail.json\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

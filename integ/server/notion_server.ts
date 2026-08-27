@@ -50,11 +50,19 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js'
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { PrismaClient } from '@prisma/client'
+
+// The interface the fake listens on. Loopback is right on a developer's
+// machine and wrong inside a container: a server on the container's own
+// 127.0.0.1 is invisible to the published port, so a client on the host has
+// its connection accepted and then closed with no response -- while a
+// healthcheck running inside the container sees a healthy server. Set
+// MIRAGE_BIND_HOST=0.0.0.0 wherever the client is outside the container.
+//
+// The advertised URLs below stay on 127.0.0.1 on purpose: 0.0.0.0 is an
+// interface to listen on, not an address anything can connect to.
+const BIND_HOST = process.env.MIRAGE_BIND_HOST ?? '127.0.0.1'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SCHEMA = join(HERE, '..', 'prisma', 'schema.prisma')
@@ -394,7 +402,9 @@ function selectOption(column: Json, kind: string, value: Json): Json {
 function normalizeValue(column: Json, kind: string, value: unknown): unknown {
   if (kind === 'title' || kind === 'rich_text') return normalizeRichText(value)
   if (kind === 'select' || kind === 'status') {
-    return value === null || value === undefined ? null : selectOption(column, kind, asObject(value))
+    return value === null || value === undefined
+      ? null
+      : selectOption(column, kind, asObject(value))
   }
   if (kind === 'multi_select') {
     if (!Array.isArray(value)) return []
@@ -743,7 +753,10 @@ function markdownToBlocks(markdown: string): Json[] {
         fence = []
         lang = line.slice(3).trim()
       } else {
-        blocks.push({ type: 'code', code: { rich_text: [plainRich(fence.join('\n'))], language: lang || 'plain text' } })
+        blocks.push({
+          type: 'code',
+          code: { rich_text: [plainRich(fence.join('\n'))], language: lang || 'plain text' },
+        })
         fence = null
       }
       continue
@@ -767,7 +780,10 @@ function markdownToBlocks(markdown: string): Json[] {
     if (todo !== null) {
       blocks.push({
         type: 'to_do',
-        to_do: { rich_text: [plainRich(todo[2] ?? '')], checked: (todo[1] ?? ' ').toLowerCase() === 'x' },
+        to_do: {
+          rich_text: [plainRich(todo[2] ?? '')],
+          checked: (todo[1] ?? ' ').toLowerCase() === 'x',
+        },
       })
       continue
     }
@@ -1323,7 +1339,13 @@ async function deleteBlock(db: PrismaClient, workspaceId: string, id: string): P
   // answers as a block, which is what "including page blocks" means.
   const body =
     block === null
-      ? { object: 'block', id, type: 'child_page', has_children: false, child_page: { title: (page as PageRow).titleText } }
+      ? {
+          object: 'block',
+          id,
+          type: 'child_page',
+          has_children: false,
+          child_page: { title: (page as PageRow).titleText },
+        }
       : blockJson(block)
   return { status: 200, json: { ...body, archived: true, in_trash: true } }
 }
@@ -1587,7 +1609,12 @@ async function handle(
     return updatePage(db, ws, parts[2] ?? '', body)
   }
 
-  if (method === 'PATCH' && parts.length === 4 && parts[1] === 'blocks' && parts[3] === 'children') {
+  if (
+    method === 'PATCH' &&
+    parts.length === 4 &&
+    parts[1] === 'blocks' &&
+    parts[3] === 'children'
+  ) {
     return appendChildren(db, ws, fx, parts[2] ?? '', body)
   }
 
@@ -1697,7 +1724,7 @@ export async function startServer(port: number): Promise<Server> {
   const { db, fx } = await createStore(`rest-${String(port)}`)
   const server = serve(db, fx)
   return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve(server))
+    server.listen(port, BIND_HOST, () => resolve(server))
   })
 }
 
@@ -1799,7 +1826,7 @@ export async function startMockMcpServer(): Promise<{ server: Server; port: numb
     })
   })
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, BIND_HOST, () => {
       const address = server.address()
       if (address === null || typeof address === 'string') throw new Error('no port')
       resolve({ server, port: address.port })

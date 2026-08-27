@@ -42,7 +42,7 @@
     "  /data: 0 dirs, 8 files",
     "",
     "--- read-only mount ---",
-    "  os.remove: EACCES",
+    "  os.remove: EROFS",
     "  access W_OK: False",
     "",
     "--- the backend's own host paths ---",

@@ -191,7 +191,7 @@
       "expect": {
         "exit": 126,
         "stdout": "",
-        "stderr": "rm: requires approval: scripted sign-off (approval a288d3df2ca1)\n"
+        "stderr": "rm: requires approval: scripted sign-off (ask a288d3df2ca1)\n"
       }
     },
     {

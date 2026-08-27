@@ -295,11 +295,12 @@ def test_zcat_good_then_missing():
 
 def test_sort_still_aborts_on_missing():
     # GNU sort needs all input before emitting anything, so no partial
-    # output; the repo reports the operand and exits 1 (GNU exits 2).
+    # output; it reports the operand and exits 2 (coreutils 9.7), which
+    # is sort's code for any failed read, not just a directory.
     out, err, code = _run(_make_numbered_ws(), "sort /a/f.txt /a/missing.txt")
     assert out == ""
     assert err == "sort: /a/missing.txt: No such file or directory\n"
-    assert code == 1
+    assert code == 2
 
 
 def _make_cross_numbered_ws():
@@ -339,19 +340,25 @@ def test_stat_good_then_missing_keeps_row():
 
 
 def test_sed_good_then_missing_keeps_output():
+    # GNU sed exits 2 when it cannot open an operand (sed 4.9); a
+    # directory, which it opens and then fails to read, is 4.
     out, err, code = _run(_make_numbered_ws(),
                           "sed s/1/X/ /a/f.txt /a/missing.txt")
     assert out == "X\n2\n"
     assert err == "sed: /a/missing.txt: No such file or directory\n"
-    assert code == 1
+    assert code == 2
 
 
 def test_cross_sed_good_then_missing_keeps_output():
+    # GNU sed exits 2 when it cannot open an operand, whichever mount it
+    # lives on. The cross-mount combiner fetches each operand with a
+    # native cat, whose own code is 1 for every failure, and used to let
+    # that stand: this line disagreed with the single-mount one above.
     out, err, code = _run(_make_cross_numbered_ws(),
                           "sed s/1/X/ /a/f.txt /b/missing.txt")
     assert out == "X\n2\n"
     assert err == "sed: /b/missing.txt: No such file or directory\n"
-    assert code == 1
+    assert code == 2
 
 
 def test_cross_sort_aborts_like_single_mount():
@@ -359,4 +366,4 @@ def test_cross_sort_aborts_like_single_mount():
                           "sort /a/f.txt /b/missing.txt")
     assert out == ""
     assert err == "sort: /b/missing.txt: No such file or directory\n"
-    assert code == 1
+    assert code == 2

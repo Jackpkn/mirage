@@ -2,11 +2,14 @@ from opendal.exceptions import NotFound
 
 from mirage.accessor.nextcloud import NextcloudAccessor
 from mirage.cache.context import invalidate_after_unlink
+from mirage.cache.index import NULL_INDEX, IndexCacheStore
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent, enotempty
 
 
-async def rmdir(accessor: NextcloudAccessor, path: PathSpec) -> None:
+async def rmdir(accessor: NextcloudAccessor,
+                path: PathSpec,
+                index: IndexCacheStore = NULL_INDEX) -> None:
     """Remove an empty collection.
 
     WebDAV DELETE on a collection is recursive (RFC 4918 9.6.1), so this
@@ -24,6 +27,8 @@ async def rmdir(accessor: NextcloudAccessor, path: PathSpec) -> None:
     Args:
         accessor (NextcloudAccessor): Nextcloud accessor.
         path (PathSpec): collection to remove.
+        index (IndexCacheStore): accepted for the rmdir slot's shape;
+            unused.
     """
     key = path.mount_path.strip("/") + "/"
     stem = key.strip("/")

@@ -57,6 +57,18 @@ class PathFn(Protocol[A_contra]):
         ...
 
 
+class RmdirFn(Protocol[A_contra]):
+    """``PathFn`` plus the rmdir slot's optional ``index``, which rides
+    the call for the command tier's hidden-remnant listing; the store
+    itself never consults it."""
+
+    def __call__(self,
+                 accessor: A_contra,
+                 path_spec: PathSpec,
+                 index: IndexCacheStore = ...) -> Awaitable[None]:
+        ...
+
+
 class PairFn(Protocol[A_contra]):
 
     def __call__(self, accessor: A_contra, src_spec: PathSpec,

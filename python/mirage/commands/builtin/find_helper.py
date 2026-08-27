@@ -19,7 +19,7 @@ from stat import filemode
 from mirage.commands.errors import FindParseError
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.dates import iso_timestamp
-from mirage.utils.stat_view import DIR_MODE, FILE_MODE, LINK_MODE
+from mirage.utils.stat_view import CHAR_MODE, DIR_MODE, FILE_MODE, LINK_MODE
 
 
 def _parse_depth(value: str, flag: str) -> int:
@@ -84,11 +84,23 @@ _PRINTF_ESCAPES = {
     "v": "\v",
 }
 _STAT_DIRECTIVES = frozenset("syYmMT")
-_TYPE_LETTER = {FileType.DIRECTORY: "d", FileType.SYMLINK: "l"}
+_TYPE_LETTER = {
+    FileType.DIRECTORY: "d",
+    FileType.SYMLINK: "l",
+    FileType.CHAR_DEVICE: "c",
+    FileType.BLOCK_DEVICE: "b",
+    FileType.FIFO: "p",
+    FileType.SOCKET: "s",
+}
 # One mode per kind, spelled from the same constants every stat
 # translator uses (utils/stat_view.py); links are 777 the way ls draws
 # them.
-_KIND_MODE = {"d": DIR_MODE, "l": LINK_MODE, "f": FILE_MODE}
+_KIND_MODE = {
+    "c": CHAR_MODE,
+    "d": DIR_MODE,
+    "l": LINK_MODE,
+    "f": FILE_MODE,
+}
 
 
 def printf_needs_stat(fmt: str) -> bool:

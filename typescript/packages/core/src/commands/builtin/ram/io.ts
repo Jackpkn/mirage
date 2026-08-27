@@ -20,26 +20,26 @@ import { size as ramDu, entries as ramDuAll } from '../../../core/ram/du/index.t
 import { exists as ramExists } from '../../../core/ram/exists.ts'
 import { find as ramFind } from '../../../core/ram/find.ts'
 import { mkdir as ramMkdir } from '../../../core/ram/mkdir.ts'
-import { read as ramRead } from '../../../core/ram/read.ts'
+import { read as devAwareRead, readRange as devAwareReadRange } from '../../../core/dev/read.ts'
 import { readdir as ramReaddir } from '../../../core/ram/readdir.ts'
 import { rename as ramRename } from '../../../core/ram/rename.ts'
 import { rmR as ramRmR } from '../../../core/ram/rm.ts'
 import { rmdir as ramRmdir } from '../../../core/ram/rmdir.ts'
 import { SCOPE_ERROR } from '../../../core/ram/constants.ts'
 import { setAttrs as ramSetAttrs } from '../../../core/ram/set_attrs.ts'
-import { stat as ramStat } from '../../../core/ram/stat.ts'
-import { stream as ramStream } from '../../../core/ram/stream.ts'
+import { stat as devAwareStat } from '../../../core/dev/stat.ts'
+import { stream as devAwareStream } from '../../../core/dev/stream.ts'
 import { truncate as ramTruncate } from '../../../core/ram/truncate.ts'
 import { unlink as ramUnlink } from '../../../core/ram/unlink.ts'
 import { writeBytes as ramWrite } from '../../../core/ram/write.ts'
-import { type CommandIO, rangeOf } from '../generic_bind/index.ts'
+import type { CommandIO } from '../generic_bind/index.ts'
 
 export const RAM_IO: CommandIO<RAMAccessor> = {
   readdir: ramReaddir,
-  readBytes: ramRead,
-  readRange: rangeOf(ramRead),
-  readStream: ramStream,
-  stat: ramStat,
+  readBytes: devAwareRead,
+  readRange: devAwareReadRange,
+  readStream: devAwareStream,
+  stat: devAwareStat,
   isMounted: () => true,
   local: true,
   maxGlobMatches: SCOPE_ERROR,

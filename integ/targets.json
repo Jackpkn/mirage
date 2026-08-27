@@ -1,9 +1,11 @@
 {
   "services": {
     "box": {
-      "python": [],
+      "python": [
+        "BOX_URL"
+      ],
       "typescript": [
-        "BOX_ENDPOINT"
+        "BOX_URL"
       ]
     },
     "chroma": {
@@ -27,14 +29,20 @@
       ]
     },
     "discord": {
-      "python": [],
+      "python": [
+        "DISCORD_URL"
+      ],
       "typescript": [
-        "DISCORD_ENDPOINT"
+        "DISCORD_URL"
       ]
     },
     "dropbox": {
-      "python": [],
-      "typescript": []
+      "python": [
+        "DROPBOX_URL"
+      ],
+      "typescript": [
+        "DROPBOX_URL"
+      ]
     },
     "email": {
       "python": [
@@ -99,9 +107,11 @@
       ]
     },
     "linear": {
-      "python": [],
+      "python": [
+        "LINEAR_URL"
+      ],
       "typescript": [
-        "LINEAR_ENDPOINT"
+        "LINEAR_URL"
       ]
     },
     "mem0": {
@@ -133,8 +143,12 @@
       ]
     },
     "onedrive": {
-      "python": [],
-      "typescript": []
+      "python": [
+        "ONEDRIVE_URL"
+      ],
+      "typescript": [
+        "ONEDRIVE_URL"
+      ]
     },
     "postgres": {
       "python": [
@@ -169,8 +183,12 @@
       ]
     },
     "sharepoint": {
-      "python": [],
-      "typescript": []
+      "python": [
+        "ONEDRIVE_URL"
+      ],
+      "typescript": [
+        "ONEDRIVE_URL"
+      ]
     },
     "slack": {
       "python": [
@@ -188,10 +206,10 @@
     },
     "trello": {
       "python": [
-        "TRELLO_ENDPOINT"
+        "TRELLO_URL"
       ],
       "typescript": [
-        "TRELLO_ENDPOINT"
+        "TRELLO_URL"
       ]
     }
   },
@@ -1106,7 +1124,16 @@
           "backend": "ssh",
           "root": "links"
         }
-      ]
+      ],
+      "sessions": {
+        "veiled": {
+          "paths": {
+            "hide": [
+              "/data/qsubh/sec"
+            ]
+          }
+        }
+      }
     },
     {
       "id": "nextcloud",
@@ -1290,6 +1317,40 @@
         "typescript-node"
       ],
       "service": "lancedb",
+      "mounts": [
+        {
+          "path": "/db",
+          "resource": "lancedb",
+          "backend": "lancedb",
+          "mode": "read"
+        }
+      ]
+    },
+    {
+      "id": "qdrant-window",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "service": "qdrant",
+      "facet": "window",
+      "mounts": [
+        {
+          "path": "/db",
+          "resource": "qdrant",
+          "backend": "qdrant",
+          "mode": "read"
+        }
+      ]
+    },
+    {
+      "id": "lancedb-window",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "service": "lancedb",
+      "facet": "window",
       "mounts": [
         {
           "path": "/db",
@@ -2375,10 +2436,41 @@
             ]
           }
         },
+        "boxed": {
+          "paths": {
+            "hide": [
+              "/scratch/box/sec",
+              "/scratch/only/h",
+              "/scratch/gone/sec"
+            ]
+          }
+        },
+        "tagged": {
+          "paths": {
+            "hide": [
+              "*.tkn"
+            ]
+          }
+        },
+        "screened": {
+          "paths": {
+            "hide": [
+              "/scratch/pen/*/sec"
+            ]
+          }
+        },
+        "guarded": "guarded",
         "sealed": {
           "paths": {
             "hide": [
               "/vault/d/inner"
+            ]
+          }
+        },
+        "shrouded": {
+          "paths": {
+            "hide": [
+              "/vault/d/sec"
             ]
           }
         },
@@ -2494,10 +2586,50 @@
           }
         },
         "scripted": "scripted",
-        "scriptedask": "scriptedask"
+        "scriptedask": "scriptedask",
+        "keeper": "keeper",
+        "opener": "opener",
+        "pruner": "pruner"
       },
       "profile": "default",
       "profiles": {
+        "keeper": {
+          "paths": {
+            "hide": [
+              "/scratch/grove"
+            ],
+            "show": {
+              "/scratch/grove/open": "r"
+            }
+          }
+        },
+        "opener": {
+          "mounts": {
+            "/scratch": "r"
+          },
+          "paths": {
+            "show": {
+              "/scratch/grove/build": "rw"
+            }
+          }
+        },
+        "pruner": {
+          "paths": {
+            "show": {
+              "/scratch/pine/keep": "r"
+            }
+          }
+        },
+        "guarded": {
+          "paths": {
+            "hide": [
+              "/scratch/keep/h"
+            ],
+            "show": {
+              "/scratch/keep/h": "r"
+            }
+          }
+        },
         "default": {
           "commands": {
             "allow": [

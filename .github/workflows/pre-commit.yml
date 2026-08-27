@@ -56,6 +56,13 @@ jobs:
         working-directory: typescript
         run: pnpm -r build
 
+      # The integ mock servers import their generated Prisma clients, which are
+      # gitignored, so the integ-typecheck hook cannot resolve a single one of
+      # them until this has run.
+      - name: Generate integ Prisma clients
+        working-directory: integ
+        run: pnpm run prisma:clients
+
       - name: Run pre-commit
         run: SKIP=no-commit-to-branch ./python/.venv/bin/pre-commit run --all-files
 

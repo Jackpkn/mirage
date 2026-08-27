@@ -1,0 +1,29 @@
+---
+title: Slack
+icon: slack
+description: Set up the Slack CLI with Python or TypeScript.
+---
+
+Create tokens in [Slack setup](/home/setup/slack), then register them on an
+existing `ws`. Commands: [Python](/python/cli/slack) ·
+[TypeScript](/typescript/cli/slack).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.slack import SLACK
+    from mirage.core.slack.config import SlackConfig
+
+    config = SlackConfig(token="xoxb-...", search_token="xoxp-...")
+    ws.register_cli("slack", SLACK, config.model_dump())
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { SLACK } from '@struktoai/mirage-core'
+
+    const config = { token: 'xoxb-...', searchToken: 'xoxp-...' }
+    ws.registerCli('slack', SLACK, config)
+    ```
+  </Tab>
+</Tabs>

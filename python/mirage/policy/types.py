@@ -131,6 +131,27 @@ class CommandRule:
 
 
 @dataclass(frozen=True, slots=True)
+class HideReason:
+    """Why one group of hide entries exists, for the operator only.
+
+    The document may state a hide as ``{patterns: [...], reason: ...}``;
+    the patterns compile into the flat hide spec like any other entry,
+    and this side table keeps the reason beside them for the host's
+    doors (audit, read-back). It is never rendered to the agent: a hide
+    answers ENOENT, and a reason on a nonexistent path would confirm
+    the path exists.
+
+    Args:
+        patterns (tuple[str, ...]): the group's entries, as compiled
+            (a mount section's entries anchored to its root).
+        reason (str): why the operator hid them.
+    """
+
+    patterns: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class Ruling:
     """The profile's answer about one line, and what produced it.
 
@@ -278,6 +299,20 @@ class Pending:
 
     id: str
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class Abandoned:
+    """The question was abandoned: the run that raised it was killed
+    while the host was still deciding, so the ledger stopped waiting.
+
+    The record is left waiting, and whatever the host eventually answers
+    is dropped rather than recorded — an answer banked against a run
+    that no longer exists would be taken by the next identical line with
+    nobody asked. The door turns this into the same abort every other
+    killed wait raises; the ledger states the fact in its own vocabulary
+    because execution is not its to know about.
+    """
 
 
 class SessionDecisionsQuery(Protocol):

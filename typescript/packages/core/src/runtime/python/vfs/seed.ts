@@ -24,6 +24,7 @@ import type { FSLike } from './preload.ts'
 export class MirageFsSeed implements FSLike {
   readonly dirs: string[] = []
   readonly files = new Map<string, Uint8Array>()
+  readonly devices = new Map<string, { mode: number; rdev: number }>()
   readonly unreadable = new Set<string>()
   readonly links = new Map<string, string>()
   readonly modes = new Map<string, number>()
@@ -35,6 +36,10 @@ export class MirageFsSeed implements FSLike {
 
   writeFile(path: string, bytes: Uint8Array): void {
     this.files.set(path, bytes)
+  }
+
+  charDevice(path: string, mode: number, rdev: number): void {
+    this.devices.set(path, { mode, rdev })
   }
 
   /**

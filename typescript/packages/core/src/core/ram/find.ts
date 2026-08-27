@@ -69,14 +69,23 @@ export function find(
         ...[...accessor.store.dirs].filter((k) => k !== '/'),
       ])
     : new Set<string>()
-  const candidates: [string, 'f' | 'd'][] = []
+  const files = accessor.store.files as Map<string, Uint8Array> & {
+    deviceOf?: (key: string) => string | null
+  }
+  const kindOf = (key: string): 'f' | 'c' => (files.deviceOf?.(key) != null ? 'c' : 'f')
+  const emptyOf = (key: string, kind: 'f' | 'd' | 'c'): boolean => {
+    if (kind === 'f') return (accessor.store.files.get(key)?.byteLength ?? 0) === 0
+    if (kind === 'd') return !nonempty.has(key)
+    return false
+  }
+  const candidates: [string, 'f' | 'd' | 'c'][] = []
   if (options.type !== 'd') {
-    for (const key of accessor.store.files.keys()) candidates.push([key, 'f'])
+    for (const key of accessor.store.files.keys()) candidates.push([key, kindOf(key)])
   }
   if (options.type !== 'f') {
     for (const key of accessor.store.dirs) candidates.push([key, 'd'])
   }
-  let rootKind: 'f' | 'd' | null = null
+  let rootKind: 'f' | 'd' | 'c' | null = null
   let rootIsEmpty: boolean | null = null
   let rootSize: number | null = null
   for (const [key, kind] of candidates) {
@@ -84,8 +93,7 @@ export function find(
     if (key === p) {
       rootKind = kind
       if (empty) {
-        rootIsEmpty =
-          kind === 'f' ? (accessor.store.files.get(key)?.byteLength ?? 0) === 0 : !nonempty.has(key)
+        rootIsEmpty = emptyOf(key, kind)
       }
       if (kind === 'f') rootSize = accessor.store.files.get(key)?.byteLength ?? 0
       continue
@@ -96,8 +104,7 @@ export function find(
     const basename = key.slice(key.lastIndexOf('/') + 1)
     let isEmpty: boolean | null = null
     if (empty) {
-      isEmpty =
-        kind === 'f' ? (accessor.store.files.get(key)?.byteLength ?? 0) === 0 : !nonempty.has(key)
+      isEmpty = emptyOf(key, kind)
     }
     if (!keep({ key, name: basename, kind, depth, isEmpty }, tree, options.minDepth)) continue
     // Directories count as size 0 for -size (deliberate GNU divergence).

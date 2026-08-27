@@ -645,6 +645,7 @@ export async function grepRecursive(
       for (const r of sub) results.push(r)
       continue
     }
+    if (s.type === FileType.CHAR_DEVICE) continue
     if (!fileAdmitted(entry, filters)) continue
     if (!filters.text && BINARY_EXTENSIONS.has(getExtension(entry) ?? '')) continue
     try {

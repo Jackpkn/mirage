@@ -31,15 +31,18 @@ describe('mirage CLI program', () => {
     const sub = ws?.commands.map((c) => c.name()).sort() ?? []
     expect(sub).toEqual(
       [
+        'allow',
         'branch',
         'checkout',
         'clone',
         'commit',
         'create',
         'delete',
+        'deny',
         'diff',
         'get',
         'list',
+        'list-asks',
         'load',
         'log',
         'snapshot',

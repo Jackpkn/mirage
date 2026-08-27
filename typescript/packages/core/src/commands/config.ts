@@ -53,6 +53,12 @@ export interface CommandOpts {
   // command that does not read this simply ignores it.
   sessionView?: SessionView
   execAllowed?: boolean
+  /**
+   * Whether code may be loaded from one path, for an interpreter's file
+   * operand; absent outside a workspace, where `execAllowed` answers
+   * for files too.
+   */
+  execPathAllowed?: (virtual: string) => boolean
   runtime?: Runtime
   // The name plane's facts (symlinks, mount boundaries, attr overlay,
   // child names the namespace owes a directory), which no backend can

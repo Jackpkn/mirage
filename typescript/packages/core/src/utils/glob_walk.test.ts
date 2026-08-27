@@ -21,7 +21,11 @@ import { enoent } from './errors.ts'
 import {
   expandPattern,
   globPattern,
+  globPrefix,
+  globSpan,
+  globStemPrefix,
   hasGlob,
+  hasGlobPrefix,
   isWordShaped,
   literalWord,
   markEscapedGlobs,
@@ -283,5 +287,81 @@ describe('resolveGlobWith under hidden paths', () => {
     expect(result[0]?.resolved).toBe(true)
     expect(result[0]?.pattern).toBeNull()
     expect(result[0]?.virtual).toBe('/notion/pages/Roadmap__uuid2/page.*')
+  })
+})
+
+describe('globSpan', () => {
+  it.each([
+    ['2026-*', ['2026-01-01', '2027-01-01']],
+    ['2026-01-*', ['2026-01-01', '2026-02-01']],
+    ['2026-12-*', ['2026-12-01', '2027-01-01']],
+    ['2026-01-05*', ['2026-01-05', '2026-01-06']],
+    ['2026-01-05_*', ['2026-01-05', '2026-01-06']],
+    ['2026-01-?', ['2026-01-01', '2026-02-01']],
+  ])('reads the literal date prefix of %s', (pattern, expected) => {
+    expect(globSpan(pattern)).toEqual(expected)
+  })
+
+  it.each([
+    // No metacharacter at all is a literal name, not a span.
+    ['2026-01-05'],
+    ['chat*'],
+    ['2026-13-*'],
+    ['2026-02-30*'],
+    [''],
+    [null],
+    [undefined],
+  ])('has no span for %s', (pattern) => {
+    expect(globSpan(pattern)).toBeNull()
+  })
+})
+
+describe('globPrefix', () => {
+  it.each([
+    ['doc-1*', 'doc-1'],
+    ['doc-1?.md', 'doc-1'],
+    ['doc-1[0-9]', 'doc-1'],
+    // A metacharacter first leaves nothing to narrow on, and a word with none
+    // at all is a literal name rather than a glob.
+    ['*.md', ''],
+    ['?abc*', ''],
+    ['doc-10.md', ''],
+    ['', ''],
+  ])('reads the literal head of %s', (pattern, expected) => {
+    expect(globPrefix(pattern)).toBe(expected)
+    expect(hasGlobPrefix(pattern)).toBe(expected !== '')
+  })
+
+  it('has no prefix for a missing pattern', () => {
+    expect(globPrefix(null)).toBe('')
+    expect(globPrefix(undefined)).toBe('')
+  })
+
+  it('restores a quoted metacharacter', () => {
+    // A quoted star travels under a private mark and stands for a literal
+    // star, so it belongs in the prefix as the character it names.
+    expect(globPrefix(markGlobs('*') + 'ab*')).toBe('*ab')
+  })
+})
+
+describe('globStemPrefix', () => {
+  it.each([
+    // The literal has run into the suffix, so the part that ran in says
+    // nothing about the stem and comes off.
+    ['12*.md', '12'],
+    ['doc-1.m*', 'doc-1'],
+    ['doc-1.*', 'doc-1'],
+    ['doc-1.p*', 'doc-1'],
+    // A dot inside the stem is not the suffix, so it stays.
+    ['acct.2026*', 'acct.2026'],
+    ['acct.mark*', 'acct.mark'],
+    ['doc-1*', 'doc-1'],
+    ['*.md', ''],
+  ])('drops only a reached suffix from %s', (pattern, expected) => {
+    expect(globStemPrefix(pattern, ['.md', '.png'])).toBe(expected)
+  })
+
+  it('has no prefix for a missing pattern', () => {
+    expect(globStemPrefix(null, ['.md'])).toBe('')
   })
 })

@@ -22,6 +22,7 @@ from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
+from mirage.context import hidden_paths_intersect, path_rules_active
 from mirage.core.hierarchy.probe import A
 from mirage.core.hierarchy.scope import ROOT, DetectFn
 from mirage.core.hierarchy.search import Searcher, SearchQuery
@@ -116,7 +117,14 @@ def make_search(
         fl = FlagView(opts.flags, spec=spec)
         pattern = pattern_arg(texts, fl)
         operand = qualify(paths, opts.flags, pattern)
-        if pattern is not None and operand is not None:
+        # A native search answers from the raw backend, so it would
+        # print lines out of files the session cannot see, or ones a
+        # path rule refuses; the generic scan classifies through the
+        # guarded readdir/stat instead. Per operand, like find's fork.
+        pushdown_open = (operand is None
+                         or (not hidden_paths_intersect(operand.virtual)
+                             and not path_rules_active()))
+        if pattern is not None and operand is not None and pushdown_open:
             match = detect(operand)
             searcher = searchers.get(match.kind)
             if searcher is not None:

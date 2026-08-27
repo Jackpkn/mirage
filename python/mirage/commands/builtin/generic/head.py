@@ -5,14 +5,19 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from mirage.cache.read_through import cache_aware_read
-from mirage.commands.builtin.tail_helper import number_flag_error
-from mirage.commands.builtin.utils.operands import operands_io, split_readable
+from mirage.commands.builtin.tail_helper import (number_flag_error,
+                                                 parse_byte_count)
+from mirage.commands.builtin.utils.constants import CHAR_DEVICE_MAX_BYTES
+from mirage.commands.builtin.utils.limit import truncate_stream
+from mirage.commands.builtin.utils.operands import (normalized_read,
+                                                    operands_io,
+                                                    split_readable)
 from mirage.commands.builtin.utils.stream import _resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
-from mirage.types import PathSpec, PolymorphicReadFn, StatFn
+from mirage.types import FileType, Limit, PathSpec, PolymorphicReadFn, StatFn
 from mirage.utils.stream import ensure_stream
 
 
@@ -34,7 +39,7 @@ def parse_flags(flags: Mapping[str, FlagValue]) -> HeadFlags:
         raise ValueError(error)
     return HeadFlags(
         lines=int(n_raw) if n_raw is not None else None,
-        bytes_=int(c_raw) if c_raw is not None else None,
+        bytes_=parse_byte_count(c_raw) if c_raw is not None else None,
         quiet=fl.as_bool("quiet") or fl.as_bool("silent"),
         verbose=fl.as_bool("verbose"),
         zero_terminated=fl.as_bool("zero_terminated"),
@@ -78,17 +83,19 @@ async def head(
         if target == 0:
             return
         emitted_lines = 0
-        buf = b""
         async for chunk in ensure_stream(src):
-            buf += chunk
-            while separator in buf and emitted_lines < target:
-                line, buf = buf.split(separator, 1)
-                yield line + separator
+            start = 0
+            while emitted_lines < target:
+                end = chunk.find(separator, start)
+                if end < 0:
+                    if start < len(chunk):
+                        yield chunk[start:]
+                    break
+                yield chunk[start:end + 1]
                 emitted_lines += 1
-            if emitted_lines >= target:
-                return
-        if buf and emitted_lines < target:
-            yield buf
+                if emitted_lines >= target:
+                    return
+                start = end + 1
         return
 
     keep = -target
@@ -204,8 +211,26 @@ async def head_generic(
         io = operands_io(err)
         if not readable:
             return None, io
+        read = normalized_read(stream)
+
+        def source_for(p: PathSpec) -> AsyncIterator[bytes]:
+            source = read(p)
+
+            async def bounded() -> AsyncIterator[bytes]:
+                if (getattr(await stat(p), "type", None)
+                        is FileType.CHAR_DEVICE and parsed.bytes_ is None):
+                    async for chunk in truncate_stream(
+                            source, io,
+                            Limit(max_bytes=CHAR_DEVICE_MAX_BYTES)):
+                        yield chunk
+                    return
+                async for chunk in source:
+                    yield chunk
+
+            return bounded()
+
         return head_multi(readable,
-                          read=stream,
+                          read=source_for,
                           n=parsed.lines,
                           c=parsed.bytes_,
                           show_headers=show_headers,

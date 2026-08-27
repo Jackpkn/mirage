@@ -13,7 +13,15 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { isMissingOp, isMissingPath } from '../utils/errors.ts'
-import { contentSize, isDir, isLink, mtimeMs, posixMode } from '../utils/stat_view.ts'
+import {
+  contentSize,
+  deviceRdev,
+  isCharDevice,
+  isDir,
+  isLink,
+  mtimeMs,
+  posixMode,
+} from '../utils/stat_view.ts'
 import { CrossMountError } from './errors.ts'
 import { normDir, rstripSlash } from '../utils/slash.ts'
 import { planFlush } from './handles/index.ts'
@@ -38,6 +46,8 @@ export interface VFSEntry {
   // whole tree from one listing needs no second stat per file.
   mode?: number
   mtimeMs?: number
+  // Encoded logical major:minor; present only for a character device.
+  rdev?: number
 }
 
 /** One path's metadata, in the shape every guest encoder needs. */
@@ -56,6 +66,8 @@ export interface VFSStat {
   // Only ever set for a stat the caller asked not to follow, since
   // every other answer is the target's.
   isLink?: boolean
+  // Encoded logical major:minor; present only for a character device.
+  rdev?: number
 }
 
 /**
@@ -76,6 +88,7 @@ function statRow(st: FileStat): VFSStat {
     mtimeMs: ms ?? 0,
     mode: posixMode(st),
     ...(isLink(st) ? { isLink: true } : {}),
+    ...(isCharDevice(st) ? { rdev: deviceRdev(st) } : {}),
   }
 }
 
@@ -249,6 +262,7 @@ export class RuntimeVFS {
           isDir: st.isDir,
           mode: st.mode,
           mtimeMs: st.mtimeMs,
+          ...(st.rdev !== undefined ? { rdev: st.rdev } : {}),
           ...linked,
         }
       }),
@@ -277,8 +291,19 @@ export class RuntimeVFS {
     await this.dispatch('unlink', path)
   }
 
-  async mkdir(path: string): Promise<void> {
-    await this.dispatch('mkdir', path)
+  /**
+   * Create a directory; `parents` asks the mount to create missing
+   * ancestors too (pathlib's mkdir(parents=True), which the backend op
+   * takes as a flag on both hosts).
+   */
+  async mkdir(path: string, parents = false): Promise<void> {
+    await this.dispatch(
+      'mkdir',
+      path,
+      undefined,
+      undefined,
+      parents ? { parents: true } : undefined,
+    )
   }
 
   async rmdir(path: string): Promise<void> {

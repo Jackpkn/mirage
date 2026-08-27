@@ -26,6 +26,7 @@ import { DISCORD_EPOCH, listMessagesForDay } from './history.ts'
 import { listMembers } from './members.ts'
 import { historyJsonlBytes, memberJsonBytes } from './render.ts'
 import { detectScope } from './scope.ts'
+import { globSpan, hasGlobSpan } from '../../utils/glob_walk.ts'
 
 const SOFT_STATUSES = new Set([403, 404, 429])
 
@@ -52,13 +53,33 @@ export function snowflakeToIso(snowflake: string): string | null {
   return epochToIso(Number(ms / 1000n))
 }
 
-export function dateRangeDescending(endDate: string, days = 30): string[] {
+/**
+ * The channel's day directories, newest first.
+ *
+ * A day dir is real for any well-formed date under the channel, so the bare
+ * listing is a window: the last `days` up to the newest message. A glob names
+ * its own window instead, clipped at the newest message because nothing was
+ * posted after it.
+ */
+export function dateRangeDescending(
+  endDate: string,
+  days = 30,
+  span: readonly [string, string] | null = null,
+): string[] {
   const [y, m, d] = endDate.split('-').map((n) => Number.parseInt(n, 10))
   if (y === undefined || m === undefined || d === undefined) return []
-  const end = Date.UTC(y, m - 1, d)
+  const dayMs = 86_400_000
+  let end = Date.UTC(y, m - 1, d)
+  let count = days
+  if (span !== null) {
+    const first = Date.parse(`${span[0]}T00:00:00Z`)
+    end = Math.min(end, Date.parse(`${span[1]}T00:00:00Z`) - dayMs)
+    count = Math.floor((end - first) / dayMs) + 1
+    if (count <= 0) return []
+  }
   const dates: string[] = []
-  for (let i = 0; i < days; i++) {
-    const cursor = new Date(end - i * 86_400_000)
+  for (let i = 0; i < count; i++) {
+    const cursor = new Date(end - i * dayMs)
     const yy = cursor.getUTCFullYear().toString().padStart(4, '0')
     const mm = (cursor.getUTCMonth() + 1).toString().padStart(2, '0')
     const dd = cursor.getUTCDate().toString().padStart(2, '0')
@@ -144,16 +165,16 @@ async function listMembersDir(
 
 function listChannelDays(
   _accessor: DiscordAccessor,
-  _match: ScopeMatch,
+  match: ScopeMatch,
   own: IndexEntry,
 ): Promise<Listed> {
   const lastMsgId = own.remoteTime
   const endDate = lastMsgId !== '' ? snowflakeToDate(lastMsgId) : todayUtc()
-  return Promise.resolve(
-    dateRangeDescending(endDate, 30).map(
-      (d) => [d, DiscordIndexEntry.history(own.id, d)] as [string, IndexEntry],
-    ),
+  const span = globSpan(match.pattern)
+  const entries = dateRangeDescending(endDate, 30, span).map(
+    (d) => [d, DiscordIndexEntry.history(own.id, d)] as [string, IndexEntry],
   )
+  return Promise.resolve({ entries, seeds: {}, partial: span !== null })
 }
 
 /**
@@ -271,5 +292,6 @@ export const readdir = makeReaddir<DiscordAccessor>(detectScope, {
     files: listFiles,
   },
   parentEntryListers: { day: listDay },
+  patternKinds: { channel: hasGlobSpan },
   leafError: 'enotdir',
 })

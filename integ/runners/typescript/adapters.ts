@@ -25,6 +25,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3'
 import { OPFSResource, Workspace as BrowserWorkspace } from '@struktoai/mirage-browser'
+import type { ConsistencyPolicy } from '@struktoai/mirage-node'
 import {
   AliyunResource,
   BackblazeResource,
@@ -65,7 +66,6 @@ import {
   Mem0Resource,
   MongoDBResource,
   NotionResource,
-  ConsistencyPolicy,
   MountMode,
   NextcloudResource,
   OCIResource,
@@ -91,10 +91,7 @@ import {
   Workspace,
   type ConsoleFactory,
 } from '@struktoai/mirage-node'
-import {
-  parseSessionProfile,
-  type SessionProfile,
-} from '@struktoai/mirage-core/policy/profile'
+import { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
 import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/types'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
@@ -102,8 +99,10 @@ import { ChromaClient } from 'chromadb'
 import { ImapFlow } from 'imapflow'
 import { Double, MongoClient } from 'mongodb'
 import pg from 'pg'
-import { installFakeNavigator, makeMockRoot } from '../../../typescript/packages/browser/src/test-utils.ts'
-import { startFakeDropbox, type FakeDropbox } from '../../server/dropbox.ts'
+import {
+  installFakeNavigator,
+  makeMockRoot,
+} from '../../../typescript/packages/browser/src/test-utils.ts'
 import { integRoot, walkFiles } from './harness.ts'
 import type { ExecWorkspace, Mount, Target } from './harness.ts'
 import { startPythonServer } from './server_process.ts'
@@ -183,7 +182,10 @@ function runId(): string {
  * all, where every other one needs its mock service to hand over both the tree
  * and the credentials pointing at itself.
  */
-function installLocalClis(ws: { registerCli: (name: string, spec: unknown) => void }, target: Target): void {
+function installLocalClis(
+  ws: { registerCli: (name: string, spec: unknown) => void },
+  target: Target,
+): void {
   if (target.clis?.includes('git') === true) ws.registerCli('git', GIT)
 }
 
@@ -377,7 +379,11 @@ async function openDatabricksVolume(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
-function objectStorageResource(name: string, bucket: string, keyPrefix: string | undefined): S3Resource {
+function objectStorageResource(
+  name: string,
+  bucket: string,
+  keyPrefix: string | undefined,
+): S3Resource {
   if (S3_ENDPOINT === undefined) throw new Error('s3 target requires S3_ENDPOINT')
   const common = {
     bucket,
@@ -632,32 +638,41 @@ async function openHf(target: Target, options?: OpenOptions): Promise<Open> {
   return { ws: opened.ws, shadow: opened.shadow, cleanup: opened.closeAll }
 }
 
-const BOX_AUTH = { Authorization: 'Bearer integ-box-token' }
+// The seeding calls have to reach the SAME account the mount will read, and
+// on this fake the account is the bearer token, so it is a parameter rather
+// than a constant.
+const boxAuth = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` })
 
 async function boxCreateWebLink(
   endpoint: string,
+  token: string,
   parentId: string,
   name: string,
   url: string,
 ): Promise<void> {
   const r = await fetch(`${endpoint}/2.0/web_links`, {
     method: 'POST',
-    headers: { ...BOX_AUTH, 'Content-Type': 'application/json' },
+    headers: { ...boxAuth(token), 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, url, parent: { id: parentId } }),
   })
   if (r.status !== 201) throw new Error(`box web_link seed failed: ${String(r.status)}`)
 }
 
-async function boxCreateFolder(endpoint: string, parentId: string, name: string): Promise<string> {
+async function boxCreateFolder(
+  endpoint: string,
+  token: string,
+  parentId: string,
+  name: string,
+): Promise<string> {
   const r = await fetch(`${endpoint}/2.0/folders`, {
     method: 'POST',
-    headers: { ...BOX_AUTH, 'Content-Type': 'application/json' },
+    headers: { ...boxAuth(token), 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, parent: { id: parentId } }),
   })
   if (r.status === 201) return ((await r.json()) as { id: string }).id
   if (r.status === 409) {
     const list = await fetch(`${endpoint}/2.0/folders/${parentId}/items?limit=1000`, {
-      headers: BOX_AUTH,
+      headers: boxAuth(token),
     })
     const items = ((await list.json()) as { entries: { id: string; name: string; type: string }[] })
       .entries
@@ -669,6 +684,7 @@ async function boxCreateFolder(endpoint: string, parentId: string, name: string)
 
 async function boxUpload(
   endpoint: string,
+  token: string,
   folderId: string,
   name: string,
   content: Uint8Array,
@@ -678,25 +694,30 @@ async function boxUpload(
   form.set('file', new Blob([content]), name)
   const r = await fetch(`${endpoint}/2.0/files/content`, {
     method: 'POST',
-    headers: BOX_AUTH,
+    headers: boxAuth(token),
     body: form,
   })
   if (r.status !== 201) throw new Error(`box upload ${name} -> ${String(r.status)}`)
 }
 
 async function openBox(target: Target): Promise<Open> {
-  const endpoint = process.env.BOX_ENDPOINT
-  if (!endpoint) throw new Error('box target requires BOX_ENDPOINT')
-  const id = runId()
+  let endpoint = process.env.BOX_URL ?? ''
+  while (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1)
+  if (endpoint === '') throw new Error('box target requires BOX_URL')
+  // Each run takes its own ACCOUNT on the shared fake. The vendor's
+  // developer-token flow sends a pre-fetched access token verbatim, so the
+  // token IS the account and no mirage-only header is involved. This replaces
+  // naming the mount folder `integ-<runid>-<mount>` inside one shared account,
+  // which isolated runs only as far as a name collision.
+  const token = `integ-box-${runId()}`
   const root = integRoot()
   const mounts: Record<string, BoxResource> = {}
   for (const m of target.mounts) {
     // Box is read-only through the workspace, so the harness tee-seeding
-    // can't run; the fixture is uploaded over the Box API instead. The
-    // shared fake server outlives a run, so a per-run folder name isolates
-    // runs, and the folder id becomes the mount root (mirrors how a real
-    // Box app scopes to a folder).
-    const folderId = await boxCreateFolder(endpoint, '0', `integ-${id}-${String(m.folder)}`)
+    // can't run; the fixture is uploaded over the Box API instead (the folder
+    // id becomes the mount root, mirroring how a real Box app scopes to a
+    // folder).
+    const folderId = await boxCreateFolder(endpoint, token, '0', String(m.folder))
     if (m.seed !== undefined) {
       const base = join(root, 'fixtures', m.seed)
       for (const file of walkFiles(base)) {
@@ -704,10 +725,11 @@ async function openBox(target: Target): Promise<Open> {
         const parts = rel.split('/')
         let parentId = folderId
         for (const dir of parts.slice(0, -1)) {
-          parentId = await boxCreateFolder(endpoint, parentId, dir)
+          parentId = await boxCreateFolder(endpoint, token, parentId, dir)
         }
         await boxUpload(
           endpoint,
+          token,
           parentId,
           parts[parts.length - 1] ?? '',
           new Uint8Array(readFileSync(file)),
@@ -717,10 +739,10 @@ async function openBox(target: Target): Promise<Open> {
     if (m.seed === 'files/v1') {
       // A weblink beside the fixture: sizeless and content-free, so
       // listings must hide it and a direct stat must ENOENT.
-      await boxCreateWebLink(endpoint, folderId, 'homepage', 'https://example.com/')
+      await boxCreateWebLink(endpoint, token, folderId, 'homepage', 'https://example.com/')
     }
     mounts[m.path] = new BoxResource({
-      accessToken: 'integ-box-token',
+      accessToken: token,
       endpoint,
       rootFolderId: folderId,
       // The fake supports name+content search, so exercise grep/rg push-down
@@ -733,73 +755,128 @@ async function openBox(target: Target): Promise<Open> {
 }
 
 async function openDropbox(target: Target, options?: OpenOptions): Promise<Open> {
-  // Mounts sharing a `bucket` share one fake account (the -root target
-  // mounts three rootPath subfolders of a single account, mirroring
-  // s3-prefix's shared bucket); distinct buckets get isolated accounts.
-  const accounts = new Map<string, FakeDropbox>()
-  for (const m of target.mounts) {
-    const account = String(m.bucket ?? m.path)
-    if (!accounts.has(account)) accounts.set(account, await startFakeDropbox())
-  }
+  // Mounts sharing a `bucket` share one fake ACCOUNT (the -root target mounts
+  // three rootPath subfolders of a single account, mirroring s3-prefix's
+  // shared bucket); distinct buckets get isolated accounts. An account is a
+  // tenant on the one shared server rather than a server of its own: the fake
+  // echoes the refresh token back from /oauth2/token as the access token, so
+  // the account rides the ordinary Authorization header the Dropbox RPC layer
+  // already sends. The run id is part of the token so two runs against the
+  // same shared server cannot see each other's writes.
+  let endpoint = process.env.DROPBOX_URL ?? ''
+  while (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1)
+  if (endpoint === '') throw new Error('dropbox target requires DROPBOX_URL')
+  const id = runId()
   const build = (): MountMap => {
     const mounts: Record<string, DropboxResource> = {}
     for (const m of target.mounts) {
-      const fake = accounts.get(String(m.bucket ?? m.path))
-      if (fake === undefined) throw new Error(`dropbox account missing for ${m.path}`)
+      const account = String(m.bucket ?? String(m.path).replace(/^\/+|\/+$/g, ''))
       mounts[m.path] = new DropboxResource({
         clientId: 'integ-client',
         clientSecret: 'integ-secret',
-        refreshToken: 'integ-refresh',
+        refreshToken: `${id}-${account}`,
         // The fake supports full-text search_v2, so exercise grep/rg
         // narrowing in the battery.
         contentSearch: true,
-        endpoint: fake.endpoint,
+        endpoint,
         ...(m.root !== undefined ? { rootPath: m.root } : {}),
       })
     }
     return mounts
   }
   const opened = openWorkspaces(build, options)
-  const cleanup = async (): Promise<void> => {
-    await opened.closeAll()
-    for (const fake of accounts.values()) fake.close()
+  return { ws: opened.ws, shadow: opened.shadow, cleanup: () => opened.closeAll() }
+}
+
+// The Graph service root, shared by the onedrive and the sharepoint targets:
+// OneDrive for Business is SharePoint underneath and one fake serves both.
+// This used to be a PYTHON SUBPROCESS started from the TypeScript runner, one
+// per target; it is now the same external Prisma-backed server the python host
+// talks to.
+function graphBase(): string {
+  let base = process.env.ONEDRIVE_URL ?? ''
+  while (base.endsWith('/')) base = base.slice(0, -1)
+  if (base === '') throw new Error('onedrive target requires ONEDRIVE_URL')
+  return base
+}
+
+// Which drives a SharePoint site has is deployment state, and real Graph has
+// no endpoint that creates one, so the fake takes a declaration on a route of
+// its own. It replaces the `MIRAGE_GRAPH_DRIVES` env the subprocess read at
+// launch, which a shared server cannot have: the drives belong to this run's
+// account, not to the process.
+async function declareDrive(base: string, token: string, drive: string): Promise<void> {
+  const resp = await fetch(`${base}/drives/${encodeURIComponent(drive)}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!resp.ok) throw new Error(`sharepoint drive ${drive} -> ${String(resp.status)}`)
+}
+
+async function makePrefix(
+  base: string,
+  token: string,
+  drive: string,
+  prefix: string,
+): Promise<void> {
+  let parent = ''
+  for (const name of prefix.replace(/^\/+|\/+$/g, '').split('/')) {
+    if (name === '') continue
+    // One level at a time: Graph's mkdir 404s when the parent is missing, and
+    // `replace` on a folder returns the existing one with its children intact,
+    // which is what makes this idempotent across the two mounts of
+    // sharepoint-prefix that share a `team/reports` ancestor.
+    const stem = `${base}/drives/${encodeURIComponent(drive)}/root`
+    const url = parent === '' ? `${stem}/children` : `${stem}:/${parent}:/children`
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        folder: {},
+        '@microsoft.graph.conflictBehavior': 'replace',
+      }),
+    })
+    if (!resp.ok) throw new Error(`sharepoint mkdir ${name} -> ${String(resp.status)}`)
+    parent = parent === '' ? name : `${parent}/${name}`
   }
-  return { ws: opened.ws, shadow: opened.shadow, cleanup }
 }
 
 async function openOneDrive(target: Target, options?: OpenOptions): Promise<Open> {
-  const server = await startPythonServer('onedrive_server.py', {
-    MIRAGE_GRAPH_DRIVES: 'data,xm2,res,shared',
-  })
+  // Each target takes its own Graph ACCOUNT, carried by the access token the
+  // client already sends on every call, so two runs against the one shared
+  // server cannot see each other's writes.
+  const base = graphBase()
+  const token = `${runId()}-${target.id}`
   const build = (): MountMap => {
     const mounts: Record<string, OneDriveResource> = {}
     for (const mount of target.mounts) {
       mounts[mount.path] = new OneDriveResource({
-        accessToken: 'integ-token',
-        graphBaseUrl: server.endpoint,
+        accessToken: token,
+        graphBaseUrl: base,
         ...(mount.prefix !== undefined ? { keyPrefix: mount.prefix } : {}),
       })
     }
     return mounts
   }
   const opened = openWorkspaces(build, options)
-  const cleanup = async (): Promise<void> => {
-    await opened.closeAll()
-    await server.close()
-  }
-  return { ws: opened.ws, shadow: opened.shadow, cleanup }
+  return { ws: opened.ws, shadow: opened.shadow, cleanup: () => opened.closeAll() }
 }
 
 async function openSharePoint(target: Target, options?: OpenOptions): Promise<Open> {
-  const server = await startPythonServer('onedrive_server.py', {
-    MIRAGE_GRAPH_DRIVES: 'data,xm2,res,shared',
-  })
+  const base = graphBase()
+  const token = `${runId()}-${target.id}`
+  for (const mount of target.mounts) {
+    const drive = String(mount.drive)
+    await declareDrive(base, token, drive)
+    if (mount.prefix !== undefined) await makePrefix(base, token, drive, mount.prefix)
+  }
   const build = (): MountMap => {
     const mounts: Record<string, SharePointResource> = {}
     for (const mount of target.mounts) {
       mounts[mount.path] = new SharePointResource({
-        accessToken: 'integ-token',
-        graphBaseUrl: server.endpoint,
+        accessToken: token,
+        graphBaseUrl: base,
         site: 'Main',
         drive: mount.drive,
         ...(mount.prefix !== undefined ? { keyPrefix: mount.prefix } : {}),
@@ -808,11 +885,7 @@ async function openSharePoint(target: Target, options?: OpenOptions): Promise<Op
     return mounts
   }
   const opened = openWorkspaces(build, options)
-  const cleanup = async (): Promise<void> => {
-    await opened.closeAll()
-    await server.close()
-  }
-  return { ws: opened.ws, shadow: opened.shadow, cleanup }
+  return { ws: opened.ws, shadow: opened.shadow, cleanup: () => opened.closeAll() }
 }
 
 async function openNotion(target: Target): Promise<Open> {
@@ -857,19 +930,43 @@ const LANCEDB_ROWS: ReadonlyArray<Record<string, unknown>> = [
   { id: 4, label: 'dog', kind: 'small', name: 'a small white dog' },
 ]
 
+// One group holding far more rows than the window facet's row cap, so a glob
+// for a row past the cap can only be answered by narrowing the query.
+const LANCEDB_WIDE_CAP = 5
+
+function lancedbWideRows(): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = []
+  for (let i = 0; i < 40; i += 1) {
+    rows.push({ id: `doc-${String(i).padStart(3, '0')}`, label: 'all', name: `row ${String(i)}` })
+  }
+  return rows
+}
+
 async function openLancedb(target: Target): Promise<Open> {
+  const window = target.facet === 'window'
   const uri = mkdtempSync(join(tmpdir(), 'mirage-integ-lancedb-'))
   const db = await lancedb.connect(uri)
-  await db.createTable('animals', LANCEDB_ROWS as Record<string, unknown>[])
+  if (window) await db.createTable('wide', lancedbWideRows())
+  else await db.createTable('animals', LANCEDB_ROWS as Record<string, unknown>[])
   const mounts: Record<string, LanceDBResource | [LanceDBResource, MountMode]> = {}
   for (const mount of target.mounts) {
-    const resource = new LanceDBResource({
-      uri,
-      groupBy: ['label', 'kind'],
-      idColumn: 'id',
-      titleColumn: 'name',
-      textColumn: 'name',
-    })
+    const resource = window
+      ? new LanceDBResource({
+          uri,
+          table: 'wide',
+          groupBy: ['label'],
+          idColumn: 'id',
+          titleColumn: 'name',
+          textColumn: 'name',
+          maxRows: LANCEDB_WIDE_CAP,
+        })
+      : new LanceDBResource({
+          uri,
+          groupBy: ['label', 'kind'],
+          idColumn: 'id',
+          titleColumn: 'name',
+          textColumn: 'name',
+        })
     mounts[mount.path] = mount.mode === 'read' ? [resource, MountMode.READ] : resource
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
@@ -889,7 +986,13 @@ const QDRANT_ROWS: ReadonlyArray<readonly [number, string, string, string]> = [
   [4, 'dog', 'small', 'a small white dog'],
 ]
 
+// Far more points than the window facet's row cap, all in one group, and ids
+// whose text straddles a scroll page so a narrowed listing has to page.
+const QDRANT_WIDE_CAP = 5
+const QDRANT_WIDE_POINTS = 600
+
 async function openQdrant(target: Target): Promise<Open> {
+  const window = target.facet === 'window'
   const host = process.env.QDRANT_HOST ?? 'localhost'
   const port = Number.parseInt(process.env.QDRANT_PORT ?? '6333', 10)
   const collection = `mirage-integ-${runId()}`
@@ -897,29 +1000,51 @@ async function openQdrant(target: Target): Promise<Open> {
   await client.createCollection(collection, {
     vectors: { size: QDRANT_EMBED_DIM, distance: 'Cosine' },
   })
-  await client.upsert(collection, {
-    points: QDRANT_ROWS.map(([id, label, kind, name]) => ({
-      id,
-      vector: Array<number>(QDRANT_EMBED_DIM).fill(0.1),
-      payload: { label, kind, name, image_bytes: btoa(`PNG-${String(id)}`) },
-    })),
-  })
-  for (const field of ['label', 'kind']) {
+  if (window) {
+    const points = []
+    for (let i = 1; i <= QDRANT_WIDE_POINTS; i += 1) {
+      points.push({
+        id: i,
+        vector: Array<number>(QDRANT_EMBED_DIM).fill(0.1),
+        payload: { label: 'all', name: `row ${String(i)}` },
+      })
+    }
+    await client.upsert(collection, { points })
+  } else {
+    await client.upsert(collection, {
+      points: QDRANT_ROWS.map(([id, label, kind, name]) => ({
+        id,
+        vector: Array<number>(QDRANT_EMBED_DIM).fill(0.1),
+        payload: { label, kind, name, image_bytes: btoa(`PNG-${String(id)}`) },
+      })),
+    })
+  }
+  for (const field of window ? ['label'] : ['label', 'kind']) {
     await client.createPayloadIndex(collection, { field_name: field, field_schema: 'keyword' })
   }
   await new Promise((r) => setTimeout(r, 2000))
   const mounts: Record<string, QdrantResource | [QdrantResource, MountMode]> = {}
   for (const mount of target.mounts) {
-    const resource = new QdrantResource({
-      host,
-      port,
-      collection,
-      groupBy: ['label', 'kind'],
-      idField: 'id',
-      textField: 'name',
-      blobField: 'image_bytes',
-      blobExt: 'png',
-    })
+    const resource = window
+      ? new QdrantResource({
+          host,
+          port,
+          collection,
+          groupBy: ['label'],
+          idField: 'id',
+          textField: 'name',
+          maxRows: QDRANT_WIDE_CAP,
+        })
+      : new QdrantResource({
+          host,
+          port,
+          collection,
+          groupBy: ['label', 'kind'],
+          idField: 'id',
+          textField: 'name',
+          blobField: 'image_bytes',
+          blobExt: 'png',
+        })
     mounts[mount.path] = mount.mode === 'read' ? [resource, MountMode.READ] : resource
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
@@ -968,7 +1093,10 @@ async function seedChroma(host: string, port: number, collectionName: string): P
     }
   }
   const client = new ChromaClient({ host, port })
-  const collection = await client.createCollection({ name: collectionName, embeddingFunction: null })
+  const collection = await client.createCollection({
+    name: collectionName,
+    embeddingFunction: null,
+  })
   await collection.add({ ids, documents, metadatas, embeddings })
 }
 
@@ -1525,10 +1653,7 @@ async function openGitHub(target: Target): Promise<Open> {
     const reset = await fetch(`${base}/reset`, { method: 'POST' })
     if (!reset.ok) throw new Error(`github /reset failed: ${String(reset.status)}`)
   }
-  const mounts: Record<
-    string,
-    GitHubResource | RAMResource | [GitHubResource, MountMode]
-  > = {}
+  const mounts: Record<string, GitHubResource | RAMResource | [GitHubResource, MountMode]> = {}
   for (const m of target.mounts) {
     if (m.resource === 'ram') {
       mounts[m.path] = new RAMResource()
@@ -1571,8 +1696,8 @@ async function openDify(target: Target): Promise<Open> {
 }
 
 async function openTrello(target: Target): Promise<Open> {
-  const endpoint = process.env.TRELLO_ENDPOINT
-  if (!endpoint) throw new Error('trello target requires TRELLO_ENDPOINT')
+  const endpoint = process.env.TRELLO_URL
+  if (!endpoint) throw new Error('trello target requires TRELLO_URL')
   // The server outlives a single run here, so cards and comments the write
   // cases create have to be rolled back to the fixture before they run
   // again -- and before the other host's run, which shares this server.
@@ -1595,8 +1720,8 @@ async function openTrello(target: Target): Promise<Open> {
 }
 
 async function openDiscord(target: Target): Promise<Open> {
-  const endpoint = process.env.DISCORD_ENDPOINT
-  if (!endpoint) throw new Error('discord target requires DISCORD_ENDPOINT')
+  const endpoint = process.env.DISCORD_URL
+  if (!endpoint) throw new Error('discord target requires DISCORD_URL')
   // The server outlives a single run here, so posted messages have to be
   // rolled back to the fixture before the write cases run again.
   const reset = await fetch(`${endpoint}/reset`, { method: 'POST' })
@@ -1623,12 +1748,17 @@ async function openDiscord(target: Target): Promise<Open> {
 }
 
 async function openLinear(target: Target): Promise<Open> {
-  const endpoint = process.env.LINEAR_ENDPOINT
-  if (!endpoint) throw new Error('linear target requires LINEAR_ENDPOINT')
+  const endpoint = process.env.LINEAR_URL
+  if (!endpoint) throw new Error('linear target requires LINEAR_URL')
   // The server outlives a single run here, so mutations from the CLI
   // write cases have to be rolled back to the fixture before the read
   // goldens run again.
-  const resetUrl = `${endpoint.replace(/\/graphql$/, '')}/reset`
+  // LINEAR_URL is an ORIGIN, like every other service's variable. The graphql
+  // path is this service's, not the variable's, so it is appended at the two
+  // call sites that speak graphql and never at /reset.
+  const origin = endpoint.replace(/\/$/, '')
+  const graphql = `${origin}/graphql`
+  const resetUrl = `${origin}/reset`
   const reset = await fetch(resetUrl, { method: 'POST' })
   if (!reset.ok) throw new Error(`linear /reset failed: ${String(reset.status)}`)
   const mounts: Record<string, LinearResource | RAMResource> = {}
@@ -1639,12 +1769,12 @@ async function openLinear(target: Target): Promise<Open> {
     }
     mounts[m.path] = new LinearResource({
       apiKey: 'integ-key',
-      baseUrl: endpoint,
+      baseUrl: graphql,
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
   if (target.clis?.includes('linear') === true) {
-    ws.registerCli('linear', LINEAR, { api_key: 'integ-key', base_url: endpoint })
+    ws.registerCli('linear', LINEAR, { api_key: 'integ-key', base_url: graphql })
   }
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
@@ -1754,10 +1884,7 @@ async function openArgError(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
-export const ADAPTERS: Record<
-  string,
-  (target: Target, options?: OpenOptions) => Promise<Open>
-> = {
+export const ADAPTERS: Record<string, (target: Target, options?: OpenOptions) => Promise<Open>> = {
   ram: openRam,
   disk: openDisk,
   redis: openRedis,

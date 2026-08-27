@@ -14,6 +14,7 @@
 
 import { apiRequest } from '../api/client.ts'
 import { pathSafeName } from '../../utils/sanitize.ts'
+import { fitIdName } from '../../utils/naming.ts'
 import { windowFor } from '../../utils/ranges.ts'
 
 export interface DiscordAttachment {
@@ -33,9 +34,9 @@ export function fileBlobName(att: DiscordAttachment): string {
   if (dot >= 0 && dot < rawName.length - 1) {
     const stem = rawName.slice(0, dot)
     const ext = rawName.slice(dot + 1)
-    return `${pathSafeName(stem)}__${aid}.${ext}`
+    return fitIdName(pathSafeName(stem), aid, `.${ext}`)
   }
-  return `${pathSafeName(rawName)}__${aid}`
+  return fitIdName(pathSafeName(rawName), aid)
 }
 
 function downloadError(response: Response): Error {

@@ -34,13 +34,13 @@ async function main(): Promise<void> {
   const wcNull = await ws.execute('wc -c /dev/null')
   process.stdout.write(wcNull.stdoutText + '\n')
 
-  console.log('=== wc -c /dev/zero (should be 1048576) ===')
-  const wcZero = await ws.execute('wc -c /dev/zero')
+  console.log('=== bounded read from /dev/zero (should be 2097152) ===')
+  const wcZero = await ws.execute('head -c 2M /dev/zero | wc -c')
   process.stdout.write(wcZero.stdoutText + '\n')
 
-  console.log('=== md5 /dev/zero (1 MiB of zero bytes) ===')
-  const md5Zero = await ws.execute('md5 /dev/zero')
-  process.stdout.write(md5Zero.stdoutText + '\n')
+  console.log('=== /dev/null device metadata ===')
+  const statDevice = await ws.execute("stat -c '%F %t %T' /dev/null")
+  process.stdout.write(statDevice.stdoutText + '\n')
 
   console.log('=== write to /dev/null is silently dropped ===')
   await ws.execute('echo "this disappears" | tee /dev/null')

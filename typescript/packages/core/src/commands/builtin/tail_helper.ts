@@ -12,6 +12,25 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { sizeSuffixes } from './utils/size_suffix.ts'
+
+const BYTE_UNITS: Readonly<Record<string, number>> = {
+  '': 1,
+  ...sizeSuffixes('bkKMGTPEZYRQ'),
+}
+
+export function parseByteCount(raw: string): number {
+  const match = /^([+-]?)([0-9]+)([A-Za-z]*)$/.exec(raw)
+  if (match === null) throw new Error(raw)
+  const sign = match[1] ?? ''
+  const digits = match[2]
+  const suffix = match[3] ?? ''
+  const multiplier = BYTE_UNITS[suffix]
+  if (digits === undefined || multiplier === undefined) throw new Error(raw)
+  const count = Number.parseInt(digits, 10) * multiplier
+  return sign === '-' ? -count : count
+}
+
 export function parseN(n: string | null): [number, boolean] {
   if (n === null) return [10, false]
   if (n.startsWith('+')) return [Number.parseInt(n.slice(1), 10), true]
@@ -63,7 +82,8 @@ export function parseCounts(nRaw: string | null, cRaw: string | null): TailCount
     else counts.lines = count
   }
   if (cRaw !== null) {
-    const [count, plusMode] = parseN(cRaw)
+    const count = parseByteCount(cRaw)
+    const plusMode = cRaw.startsWith('+')
     if (plusMode) counts.fromByte = count
     else counts.byteCount = count
   }
@@ -80,8 +100,12 @@ export function numberFlagError(
   if (nRaw !== null && !/^[+-]?\d+$/.test(nRaw)) {
     return `${cmd}: invalid number of lines: '${nRaw}'\n`
   }
-  if (cRaw !== null && !/^[+-]?\d+$/.test(cRaw)) {
-    return `${cmd}: invalid number of bytes: '${cRaw}'\n`
+  if (cRaw !== null) {
+    try {
+      parseByteCount(cRaw)
+    } catch {
+      return `${cmd}: invalid number of bytes: '${cRaw}'\n`
+    }
   }
   return null
 }

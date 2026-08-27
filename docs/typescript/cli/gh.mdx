@@ -67,14 +67,57 @@ bytes. Nothing is required of the caller.
 ## Verbs
 
 ```
-gh repo view   [<REPOSITORY>]
-gh repo fork   [<REPOSITORY>]  --fork-name
-gh repo rename  <NEW-NAME>     -R/--repo
-gh api          <ENDPOINT>     -X/--method  -f/--raw-field  -F/--field
+gh api       <ENDPOINT>
+gh issue     list | view | create | edit | close | reopen | comment
+gh pr        list | view | create | edit | merge | close | comment | diff | checks
+gh repo      list | view | create | fork | rename
+gh release   list | view | create
+gh run       list | view | rerun
+gh workflow  list | view | run
 ```
 
-Every level answers `--help`, and `man gh`, `man gh repo` and
-`man gh api` render the same text from the same spec.
+Every level answers `--help`; `man gh`, `man gh issue`, and `man gh pr
+create` render the same text from the same spec. `list` also accepts `ls`,
+and issue and pull request `create` also accept `new`.
+
+## Typed workflows
+
+Typed read commands accept `-R/--repo [HOST/]OWNER/REPO` where applicable.
+Most also accept `--json field1,field2` and `-q/--jq EXPRESSION`; `--jq`
+requires `--json`, so the selected field set stays explicit and bounded.
+List commands use `-L/--limit` and fetch as many REST pages as needed.
+
+```bash
+gh issue list --state open --label bug --limit 20
+gh issue view 42 --json number,title,labels,url --jq '.url'
+gh pr checks 17 --json name,bucket,state
+gh repo list acme --json nameWithOwner,visibility
+gh release list --json tagName,isLatest
+gh run list --workflow ci.yml --json databaseId,status,conclusion
+```
+
+Mutations never open an editor or prompt. Supply the values on the line,
+through a workspace file, or through stdin with `-`:
+
+```bash
+gh issue create --title 'Broken build' --body-file /scratch/issue.md --label bug
+gh issue edit 42 --add-label confirmed --remove-assignee octocat
+gh issue comment 42 --body-file - < /scratch/comment.md
+gh issue close 42
+
+gh pr create --title 'Fix build' --head fix-build --base main --body-file /scratch/pr.md
+gh pr edit 17 --base release --body 'Updated scope'
+gh pr merge 17 --squash --subject 'fix: build'
+
+gh repo create acme/tools-next --private --add-readme
+gh release create v1.2.0 --title '1.2.0' --notes-file /scratch/notes.md
+gh workflow run ci.yml --ref main -f mode=full
+gh run rerun 123456 --failed
+```
+
+Body and notes files are read through the workspace dispatcher, not the host
+filesystem. That keeps an agent inside mirage while still supporting the
+official CLI's file-oriented grammar.
 
 ### repo
 
@@ -82,6 +125,10 @@ Every level answers `--help`, and `man gh`, `man gh repo` and
 gh repo view                        # the install's repository
 gh repo view acme/tools
 gh repo view github.com/acme/tools  # the host segment is accepted
+gh repo view --json nameWithOwner,defaultBranchRef,url
+
+gh repo list acme --limit 50
+gh repo create tools-next --private --description 'Next generation'
 
 gh repo fork acme/tools
 gh repo fork acme/tools --fork-name tools-patched
@@ -89,9 +136,10 @@ gh repo fork acme/tools --fork-name tools-patched
 gh repo rename tools-v2 -R acme/tools
 ```
 
-`view` prints what gh prints: a `name:` line, a `description:` line, then
-`--` and the README, with the separator omitted when the repository has
-none. For the repository object as JSON, use `gh api repos/OWNER/REPO`.
+The default `view` prints a `name:` line, a `description:` line, then `--`
+and the README, with the separator omitted when the repository has none.
+Use `--json` for a stable subset of repository fields or `gh api` for the
+complete REST object.
 
 `rename` takes the **new name** as the operand and the repository to
 rename on `-R`, which is the reverse of what the shape of the line
@@ -114,6 +162,11 @@ gh api /user
 gh api repos/acme/tools/issues -f title='Bug' -f body='Steps...'
 gh api -X GET search/code -f q='repo:acme/tools TODO'
 gh api repos/acme/tools/issues -F draft=false -F milestone=3
+gh api repos/acme/tools/issues -F 'labels[]=bug' -F 'metadata[agent]=worker'
+gh api repos/acme/tools/issues --input /scratch/issue.json --silent
+gh api repos/acme/tools/issues --input - < /scratch/issue.json
+gh api 'repos/acme/tools/issues?per_page=50' --paginate --slurp
+gh api repos/acme/tools/pulls/17 -H 'Accept: application/vnd.github.v3.diff'
 gh api repos/acme/tools/contents/NOTES.md -X DELETE -f message=rm -f sha=<blob-sha>
 gh api graphql -f query='{viewer{login}}'
 
@@ -133,7 +186,16 @@ The rules are gh's own:
 - A `GET` carries its fields in the **query string**; every other method
   carries them in a **JSON body**.
 - `-f/--raw-field` is always a string. `-F/--field` reads `true`, `false`,
-  `null` and integers as their JSON types.
+  `null` and integers as their JSON types. A typed value beginning with `@`
+  reads that workspace file, and `@-` reads stdin.
+- Object keys such as `config[enabled]` and arrays such as `labels[]` build
+  nested JSON rather than flat keys.
+- `--input FILE` sends that JSON document as the body and moves any fields
+  to the query string. `--input -` reads stdin.
+- `-H/--header` adds or replaces request headers.
+- `--paginate` follows REST `Link` headers. Responses stream page by page;
+  `--slurp` wraps all pages in one array.
+- `--silent` suppresses response output without suppressing the request.
 - A call with no fields sends **no body at all**, so a bare `DELETE` is a
   bare `DELETE` rather than an empty JSON object with a content type. Some
   endpoints read those differently.
@@ -143,28 +205,25 @@ The rules are gh's own:
 - A read (`GET`, `HEAD`, `OPTIONS`) leaves the mount's cache alone; only a
   write expires it.
 
-Output is JSON on stdout, so the rest of the shell composes with it:
+JSON responses are pretty-printed by default. `-q/--jq` evaluates in-process
+and renders strings raw, or the rest of the shell can consume stdout:
 
 ```bash
 gh api repos/acme/tools | jq -r .default_branch
-gh api repos/acme/tools/issues | jq -r '.[].title'
+gh api repos/acme/tools/issues --jq '.[].title'
 ```
 
 ## Divergences from upstream gh
 
-`gh` is virtualized, not wrapped, so the table below is the whole of what
-differs. Everything else matches `gh` 2.85.
+`gh` is virtualized, not wrapped. The intentional boundaries are:
 
-| Divergence                                                                 | Why                                                                                            |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `gh api` pretty-prints the response; real gh prints the body verbatim       | the reader is usually an agent or `jq`, and an indented body is what a human reads              |
-| `gh repo view` has no `--json`/`-q`/`-t`; the default text view matches      | upstream's field set is GraphQL's, with 75 names; `gh api repos/O/R` is the JSON route          |
-| `--paginate`, `-q/--jq`, `-H`, `--input`, `--silent`, `-i` are not built    | not built yet; pipe to `jq` for selection, and paginate with `-f page=2`                        |
-| `-F` reads no `@file` values, and `key[sub]=` / `key[]=` nesting is flat    | not built yet                                                                                   |
-| `repo rename` has no `-y/--yes`                                             | there is no prompt to skip: nothing in a workspace is interactive                                |
-| `repo fork` has no `--clone`, `--remote`, `--org`                           | those act on a host checkout and a git remote, which a workspace has neither of                  |
-| a `HOST/` prefix is accepted but never routes                               | one install is one account on one host; a second host is a second install                        |
-
-The interactive and host-side verbs (`auth`, `gist`, `codespace`,
-`browse`, `repo clone`) are out of scope for a virtualized CLI, the same
-way they are for the other account CLIs.
+| Divergence | Reason |
+| --- | --- |
+| Only the command groups listed above are installed | `auth`, `browse`, `codespace`, `extension`, `gist`, and host checkout operations do not act on virtual workspace state |
+| Commands never prompt, open an editor, or launch a browser | agents need deterministic, noninteractive execution |
+| `pr create` requires explicit title, head, base, and body/body-file | there is no host checkout from which to infer or fill them |
+| `repo fork` omits clone/remote flags; release asset upload and workflow log/watch/YAML views are absent | those require host files, checkout state, or streaming surfaces not modeled here |
+| Typed `--json` exposes a stable REST-backed field subset | upstream's full field sets include GraphQL-only data; use `gh api` for arbitrary REST fields |
+| `gh api --input` accepts JSON, and pagination follows REST `Link` headers only | arbitrary byte bodies and GraphQL cursor pagination are not implemented |
+| `gh api` pretty-prints JSON and has no `--include`/verbose/cache flags | output is optimized for agents and shell composition rather than wire debugging |
+| A `HOST/` repository prefix is accepted but never routes | one install is one account on one host; use another install for another host |

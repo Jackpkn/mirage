@@ -20,6 +20,7 @@ import type { JobTable } from '../../shell/job_table/index.ts'
 import { getText } from '../../shell/helpers.ts'
 import { ERREXIT_EXEMPT_TYPES, NodeType as NT } from '../../shell/types.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
+import { readFailExitCode } from '../../commands/spec/usage.ts'
 import { errorVirtualPath, gnuStrerror } from '../../utils/errors.ts'
 import { ReturnSignal } from '../executor/command.ts'
 import { BreakSignal, ContinueSignal } from '../executor/control.ts'
@@ -217,6 +218,10 @@ async function runProgram(
         throw err
       }
       let drainErr: string | null = null
+      // Only a filesystem failure reads its code off the command; anything
+      // else keeps the catch-all 1, so the two arms below do not share the
+      // assignment.
+      let drainExit = 1
       try {
         stdout = await materialize(s)
       } catch (err) {
@@ -231,6 +236,7 @@ async function runProgram(
           const cmdName = execNode.command?.split(' ')[0] ?? ''
           const spelled = execNode.paths.find((p) => p.virtual === vpath)?.rawPath ?? vpath
           drainErr = `${cmdName}: ${spelled}: ${strerror}`
+          drainExit = readFailExitCode(cmdName, err)
         } else {
           drainErr = err instanceof Error ? err.message : String(err)
         }
@@ -243,8 +249,8 @@ async function runProgram(
         merged.set(existing, 0)
         merged.set(added, existing.byteLength)
         ioResult.stderr = merged
-        ioResult.exitCode = 1
-        execNode.exitCode = 1
+        ioResult.exitCode = drainExit
+        execNode.exitCode = drainExit
       }
       session.lastExitCode = ioResult.exitCode
       io = ioResult

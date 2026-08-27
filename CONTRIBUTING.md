@@ -58,6 +58,26 @@ cd python
 uv run pytest
 ```
 
+That runs one process. For a faster inner loop, spread a subset across every
+core the way CI does:
+
+```bash
+cd python
+uv run pytest tests/commands -n auto --dist loadscope
+```
+
+The redis tests are the exception: they share one server, so CI runs them
+serially after the parallel batch rather than under `-n` (see
+`.github/workflows/test_python.yml`). Leave them out of an `-n auto` run.
+
+Coverage is not on by default, because nothing reads it. Ask for it when you
+want it:
+
+```bash
+cd python
+uv run pytest --cov=mirage --cov-report=term-missing
+```
+
 Run Python formatting and linting from the repository root:
 
 ```bash

@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { TrelloAccessor } from '../../../accessor/trello.ts'
+import { requireMountWritable } from '../../../context/session_context.ts'
 import { cardAssign } from '../../../core/trello/client.ts'
 import { normalizeCard } from '../../../core/trello/normalize.ts'
 import { IOResult } from '../../../io/types.ts'
@@ -41,6 +42,9 @@ async function trelloCardAssignCommand(
   if (cardId === undefined || cardId === '') throw new Error('--card_id is required')
   const memberId = fl.asStr('member_id')
   if (memberId === undefined || memberId === '') throw new Error('--member_id is required')
+  // A card write is addressed by id, not path, so only the mount-wide
+  // grant can admit it (a write-granting carve-out names no card).
+  requireMountWritable(opts.mountPrefix ?? '')
   const card = await cardAssign(accessor.transport, cardId, memberId)
   return [ENC.encode(JSON.stringify(normalizeCard(card))), new IOResult()]
 }

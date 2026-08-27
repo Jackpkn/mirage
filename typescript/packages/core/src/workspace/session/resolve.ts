@@ -14,11 +14,11 @@
 
 import { checkRules } from './validate.ts'
 import { PolicyError } from '../../policy/errors.ts'
-import type { CommandRule, AdmissionRules, ProfileScript } from '../../policy/types.ts'
+import type { CommandRule, AdmissionRules, HideReason, ProfileScript } from '../../policy/types.ts'
 import type { ScriptSource } from '../../runtime/policy/types.ts'
-import type { HiddenPaths, MountMode } from '../../types.ts'
+import type { HiddenPaths, MountMode, ShowEntry, ShownPaths } from '../../types.ts'
 import { weakerMode } from '../../types.ts'
-import { classifyPaths, classifyVars } from '../../utils/hidden.ts'
+import { classifyPaths, classifyShows, classifyVars } from '../../utils/hidden.ts'
 import { stripSlash } from '../../utils/slash.ts'
 import {
   type CommandsBlock,
@@ -93,6 +93,33 @@ export function refuseAllow(inline: CommandsBlock | null | undefined): void {
   }
 }
 
+/**
+ * Refuse a show entry in an inline document.
+ *
+ * An inline document may only restrict: it adds ask and deny rules and
+ * hides. A show re-opens a subtree or states a mode, which is the
+ * profile's to say; same rule as `refuseAllow`, and it runs on both
+ * paths into `withInline` for the same reason.
+ */
+export function refuseShow(inline: SessionProfile): void {
+  const blocks = [inline.paths, ...[...(inline.mounts?.values() ?? [])].map((m) => m.paths)]
+  if (blocks.some((block) => block != null && (block.show ?? []).length > 0)) {
+    throw new PolicyError(
+      'inline permissions may add ask and deny rules and hides, not show entries',
+    )
+  }
+}
+
+/** Both blocks' reason groups, the profile's first. */
+function mergeReasons(
+  a: PathsBlock | null | undefined,
+  b: PathsBlock | null | undefined,
+): HideReason[] {
+  const out: HideReason[] = []
+  for (const block of [a, b]) out.push(...(block?.reasons ?? []))
+  return out
+}
+
 function addCommands(
   base: CommandsBlock | null | undefined,
   inline: CommandsBlock | null | undefined,
@@ -121,10 +148,18 @@ function addMount(base: ProfileMount | undefined, inline: ProfileMount | undefin
   const ask = [...rulesOf(base.commands, 'ask'), ...rulesOf(inline.commands, 'ask')]
   const deny = [...rulesOf(base.commands, 'deny'), ...rulesOf(inline.commands, 'deny')]
   const hide = unionHide(base.paths, inline.paths)
+  const show = base.paths?.show ?? []
+  const reasons = mergeReasons(base.paths, inline.paths)
   const out: { mode?: MountMode | null; commands?: MountCommandsBlock; paths?: PathsBlock } = {}
   if (mode !== null) out.mode = mode
   if (ask.length > 0 || deny.length > 0) out.commands = { ask, deny }
-  if (hide.length > 0) out.paths = { hide }
+  if (hide.length > 0 || show.length > 0 || reasons.length > 0) {
+    out.paths = {
+      hide,
+      ...(show.length > 0 ? { show } : {}),
+      ...(reasons.length > 0 ? { reasons } : {}),
+    }
+  }
   return out
 }
 
@@ -146,6 +181,7 @@ export function withInline(
 ): SessionProfile | null {
   if (inline === null) return base
   refuseAllow(inline.commands)
+  refuseShow(inline)
   if (inline.script !== undefined && inline.script !== null) {
     throw new PolicyError(
       'inline permissions may add ask and deny rules, not a script; state one on the profile',
@@ -176,7 +212,15 @@ export function withInline(
       ]),
     )
   }
-  if (base.paths != null || inline.paths != null) out.paths = { hide: hidePaths }
+  if (base.paths != null || inline.paths != null) {
+    const show = base.paths?.show ?? []
+    const reasons = mergeReasons(base.paths, inline.paths)
+    out.paths = {
+      hide: hidePaths,
+      ...(show.length > 0 ? { show } : {}),
+      ...(reasons.length > 0 ? { reasons } : {}),
+    }
+  }
   if (base.vars != null || inline.vars != null) out.vars = { hide: hideVars }
   out.commands = addCommands(base.commands, inline.commands)
   if (base.script != null) {
@@ -266,6 +310,37 @@ function hiddenOf(profile: SessionProfile): HiddenPaths | null {
 }
 
 /**
+ * Every show entry the profile states: its own and each mount
+ * section's, one list, since a show entry is absolute wherever it is
+ * written and the compiled axis has no sections.
+ */
+function shownOf(profile: SessionProfile): ShownPaths | null {
+  const entries: ShowEntry[] = [...(profile.paths?.show ?? [])]
+  for (const entry of profile.mounts?.values() ?? []) {
+    entries.push(...(entry.paths?.show ?? []))
+  }
+  return classifyShows(entries)
+}
+
+/**
+ * The operator's reasons for grouped hides, a mount section's anchored
+ * to its mount exactly like the hide entries they describe, so the
+ * side table names what the compiled spec matches.
+ */
+function hideReasonsOf(profile: SessionProfile): readonly HideReason[] {
+  const groups: HideReason[] = [...(profile.paths?.reasons ?? [])]
+  for (const [prefix, entry] of profile.mounts ?? new Map<string, ProfileMount>()) {
+    const root = rootOf(prefix)
+    groups.push(
+      ...(entry.paths?.reasons ?? []).map(
+        (g): HideReason => ({ patterns: anchored(g.patterns, root), reason: g.reason }),
+      ),
+    )
+  }
+  return groups
+}
+
+/**
  * The mode each mount section states, null when none does. A mount the
  * profile does not name is absent from the map and keeps the mode it
  * declares in the workspace's `mounts:`; the map only narrows, it never
@@ -312,6 +387,8 @@ export function compileProfile(effective: SessionProfile | null, name = ''): Com
       cwd: null,
       commands: null,
       script: null,
+      shownPaths: null,
+      hideReasons: [],
     }
   }
   const commands = compileCommands(effective)
@@ -324,14 +401,16 @@ export function compileProfile(effective: SessionProfile | null, name = ''): Com
     cwd: effective.cwd ?? null,
     commands,
     script: compileScript(effective, name),
+    shownPaths: shownOf(effective),
+    hideReasons: hideReasonsOf(effective),
   }
 }
 
 /**
- * Stamp a compiled profile's narrowing onto a session: the five fields no
- * shell line can edit (the per-mount modes, hidden paths, hidden
- * variables, the admission rules, the profile's script). Applied at
- * creation and again
+ * Stamp a compiled profile's narrowing onto a session: the fields no
+ * shell line can edit (the per-mount modes, hidden paths, show entries,
+ * hidden variables, hide reasons, the admission rules, the profile's
+ * script). Applied at creation and again
  * whenever a stored record could carry a stale copy (the default
  * session after hydration), so the document, not the store, is what an
  * agent runs under.
@@ -339,7 +418,9 @@ export function compileProfile(effective: SessionProfile | null, name = ''): Com
 export function narrow(session: Session, compiled: CompiledProfile): void {
   session.mountModes = compiled.mountModes === null ? null : new Map(compiled.mountModes)
   session.hiddenPaths = compiled.hiddenPaths
+  session.shownPaths = compiled.shownPaths ?? null
   session.hiddenVars = compiled.hiddenVars
+  session.hideReasons = compiled.hideReasons ?? []
   session.commands = compiled.commands
   session.script = compiled.script ?? null
 }

@@ -15,15 +15,35 @@
 import re
 from dataclasses import dataclass
 
+from mirage.commands.builtin.utils.size_suffix import size_suffixes
+
 _NUMBER_RE = re.compile(r"^[+-]?[0-9]+$")
+_BYTE_RE = re.compile(r"^([+-]?)([0-9]+)([A-Za-z]*)$")
+_BYTE_UNITS = {"": 1, **size_suffixes("bkKMGTPEZYRQ")}
+
+
+def parse_byte_count(raw: str) -> int:
+    """Parse GNU head/tail byte counts, including size suffixes."""
+    match = _BYTE_RE.match(raw)
+    if match is None:
+        raise ValueError(raw)
+    sign, digits, suffix = match.groups()
+    multiplier = _BYTE_UNITS.get(suffix)
+    if multiplier is None:
+        raise ValueError(raw)
+    count = int(digits) * multiplier
+    return -count if sign == "-" else count
 
 
 def number_flag_error(cmd: str, n_raw: str | None,
                       c_raw: str | None) -> str | None:
     if n_raw is not None and not _NUMBER_RE.match(n_raw):
         return f"{cmd}: invalid number of lines: '{n_raw}'\n"
-    if c_raw is not None and not _NUMBER_RE.match(c_raw):
-        return f"{cmd}: invalid number of bytes: '{c_raw}'\n"
+    if c_raw is not None:
+        try:
+            parse_byte_count(c_raw)
+        except ValueError:
+            return f"{cmd}: invalid number of bytes: '{c_raw}'\n"
     return None
 
 
@@ -69,7 +89,8 @@ def parse_counts(n: str | None, c: str | None) -> TailCounts:
     byte_count: int | None = None
     from_byte: int | None = None
     if c is not None:
-        count, plus_mode = _parse_n(c)
+        count = parse_byte_count(c)
+        plus_mode = c.startswith("+")
         if plus_mode:
             from_byte = count
         else:

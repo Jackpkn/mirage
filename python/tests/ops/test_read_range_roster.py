@@ -30,6 +30,7 @@ import mirage.commands.builtin
 NATIVE_RANGE = {
     "box",
     "databricks_volume",
+    "dev",
     "dify",
     "discord",
     "disk",

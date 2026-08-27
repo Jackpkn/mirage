@@ -1,0 +1,30 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import { KitError } from './errors.ts'
+
+// One --port contract, replacing four: argparse-required, argparse default 0,
+// hand-rolled process.argv.indexOf with an in-file DEFAULT_PORT, and none.
+// 0 means "pick an ephemeral port and announce it".
+export function parsePort(argv: string[] = process.argv.slice(2), fallback = 0): number {
+  const i = argv.indexOf('--port')
+  if (i === -1) return fallback
+  const raw = argv[i + 1]
+  if (raw === undefined) throw new KitError('--port requires a value')
+  const port = Number(raw)
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new KitError(`invalid port ${raw}`)
+  }
+  return port
+}

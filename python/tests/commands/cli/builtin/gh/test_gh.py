@@ -12,21 +12,28 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import json
+
 import pytest
 
 from mirage.commands.cli.builtin.gh import GH
+from mirage.commands.cli.builtin.gh.accessor import body_value, repo_number
 from mirage.commands.cli.builtin.gh.api import api
 from mirage.commands.cli.builtin.gh.repo import fork, rename, summary, view
 from mirage.commands.cli.specs import cli_spec_for
-from mirage.commands.cli.types import CLIInvocation
+from mirage.commands.cli.types import CLIDoors, CLIInvocation
+from mirage.commands.spec.types import FlagView
+from mirage.core.api.client import ApiResponse
 from mirage.core.github.config import GhConfig
 from mirage.io.types import materialize
-from mirage.types import ResourceName
+from mirage.types import PathSpec, ResourceName
 
 CONFIG = GhConfig(token="t")
 CALLS: list[dict] = []
 REPLY: dict = {}
+RESPONSES: list[ApiResponse] = []
 README: list[str | None] = [None]
+_MISSING = object()
 
 
 def _record(**call) -> dict:
@@ -36,6 +43,7 @@ def _record(**call) -> dict:
 
 def _reset(reply=None) -> None:
     CALLS.clear()
+    RESPONSES.clear()
     README[0] = None
     globals()["REPLY"] = {} if reply is None else reply
 
@@ -63,33 +71,127 @@ def _patch(monkeypatch):
     async def fake_request(token,
                            method,
                            path,
-                           body=None,
+                           body=_MISSING,
                            params=None,
                            *,
-                           base_url=None):
+                           base_url=None,
+                           headers=None):
         call = {"method": method, "path": path}
-        if body is not None:
+        if body is not _MISSING:
             call["body"] = body
         if params is not None:
             call["params"] = params
+        if headers is not None:
+            call["headers"] = headers
         return _record(**call)
+
+    async def fake_response(token,
+                            method,
+                            path,
+                            body=_MISSING,
+                            params=None,
+                            *,
+                            base_url=None,
+                            headers=None):
+        if body is _MISSING:
+            await fake_request(token,
+                               method,
+                               path,
+                               params=params,
+                               base_url=base_url,
+                               headers=headers)
+        else:
+            await fake_request(token,
+                               method,
+                               path,
+                               body,
+                               params,
+                               base_url=base_url,
+                               headers=headers)
+        if RESPONSES:
+            return RESPONSES.pop(0)
+        return ApiResponse(REPLY, 200, {})
 
     monkeypatch.setitem(view.__globals__, "view_repo", fake_view)
     monkeypatch.setitem(view.__globals__, "read_readme", fake_readme)
     monkeypatch.setitem(fork.__globals__, "fork_repo", fake_fork)
     monkeypatch.setitem(rename.__globals__, "rename_repo", fake_rename)
     monkeypatch.setitem(api.__globals__, "github_request", fake_request)
+    monkeypatch.setitem(api.__globals__, "github_request_response",
+                        fake_response)
 
 
-def _inv(texts=(), flags=None, config=CONFIG) -> CLIInvocation:
-    return CLIInvocation(config, texts=tuple(texts), flags=flags or {})
+def _inv(texts=(), flags=None,
+         config=CONFIG,
+         stdin=None,
+         doors=None,
+         argv=()) -> CLIInvocation:
+    return CLIInvocation(config,
+                         argv=tuple(argv),
+                         texts=tuple(texts),
+                         flags=flags or {},
+                         stdin=stdin,
+                         doors=doors)
 
 
 def test_registers_itself_under_the_grammar_gh_uses():
     assert cli_spec_for("gh") is GH
-    assert [c.name for c in GH.subcommands] == ["repo", "api"]
-    assert [c.name for c in GH.subcommands[0].subcommands
-            ] == ["view", "fork", "rename"]
+    assert [c.name for c in GH.subcommands
+            ] == ["api", "issue", "pr", "repo", "release", "run", "workflow"]
+    repo = next(c for c in GH.subcommands if c.name == "repo")
+    assert [c.name for c in repo.subcommands
+            ] == ["list", "view", "create", "fork", "rename"]
+    groups = {
+        c.name: [leaf.name for leaf in c.subcommands]
+        for c in GH.subcommands if c.subcommands
+    }
+    assert groups["issue"] == [
+        "list", "view", "create", "edit", "close", "reopen", "comment"
+    ]
+    assert groups["pr"] == [
+        "list", "view", "create", "edit", "merge", "close", "comment", "diff",
+        "checks"
+    ]
+    assert groups["release"] == ["list", "view", "create"]
+    assert groups["run"] == ["list", "view", "rerun"]
+    assert groups["workflow"] == ["list", "view", "run"]
+
+
+def _path(value: str) -> PathSpec:
+    return PathSpec.from_str_path(value)
+
+
+def _doors(files: dict[str, bytes]) -> CLIDoors:
+
+    async def dispatch(op, path, *args, **kwargs):
+        assert op == "read"
+        return files[path.virtual], None
+
+    return CLIDoors(dispatch=dispatch)
+
+
+@pytest.mark.asyncio
+async def test_short_body_file_dash_reads_standard_input():
+    flags = {"body_file": _path("/-")}
+    for argv in (("issue", "create", "-F", "-"), ("issue", "create", "-F-")):
+        value = await body_value(
+            _inv(flags=flags, stdin=b"short body", argv=argv), FlagView(flags))
+        assert value == "short body"
+
+
+def test_full_subject_url_overrides_the_configured_repository():
+    flags = {"repo": "wrong/repo"}
+    ref, number = repo_number(_inv(flags=flags), FlagView(flags),
+                              "https://github.com/acme/tools/issues/42",
+                              "issue", "issues")
+    assert (ref.owner, ref.repo, number) == ("acme", "tools", 42)
+
+
+def test_subject_url_kind_must_match_the_verb():
+    with pytest.raises(ValueError, match="pull request number"):
+        repo_number(_inv(), FlagView({}),
+                    "https://github.com/acme/tools/issues/42", "pull request",
+                    "pull")
 
 
 # A gh write lands on the repository a `github` mount reads, by name rather
@@ -103,6 +205,18 @@ def test_names_the_mounted_resource_its_writes_invalidate():
 @pytest.mark.asyncio
 async def test_views_the_repository_the_operand_names():
     await view(_inv(["o/r"]))
+    assert CALLS == [{"method": "GET", "path": "/repos/o/r"}]
+
+
+@pytest.mark.asyncio
+async def test_json_repo_view_does_not_fetch_the_readme(monkeypatch):
+
+    async def unexpected_readme(config, ref):
+        raise AssertionError("JSON output must not fetch README content")
+
+    monkeypatch.setitem(view.__globals__, "read_readme", unexpected_readme)
+    _reset({"name": "r", "full_name": "o/r"})
+    await view(_inv(["o/r"], {"json": "name"}))
     assert CALLS == [{"method": "GET", "path": "/repos/o/r"}]
 
 
@@ -252,6 +366,120 @@ async def test_api_stringifies_a_typed_field_bound_for_the_query():
         }))
     assert CALLS[0]["params"] == {"per_page": "5", "draft": "true"}
     assert "body" not in CALLS[0]
+
+
+@pytest.mark.asyncio
+async def test_api_builds_nested_objects_and_arrays():
+    await api(
+        _inv(
+            ["x"], {
+                "field": [
+                    "config[enabled]=true", "labels[]=bug", "labels[]=agent",
+                    "empty[]"
+                ]
+            }))
+    assert CALLS[0]["body"] == {
+        "config": {
+            "enabled": True
+        },
+        "labels": ["bug", "agent"],
+        "empty": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_api_reads_typed_at_values_from_workspace_and_stdin():
+    await api(
+        _inv(["x"], {"field": ["body=@/scratch/body.md", "note=@-"]},
+             stdin=b"from stdin",
+             doors=_doors({"/scratch/body.md": b"from file"})))
+    assert CALLS[0]["body"] == {"body": "from file", "note": "from stdin"}
+
+
+@pytest.mark.asyncio
+async def test_api_input_is_the_body_and_fields_move_to_the_query():
+    await api(
+        _inv(
+            ["x"], {
+                "method": "PATCH",
+                "input": _path("/scratch/body.json"),
+                "raw_field": ["mode=strict"],
+            },
+            doors=_doors({"/scratch/body.json": b'{"enabled":true}'})))
+    assert CALLS[0] == {
+        "method": "PATCH",
+        "path": "/x",
+        "body": {
+            "enabled": True
+        },
+        "params": {
+            "mode": "strict"
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_api_input_preserves_an_explicit_json_null_body():
+    await api(
+        _inv(["x"], {"input": _path("/scratch/body.json")},
+             doors=_doors({"/scratch/body.json": b"null"})))
+    assert CALLS[0] == {"method": "POST", "path": "/x", "body": None}
+
+
+@pytest.mark.asyncio
+async def test_api_passes_custom_headers_without_replacing_defaults():
+    await api(_inv(["x"], {"header": ["Accept: text/plain", "X-Probe: yes"]}))
+    assert CALLS[0]["headers"] == {"Accept": "text/plain", "X-Probe": "yes"}
+
+
+@pytest.mark.asyncio
+async def test_api_follows_link_headers_and_slurps_pages():
+    RESPONSES.extend([
+        ApiResponse([{
+            "id": 1
+        }], 200, {"link": '<http://fake/items?page=2>; rel="next"'}),
+        ApiResponse([{
+            "id": 2
+        }], 200, {}),
+    ])
+    out, _io = await api(_inv(["items"], {"paginate": True, "slurp": True}))
+    assert [call["path"] for call in CALLS] == ["/items", "/items?page=2"]
+    assert json.loads(await materialize(out)) == [[{"id": 1}], [{"id": 2}]]
+
+
+@pytest.mark.asyncio
+async def test_api_strips_the_enterprise_prefix_from_link_pages():
+    RESPONSES.extend([
+        ApiResponse(
+            [{
+                "id": 1
+            }], 200,
+            {"link": '<https://git.example/api/v3/items?page=2>; rel="next"'}),
+        ApiResponse([{
+            "id": 2
+        }], 200, {}),
+    ])
+    await api(
+        _inv(["items"], {"paginate": True},
+             config=GhConfig(token="t",
+                             base_url="https://git.example/api/v3")))
+    assert [call["path"] for call in CALLS] == ["/items", "/items?page=2"]
+
+
+@pytest.mark.asyncio
+async def test_api_silent_suppresses_output_without_losing_mutation():
+    out, io = await api(_inv(["x"], {"method": "POST", "silent": True}))
+    assert await materialize(out) == b""
+    assert io.mutated is True
+
+
+@pytest.mark.asyncio
+async def test_api_emits_a_non_json_response_verbatim():
+    RESPONSES.append(ApiResponse("diff --git a/x b/x\n", 200, {}))
+    out, _io = await api(
+        _inv(["repos/o/r/pulls/1"],
+             {"header": ["Accept: application/vnd.github.v3.diff"]}))
+    assert await materialize(out) == b"diff --git a/x b/x\n"
 
 
 # `--jq` renders the way gh 2.85 does, probed live: a string raw, null as

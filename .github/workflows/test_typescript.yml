@@ -81,6 +81,15 @@ jobs:
         working-directory: typescript
         run: pnpm -r build
 
+      # integ is a workspace member, so `pnpm -r typecheck` reaches it, and its
+      # fakes import Prisma clients generated into the gitignored
+      # integ/generated/. Without this every one of those imports is TS2307 and
+      # the types they carry degrade to implicit any, which reads as dozens of
+      # unrelated errors in files nobody touched.
+      - name: Generate integ Prisma clients
+        working-directory: integ
+        run: pnpm run prisma:clients
+
       - name: Typecheck
         working-directory: typescript
         run: pnpm -r typecheck

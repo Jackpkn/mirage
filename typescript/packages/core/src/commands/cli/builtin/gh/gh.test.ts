@@ -14,10 +14,12 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type * as AccessorModule from './accessor.ts'
-import type { GitHubTransport } from '../../../../core/github/client.ts'
+import { bodyValue, repoNumber } from './accessor.ts'
+import { type GitHubResponse, type GitHubTransport } from '../../../../core/github/client.ts'
 import { cliSpecFor } from '../../specs.ts'
 import { ResourceName } from '../../../../types.ts'
 import type { CommandFnResult } from '../../../config.ts'
+import { FlagView } from '../../../spec/types.ts'
 import type { CLIInvocation } from '../../types.ts'
 import { GH } from './index.ts'
 import { api } from './api.ts'
@@ -34,6 +36,7 @@ interface Call {
 
 const CALLS: Call[] = []
 let REPLY: unknown = {}
+let RESPONSES: GitHubResponse[] = []
 
 class FakeTransport implements GitHubTransport {
   get(path: string, params?: Record<string, string>): Promise<unknown> {
@@ -52,6 +55,21 @@ class FakeTransport implements GitHubTransport {
     CALLS.push(call)
     return Promise.resolve(REPLY)
   }
+
+  requestWithResponse(
+    method: string,
+    path: string,
+    body?: unknown,
+    params?: Record<string, string>,
+    headers?: Record<string, string>,
+  ): Promise<GitHubResponse> {
+    const call: Call & { headers?: Record<string, string> } = { method, path }
+    if (body !== undefined) call.body = body
+    if (params !== undefined) call.params = params
+    if (headers !== undefined) call.headers = headers
+    CALLS.push(call)
+    return Promise.resolve(RESPONSES.shift() ?? { data: REPLY, status: 200, headers: {} })
+  }
 }
 
 vi.mock('./accessor.ts', async (importOriginal) => {
@@ -63,8 +81,18 @@ function inv(
   texts: string[],
   flags: CLIInvocation['flags'] = {},
   config: unknown = { token: 't' },
+  extra: Partial<Pick<CLIInvocation, 'stdin' | 'doors' | 'argv'>> = {},
 ): CLIInvocation {
-  return { config, argv: [], paths: [], texts, flags, stdin: null, env: {} }
+  return {
+    config,
+    argv: extra.argv ?? [],
+    paths: [],
+    texts,
+    flags,
+    stdin: extra.stdin ?? null,
+    env: {},
+    ...(extra.doors === undefined ? {} : { doors: extra.doors }),
+  }
 }
 
 function text(result: CommandFnResult): string {
@@ -75,14 +103,47 @@ function text(result: CommandFnResult): string {
 function reset(reply: unknown = {}): void {
   CALLS.length = 0
   REPLY = reply
+  RESPONSES = []
 }
 
 describe('gh tree', () => {
   it('registers itself under the grammar gh uses', () => {
     expect(cliSpecFor('gh')).toBe(GH)
-    expect(GH.subcommands.map((c) => c.name)).toEqual(['repo', 'api'])
+    expect(GH.subcommands.map((c) => c.name)).toEqual([
+      'api',
+      'issue',
+      'pr',
+      'repo',
+      'release',
+      'run',
+      'workflow',
+    ])
     const repo = GH.subcommands.find((c) => c.name === 'repo')
-    expect(repo?.subcommands.map((c) => c.name)).toEqual(['view', 'fork', 'rename'])
+    expect(repo?.subcommands.map((c) => c.name)).toEqual([
+      'list',
+      'view',
+      'create',
+      'fork',
+      'rename',
+    ])
+    const groups = Object.fromEntries(
+      GH.subcommands.map((group) => [group.name, group.subcommands.map((leaf) => leaf.name)]),
+    )
+    expect(groups.issue).toEqual(['list', 'view', 'create', 'edit', 'close', 'reopen', 'comment'])
+    expect(groups.pr).toEqual([
+      'list',
+      'view',
+      'create',
+      'edit',
+      'merge',
+      'close',
+      'comment',
+      'diff',
+      'checks',
+    ])
+    expect(groups.release).toEqual(['list', 'view', 'create'])
+    expect(groups.run).toEqual(['list', 'view', 'rerun'])
+    expect(groups.workflow).toEqual(['list', 'view', 'run'])
   })
 
   // A gh write lands on the repository a `github` mount reads, by name
@@ -102,6 +163,12 @@ describe('gh repo', () => {
       { method: 'GET', path: '/repos/o/r' },
       { method: 'GET', path: '/repos/o/r/readme' },
     ])
+  })
+
+  it('does not fetch README content for JSON output', async () => {
+    reset({ name: 'r', full_name: 'o/r' })
+    await view(inv(['o/r'], { json: 'name' }))
+    expect(CALLS).toEqual([{ method: 'GET', path: '/repos/o/r' }])
   })
 
   it('falls back to the install repo when no operand is given', async () => {
@@ -154,6 +221,48 @@ describe('gh repo', () => {
     reset({ full_name: 'me/after' })
     await rename(inv(['after'], { repo: 'me/before' }))
     expect(CALLS).toEqual([{ method: 'PATCH', path: '/repos/me/before', body: { name: 'after' } }])
+  })
+})
+
+describe('gh file input', () => {
+  it('reads short -F - from standard input after path resolution', async () => {
+    const flags = { body_file: '/-' }
+    for (const argv of [
+      ['issue', 'create', '-F', '-'],
+      ['issue', 'create', '-F-'],
+    ]) {
+      const value = await bodyValue(
+        inv([], flags, { token: 't' }, { stdin: new TextEncoder().encode('short body'), argv }),
+        new FlagView(flags),
+      )
+      expect(value).toBe('short body')
+    }
+  })
+})
+
+describe('gh issue and pull request subjects', () => {
+  it('lets a full URL override the configured repository', () => {
+    const flags = { repo: 'wrong/repo' }
+    const [ref, number] = repoNumber(
+      inv([], flags),
+      new FlagView(flags),
+      'https://github.com/acme/tools/issues/42',
+      'issue',
+      'issues',
+    )
+    expect({ ...ref, number }).toEqual({ owner: 'acme', repo: 'tools', number: 42 })
+  })
+
+  it('requires the URL kind to match the verb', () => {
+    expect(() =>
+      repoNumber(
+        inv([]),
+        new FlagView({}),
+        'https://github.com/acme/tools/issues/42',
+        'pull request',
+        'pull',
+      ),
+    ).toThrow(/pull request number/)
   })
 })
 
@@ -218,6 +327,111 @@ describe('gh api', () => {
     await api(inv(['search/code'], { method: 'GET', field: ['per_page=5', 'draft=true'] }))
     expect(CALLS[0]?.params).toEqual({ per_page: '5', draft: 'true' })
     expect(CALLS[0]?.body).toBeUndefined()
+  })
+
+  it('builds nested objects and arrays', async () => {
+    reset({})
+    await api(
+      inv(['x'], {
+        field: ['config[enabled]=true', 'labels[]=bug', 'labels[]=agent', 'empty[]'],
+      }),
+    )
+    expect(CALLS[0]?.body).toEqual({
+      config: { enabled: true },
+      labels: ['bug', 'agent'],
+      empty: [],
+    })
+  })
+
+  it('reads typed @- values from stdin', async () => {
+    reset({})
+    await api(
+      inv(
+        ['x'],
+        { field: ['body=@-'] },
+        { token: 't' },
+        { stdin: new TextEncoder().encode('from stdin') },
+      ),
+    )
+    expect(CALLS[0]?.body).toEqual({ body: 'from stdin' })
+  })
+
+  it('uses --input as the body and moves fields to the query', async () => {
+    reset({})
+    await api(
+      inv(
+        ['x'],
+        { method: 'PATCH', input: '-', raw_field: ['mode=strict'] },
+        { token: 't' },
+        { stdin: new TextEncoder().encode('{"enabled":true}'), argv: ['api', 'x', '--input', '-'] },
+      ),
+    )
+    expect(CALLS[0]).toEqual({
+      method: 'PATCH',
+      path: '/x',
+      body: { enabled: true },
+      params: { mode: 'strict' },
+    })
+  })
+
+  it('preserves an explicit JSON null from --input', async () => {
+    reset({})
+    await api(
+      inv(
+        ['x'],
+        { input: '-' },
+        { token: 't' },
+        { stdin: new TextEncoder().encode('null'), argv: ['api', 'x', '--input', '-'] },
+      ),
+    )
+    expect(CALLS[0]).toEqual({ method: 'POST', path: '/x', body: null })
+  })
+
+  it('passes custom headers without replacing defaults', async () => {
+    reset({})
+    await api(inv(['x'], { header: ['Accept: text/plain', 'X-Probe: yes'] }))
+    expect((CALLS[0] as Call & { headers?: Record<string, string> }).headers).toEqual({
+      Accept: 'text/plain',
+      'X-Probe': 'yes',
+    })
+  })
+
+  it('follows Link headers and slurps pages', async () => {
+    reset()
+    RESPONSES = [
+      {
+        data: [{ id: 1 }],
+        status: 200,
+        headers: { link: '<http://fake/items?page=2>; rel="next"' },
+      },
+      { data: [{ id: 2 }], status: 200, headers: {} },
+    ]
+    const out = await api(inv(['items'], { paginate: true, slurp: true }))
+    expect(CALLS.map((call) => call.path)).toEqual(['/items', '/items?page=2'])
+    expect(out === null ? '' : JSON.parse(text(out))).toEqual([[{ id: 1 }], [{ id: 2 }]])
+  })
+
+  it('strips the Enterprise API prefix from Link pages', async () => {
+    reset()
+    RESPONSES = [
+      {
+        data: [{ id: 1 }],
+        status: 200,
+        headers: { link: '<https://git.example/api/v3/items?page=2>; rel="next"' },
+      },
+      { data: [{ id: 2 }], status: 200, headers: {} },
+    ]
+    await api(
+      inv(['items'], { paginate: true }, { token: 't', baseUrl: 'https://git.example/api/v3' }),
+    )
+    expect(CALLS.map((call) => call.path)).toEqual(['/items', '/items?page=2'])
+  })
+
+  it('suppresses --silent output without losing mutation', async () => {
+    reset({ ok: true })
+    const out = await api(inv(['x'], { method: 'POST', silent: true }))
+    expect(out === null ? '' : text(out)).toBe('')
+    expect(out?.[1].mutated).toBe(true)
   })
 })
 

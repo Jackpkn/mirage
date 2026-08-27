@@ -33,6 +33,12 @@ import type {
 } from './types.ts'
 
 const ENC = new TextEncoder()
+const S_IFMT = 0o170000
+const S_IFCHR = 0o020000
+
+function isCharDevice(mode: number): boolean {
+  return (mode & S_IFMT) === S_IFCHR
+}
 
 /**
  * The metadata a `setattr` actually changes, or null when it changes
@@ -171,7 +177,7 @@ export class MirageFs {
       nlink: 1,
       uid: 0,
       gid: 0,
-      rdev: 0,
+      rdev: node.rdev,
       size,
       atime: new Date(node.atime),
       mtime: new Date(node.mtime),
@@ -330,6 +336,11 @@ export class MirageFs {
     position: number,
   ): number {
     const node = stream.node
+    if (isCharDevice(node.mode)) {
+      if (node.rdev === 0x103) return 0
+      buffer.fill(0, offset, offset + length)
+      return length
+    }
     const used = node.usedBytes ?? 0
     if (position >= used) return 0
     const size = Math.min(used - position, length)
@@ -346,6 +357,7 @@ export class MirageFs {
   ): number {
     if (length === 0) return 0
     const node = stream.node
+    if (isCharDevice(node.mode)) return length
     const need = position + length
     let contents = node.contents ?? new Uint8Array(0)
     if (contents.length < need) {

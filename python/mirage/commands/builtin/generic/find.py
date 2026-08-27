@@ -8,8 +8,9 @@ from mirage.commands.builtin.find_eval import (FindArgs, FindEntry, PredNode,
                                                has_link_children, keep,
                                                prefix_path_nodes,
                                                start_basename, tree_has_empty)
-from mirage.commands.builtin.find_helper import (_parse_depth, _parse_mtime,
-                                                 _parse_size, expand_printf,
+from mirage.commands.builtin.find_helper import (_kind_letter, _parse_depth,
+                                                 _parse_mtime, _parse_size,
+                                                 expand_printf,
                                                  printf_needs_stat,
                                                  unrespell_raw)
 from mirage.commands.builtin.find_parse import parse_find_expression
@@ -363,11 +364,17 @@ def start_point_results(
             return results
         if args.mtime_max is not None and ts > args.mtime_max:
             return results
+    empty = None
+    if args.empty:
+        # GNU -empty matches only a size-0 regular file here; a device
+        # start point is never empty-eligible.
+        empty = (start.size
+                 or 0) == 0 if start.type is FileType.FILE else False
     emit_start_path(results,
                     search_path.mount_path,
                     start_basename(search_path),
-                    kind="f",
-                    is_empty=(start.size or 0) == 0 if args.empty else None,
+                    kind=_kind_letter(start),
+                    is_empty=empty,
                     exists=True,
                     tree=tree,
                     maxdepth=args.maxdepth,
@@ -735,11 +742,13 @@ async def _walk_collect(
         if child.endswith("/"):
             trimmed = child.rstrip("/")
             is_dir = True
+            kind = "d"
         else:
             trimmed = child
             st = await _stat_entry(stat, trimmed, prefix, index)
             is_dir = st is not None and st.type == FileType.DIRECTORY
-        acc.append((trimmed, "d" if is_dir else "f"))
+            kind = _kind_letter(st)
+        acc.append((trimmed, kind))
         if is_dir:
             child_spec = PathSpec(virtual=trimmed,
                                   directory=trimmed,
@@ -801,7 +810,7 @@ async def link_results(
         if follow:
             target = await links.target_stat(path)
             if target is not None:
-                kind = ("d" if target.type == FileType.DIRECTORY else "f")
+                kind = _kind_letter(target)
                 st = target
         key = path[len(prefix
                        ):] if prefix and path.startswith(prefix) else path
@@ -856,8 +865,7 @@ async def walk_find(
                  if search_path.virtual != "/" else "/")
     root_stat = await _stat_entry(stat, root_path, prefix, index)
     if root_stat is not None:
-        collected.append(
-            (root_path, "d" if root_stat.type == FileType.DIRECTORY else "f"))
+        collected.append((root_path, _kind_letter(root_stat)))
     # GNU depth convention: the search root is depth 0, its children are
     # depth 1. A start point that is not a directory has no children, so
     # readdir on it is either an error the walk would have to swallow

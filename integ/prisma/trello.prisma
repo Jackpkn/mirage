@@ -1,0 +1,156 @@
+// Schema for the Trello fake (integ/server/trello/). The vendor API returns
+// collections in a caller-visible order that the fixture fixes and writes
+// append to, so every listable table carries an explicit `seq` and is read
+// back with orderBy seq: `include` does not read back insertion order.
+//
+// The vendor takes write parameters in the QUERY STRING, not a body.
+//
+// A card's members and labels are ordered id lists rather than link tables.
+// The fixture states them as `idMembers` / `labelIds` arrays of ids and the
+// generic seeder writes an array into a scalar column as JSON, so the order
+// the fixture fixes survives without a table whose seq would have to restate
+// it. Both endpoints answer with exactly that list.
+//
+// A column the old hand-written seeder defaulted to '' when the fixture
+// omitted it carries @default("") here, so a sparse fixture renders the empty
+// string instead of failing the whole reset. The set is exactly the old
+// seeder's: workspace displayName and name, board name, list name, card name,
+// comment text. Label name and board-member username/fullName are NOT in it,
+// because the old seeder passed those through and Prisma refused them.
+
+// TrelloMember is the one model no fixture key names. Board membership is
+// stated per board (and the same person appears on two of them), so the
+// global member table an id lookup reads is derived from those rows in
+// afterSeed rather than restated a third time.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/trello"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model TrelloWorkspace {
+  tenant      String
+  id          String
+  displayName String        @default("")
+  name        String        @default("")
+  seq         Int
+  boards      TrelloBoard[]
+
+  @@id([tenant, id])
+}
+
+model TrelloBoard {
+  tenant           String
+  id               String
+  workspaceId      String
+  name             String  @default("")
+  closed           Boolean @default(false)
+  url              String?
+  dateLastActivity String?
+  seq              Int
+
+  workspace TrelloWorkspace     @relation(fields: [tenant, workspaceId], references: [tenant, id])
+  members   TrelloBoardMember[]
+  labels    TrelloLabel[]
+  lists     TrelloList[]
+
+  @@id([tenant, id])
+  @@index([tenant, workspaceId])
+}
+
+// A link row, so a surrogate pk and not @@id([tenant, id]): the same person is
+// a member of two boards and a composite key would reject the second row.
+model TrelloBoardMember {
+  pk       Int    @id @default(autoincrement())
+  tenant   String
+  id       String
+  boardId  String
+  username String
+  fullName String
+  seq      Int
+
+  board TrelloBoard @relation(fields: [tenant, boardId], references: [tenant, id])
+
+  @@index([tenant, boardId])
+}
+
+model TrelloMember {
+  tenant   String
+  id       String
+  username String
+  fullName String
+
+  @@id([tenant, id])
+}
+
+model TrelloLabel {
+  tenant  String
+  id      String
+  boardId String
+  name    String
+  color   String?
+  seq     Int
+
+  board TrelloBoard @relation(fields: [tenant, boardId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, boardId])
+}
+
+model TrelloList {
+  tenant  String
+  id      String
+  boardId String
+  name    String  @default("")
+  closed  Boolean @default(false)
+  pos     Int?
+  seq     Int
+
+  board TrelloBoard  @relation(fields: [tenant, boardId], references: [tenant, id])
+  cards TrelloCard[]
+
+  @@id([tenant, id])
+  @@index([tenant, boardId])
+}
+
+model TrelloCard {
+  tenant           String
+  id               String
+  listId           String
+  name             String  @default("")
+  desc             String  @default("")
+  idMembers        String  @default("[]")
+  labelIds         String  @default("[]")
+  due              String?
+  dueComplete      Boolean @default(false)
+  closed           Boolean @default(false)
+  dateLastActivity String?
+  seq              Int
+
+  list     TrelloList      @relation(fields: [tenant, listId], references: [tenant, id])
+  comments TrelloComment[]
+
+  @@id([tenant, id])
+  @@index([tenant, listId])
+}
+
+model TrelloComment {
+  tenant   String
+  id       String
+  cardId   String
+  memberId String?
+  text     String  @default("")
+  date     String?
+  seq      Int
+
+  card TrelloCard @relation(fields: [tenant, cardId], references: [tenant, id])
+
+  @@id([tenant, id])
+  @@index([tenant, cardId])
+}

@@ -11,8 +11,10 @@ from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.core.timeutil import iso_to_epoch
 from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView, MountView, StatPath
-from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec, StatFn
+from mirage.types import (DEVICE_NUMBERS_KEY, LINK_TARGET_KEY, FileStat,
+                          FileType, PathSpec, StatFn)
 from mirage.utils.errors import FS_ERRORS, fs_error_line
+from mirage.utils.stat_view import device_rdev, posix_mode
 
 _STR_DIRECTIVES = frozenset("nNF")
 
@@ -23,6 +25,7 @@ _ASCII_DIGITS = frozenset("0123456789")
 _TYPE_LABELS = {
     FileType.DIRECTORY: "directory",
     FileType.SYMLINK: "symbolic link",
+    FileType.CHAR_DEVICE: "character special file",
     FileType.FILE: "regular file",
 }
 
@@ -68,14 +71,7 @@ def _type_label(s: FileStat) -> str:
 
 
 def _effective_mode(s: FileStat) -> int:
-    if s.mode is not None:
-        return s.mode & 0o7777
-    if s.type == FileType.DIRECTORY:
-        return 0o755
-    # A symlink carries no permission bits of its own; GNU reports 0777.
-    if s.type == FileType.SYMLINK:
-        return 0o777
-    return 0o644
+    return posix_mode(s) & 0o7777
 
 
 def _type_bits(s: FileStat) -> int:
@@ -83,6 +79,8 @@ def _type_bits(s: FileStat) -> int:
         return 0o040000
     if s.type == FileType.SYMLINK:
         return 0o120000
+    if s.type == FileType.CHAR_DEVICE:
+        return 0o020000
     return 0o100000
 
 
@@ -231,12 +229,21 @@ def _directive_value(spec: str, s: FileStat, name: str) -> str:
         return "0"
     if spec == "B":
         return "512"
-    if spec in ("r", "R", "t", "T"):
-        return "0"
+    dev = s.extra.get(DEVICE_NUMBERS_KEY) if s.extra else None
+    if spec == "t":
+        # rdev major in hex; a non-device has none, so 0 like GNU.
+        return f"{dev[0]:x}" if dev else "0"
+    if spec == "T":
+        return f"{dev[1]:x}" if dev else "0"
+    if spec in ("r", "R"):
+        rdev = device_rdev(s)
+        return str(rdev) if spec == "r" else f"{rdev:x}"
     if len(spec) == 2 and spec[0] in "HL":
-        # %Hr/%Lr are rdev major/minor (0, like %r); %Hd/%Ld are device
-        # major/minor, which a VFS has no truthful value for.
-        return "0" if spec[1] in "rR" else "?"
+        # %Hr/%Lr are rdev major/minor in decimal; %Hd/%Ld are the device
+        # the file resides on, which a VFS has no truthful value for.
+        if spec[1] in "rR":
+            return str(dev[0 if spec[0] == "H" else 1]) if dev else "0"
+        return "?"
     return "?"
 
 

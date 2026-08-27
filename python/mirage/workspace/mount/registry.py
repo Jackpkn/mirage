@@ -17,6 +17,7 @@ from typing import Protocol
 from mirage.cache.file.mixin import FileCacheMixin
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.general import COMMANDS as GENERAL_COMMANDS
+from mirage.context import effective_path_mode, strongest_mode_under
 from mirage.ops.config import OpsMount
 from mirage.policy import Decisions, MountRootPolicy, OutputCapPolicy, Policies
 from mirage.resource.base import BaseResource
@@ -297,9 +298,24 @@ class MountRegistry:
         for m in self._mounts:
             if m.prefix == DEV_PREFIX:
                 continue
-            if m.effective_mode() == MountMode.EXEC:
+            # strongest_mode_under, not effective_mode: a session whose
+            # only x grant is a show entry still counts as having one.
+            if strongest_mode_under(m.prefix, m.mode) == MountMode.EXEC:
                 return True
         return False
+
+    def exec_allowed_at(self, virtual: str) -> bool:
+        """Whether code may be loaded from this path: the per-script
+        form of ``is_exec_allowed``, read by an interpreter running a
+        file operand (``python3 path.py``, ``bash script.sh``).
+
+        Args:
+            virtual (str): the script's absolute virtual path.
+        """
+        m = self.try_mount_for(virtual)
+        if m is None:
+            return False
+        return effective_path_mode(virtual, m.prefix, m.mode) == MountMode.EXEC
 
     def mount_for_command(self, cmd_name: str) -> MountEntry | None:
         """Find a mount that has this command registered.

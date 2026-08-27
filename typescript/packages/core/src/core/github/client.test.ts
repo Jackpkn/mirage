@@ -20,6 +20,7 @@ interface Seen {
   method: string
   body: string | null
   contentType: string | null
+  accept: string | null
 }
 
 const SEEN: Seen[] = []
@@ -40,11 +41,12 @@ beforeEach(() => {
       method: req.method,
       body: typeof init?.body === 'string' ? init.body : null,
       contentType: req.headers.get('content-type'),
+      accept: req.headers.get('accept'),
     })
     return Promise.resolve(
       new Response(REPLY.body === '' ? null : REPLY.body, {
         status: REPLY.status,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-page': 'next' },
       }),
     )
   }) as typeof globalThis.fetch
@@ -96,6 +98,21 @@ describe('HttpGitHubTransport', () => {
   it('decodes an empty response to null', async () => {
     REPLY = { status: 204, body: '' }
     expect(await transport().request('DELETE', '/repos/o/r')).toBeNull()
+  })
+
+  it('retains response metadata and accepts custom headers', async () => {
+    const response = await transport().requestWithResponse(
+      'GET',
+      '/repos/o/r',
+      undefined,
+      undefined,
+      {
+        accept: 'text/plain',
+      },
+    )
+    expect(SEEN[0]?.accept).toBe('text/plain')
+    expect(response).toMatchObject({ data: { ok: true }, status: 200 })
+    expect(response.headers['x-page']).toBe('next')
   })
 
   // github.com asks for a second between writes and enforces it as a

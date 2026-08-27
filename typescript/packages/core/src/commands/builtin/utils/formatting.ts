@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { FileType, LINK_TARGET_KEY, type FileStat } from '../../../types.ts'
+import { DEVICE_NUMBERS_KEY, FileType, LINK_TARGET_KEY, type FileStat } from '../../../types.ts'
 import { DEFAULT_MODES, EPOCH_LS_TIME, MONTHS, NUMERIC_PREFIX, TYPE_CHARS } from './constants.ts'
 
 /**
@@ -130,6 +130,10 @@ export function formatLsLong(stats: readonly FileStat[], opts: LsLongOptions = {
   const width = opts.sizeWidth ?? sizes.reduce((m, s) => Math.max(m, s.length), 1)
   return stats.map((s, i) => {
     const mode = lsModeString(s)
+    const device = s.extra[DEVICE_NUMBERS_KEY]
+    if (Array.isArray(device) && device.length === 2) {
+      return `${mode}\t${String(device[0])}, ${String(device[1])}\t-\t${lsName(s)}`
+    }
     // Metadata-less entries (synthetic API-backend directories) render the
     // compact placeholder form instead of inventing size 0 + epoch mtime,
     // mirroring the python formatter.

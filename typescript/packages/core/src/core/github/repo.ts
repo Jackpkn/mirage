@@ -14,6 +14,7 @@
 
 import { GitHubApiError, type GitHubTransport } from './client.ts'
 import { decodeBase64 } from '../../utils/base64.ts'
+import { githubPages } from './paginate.ts'
 
 export interface RepoRef {
   owner: string
@@ -86,4 +87,29 @@ export function renameRepo(
   name: string,
 ): Promise<unknown> {
   return transport.request('PATCH', `/repos/${ref.owner}/${ref.repo}`, { name })
+}
+
+export async function listRepos(
+  transport: GitHubTransport,
+  owner: string | undefined,
+  limit: number,
+): Promise<Record<string, unknown>[]> {
+  let path = '/user/repos'
+  if (owner !== undefined) {
+    const account = (await transport.get(`/users/${owner}`)) as { type?: unknown }
+    const prefix = account.type === 'Organization' ? 'orgs' : 'users'
+    path = `/${prefix}/${owner}/repos`
+  }
+  return githubPages(transport, path, { params: { sort: 'pushed' }, limit })
+}
+
+export async function createRepo(
+  transport: GitHubTransport,
+  owner: string | undefined,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const personal =
+    owner === undefined || owner.toLowerCase() === (await login(transport)).toLowerCase()
+  const path = personal ? '/user/repos' : `/orgs/${owner}/repos`
+  return transport.request('POST', path, body)
 }

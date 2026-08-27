@@ -19,6 +19,7 @@ from typing import Any
 from mirage.commands.builtin.generic.crossmount.types import (OperandRun,
                                                               RunSingle)
 from mirage.commands.spec.types import FlagValue
+from mirage.commands.spec.usage import read_fail_exit
 from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.runtime.types import DispatchFn
@@ -68,7 +69,11 @@ async def run_operands(run_single: RunSingle,
             # keep the remaining operands, GNU-style.
             existing = await materialize(io.stderr) if io.stderr else b""
             io.stderr = existing + fs_error_line(cmd_name, scope, exc).encode()
-            io.exit_code = 1
+            # The command's own code for a failed read, not the catch-all:
+            # a lazy operand that fails here is the same failure the
+            # single-mount run reports eagerly, and it must answer the
+            # same number.
+            io.exit_code = read_fail_exit(cmd_name, exc)
             data = b""
         results.append(OperandRun(scope, data, io))
     return results

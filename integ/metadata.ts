@@ -136,10 +136,7 @@ async function runSnapshotRoundtrip(): Promise<Record<string, string>> {
 
 async function main(): Promise<void> {
   const prefix = `mirage-integ-meta-${randomUUID().slice(0, 8)}/`
-  const s3Ws = new Workspace(
-    { '/data': s3ResourceFromEnv(prefix) },
-    { mode: MountMode.WRITE },
-  )
+  const s3Ws = new Workspace({ '/data': s3ResourceFromEnv(prefix) }, { mode: MountMode.WRITE })
   const result: Record<string, string | boolean | null> = {}
   try {
     Object.assign(result, await runOverlaySnapshotRoundtrip(s3Ws, s3ResourceFromEnv(prefix)))

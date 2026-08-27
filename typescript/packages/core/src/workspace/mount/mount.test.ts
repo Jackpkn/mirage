@@ -21,7 +21,7 @@ import type { Accessor } from '../../accessor/base.ts'
 import { revisionFor } from '../../observe/context.ts'
 import type { RegisteredOp } from '../../ops/registry.ts'
 import { BaseResource, type Resource } from '../../resource/base.ts'
-import { Limit, MountMode, PathSpec } from '../../types.ts'
+import { FileStat, FileType, Limit, MountMode, PathSpec } from '../../types.ts'
 import { MountEntry } from './mount.ts'
 
 class StubResource extends BaseResource implements Resource {
@@ -207,6 +207,49 @@ describe('Mount.executeCmd', () => {
     m.register(cmd)
     await m.executeCmd('cat', [PathSpec.fromStrPath('/ram/hello.txt')], [], {})
     expect(seenPrefix).toBe('/ram')
+  })
+
+  it('a directory does not route to a filetype handler', async () => {
+    // A filetype handler is chosen from the operand's NAME, and a
+    // directory can carry any extension, so without a type check `cat`
+    // on a directory named `dir.tally` runs the renderer, which reads
+    // bytes that are not there and reports ENOENT: registering a
+    // renderer made the command worse than the built-in it replaced.
+    const m = makeMount()
+    const fired: string[] = []
+    const renderer: CommandFn = (_accessor, paths) => {
+      fired.push(paths[0]?.virtual ?? '')
+      return [new TextEncoder().encode('rendered\n'), new IOResult()]
+    }
+    const builtins: string[] = []
+    const builtin: CommandFn = (_accessor, paths) => {
+      builtins.push(paths[0]?.virtual ?? '')
+      return [null, new IOResult()]
+    }
+    const [plain] = command({ name: 'cat', resource: 'ram', spec: BASIC_SPEC, fn: builtin })
+    const [typed] = command({
+      name: 'cat',
+      resource: 'ram',
+      spec: BASIC_SPEC,
+      fn: renderer,
+      filetype: '.tally',
+    })
+    if (plain === undefined || typed === undefined) throw new Error('missing')
+    m.register(plain)
+    m.register(typed)
+    const statPath = (p: string): Promise<FileStat | null> =>
+      Promise.resolve(
+        p.endsWith('dir.tally')
+          ? new FileStat({ name: p, type: FileType.DIRECTORY })
+          : new FileStat({ name: p, size: 4 }),
+      )
+
+    await m.executeCmd('cat', [PathSpec.fromStrPath('/dir.tally')], [], {}, { statPath })
+    expect(fired).toEqual([])
+    expect(builtins).toEqual(['/dir.tally'])
+
+    await m.executeCmd('cat', [PathSpec.fromStrPath('/file.tally')], [], {}, { statPath })
+    expect(fired).toEqual(['/file.tally'])
   })
 
   it('a null limitOverride does not shadow the mount own table', async () => {

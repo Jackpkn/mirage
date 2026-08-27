@@ -177,7 +177,7 @@ LINES = [
 
 # The approval id is a digest of the session, cwd and words; it is
 # stable, and it is noise here.
-APPROVAL_ID = re.compile(r"\(approval [0-9a-f]+\)")
+ASK_ID = re.compile(r"\(ask [0-9a-f]+\)")
 
 
 def answer(out: bytes, err: bytes, code: int) -> str:
@@ -190,7 +190,7 @@ def answer(out: bytes, err: bytes, code: int) -> str:
         code (int): the line's exit code.
     """
     if err:
-        first = APPROVAL_ID.sub("(approval ...)", err.decode()).splitlines()[0]
+        first = ASK_ID.sub("(ask ...)", err.decode()).splitlines()[0]
         return f"[{code}] {first}"
     return f"[{code}] {' '.join(out.decode().split())}".rstrip()
 

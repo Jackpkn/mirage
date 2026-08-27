@@ -16,9 +16,10 @@ from mirage.accessor.box import BoxAccessor
 from mirage.cache.context import invalidate_subtree
 from mirage.core.box.api import (delete_file, delete_folder, update_file,
                                  update_folder)
+from mirage.core.box.client import BoxApiError
 from mirage.core.box.resolve import path_parts, resolve_item, resolve_parent_id
 from mirage.types import PathSpec
-from mirage.utils.errors import enoent
+from mirage.utils.errors import eisdir, enoent, enotdir, enotempty
 
 
 async def rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec) -> None:
@@ -33,12 +34,27 @@ async def rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec) -> None:
         raise enoent(dst.virtual)
     new_name = dst_parts[-1]
     # GNU mv overwrites the destination; Box 409s on a name clash, so clear
-    # an existing dst of the same kind first.
+    # an existing dst first. A type mismatch is refused with rename(2)'s own
+    # errnos and outranks emptiness, since real rename answers EISDIR for a
+    # file onto a directory whether or not that directory has children. Only
+    # a folder gives way to a folder, and then only an empty one: a non-empty
+    # one is mv's "Directory not empty", which recursive=false gets from Box
+    # for free, exactly as rmdir does.
     existing = await resolve_item(accessor, dst_parts)
     if existing is not None and existing["id"] != item["id"]:
+        src_is_folder = item.get("type") == "folder"
         if existing.get("type") == "folder":
-            await delete_folder(tm, existing["id"], recursive=True)
+            if not src_is_folder:
+                raise eisdir(dst.virtual)
+            try:
+                await delete_folder(tm, existing["id"], recursive=False)
+            except BoxApiError as exc:
+                if exc.status == 409:
+                    raise enotempty(dst) from exc
+                raise
         else:
+            if src_is_folder:
+                raise enotdir(dst.virtual)
             await delete_file(tm, existing["id"])
     if item.get("type") == "folder":
         await update_folder(tm,

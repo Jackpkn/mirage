@@ -12,6 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { parseMode } from '../../handles/mode.ts'
+import type { MontyBindingBits } from './binding.ts'
+import { guestError } from './errors.ts'
+import { ScratchTree } from './tree.ts'
 import type { MontyVFS } from './vfs.ts'
 
 function pathArg(value: unknown): string | null {
@@ -23,37 +27,154 @@ function pathArg(value: unknown): string | null {
   return null
 }
 
+/** Character count the way python's `len` counts: code points, not UTF-16 units. */
+function textLength(data: unknown): number {
+  return Array.from(String(data)).length
+}
+
+function payloadBytes(data: unknown): Uint8Array {
+  if (data instanceof Uint8Array) return data
+  return new TextEncoder().encode(typeof data === 'string' ? data : '')
+}
+
+function concatBytes(head: Uint8Array, tail: Uint8Array): Uint8Array {
+  const out = new Uint8Array(head.length + tail.length)
+  out.set(head, 0)
+  out.set(tail, head.length)
+  return out
+}
+
+interface TimeZoneMarker {
+  offsetSeconds: number
+  name?: string
+}
+
+function timeZoneArg(value: unknown): TimeZoneMarker | null {
+  if (value === null || typeof value !== 'object') return null
+  const marker = value as { __monty_type__?: unknown; offsetSeconds?: unknown; name?: unknown }
+  if (marker.__monty_type__ !== 'TimeZone' || typeof marker.offsetSeconds !== 'number') return null
+  return {
+    offsetSeconds: marker.offsetSeconds,
+    ...(typeof marker.name === 'string' ? { name: marker.name } : {}),
+  }
+}
+
+/**
+ * The host clock as monty's DateTime marker, which the binding turns
+ * into a real guest `datetime`. No timezone argument means python's
+ * naive local now; a TimeZone marker means an aware now in that
+ * offset — both exactly what the python binding's default
+ * `datetime_now(tz)` answers.
+ */
+function dateTimeMarker(tz: TimeZoneMarker | null): Record<string, unknown> {
+  if (tz === null) {
+    const now = new Date()
+    return {
+      __monty_type__: 'DateTime',
+      year: now.getFullYear(),
+      month: now.getMonth() + 1,
+      day: now.getDate(),
+      hour: now.getHours(),
+      minute: now.getMinutes(),
+      second: now.getSeconds(),
+      microsecond: now.getMilliseconds() * 1000,
+    }
+  }
+  const shifted = new Date(Date.now() + tz.offsetSeconds * 1000)
+  return {
+    __monty_type__: 'DateTime',
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+    second: shifted.getUTCSeconds(),
+    microsecond: shifted.getUTCMilliseconds() * 1000,
+    offsetSeconds: tz.offsetSeconds,
+    ...(tz.name !== undefined ? { timezoneName: tz.name } : {}),
+  }
+}
+
+function dateMarker(): Record<string, unknown> {
+  const now = new Date()
+  return {
+    __monty_type__: 'Date',
+    year: now.getFullYear(),
+    month: now.getMonth() + 1,
+    day: now.getDate(),
+  }
+}
+
+/** A full entry path under `dir`, whatever shape the listing spelled. */
+function joinEntry(dir: string, name: string): string {
+  const clean = name.endsWith('/') ? name.slice(0, -1) : name
+  if (clean.startsWith('/')) return clean
+  return dir === '/' ? '/' + clean : dir + '/' + clean
+}
+
+/** Sort paths the way python sorts PurePosixPath: by parts, not raw bytes. */
+function sortPaths(paths: string[]): string[] {
+  return paths
+    .map((p): [string[], string] => [p.split('/'), p])
+    .sort((a, b) => {
+      const [pa] = a
+      const [pb] = b
+      const n = Math.min(pa.length, pb.length)
+      for (let i = 0; i < n; i++) {
+        const x = pa[i] ?? ''
+        const y = pb[i] ?? ''
+        if (x !== y) return x < y ? -1 : 1
+      }
+      return pa.length - pb.length
+    })
+    .map(([, p]) => p)
+}
+
 /**
  * Monty's OS door, serving the guest's `os` and `pathlib` calls.
  *
  * This is monty's tier of the interception taxonomy: the binding calls
- * one host callback per operation and takes back either a value (or a
- * promise of one) or NOT_HANDLED, in which case monty falls back to
- * its own in-memory tree. That is the whole seam, which is why this
- * side is a value-returning table rather than the subclass Python's
- * binding hands over, and why the runtime needs no interpreter patch.
- *
- * Declining is load-bearing, not an error path: a path under no mount
- * must reach monty's own tree, so `/tmp` still behaves like `/tmp`.
+ * one host callback per operation and takes back a value (or a promise
+ * of one) or NOT_HANDLED, which the sandbox raises as the call's
+ * default refusal. That is the whole seam — the JS binding has no tree
+ * of its own, unlike the python binding's `OSAccess` — so this side
+ * carries both halves itself: a path under a mount answers through
+ * `MontyVFS`, and a path under no mount answers from a per-run
+ * `ScratchTree`, so `/tmp` really does behave like `/tmp` on both
+ * hosts. Declining is reserved for what neither half can serve: an
+ * operation this door does not implement, and `Path.stat` (see the
+ * note at that case).
  *
  * Args:
- *   notHandled: the binding's NOT_HANDLED sentinel.
+ *   binding: the loaded binding's door pieces (NOT_HANDLED sentinel
+ *     and the MontyFileHandle an `open` answer must be).
  *   env: the run's environment, readable both ways python's monty
  *     spells it (`os.getenv` and `os.environ`).
  *   vfs: the mount view, or null when no workspace is attached.
  */
 export class MirageOSAccess {
   private readonly notHandled: symbol
+  private readonly fileHandle: MontyBindingBits['MontyFileHandle']
   private readonly env: Record<string, string>
   private readonly vfs: MontyVFS | null
+  private readonly tree = new ScratchTree()
+  // The content each open-for-append handle has accumulated, so an
+  // append can ride the delta op with the correct whole-file fallback
+  // (python holds the same running content in its in-memory tree).
+  private readonly bases = new Map<string, Uint8Array>()
 
-  constructor(notHandled: symbol, env: Record<string, string>, vfs: MontyVFS | null) {
-    this.notHandled = notHandled
+  constructor(binding: MontyBindingBits, env: Record<string, string>, vfs: MontyVFS | null) {
+    this.notHandled = binding.NOT_HANDLED
+    this.fileHandle = binding.MontyFileHandle
     this.env = env
     this.vfs = vfs
   }
 
-  readonly handle = (name: string, args: unknown[]): unknown => {
+  readonly handle = (
+    name: string,
+    args: unknown[],
+    kwargs: Record<string, unknown> = {},
+  ): unknown => {
     if (name === 'os.getenv') {
       // hasOwn, not `in`: the guest picks the key, so a name like
       // `toString` must miss instead of leaking a host function.
@@ -72,31 +193,65 @@ export class MirageOSAccess {
       // guest that mutates it cannot reach the session's own env.
       return { ...this.env }
     }
-    // Everything below serves a path through the mounts; the env doors
-    // above need no mount.
-    const vfs = this.vfs
-    if (vfs === null) return this.notHandled
+    // The clock doors: python's binding defaults these to the host
+    // clock, so declining them (a guest RuntimeError) was a divergence
+    // for any program that stamps its output.
+    if (name === 'datetime.now') return dateTimeMarker(timeZoneArg(args[0]))
+    if (name === 'date.today') return dateMarker()
+    // Everything below serves a path; the doors above need none.
     const path = pathArg(args[0])
-    if (path === null || !vfs.serves(path)) return this.notHandled
+    if (path === null) return this.notHandled
+    // Lexical questions need no mount and no tree entry: monty's own
+    // tree resolves no symlinks, so resolve() is absolute() and '/' is
+    // the working directory, which is also what python's binding
+    // answers (a str, on both hosts).
+    if (name === 'Path.resolve' || name === 'Path.absolute') {
+      return path.startsWith('/') ? path : '/' + path
+    }
+    const vfs = this.vfs
+    if (vfs === null) return this.scratchOp(name, path, args, kwargs, vfs)
+    if (vfs.serves(path)) return this.mountedOp(name, path, args, kwargs, vfs)
+    return this.scratchOp(name, path, args, kwargs, vfs)
+  }
+
+  /** A path some mount serves: every answer is the workspace's. */
+  private mountedOp(
+    name: string,
+    path: string,
+    args: unknown[],
+    kwargs: Record<string, unknown>,
+    vfs: MontyVFS,
+  ): unknown {
     switch (name) {
+      case 'open':
+        return this.openMounted(path, typeof args[1] === 'string' ? args[1] : 'r', vfs)
       case 'Path.read_bytes':
         return vfs.read(path)
       case 'Path.read_text':
         return vfs.read(path).then((b) => new TextDecoder().decode(b))
       case 'Path.write_bytes':
       case 'Path.write_text':
+        this.bases.set(path, payloadBytes(args[1]))
         return vfs.write(path, args[1])
+      case 'Path.append_bytes':
+      case 'Path.append_text':
+        return this.appendMounted(path, args[1], vfs)
       case 'Path.mkdir':
-        return vfs.mkdir(path)
+        return this.mkdirMounted(path, kwargs, vfs)
       case 'Path.rmdir':
         return vfs.rmdir(path)
       case 'Path.unlink':
+        this.bases.delete(path)
         return vfs.unlink(path)
       case 'Path.rename': {
         const dst = pathArg(args[1])
-        // A destination outside the workspace has no mount to rename
-        // into; decline rather than half-apply the move.
-        if (dst === null || !vfs.serves(dst)) return this.notHandled
+        if (dst === null) return this.notHandled
+        // A destination outside the workspace crosses out of the
+        // mount world; EXDEV is what POSIX answers for a rename
+        // across filesystems and what python raises here.
+        if (!vfs.serves(dst)) throw guestError('EXDEV', path, dst)
+        this.bases.delete(path)
+        this.bases.delete(dst)
         return vfs.rename(path, dst)
       }
       case 'Path.iterdir':
@@ -114,7 +269,8 @@ export class MirageOSAccess {
         return vfs.isLink(path)
       case 'Path.is_file':
         return vfs.entryFor(path).then(
-          (e) => e !== null && !e.isDir,
+          (e) =>
+            e !== null && !e.isDir && (e.mode === undefined || (e.mode & 0o170000) === 0o100000),
           () => false,
         )
       case 'Path.exists':
@@ -126,8 +282,209 @@ export class MirageOSAccess {
               () => false,
             ),
         )
+      // `Path.stat` is deliberately not served: the JS binding
+      // converts a callback's answer structurally, so a stat object
+      // arrives in the guest as a dict (and a 10-tuple as a list) and
+      // `st.st_size` raises AttributeError — probed on 0.0.21.
+      // Python's binding takes a real `StatResult`, which is why its
+      // guests get a working stat; until @pydantic/monty grows a
+      // StatResult (and Path) marker for the JS side, a guest stat
+      // raises PermissionError here. `Path.iterdir` strings arriving
+      // as guest str (python: PosixPath) is the same upstream gap.
       default:
         return this.notHandled
     }
+  }
+
+  /** A path no mount serves: the guest's scratch space, answered from the tree. */
+  private scratchOp(
+    name: string,
+    path: string,
+    args: unknown[],
+    kwargs: Record<string, unknown>,
+    vfs: MontyVFS | null,
+  ): unknown {
+    switch (name) {
+      case 'open': {
+        const mode = typeof args[1] === 'string' ? args[1] : 'r'
+        const handle = new this.fileHandle(path, mode)
+        this.tree.open(path, parseMode(mode))
+        return handle
+      }
+      case 'Path.read_text':
+        return this.tree.readText(path)
+      case 'Path.read_bytes':
+        return this.tree.readBytes(path)
+      case 'Path.write_text':
+        this.tree.write(path, String(args[1]))
+        return textLength(args[1])
+      case 'Path.write_bytes': {
+        const data = payloadBytes(args[1])
+        this.tree.write(path, data)
+        return data.length
+      }
+      case 'Path.append_text':
+        this.tree.append(path, String(args[1]))
+        return textLength(args[1])
+      case 'Path.append_bytes': {
+        const data = payloadBytes(args[1])
+        this.tree.append(path, data)
+        return data.length
+      }
+      case 'Path.mkdir':
+        this.tree.mkdir(path, kwargs.parents === true, kwargs.exist_ok === true)
+        return null
+      case 'Path.unlink':
+        this.tree.unlink(path)
+        return null
+      case 'Path.rmdir':
+        this.tree.rmdir(path)
+        return null
+      case 'Path.rename': {
+        const dst = pathArg(args[1])
+        if (dst === null) return this.notHandled
+        // Crossing into a mount is the same filesystem boundary as
+        // crossing out of one.
+        if (vfs?.serves(dst) === true) throw guestError('EXDEV', path, dst)
+        this.tree.rename(path, dst)
+        return null
+      }
+      case 'Path.exists':
+        if (this.tree.exists(path)) return true
+        return this.remoteIsDir(path, vfs)
+      case 'Path.is_file':
+        return this.tree.isFile(path)
+      case 'Path.is_dir':
+        if (this.tree.isDir(path)) return true
+        return this.remoteIsDir(path, vfs)
+      case 'Path.is_symlink':
+        // The tree holds no links, but the name plane may hold one at
+        // an unmounted path; python asks the workspace the same way.
+        return vfs === null ? false : vfs.isLink(path)
+      case 'Path.iterdir':
+        return this.scratchIterdir(path, vfs)
+      // `Path.stat` stays declined even for scratch files — see the
+      // upstream-gap note in `mountedOp`.
+      default:
+        return this.notHandled
+    }
+  }
+
+  /**
+   * Whether the workspace can list `path` even though no mount claims
+   * it: the root of a workspace with nested mounts is the everyday
+   * case. Python's tree answers exists/is_dir the same way, by trying
+   * the listing.
+   */
+  private remoteIsDir(path: string, vfs: MontyVFS | null): boolean | Promise<boolean> {
+    if (vfs === null) return false
+    return vfs.readdir(path).then(
+      () => true,
+      () => false,
+    )
+  }
+
+  /**
+   * List a scratch directory, folding in whatever the workspace can
+   * list under the same name — `iterdir('/')` must show the mount
+   * roots beside the guest's own scratch entries, as python's merged
+   * listing does. A path neither side can list raises the tree's own
+   * FileNotFoundError.
+   */
+  private scratchIterdir(path: string, vfs: MontyVFS | null): unknown {
+    if (vfs === null) return this.tree.iterdir(path)
+    return vfs.readdir(path).then(
+      (entries) => {
+        const merged = new Set<string>(this.tree.isDir(path) ? this.tree.iterdir(path) : [])
+        for (const entry of entries) merged.add(joinEntry(path, entry.path))
+        return sortPaths([...merged])
+      },
+      () => this.tree.iterdir(path),
+    )
+  }
+
+  private async openMounted(path: string, mode: string, vfs: MontyVFS): Promise<unknown> {
+    // Handle first, mirroring monty's own tree: a malformed mode must
+    // raise before any side effect lands on the mount.
+    const handle = new this.fileHandle(path, mode)
+    const facts = parseMode(mode)
+    if (facts.exclusive) {
+      if ((await vfs.entryFor(path)) !== null) throw guestError('EEXIST', path)
+      await vfs.create(path)
+      this.bases.set(path, new Uint8Array())
+      return handle
+    }
+    if (facts.truncate) {
+      // CPython's open('w') leaves an empty file behind even when
+      // nothing is written, so the effect fires at open, not at the
+      // first flush.
+      if ((await vfs.entryFor(path)) !== null) await vfs.truncate(path)
+      else await vfs.create(path)
+      this.bases.set(path, new Uint8Array())
+      return handle
+    }
+    if (facts.append) {
+      const base = await vfs.readOrNull(path)
+      if (base === null) await vfs.create(path)
+      this.bases.set(path, base ?? new Uint8Array())
+      return handle
+    }
+    const entry = await vfs.entryFor(path)
+    if (entry === null) {
+      const isDir = await vfs.readdir(path).then(
+        () => true,
+        () => false,
+      )
+      throw isDir ? guestError('EISDIR', path) : guestError('ENOENT', path)
+    }
+    if (entry.isDir) throw guestError('EISDIR', path)
+    return handle
+  }
+
+  /**
+   * Extend a mounted file by `data`, shipping only the delta.
+   *
+   * Monty hands an append handler the new text alone; the running
+   * whole rides beside it so a mount without an append op falls back
+   * to one write instead of failing (python keeps the same running
+   * content in its tree). The return is python's: characters for
+   * text, bytes for bytes.
+   */
+  private async appendMounted(path: string, data: unknown, vfs: MontyVFS): Promise<number> {
+    const tail = payloadBytes(data)
+    const base = this.bases.get(path) ?? (await vfs.readOrNull(path)) ?? new Uint8Array()
+    const whole = concatBytes(base, tail)
+    this.bases.set(path, whole)
+    await vfs.append(path, tail, whole)
+    return typeof data === 'string' ? textLength(data) : tail.length
+  }
+
+  /**
+   * Create a mounted directory, keeping pathlib's flags: `parents`
+   * rides through to the backend op, which takes it; `exist_ok` is
+   * answered here, since the op has no such argument and backends
+   * differ on whether creating an existing directory raises at all.
+   * `exist_ok` forgives an existing directory only — a file at the
+   * target still raises, pathlib's own rule.
+   */
+  private async mkdirMounted(
+    path: string,
+    kwargs: Record<string, unknown>,
+    vfs: MontyVFS,
+  ): Promise<null> {
+    const entry = await vfs.entryFor(path).catch(() => null)
+    if (entry !== null && !entry.isDir) throw guestError('EEXIST', path)
+    const exists =
+      entry !== null ||
+      (await vfs.readdir(path).then(
+        () => true,
+        () => false,
+      ))
+    if (exists) {
+      if (kwargs.exist_ok === true) return null
+      throw guestError('EEXIST', path)
+    }
+    await vfs.mkdir(path, kwargs.parents === true)
+    return null
   }
 }

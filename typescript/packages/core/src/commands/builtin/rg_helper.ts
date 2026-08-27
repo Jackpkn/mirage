@@ -136,8 +136,10 @@ export async function rgFull(
   const compiled = compilePattern(pattern, opts.ignoreCase, opts.fixedString, opts.wholeWord)
 
   let isDir = false
+  let startType: FileType | null = null
   try {
     const s = await statFn(path)
+    startType = s.type
     isDir = s.type === FileType.DIRECTORY
   } catch {
     try {
@@ -151,6 +153,7 @@ export async function rgFull(
   const DEC = new TextDecoder('utf-8', { fatal: false })
 
   if (!isDir) {
+    if (startType === FileType.CHAR_DEVICE) return []
     if (!rgMatchesFilter(path, opts.fileType, opts.globPattern, opts.hidden)) return []
     let data: string[]
     try {
@@ -214,6 +217,7 @@ export async function rgFull(
       results.push(...sub)
       continue
     }
+    if (s.type === FileType.CHAR_DEVICE) continue
 
     if (BINARY_EXTENSIONS.has(getExtension(entry) ?? '')) continue
     if (!rgMatchesFilter(entry, opts.fileType, opts.globPattern, opts.hidden)) continue
@@ -295,6 +299,7 @@ export async function rgFolderFiletype(
       results.push(...sub)
       continue
     }
+    if (s.type === FileType.CHAR_DEVICE) continue
 
     if (BINARY_EXTENSIONS.has(getExtension(entry) ?? '')) continue
     if (!rgMatchesFilter(entry, opts.fileType, opts.globPattern, opts.hidden)) continue

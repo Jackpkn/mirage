@@ -45,6 +45,15 @@ export function isNoSuchFile(err: unknown): boolean {
   return code === 2
 }
 
+// SFTP 3's one generic refusal (SSH_FX_FAILURE): the only vocabulary a
+// version-3 server has for a not-empty rmdir, among other refusals.
+export function isFailure(err: unknown): boolean {
+  if (err === null || err === undefined) return false
+  if (typeof err !== 'object') return false
+  const code = (err as { code?: unknown }).code
+  return code === 4
+}
+
 export function isDirectoryAttrs(attrs: { mode?: number }): boolean {
   if (attrs.mode === undefined) return false
   return (attrs.mode & S_IFMT) === S_IFDIR

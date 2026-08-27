@@ -28,6 +28,8 @@ import {
   messageJsonBytes,
 } from './messages.ts'
 import { detectScope } from './scope.ts'
+import { globSpan, hasGlobSpan } from '../../utils/glob_walk.ts'
+import { dateDirToGmailQuery, spanToGmailQuery } from './date_query.ts'
 
 const TITLE_MAX = 80
 const MSG_SUFFIX = '.gmail.json'
@@ -157,11 +159,17 @@ async function listRoot(accessor: GmailAccessor, _match: ScopeMatch): Promise<Li
 
 async function listLabel(
   accessor: GmailAccessor,
-  _match: ScopeMatch,
+  match: ScopeMatch,
   own: IndexEntry,
 ): Promise<Listed> {
+  // The bare listing is a window, the most recent MAX_MESSAGES, so the day
+  // dirs it mints are whichever days those fell on. A glob pushes its own
+  // span into the query instead of filtering that window, which is the only
+  // way to reach a day older than it.
+  const span = globSpan(match.pattern)
   const msgIds = await listMessages(accessor.tokenManager, {
     labelId: own.id,
+    query: span === null ? null : spanToGmailQuery(span[0], span[1]),
     maxResults: MAX_MESSAGES,
   })
   const groups = await groupByDate(accessor, msgIds)
@@ -185,26 +193,28 @@ async function listLabel(
       seeds[`${dateStr}/${attDir}`] = attEntries
     }
   }
-  return { entries, seeds }
+  return { entries, seeds, partial: span !== null }
 }
 
 async function listDay(
   accessor: GmailAccessor,
   match: ScopeMatch,
-  own: IndexEntry,
+  label: IndexEntry,
 ): Promise<Listed> {
-  // Normally served from the label lister's seed; reached only when the
-  // index evicted the day listing while the date entry survived. The TS
-  // client has no date-scoped query (python pushes one down), so the
-  // fallback replays the label's recent window and keeps the day's bucket.
-  const labelId = typeof own.extra.label_id === 'string' ? own.extra.label_id : ''
-  if (labelId === '') return []
+  // The proof is the label entry, not the day's own: a date query answers for
+  // any well-formed day, including days the label's bounded recent listing
+  // never minted. A day proven by its own entry could only ever be a day
+  // inside that window, which is the case the seed already covers.
+  const day = match.slots.day ?? ''
+  const dateQuery = dateDirToGmailQuery(day)
+  if (dateQuery === null) return []
   const msgIds = await listMessages(accessor.tokenManager, {
-    labelId,
+    labelId: label.id,
+    query: dateQuery,
     maxResults: MAX_MESSAGES,
   })
   const groups = await groupByDate(accessor, msgIds)
-  const { children, seeds } = dateChildren(groups.get(match.slots.day ?? '') ?? [])
+  const { children, seeds } = dateChildren(groups.get(day) ?? [])
   const listing: DirListing = { entries: children, seeds }
   return listing
 }
@@ -222,7 +232,8 @@ export const readdir = makeReaddir<GmailAccessor>(detectScope, {
   listers: { root: listRoot },
   entryListers: {
     label: listLabel,
-    day: listDay,
     attachment_dir: listAttachmentDir,
   },
+  parentEntryListers: { day: listDay },
+  patternKinds: { label: hasGlobSpan },
 })

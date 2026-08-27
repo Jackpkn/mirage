@@ -16,6 +16,7 @@ import { sanitizeName } from '../../utils/sanitize.ts'
 
 export { sanitizeName } from '../../utils/sanitize.ts'
 export { parseIdName as splitSuffixId } from '../../utils/naming.ts'
+import { fitIdName } from '../../utils/naming.ts'
 
 function pickString(record: Record<string, unknown>, ...keys: readonly string[]): string {
   for (const key of keys) {
@@ -33,30 +34,30 @@ function requireId(record: Record<string, unknown>): string {
 
 export function workspaceDirname(workspace: Record<string, unknown>): string {
   const label = sanitizeName(pickString(workspace, 'displayName', 'name') || 'workspace')
-  return `${label}__${requireId(workspace)}`
+  return fitIdName(label, requireId(workspace))
 }
 
 export function boardDirname(board: Record<string, unknown>): string {
   const label = sanitizeName(pickString(board, 'name') || 'board')
-  return `${label}__${requireId(board)}`
+  return fitIdName(label, requireId(board))
 }
 
 export function listDirname(lst: Record<string, unknown>): string {
   const label = sanitizeName(pickString(lst, 'name') || 'list')
-  return `${label}__${requireId(lst)}`
+  return fitIdName(label, requireId(lst))
 }
 
 export function cardDirname(card: Record<string, unknown>): string {
   const label = sanitizeName(pickString(card, 'name') || 'card')
-  return `${label}__${requireId(card)}`
+  return fitIdName(label, requireId(card))
 }
 
 export function memberFilename(member: Record<string, unknown>): string {
   const label = sanitizeName(pickString(member, 'fullName', 'username') || 'member')
-  return `${label}__${requireId(member)}.json`
+  return fitIdName(label, requireId(member), '.json')
 }
 
 export function labelFilename(label: Record<string, unknown>): string {
   const raw = pickString(label, 'name', 'color') || 'label'
-  return `${sanitizeName(raw)}__${requireId(label)}.json`
+  return fitIdName(sanitizeName(raw), requireId(label), '.json')
 }

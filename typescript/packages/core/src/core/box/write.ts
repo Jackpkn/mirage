@@ -144,13 +144,33 @@ export async function rmR(accessor: BoxAccessor, path: PathSpec): Promise<void> 
   await invalidateSubtree(path)
 }
 
-async function clearDest(accessor: BoxAccessor, dstParts: string[], srcId: string): Promise<void> {
+async function clearDest(
+  accessor: BoxAccessor,
+  dst: PathSpec,
+  dstParts: string[],
+  src: BoxItem,
+): Promise<void> {
   // GNU mv/cp overwrite; Box 409s on a name clash, so clear an existing dst.
+  // A type mismatch is refused with rename(2)'s own errnos and outranks
+  // emptiness, since real rename answers EISDIR for a file onto a directory
+  // whether or not that directory has children. Only a folder gives way to a
+  // folder, and then only an empty one: a non-empty one is mv's "Directory not
+  // empty", which recursive=false gets from Box for free, as rmdir does.
   const existing = await resolveItem(accessor, dstParts)
-  if (existing === null || existing.id === srcId) return
+  if (existing === null || existing.id === src.id) return
   const tm = accessor.tokenManager
-  if (existing.type === 'folder') await deleteFolder(tm, existing.id, true)
-  else await deleteFile(tm, existing.id)
+  if (existing.type !== 'folder') {
+    if (src.type === 'folder') throw enotdir(dst.virtual)
+    await deleteFile(tm, existing.id)
+    return
+  }
+  if (src.type !== 'folder') throw eisdir(dst.virtual)
+  try {
+    await deleteFolder(tm, existing.id, false)
+  } catch (error) {
+    if (error instanceof BoxApiError && error.status === 409) throw enotempty(dst)
+    throw error
+  }
 }
 
 export async function rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec): Promise<void> {
@@ -160,7 +180,7 @@ export async function rename(accessor: BoxAccessor, src: PathSpec, dst: PathSpec
   const dstParts = pathParts(dst)
   const dstParent = await resolveParentId(accessor, dstParts)
   if (dstParent === null) throw enoent(dst.virtual)
-  await clearDest(accessor, dstParts, item.id)
+  await clearDest(accessor, dst, dstParts, item)
   const newName = dstParts[dstParts.length - 1] ?? ''
   if (item.type === 'folder')
     await updateFolder(tm, item.id, { name: newName, parentId: dstParent })
@@ -193,8 +213,13 @@ async function copyInto(accessor: BoxAccessor, item: BoxItem, dst: PathSpec): Pr
   if (dstParent === null) throw enoent(dst.virtual)
   const newName = dstParts[dstParts.length - 1] ?? ''
   if (existing !== null && existing.id !== item.id) {
-    if (existing.type === 'folder') await deleteFolder(tm, existing.id, true)
-    else await deleteFile(tm, existing.id)
+    // Folder onto folder already merged above, so what is left is a type
+    // mismatch or a file replacing a file. cp refuses either mismatch
+    // (rename(2)'s own errnos), mirroring gdrive and the msgraph copyTree;
+    // only a file gives way to a file.
+    if (existing.type === 'folder') throw eisdir(dst.virtual)
+    if (item.type === 'folder') throw enotdir(dst.virtual)
+    await deleteFile(tm, existing.id)
   }
   if (item.type === 'folder') await copyFolder(tm, item.id, dstParent, newName)
   else await copyFile(tm, item.id, dstParent, newName)

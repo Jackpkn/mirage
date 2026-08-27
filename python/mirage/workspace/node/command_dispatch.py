@@ -17,7 +17,8 @@ import dataclasses
 from typing import Any
 
 from mirage.commands.builtin.utils.limit import run_with_timeout
-from mirage.context import redirect_paths_for, reset_admission, set_admission
+from mirage.context import (redirect_paths_for, reset_admission,
+                            reset_op_policies, set_admission, set_op_policies)
 from mirage.io import IOResult
 from mirage.io.types import materialize
 from mirage.policy import PolicyDenied, resolve_limit
@@ -374,7 +375,8 @@ async def _run_argv(
                               namespace,
                               agent_id,
                               stdin,
-                              redirects=redirects)
+                              redirects=redirects,
+                              cancel=cancel)
         if isinstance(verdict, Refusal):
             cmd_str = " ".join([name, *argv.args])
             return None, IOResult(exit_code=verdict.exit_code,
@@ -388,18 +390,27 @@ async def _run_argv(
     # ── run ────────────────────────────────────
     # The admitted command's gate is bound for its run and reset after,
     # so its own I/O can ask about the entries the gate did not see and
-    # a nested line binds its own (see ``Admitted``).
-    if admitted is None:
-        return await _route_argv(recurse, dispatch, registry, namespace,
-                                 execute_fn, argv, session, stdin, call_stack,
-                                 job_table, cancel, routing_decision, row)
-    token = set_admission(admitted)
+    # a nested line binds its own (see ``Admitted``). The workspace's
+    # policies bind in the same window, whether or not a gate judged the
+    # line, so the command tier's policy guard can fire pre_ops for the
+    # backend I/O a handler performs.
+    ptoken = set_op_policies(registry.policies)
     try:
-        return await _route_argv(recurse, dispatch, registry, namespace,
-                                 execute_fn, argv, session, stdin, call_stack,
-                                 job_table, cancel, routing_decision, row)
+        if admitted is None:
+            return await _route_argv(recurse, dispatch, registry, namespace,
+                                     execute_fn, argv, session, stdin,
+                                     call_stack, job_table, cancel,
+                                     routing_decision, row)
+        token = set_admission(admitted)
+        try:
+            return await _route_argv(recurse, dispatch, registry, namespace,
+                                     execute_fn, argv, session, stdin,
+                                     call_stack, job_table, cancel,
+                                     routing_decision, row)
+        finally:
+            reset_admission(token)
     finally:
-        reset_admission(token)
+        reset_op_policies(ptoken)
 
 
 async def _route_argv(

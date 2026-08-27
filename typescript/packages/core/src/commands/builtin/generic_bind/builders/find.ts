@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { hiddenPathsActive, pathRulesActive } from '../../../../context/session_context.ts'
+import { hiddenPathsIntersect, pathRulesActive } from '../../../../context/session_context.ts'
 import { walkFind } from '../../../../core/generic/find.ts'
 import { findGeneric } from '../../generic/find.ts'
 import type { PathSpec } from '../../../../types.ts'
@@ -35,8 +35,14 @@ export const FIND_BUILDER: Builder = {
     // path rule it would list a directory the rule refuses to open. The
     // walk classifies through the guarded readdir/stat, so it sees
     // exactly the visible tree and reports the refusal where GNU does;
-    // same trade du makes for its summarize fast path.
-    if (find !== undefined && !hiddenPathsActive() && !pathRulesActive()) {
+    // same trade du makes for its summarize fast path. Per operand, not
+    // per session: a hidden .env under /repo must not force find on /s3
+    // off its native op.
+    if (
+      find !== undefined &&
+      !pathRulesActive() &&
+      !resolved.some((p) => hiddenPathsIntersect(p.virtual))
+    ) {
       // -mtime must see namespace times (touch results, observed
       // writes), so local backends post-filter through the overlay-
       // aware stat instead of pushing the window into the core.

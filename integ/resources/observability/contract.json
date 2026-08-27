@@ -350,7 +350,7 @@
       ],
       "command": "sort {mount}/__nf_missing__",
       "expect": {
-        "exit": 1,
+        "exit": 2,
         "stdout": "",
         "stderr": "sort: {mount}/__nf_missing__: No such file or directory\n"
       }
@@ -434,7 +434,7 @@
       ],
       "command": "sed -n 1p {mount}/__nf_missing__",
       "expect": {
-        "exit": 1,
+        "exit": 2,
         "stdout": "",
         "stderr": "sed: {mount}/__nf_missing__: No such file or directory\n"
       }
@@ -455,7 +455,7 @@
       ],
       "command": "awk '{print}' {mount}/__nf_missing__",
       "expect": {
-        "exit": 1,
+        "exit": 2,
         "stdout": "",
         "stderr": "awk: {mount}/__nf_missing__: No such file or directory\n"
       }
@@ -476,7 +476,7 @@
       ],
       "command": "jq . {mount}/__nf_missing__",
       "expect": {
-        "exit": 1,
+        "exit": 2,
         "stdout": "",
         "stderr": "jq: {mount}/__nf_missing__: No such file or directory\n"
       }
@@ -539,7 +539,7 @@
       ],
       "command": "xxd {mount}/__nf_missing__",
       "expect": {
-        "exit": 1,
+        "exit": 2,
         "stdout": "",
         "stderr": "xxd: {mount}/__nf_missing__: No such file or directory\n"
       }

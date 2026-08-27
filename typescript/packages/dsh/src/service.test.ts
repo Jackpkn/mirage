@@ -168,4 +168,108 @@ describe('MirageService', () => {
     ).rejects.toThrow(/adopted workspace/)
     await ws.close()
   })
+
+  it('accepts a permission document as written, YAML-friendly', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(MirageService, {
+      mounts: { '/data': [new RAMResource(), MountMode.WRITE] },
+      profiles: {
+        agent: {
+          commands: {
+            allow: ['cat', 'echo', 'rm'],
+            deny: [{ reason: 'no removes', commands: ['rm'] }],
+          },
+        },
+      },
+      profile: 'agent',
+    })
+    await fiber.await()
+    const ws = await ctx.mirage.ready
+    // The role reached the workspace and governs its default session: a
+    // patch file's plain YAML became a live permission document.
+    const denied = await ws.execute('rm /data/x.txt')
+    expect(denied.exitCode).toBe(126)
+    expect(denied.stderrText).toContain('no removes')
+    await fiber.dispose()
+  })
+
+  it('rejects a misspelled field in a role at load, not at first use', async () => {
+    const ctx = new Context()
+    await expect(
+      ctx
+        .plugin(MirageService, {
+          mounts: { '/data': new RAMResource() },
+          profiles: { agent: { commnads: { deny: [] } } },
+        })
+        .await(),
+    ).rejects.toThrow(/profile `agent`/)
+  })
+
+  it('refuses a profile name no role defines', async () => {
+    const ctx = new Context()
+    await expect(
+      ctx
+        .plugin(MirageService, {
+          mounts: { '/data': new RAMResource() },
+          profiles: { agent: {} },
+          profile: 'nobody',
+        })
+        .await(),
+    ).rejects.toThrow()
+  })
+
+  it('refuses profiles in both config keys', async () => {
+    const ctx = new Context()
+    await expect(
+      ctx
+        .plugin(MirageService, {
+          mounts: { '/x': new RAMResource() },
+          profiles: { agent: {} },
+          workspaceOptions: { profiles: {} },
+        })
+        .await(),
+    ).rejects.toThrow('not both')
+  })
+
+  it('refuses profiles beside an adopted workspace', async () => {
+    const ws = new Workspace({ '/data': new RAMResource() })
+    const ctx = new Context()
+    await expect(
+      ctx.plugin(MirageService, { workspace: ws, profiles: { agent: {} } }).await(),
+    ).rejects.toThrow(/adopted workspace/)
+    await expect(
+      ctx.plugin(MirageService, { workspace: ws, profile: 'agent' }).await(),
+    ).rejects.toThrow(/adopted workspace/)
+    await ws.close()
+  })
+
+  it('explains a line without running it or raising a question', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(MirageService, {
+      mounts: { '/data': [new RAMResource(), MountMode.WRITE] },
+      profiles: {
+        agent: {
+          commands: {
+            allow: ['cat', 'rm'],
+            ask: [{ reason: 'deletes are reviewed', commands: ['rm'] }],
+          },
+        },
+      },
+      profile: 'agent',
+    })
+    await fiber.await()
+    const ws = await ctx.mirage.ready
+    await ws.fs.writeFile('/data/notes.txt', 'private')
+    const [asked] = await ctx.mirage.explain('rm /data/notes.txt')
+    expect(asked?.outcome).toBe('ask')
+    expect(asked?.reason).toBe('deletes are reviewed')
+    expect(asked?.exitCode).not.toBe(0)
+    // A dry run puts no question to anybody and spends nothing.
+    expect(ctx.mirage.decisions.pending()).toHaveLength(0)
+    expect(await ws.fs.exists('/data/notes.txt')).toBe(true)
+    const [allowed] = await ctx.mirage.explain('cat /data/notes.txt')
+    expect(allowed?.outcome).toBe('allow')
+    expect(allowed?.exitCode).toBe(0)
+    await fiber.dispose()
+  })
 })

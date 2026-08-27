@@ -149,7 +149,8 @@ def test_cross_mount_mv_unremovable_source_keeps_both():
     ws = _make_readonly_src_ws()
     out, err, code = _run(ws, "mv /mail/report.csv /scratch/x.csv")
     assert code == 1
-    assert err == "mv: cannot remove '/mail/report.csv': Permission denied\n"
+    assert err == ("mv: cannot remove '/mail/report.csv': "
+                   "Read-only file system\n")
     out, err, code = _run(ws, "cat /scratch/x.csv")
     assert (out, code) == ("name,age\nalice,30\n", 0)
     out, err, code = _run(ws, "cat /mail/report.csv")

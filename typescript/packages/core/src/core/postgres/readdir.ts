@@ -17,8 +17,36 @@ import { IndexEntry } from '../../cache/index/config.ts'
 import { makeReaddir } from '../hierarchy/readdir.ts'
 import type { ScopeMatch } from '../hierarchy/scope.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
+import { enoent } from '../../utils/errors.ts'
 import { listMatviews, listSchemas, listTables, listViews } from './client.ts'
 import { detectScope, ENTITY_FILES, KIND_DIRS } from './scope.ts'
+
+export async function schemaGuard(
+  accessor: PostgresAccessor,
+  match: ScopeMatch,
+  virtual: string,
+): Promise<void> {
+  const schemas = await listSchemas(accessor, accessor.config.schemas)
+  if (!schemas.includes(match.slots.schema ?? '')) throw enoent(virtual)
+}
+
+export async function entityGuard(
+  accessor: PostgresAccessor,
+  match: ScopeMatch,
+  virtual: string,
+): Promise<void> {
+  const schema = match.slots.schema ?? ''
+  const kind = match.slots.kind ?? ''
+  let names: string[]
+  if (kind === 'tables') {
+    names = await listTables(accessor, schema)
+  } else {
+    const views = await listViews(accessor, schema)
+    const mviews = await listMatviews(accessor, schema)
+    names = [...new Set([...views, ...mviews])]
+  }
+  if (!names.includes(match.slots.entity ?? '')) throw enoent(virtual)
+}
 
 async function listRoot(
   accessor: PostgresAccessor,
@@ -102,5 +130,15 @@ export const readdir = makeReaddir<PostgresAccessor>(detectScope, {
     schema: listSchema,
     kind: listEntities,
     entity: listEntityFiles,
+  },
+  // Every lister above answers from the path alone, so without these a
+  // schema or entity that does not exist reads as a real directory:
+  // tables/ and views/ under any first segment, the entity files under
+  // any third, and an empty listing (not ENOENT) for a missing schema's
+  // tables/. Same guards stat runs, so the two answer alike.
+  guards: {
+    schema: schemaGuard,
+    kind: schemaGuard,
+    entity: entityGuard,
   },
 })

@@ -36,6 +36,14 @@ def epoch_engine() -> "wasmtime.Engine":
     """Build an engine with epoch interruption so runs can be trapped."""
     config = wasmtime.Config()
     config.epoch_interruption = True
+    # POSIX-signal traps, not Mach ports: the task-wide Mach exception
+    # ports wasmtime claims on macOS stop composing once another native
+    # runtime in the same process touches exception handling (seen with
+    # pydantic-monty >= 0.0.20 worker pools), after which wasmtime's
+    # handler thread kills the process outright with `mach_msg failed
+    # with 268451845 (10004005)`. Signal-based traps coexist; the flag
+    # is a no-op off macOS.
+    config.macos_use_mach_ports = False
     return wasmtime.Engine(config)
 
 

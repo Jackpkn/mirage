@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PathSpec } from '../../../../../types.ts'
+import { refuseReveal } from '../../../generic_bind/adapter.ts'
 import { mvGeneric, parseMvFlags } from '../../mv.ts'
 import type { CrossResult, DispatchFn } from '../types.ts'
 import { flatten, readBytesOp, readdirOp, statOp } from '../utils.ts'
@@ -55,5 +56,7 @@ export async function runMv(
     parseMvFlags(new FlagView(flagKwargs, specOf('mv'))),
     undefined,
     storageKey,
+    undefined,
+    refuseReveal,
   )
 }

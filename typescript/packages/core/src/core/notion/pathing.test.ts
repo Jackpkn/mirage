@@ -14,6 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { formatSegment, parseSegment, sanitizeName, stripDashes } from './pathing.ts'
+import { NAME_MAX_BYTES, byteLength } from '../../utils/sanitize.ts'
 
 describe('sanitizeName', () => {
   it('replaces spaces with underscores', () => {
@@ -91,5 +92,18 @@ describe('formatSegment / parseSegment round-trip', () => {
       title: 'a__b',
       id: 'aaaa1111-2222-3333-4444-555566667777',
     })
+  })
+})
+
+describe('formatSegment byte budget', () => {
+  const CJK_TITLE = '会議'.repeat(100)
+  const OBJ_ID = 'a1b2c3d4-e5f6-7890-abcd-ef0123456789'
+
+  it('fits NAME_MAX and still addresses the id', () => {
+    const name = formatSegment({ id: OBJ_ID, title: CJK_TITLE })
+
+    expect(byteLength(name)).toBeLessThanOrEqual(NAME_MAX_BYTES)
+    expect(parseSegment(name).id).toBe(OBJ_ID)
+    expect(name).not.toContain('\uFFFD')
   })
 })

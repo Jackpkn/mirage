@@ -18,8 +18,11 @@ import { loadOptionalPeer } from '../utils/optional_peer.ts'
 import {
   buildFilter,
   candidateIds,
+  idPrefixTest,
   pointToRow,
   SCROLL_BATCH,
+  valuePrefixTest,
+  type PointTest,
   type QdrantPoint,
   type QdrantRow,
 } from '../core/qdrant/client.ts'
@@ -65,19 +68,26 @@ export class QdrantAccessor extends Accessor {
     collection: string,
     filter: Record<string, unknown> | undefined,
     limit: number,
+    keep?: PointTest,
   ): Promise<QdrantPoint[]> {
+    // Without a test the limit bounds the scroll, which is the ordinary capped
+    // listing. With one it bounds the MATCHES, because qdrant has no prefix
+    // condition for a point id or a keyword field: the only way to answer a
+    // glob for a row past the cap is to keep scrolling and test each page
+    // here. A glob is a targeted request, so it pays a scan of the collection
+    // where the plain listing pays one page.
     const client = await this.getClient()
     const points: QdrantPoint[] = []
     let offset: string | number | null = null
     while (points.length < limit) {
       const res = (await client.scroll(collection, {
         ...(filter !== undefined ? { filter } : {}),
-        limit: Math.min(SCROLL_BATCH, limit - points.length),
+        limit: keep !== undefined ? SCROLL_BATCH : Math.min(SCROLL_BATCH, limit - points.length),
         offset,
         with_payload: true,
         with_vector: false,
       })) as { points: QdrantPoint[]; next_page_offset?: string | number | null }
-      points.push(...res.points)
+      points.push(...(keep === undefined ? res.points : res.points.filter(keep)))
       const next = res.next_page_offset
       if (next === null || next === undefined) break
       offset = next
@@ -108,16 +118,17 @@ export class QdrantAccessor extends Accessor {
     collection: string,
     filters: Record<string, string>,
     limit: number,
+    keep?: PointTest,
   ): Promise<QdrantPoint[]> {
-    if (Object.keys(filters).length === 0) return this.scrollRaw(collection, undefined, limit)
+    if (Object.keys(filters).length === 0) return this.scrollRaw(collection, undefined, limit, keep)
     const filter = buildFilter(filters)
     try {
-      return await this.scrollRaw(collection, filter, limit)
+      return await this.scrollRaw(collection, filter, limit, keep)
     } catch (err) {
       if (!this.isIndexRequired(err)) throw err
     }
     await this.ensureIndexes(collection)
-    return this.scrollRaw(collection, filter, limit)
+    return this.scrollRaw(collection, filter, limit, keep)
   }
 
   async listTables(): Promise<string[]> {
@@ -137,8 +148,10 @@ export class QdrantAccessor extends Accessor {
     column: string,
     filters: Record<string, string>,
     limit: number,
+    prefix = '',
   ): Promise<string[]> {
-    const points = await this.scrollFiltered(table, filters, limit)
+    const keep = prefix === '' ? undefined : valuePrefixTest(column, prefix)
+    const points = await this.scrollFiltered(table, filters, limit, keep)
     const values = new Set<string>()
     for (const point of points) {
       const value = point.payload?.[column]
@@ -153,8 +166,10 @@ export class QdrantAccessor extends Accessor {
     filters: Record<string, string>,
     _columns: string[],
     limit: number,
+    prefix = '',
   ): Promise<QdrantRow[]> {
-    const points = await this.scrollFiltered(table, filters, limit)
+    const keep = prefix === '' ? undefined : idPrefixTest(prefix)
+    const points = await this.scrollFiltered(table, filters, limit, keep)
     return points.map((point) => pointToRow(point, this.config.idField))
   }
 

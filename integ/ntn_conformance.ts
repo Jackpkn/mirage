@@ -159,19 +159,26 @@ async function main(): Promise<void> {
   let checked = 0
   for (const one of cases) {
     if (!isConformable(one)) {
-      skipped.push(one.conformance_skip === undefined ? one.id : `${one.id} (${one.conformance_skip})`)
+      skipped.push(
+        one.conformance_skip === undefined ? one.id : `${one.id} (${one.conformance_skip})`,
+      )
       continue
     }
     checked += 1
     if (process.env.NTN_CONFORMANCE_TRACE === '1') process.stderr.write(`. ${one.id}\n`)
     const got = await runLine(one.command, env)
     const diffs: string[] = []
-    if (got.exit !== one.expect.exit) diffs.push(`  exit: want ${String(one.expect.exit)}, got ${String(got.exit)}`)
+    if (got.exit !== one.expect.exit)
+      diffs.push(`  exit: want ${String(one.expect.exit)}, got ${String(got.exit)}`)
     if (got.stdout !== one.expect.stdout) {
-      diffs.push(`  ${show('stdout want', one.expect.stdout)}\n  ${show('stdout got ', got.stdout)}`)
+      diffs.push(
+        `  ${show('stdout want', one.expect.stdout)}\n  ${show('stdout got ', got.stdout)}`,
+      )
     }
     if (got.stderr !== one.expect.stderr) {
-      diffs.push(`  ${show('stderr want', one.expect.stderr)}\n  ${show('stderr got ', got.stderr)}`)
+      diffs.push(
+        `  ${show('stderr want', one.expect.stderr)}\n  ${show('stderr got ', got.stderr)}`,
+      )
     }
     if (diffs.length > 0) failures.push(`${one.id} (${one.command})\n${diffs.join('\n')}`)
   }

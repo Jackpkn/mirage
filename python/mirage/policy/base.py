@@ -35,7 +35,21 @@ class Policy:
         return None
 
     async def pre_ops(self, ctx: OpsContext) -> Action | None:
-        """Admit or refuse one VFS op, whatever door it entered.
+        """Admit or refuse one VFS op, at the op doors and on the
+        command tier's backend I/O.
+
+        The doors are the dispatcher and the ops facade, which is also
+        how FUSE, the runtime guests, ``find -delete`` and the warm
+        cache arrive; a mount command's handler (cat, grep -r, sed -i,
+        rm) admits each content read, mutation and readdir through the
+        same hook (``with_policy_guard``), before its own warm cache.
+        On that tier the op is named by adapter slot (read_bytes,
+        read_stream, rm_r, ...), so a policy portable across the tiers
+        keys on ``write`` and ``path``; stat/exists and native find/du
+        enumeration stay unguarded as presence facts (mode-000 shape: a
+        denied entry lists and stats, the read of it fails), and a
+        native subtree op (rm_r, dir_copy) admits as the one op the
+        backend performs.
 
         The hot path: fires per op (thousands under one recursive
         command), so keep the hook cheap; expensive decisions belong at
@@ -62,6 +76,12 @@ class Policy:
     async def post_ops(self, ctx: OpsResultContext) -> Action | None:
         """Observe one completed VFS op; a Deny suppresses its result,
         a Limit caps a byte-producing one.
+
+        Narrower than pre_ops: the dispatcher and facade doors only.
+        The backend I/O inside a mount command's handler and each
+        ``find -delete`` deletion admit through pre_ops and report no
+        per-op result here; the command tier's result plane is
+        post_execute, which bounds the finished line's output.
 
         Args:
             ctx (OpsResultContext): the op and its raw result.

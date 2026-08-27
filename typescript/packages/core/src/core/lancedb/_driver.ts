@@ -22,12 +22,15 @@ export interface LanceDriver {
     column: string,
     filters: Record<string, string>,
     limit: number,
+    prefix?: string,
   ): Promise<string[]>
   rowsMatching(
     table: string,
     filters: Record<string, string>,
     columns: string[],
     limit: number,
+    idColumn?: string,
+    prefix?: string,
   ): Promise<LanceRow[]>
   rowRecord(table: string, idColumn: string, rowId: string): Promise<LanceRow | null>
   search(table: string, query: string, limit: number): Promise<LanceRow[]>

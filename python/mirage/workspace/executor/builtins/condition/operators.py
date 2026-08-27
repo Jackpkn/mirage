@@ -56,6 +56,8 @@ async def path_kind(ctx: CondContext,
         return None, None
     if stat.type == FileType.DIRECTORY:
         return "dir", stat
+    if stat.type == FileType.CHAR_DEVICE:
+        return "char", stat
     return "file", stat
 
 
@@ -87,6 +89,8 @@ async def apply_unary(ctx: CondContext, op: str, val: str | PathSpec) -> bool:
             return kind == "file"
         if op == "-d":
             return kind == "dir"
+        if op == "-c":
+            return kind == "char"
         if op == "-s":
             if kind == "dir":
                 return True

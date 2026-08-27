@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest'
 
 import { FileStat, FileType } from '../types.ts'
 import {
+  CHAR_MODE,
   contentSize,
   DIR_MODE,
   FILE_MODE,
@@ -79,6 +80,7 @@ describe('contentSize', () => {
 
 describe('mode constants', () => {
   it('carry the POSIX type bits', () => {
+    expect(CHAR_MODE).toBe(0o020666)
     expect(DIR_MODE).toBe(0o040755)
     expect(FILE_MODE).toBe(0o100644)
   })
@@ -95,6 +97,11 @@ describe('posixMode', () => {
   it('takes the permission bits from the overlay and the type bits from the kind', () => {
     const st = new FileStat({ name: 'f', type: FileType.TEXT, mode: 0o600 })
     expect(posixMode(st)).toBe((FILE_MODE & ~0o7777) | 0o600)
+  })
+
+  it('projects a character device with character type bits', () => {
+    const st = new FileStat({ name: 'zero', type: FileType.CHAR_DEVICE })
+    expect(posixMode(st)).toBe(CHAR_MODE)
   })
 
   // No POSIX system consults the bits on a symlink, so a chmod -h that

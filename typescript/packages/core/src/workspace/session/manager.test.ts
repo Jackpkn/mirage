@@ -180,6 +180,36 @@ describe('SessionManager with a SessionStore', () => {
     expect(m.scriptOf('def')).toEqual(expected)
   })
 
+  it('default session adopts a stored path axis', async () => {
+    // The show half and the reasons table are durable restrictions
+    // like the hides beside them: dropped here, a restarted daemon's
+    // carve-out would vanish and the next flush would erase both from
+    // the store.
+    const store = new RAMSessionStore()
+    await store.set('def', {
+      session_id: 'def',
+      cwd: '/w',
+      env: {},
+      hidden_paths: { paths: ['/repo'], patterns: [] },
+      shown_paths: { entries: [{ path: '/repo/public', mode: 'read' }, { path: '/repo/notes' }] },
+      hide_reasons: [{ patterns: ['/repo'], reason: 'keep the bulk out of context' }],
+    })
+    const m = new SessionManager('def', store)
+    await m.ensureLoaded()
+    const dflt = m.get('def')
+    expect(dflt.shownPaths).toEqual({
+      entries: [
+        { path: '/repo/public', mode: MountMode.READ },
+        { path: '/repo/notes', mode: null },
+      ],
+    })
+    expect(dflt.hideReasons).toEqual([
+      { patterns: ['/repo'], reason: 'keep the bulk out of context' },
+    ])
+    expect(m.hideReasonsOf('def')).toEqual(dflt.hideReasons)
+    expect(m.hideReasonsOf('stranger')).toEqual([])
+  })
+
   it('defaultProfile shapes the default session and outranks a stale record', async () => {
     // A record written before the profile existed (or under an older
     // one) must not wake the primary agent unrestricted: the document

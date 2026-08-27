@@ -71,8 +71,10 @@ export function enotempty(path: string | { virtual: string }): FsError {
 
 // readlink on a path that exists but is not a symlink. Mirrors Python's
 // OSError(errno.EINVAL).
-export function einval(path: string | { virtual: string }): FsError {
-  return fsError(path, 'EINVAL')
+export function einval(path: string | { virtual: string }, message?: string): FsError {
+  const err = fsError(path, 'EINVAL')
+  if (message !== undefined) err.message = message
+  return err
 }
 
 // A rename whose two ends sit on different mounts. POSIX's answer for a
@@ -225,16 +227,30 @@ export function isMissingOp(err: unknown, op: string): boolean {
   return stamped.code === 'ENOTSUP' && stamped.op === op
 }
 
-// The read-only mount refusal keeps its human message (executor builtins
-// and the FUSE bridge sniff 'read-only') but is stamped EACCES + operand so
-// fs chokepoints render 'Permission denied', matching Python's
-// PermissionError from the same guard.
-export function eaccesReadOnly(
+// A refused mutation that is not absence and not a mode: a lock or a
+// policy in practice. Message-carrying, unlike `eacces`, because its
+// callers name what was refused (the s3 batch delete names its count).
+export function eaccesRefused(
   message: string,
   path: string | { virtual: string; rawPath?: string },
 ): FsError {
   const err = new Error(message) as FsError
   err.code = 'EACCES'
+  err.virtualPath = virtualOf(path)
+  return err
+}
+
+// The below-mode refusal keeps its human message (executor builtins and
+// the FUSE bridge sniff 'read-only') but is stamped EROFS + operand so fs
+// chokepoints render 'Read-only file system', matching Python's
+// ReadOnlyError from the same guard: the mode voice, distinct from both
+// the hide voice (ENOENT) and the policy voice (EACCES).
+export function erofsReadOnly(
+  message: string,
+  path: string | { virtual: string; rawPath?: string },
+): FsError {
+  const err = new Error(message) as FsError
+  err.code = 'EROFS'
   err.virtualPath = virtualOf(path)
   return err
 }
@@ -248,6 +264,7 @@ const STRERROR: Record<string, string> = {
   ENOENT: gnuPhrase('ENOENT'),
   ENOTDIR: gnuPhrase('ENOTDIR'),
   EISDIR: gnuPhrase('EISDIR'),
+  EROFS: gnuPhrase('EROFS'),
   EACCES: gnuPhrase('EACCES'),
   EEXIST: gnuPhrase('EEXIST'),
   ENOTEMPTY: gnuPhrase('ENOTEMPTY'),

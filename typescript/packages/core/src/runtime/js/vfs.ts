@@ -79,6 +79,7 @@ os.rename = (a, b) => __mirage_rename(String(a), String(b));
 os.utimes = (path, atime, mtime) => __mirage_utimes(String(path), atime, mtime);
 os.S_IFMT = 61440;
 os.S_IFDIR = 16384;
+os.S_IFCHR = 8192;
 os.S_IFREG = 32768;
 os.S_IFLNK = 40960;
 `
@@ -347,7 +348,7 @@ export function installMirageFs(ctx: QuickJSAsyncContext, vfs: RuntimeVFS | null
       setNum('nlink', 1)
       setNum('uid', 0)
       setNum('gid', 0)
-      setNum('rdev', 0)
+      setNum('rdev', st.rdev ?? 0)
       setNum('size', st.size)
       setNum('blocks', Math.ceil(st.size / 512))
       setNum('atime', st.mtimeMs)

@@ -50,6 +50,15 @@ runs:
       shell: bash
       run: pnpm install --frozen-lockfile=false
 
+    # Every kit fake imports a generated Prisma client out of integ/generated/,
+    # which is gitignored, so all of them have to exist before any fake starts.
+    # One step rather than one per fake: letting a fake rely on an earlier
+    # fake's step to have generated its client couples the two by accident.
+    - name: Generate integ Prisma clients
+      working-directory: integ
+      shell: bash
+      run: pnpm run prisma:clients
+
     - name: Download TypeScript build outputs
       if: ${{ inputs.typescript-build-artifact != '' }}
       uses: actions/download-artifact@v4
@@ -104,7 +113,7 @@ runs:
       working-directory: integ
       shell: bash
       run: |
-        nohup pnpm exec tsx server/gws_server.ts --port 19999 > /tmp/gws.log 2>&1 &
+        nohup pnpm exec tsx server/gws/main.ts --port 19999 > /tmp/gws.log 2>&1 &
         for i in $(seq 1 30); do
           grep -q "GWS_URL=" /tmp/gws.log && break
           sleep 1
@@ -131,16 +140,17 @@ runs:
           sleep 2
         done
 
-    - name: Start fake Box API
+    - name: Start fake Box API (Prisma)
+      working-directory: integ
       shell: bash
       run: |
-        nohup ./python/.venv/bin/python integ/server/box_server.py --port 5096 > /tmp/boxsrv.log 2>&1 &
+        nohup ./node_modules/.bin/tsx server/box/main.ts --port 5096 > /tmp/boxsrv.log 2>&1 &
         for i in $(seq 1 30); do
-          grep -q "BOX_ENDPOINT=" /tmp/boxsrv.log && break
+          grep -q "BOX_URL=" /tmp/boxsrv.log && break
           sleep 1
         done
         cat /tmp/boxsrv.log
-        echo "BOX_ENDPOINT=http://127.0.0.1:5096" >> "$GITHUB_ENV"
+        echo "BOX_URL=http://127.0.0.1:5096" >> "$GITHUB_ENV"
 
     - name: Start fake GitHub API
       shell: bash
@@ -172,6 +182,30 @@ runs:
         cat /tmp/slacksrv.log
         echo "SLACK_URL=http://127.0.0.1:5097" >> "$GITHUB_ENV"
 
+    - name: Start fake Dropbox API (Prisma)
+      working-directory: integ
+      shell: bash
+      run: |
+        nohup ./node_modules/.bin/tsx server/dropbox/main.ts --port 5088 > /tmp/dropboxsrv.log 2>&1 &
+        for i in $(seq 1 30); do
+          grep -q "DROPBOX_URL=" /tmp/dropboxsrv.log && break
+          sleep 1
+        done
+        cat /tmp/dropboxsrv.log
+        echo "DROPBOX_URL=http://127.0.0.1:5088" >> "$GITHUB_ENV"
+
+    - name: Start fake Microsoft Graph API (Prisma)
+      working-directory: integ
+      shell: bash
+      run: |
+        nohup ./node_modules/.bin/tsx server/onedrive/main.ts --port 5089 > /tmp/onedrivesrv.log 2>&1 &
+        for i in $(seq 1 30); do
+          grep -q "ONEDRIVE_URL=" /tmp/onedrivesrv.log && break
+          sleep 1
+        done
+        cat /tmp/onedrivesrv.log
+        echo "ONEDRIVE_URL=http://127.0.0.1:5089" >> "$GITHUB_ENV"
+
     - name: Start fake Trello API (Prisma)
       working-directory: integ
       shell: bash
@@ -179,24 +213,25 @@ runs:
         INTEG_DB_URL: file:/tmp/mirage-trello-ci.db
       run: |
         ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
-        nohup ./node_modules/.bin/tsx server/trello.ts --port 5095 > /tmp/trellosrv.log 2>&1 &
+        nohup ./node_modules/.bin/tsx server/trello/main.ts --port 5095 > /tmp/trellosrv.log 2>&1 &
         for i in $(seq 1 30); do
-          grep -q "TRELLO_ENDPOINT=" /tmp/trellosrv.log && break
+          grep -q "TRELLO_URL=" /tmp/trellosrv.log && break
           sleep 1
         done
         cat /tmp/trellosrv.log
-        echo "TRELLO_ENDPOINT=http://127.0.0.1:5095" >> "$GITHUB_ENV"
+        echo "TRELLO_URL=http://127.0.0.1:5095" >> "$GITHUB_ENV"
 
     - name: Start fake Linear API
+      working-directory: integ
       shell: bash
       run: |
-        nohup ./python/.venv/bin/python integ/server/linear_server.py --port 5094 > /tmp/linearsrv.log 2>&1 &
+        nohup ./node_modules/.bin/tsx server/linear/main.ts --port 5094 > /tmp/linearsrv.log 2>&1 &
         for i in $(seq 1 30); do
-          grep -q "LINEAR_ENDPOINT=" /tmp/linearsrv.log && break
+          grep -q "LINEAR_URL=" /tmp/linearsrv.log && break
           sleep 1
         done
         cat /tmp/linearsrv.log
-        echo "LINEAR_ENDPOINT=http://127.0.0.1:5094/graphql" >> "$GITHUB_ENV"
+        echo "LINEAR_URL=http://127.0.0.1:5094" >> "$GITHUB_ENV"
 
     - name: Start fake Dify API
       shell: bash

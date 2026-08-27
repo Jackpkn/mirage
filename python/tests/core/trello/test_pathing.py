@@ -18,6 +18,7 @@ from mirage.core.trello.pathing import (board_dirname, card_dirname,
                                         label_filename, list_dirname,
                                         member_filename, split_suffix_id,
                                         workspace_dirname)
+from mirage.utils.sanitize import NAME_MAX_BYTES, byte_len
 
 
 def test_split_suffix_id():
@@ -70,3 +71,33 @@ def test_label_filename():
 def test_label_filename_no_name():
     label = {"id": "lb1", "name": "", "color": "red"}
     assert label_filename(label) == "red__lb1.json"
+
+
+CJK = "会議の記録" * 40
+HEX24 = "5f2a9b1c3d4e5f6a7b8c9d0e"
+
+# Every builder, the record fields it reads for the label, and the suffix it
+# appends.
+NAME_CASES = [
+    (workspace_dirname, ("displayName", ), ""),
+    (board_dirname, ("name", ), ""),
+    (list_dirname, ("name", ), ""),
+    (card_dirname, ("name", ), ""),
+    (member_filename, ("fullName", ), ".json"),
+    (label_filename, ("name", ), ".json"),
+]
+
+
+@pytest.mark.parametrize("build,fields,suffix", NAME_CASES)
+def test_a_cjk_label_fits_name_max_and_still_addresses_the_id(
+        build, fields, suffix):
+    # These composed `<label>__<id>` by hand, so the 100-character cap in
+    # sanitize_name let a CJK name render 326-331 bytes against a 255-byte
+    # NAME_MAX. They route through fit_id_name now.
+    record: dict[str, str] = {"id": HEX24}
+    for field in fields:
+        record[field] = CJK
+    name = build(record)
+    assert byte_len(name) <= NAME_MAX_BYTES
+    assert "\ufffd" not in name
+    assert split_suffix_id(name, suffix=suffix)[1] == HEX24

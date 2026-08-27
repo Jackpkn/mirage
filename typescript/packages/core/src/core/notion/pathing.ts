@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { parseIdName } from '../../utils/naming.ts'
+import { fitIdName, parseIdName } from '../../utils/naming.ts'
 import { sanitizeName } from '../../utils/sanitize.ts'
 
 export { sanitizeName } from '../../utils/sanitize.ts'
@@ -21,9 +21,15 @@ export function stripDashes(id: string): string {
   return id.replace(/-/g, '')
 }
 
+/**
+ * Join a Notion object's title to its id inside the NAME_MAX budget. The one
+ * place the pair is composed, so a title long enough to be trimmed is trimmed
+ * the same way everywhere -- a second spelling names a path that does not
+ * exist.
+ */
 export function formatSegment(page: { id: string; title: string }): string {
   const label = page.title !== '' ? sanitizeName(page.title) : 'untitled'
-  return `${label}__${page.id}`
+  return fitIdName(label, page.id)
 }
 
 export function parseSegment(segment: string): { title: string; id: string } {

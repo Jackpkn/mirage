@@ -21,7 +21,7 @@ from mirage.io.types import ByteSource, CommandOutput, IOResult
 from mirage.runtime.base import Runtime
 from mirage.runtime.language import LanguageRuntime
 from mirage.runtime.python.base import PythonRuntime
-from mirage.runtime.types import DispatchFn, RunArgs, RunResult
+from mirage.runtime.types import DispatchFn, ExecPathFn, RunArgs, RunResult
 from mirage.types import PathSpec
 
 
@@ -168,6 +168,7 @@ async def resolve_source(
     module: str | None = None,
     argv0_rules: Argv0Rules = Argv0Rules(),
     skip_line: bool = False,
+    exec_path_allowed: ExecPathFn | None = None,
 ) -> tuple[CommandOutput | None, Source | None]:
     """Resolve what an interpreter command should run, shared by all.
 
@@ -175,6 +176,14 @@ async def resolve_source(
     payload flag wins (-c/-e), else the first operand is the script
     (read through the workspace dispatch), else piped stdin is the
     source. Words after the script pass through verbatim as argv.
+
+    The ``x`` check follows the source's door. A file operand asks
+    ``exec_path_allowed`` about the script's own path, so a session
+    whose only ``x`` grant is one show subtree runs scripts there and
+    nowhere else; inline code (-c/-e), -m and stdin keep the
+    whole-session rule (``exec_allowed``: any ``x`` grant), since no
+    path holds them. Outside a workspace no door is wired and
+    ``exec_allowed`` answers for files too.
 
     Args:
         label (str): the command name used in error messages.
@@ -186,23 +195,22 @@ async def resolve_source(
             reading the script operand.
         cwd (PathSpec | str | None): the session cwd for script
             resolution, as ``CommandOpts.cwd`` carries it.
-        exec_allowed (bool): whether the root mount is in EXEC mode.
+        exec_allowed (bool): whether any mount region is in EXEC mode.
         module (str | None): the -m module name, if given.
         argv0_rules (Argv0Rules): what this interpreter calls itself in
             the doors that carry no file name.
         skip_line (bool): drop the script file's first line (CPython's
             -x). File mode only, which is CPython's own scope: -c, -m
             and stdin are unaffected.
+        exec_path_allowed (ExecPathFn | None): whether code may be
+            loaded from one path, for the file door; None outside a
+            workspace.
 
     Returns:
         tuple[CommandOutput | None, Source | None]: an early
             error result, or the prepared source (exactly one is not
             None).
     """
-    if not exec_allowed:
-        err = f"{label}: root mount '/' is not in EXEC mode\n".encode()
-        return (None, IOResult(exit_code=126, stderr=err)), None
-
     paths = paths or []
     text_list = list(texts)
     code = payload
@@ -242,6 +250,17 @@ async def resolve_source(
         arg_strs = []
         mode = "stdin"
         argv0 = argv0_rules.bare_stdin
+
+    if mode == "file" and script_path is not None:
+        allowed = (exec_path_allowed(script_path.virtual)
+                   if exec_path_allowed is not None else exec_allowed)
+        if not allowed:
+            display = script_path.raw_path or script_path.virtual
+            err = f"{label}: {display}: not in EXEC mode\n".encode()
+            return (None, IOResult(exit_code=126, stderr=err)), None
+    elif not exec_allowed:
+        err = f"{label}: root mount '/' is not in EXEC mode\n".encode()
+        return (None, IOResult(exit_code=126, stderr=err)), None
 
     if code is None and script_path is not None:
         if dispatch is None:

@@ -85,6 +85,10 @@ export class NodeTree {
       node.usedBytes = bytes.length
       this.stamp(seed, path, node)
     }
+    for (const [path, device] of seed.devices) {
+      const node = this.placeFile(path, device.mode, device.rdev)
+      if (node !== null) this.stamp(seed, path, node)
+    }
     for (const [path, target] of seed.links) {
       const node = this.placeFile(path, LINK_MODE)
       if (node !== null) node.link = target
@@ -125,8 +129,8 @@ export class NodeTree {
    *   name: the child's name.
    *   mode: type and permission bits.
    */
-  makeNode(parent: FSNode | null, name: string, mode: number): FSNode {
-    const node = this.host.createNode(parent, name, mode, 0)
+  makeNode(parent: FSNode | null, name: string, mode: number, rdev = 0): FSNode {
+    const node = this.host.createNode(parent, name, mode, rdev)
     node.node_ops = this.nodeOps
     node.stream_ops = this.streamOps
     if (this.host.isDir(mode)) node.children = new Map()
@@ -213,13 +217,13 @@ export class NodeTree {
    *   path: guest-absolute path of the leaf.
    *   mode: type and permission bits, a regular file by default.
    */
-  private placeFile(path: string, mode: number = FILE_MODE): FSNode | null {
+  private placeFile(path: string, mode: number = FILE_MODE, rdev = 0): FSNode | null {
     const rel = this.relative(path)
     if (rel === null) return null
     const cut = rel.lastIndexOf('/')
     const name = cut < 0 ? rel : rel.slice(cut + 1)
     if (name === '') return null
     const parent = cut <= 0 ? this.rootNode() : this.ensureDir(rel.slice(0, cut))
-    return this.makeNode(parent, name, mode)
+    return this.makeNode(parent, name, mode, rdev)
   }
 }

@@ -18,7 +18,8 @@ from mirage.commands.builtin.utils.constants import (DEFAULT_MODES,
                                                      EPOCH_LS_TIME, MONTHS,
                                                      NUMERIC_PREFIX,
                                                      TYPE_CHARS)
-from mirage.types import LINK_TARGET_KEY, FileStat, FileType
+from mirage.types import (DEVICE_NUMBERS_KEY, LINK_TARGET_KEY, FileStat,
+                          FileType)
 
 
 def human_scaled(n: int, base: int, units: tuple[str, ...]) -> str:
@@ -118,11 +119,14 @@ def format_ls_long(
         (len(x) for x in sizes), default=1)
     out: list[str] = []
     for s, raw_size in zip(stats, sizes):
+        mode = _ls_mode_string(s)
+        dev = s.extra.get(DEVICE_NUMBERS_KEY) if s.extra else None
+        if dev:
+            out.append(f"{mode}\t{dev[0]}, {dev[1]}\t-\t{_ls_name(s)}")
+            continue
         if s.size is None and s.modified is None:
-            mode = _ls_mode_string(s)
             out.append(f"{mode}\t-\t-\t{_ls_name(s)}")
             continue
-        mode = _ls_mode_string(s)
         size = raw_size.rjust(width)
         time = _ls_time_string(s.modified)
         who = str(s.uid) if s.uid is not None else owner
