@@ -48,6 +48,12 @@ const STD_STREAM_RDEV: ReadonlyMap<string, number> = new Map([
   ['stderr', 8],
 ])
 
+// /dev/null's device number. It and the three streams above answer a read with
+// EOF; only /dev/zero hands back an endless run of zeroes, and a stream that
+// did the same would hang `open('/dev/stdin').read()` forever.
+const NULL_RDEV = 0x103
+const EOF_ON_READ_RDEV: ReadonlySet<number> = new Set([NULL_RDEV, ...STD_STREAM_RDEV.values()])
+
 function isCharDevice(mode: number): boolean {
   return (mode & S_IFMT) === S_IFCHR
 }
@@ -179,6 +185,10 @@ export class MirageFs {
     if (this.prefix === '/dev') {
       for (const [name, rdev] of STD_STREAM_RDEV) {
         const path = `/dev/${name}`
+        // A write is swallowed, as it is for every synthetic character device
+        // here. The interpreter's real stderr rides its own capture, not this
+        // node, so nothing that used to be reported is lost: before this the
+        // path did not exist at all and the open raised.
         if (!seed.devices.has(path)) seed.charDevice(path, S_IFCHR | 0o666, rdev)
       }
     }
@@ -366,7 +376,7 @@ export class MirageFs {
   ): number {
     const node = stream.node
     if (isCharDevice(node.mode)) {
-      if (node.rdev === 0x103) return 0
+      if (EOF_ON_READ_RDEV.has(node.rdev)) return 0
       buffer.fill(0, offset, offset + length)
       return length
     }

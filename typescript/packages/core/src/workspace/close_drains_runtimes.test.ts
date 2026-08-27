@@ -14,7 +14,7 @@
 
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { beforeAll, describe, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
@@ -46,6 +46,17 @@ describe('Workspace.close', () => {
   // `closed` before the first await. A runtime replaying its journal during
   // teardown writes to mounts, so it has to see an open workspace; Python has
   // always ordered it that way and sets its flags once teardown is done.
+  // `closed` is only set once teardown finishes, so that a runtime can still
+  // replay its journal. That would otherwise leave a window where a caller
+  // could start a job after killAll, or add a mount after the close list was
+  // taken, so the public doors check that a close is under way.
+  it('refuses new work as soon as close starts', async () => {
+    const ws = build()
+    const closing = ws.close()
+    expect(() => ws.addMount('/late', new RAMResource())).toThrow('Workspace is closed')
+    await closing
+  })
+
   it('runs teardown once when two callers race it', async () => {
     const ws = build()
     await Promise.all([ws.close(), ws.close(), ws.close()])

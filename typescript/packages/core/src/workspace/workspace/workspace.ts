@@ -115,6 +115,20 @@ export class Workspace {
   private closed = false
   private readonly closers: (() => Promise<void>)[] = []
   private closing: Promise<void> | null = null
+
+  /**
+   * Whether no new work should be accepted.
+   *
+   * True from the moment `close()` is called, not from the moment teardown
+   * finishes. The two differ because `closed` is now set at the end so a
+   * runtime can still replay its journal, and that window would otherwise let
+   * a caller start a job after `killAll`, or add a mount after the close list
+   * was taken. `resolve` is deliberately not guarded on this: the replay
+   * dispatches through it while teardown is running.
+   */
+  private get shuttingDown(): boolean {
+    return this.closing !== null || this.closed
+  }
   private readonly watchManager: WatchManager
   private readonly runtimes: Runtimes
   private readonly policyRouter: PolicyRouter
@@ -687,7 +701,7 @@ export class Workspace {
   }
 
   attachWatchRuntime(runtime: WatchRuntime): void {
-    if (this.closed) throw new Error('Workspace is closed')
+    if (this.shuttingDown) throw new Error('Workspace is closed')
     this.watchManager.attach(runtime)
   }
 
@@ -696,12 +710,12 @@ export class Workspace {
   }
 
   watch(path: string | PathSpec | readonly (string | PathSpec)[]): AsyncIterable<FileEvent> {
-    if (this.closed) throw new Error('Workspace is closed')
+    if (this.shuttingDown) throw new Error('Workspace is closed')
     return this.watchManager.watch(path)
   }
 
   async notify(change: FileEvent): Promise<void> {
-    if (this.closed) throw new Error('Workspace is closed')
+    if (this.shuttingDown) throw new Error('Workspace is closed')
     await this.watchManager.notify(change)
   }
 
@@ -710,7 +724,7 @@ export class Workspace {
    * on this workspace's OpsRegistry so dispatch can find them.
    */
   addMount(prefix: string, resource: Resource, mode: MountMode = MountMode.READ): MountEntry {
-    if (this.closed) throw new Error('Workspace is closed')
+    if (this.shuttingDown) throw new Error('Workspace is closed')
     const m = this.registry.mount(prefix, resource, mode)
     this.opsRegistry.registerResource(resource)
     const resourceOps = resource.ops?.()
@@ -727,7 +741,7 @@ export class Workspace {
    * In-flight ops that already resolved their Mount are not interrupted.
    */
   async unmount(prefix: string): Promise<void> {
-    if (this.closed) throw new Error('Workspace is closed')
+    if (this.shuttingDown) throw new Error('Workspace is closed')
     await unmountPrefix(
       {
         registry: this.registry,
@@ -955,7 +969,7 @@ export class Workspace {
    * runtime throws.
    */
   async executePythonRepl(code: string, options: { sessionId?: string } = {}): Promise<EvalResult> {
-    if (this.closed) throw new Error('Workspace is closed')
+    if (this.shuttingDown) throw new Error('Workspace is closed')
     const sessionId = options.sessionId ?? this.sessionManager.defaultId
     const bound = this.runtimes.bindings.python3
     if (bound === undefined || !isEvaluator(bound)) {

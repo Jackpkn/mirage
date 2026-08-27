@@ -175,12 +175,20 @@ describe('MirageFs', () => {
     const fs = py.FS as unknown as {
       stat: (p: string) => { mode: number }
       open: (p: string, flags: string) => unknown
+      readFile: (p: string) => Uint8Array
     }
     for (const name of ['stdin', 'stdout', 'stderr']) {
       expect((fs.stat(`/dev/${name}`).mode & 0o170000) === 0o020000).toBe(true)
     }
     // The reopen itself, which is the call that used to throw.
     expect(fs.open('/dev/stderr', 'w')).toBeTruthy()
+    // And they have to read as empty. A character device here answers with an
+    // endless run of zeroes unless told otherwise, which is /dev/zero's job; a
+    // stream doing the same would hang `open('/dev/stdin').read()` forever
+    // rather than reach EOF.
+    for (const name of ['stdin', 'stdout', 'stderr']) {
+      expect(fs.readFile(`/dev/${name}`).length).toBe(0)
+    }
   })
 
   it('serves a seeded file to the guest', async () => {
