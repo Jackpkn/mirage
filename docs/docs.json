@@ -187,6 +187,7 @@
               "home/setup/cli/ntn",
               "home/setup/cli/linear",
               "home/setup/cli/gh",
+                "home/setup/cli/hf",
               "home/setup/cli/git"
             ]
           },
@@ -368,6 +369,7 @@
               "python/cli/ntn",
               "python/cli/linear",
               "python/cli/gh",
+                "python/cli/hf",
               "python/cli/git"
             ]
           },
@@ -555,6 +557,7 @@
               "typescript/cli/ntn",
               "typescript/cli/linear",
               "typescript/cli/gh",
+                "typescript/cli/hf",
               "typescript/cli/git"
             ]
           },
