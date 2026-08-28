@@ -19,7 +19,7 @@ from typing import Any
 
 from mirage.accessor.base import Accessor
 from mirage.cache.index import IndexCacheStore
-from mirage.commands.builtin.grep_helper import BINARY_EXTENSIONS
+from mirage.commands.builtin.constants import BINARY_EXTENSIONS
 from mirage.commands.config import CommandOpts
 from mirage.commands.resolve import get_extension
 from mirage.commands.spec.compile import compile_spec

@@ -18,7 +18,7 @@ import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import type { PathSpec } from '../../../types.ts'
 import { gunzip } from '../../../utils/compress.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
-import { compilePattern, resolvePatternFromFlags } from '../grep_helper.ts'
+import { compilePattern, resolvePattern } from '../grep_pattern.ts'
 import { readStdinAsync } from '../utils/stream.ts'
 
 const ENC = new TextEncoder()
@@ -95,7 +95,7 @@ export async function zgrepGeneric(
   stream: (p: PathSpec) => AsyncIterable<Uint8Array>,
 ): Promise<CommandFnResult> {
   const fl = new FlagView(opts.flags, specOf('zgrep'))
-  const resolution = await resolvePatternFromFlags(
+  const resolution = await resolvePattern(
     'zgrep',
     texts,
     opts.flags,

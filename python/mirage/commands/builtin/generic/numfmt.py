@@ -2,7 +2,7 @@ import re
 from decimal import ROUND_HALF_EVEN, ROUND_UP, Context, Decimal
 
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.errors import UsageError
 from mirage.io.types import ByteSource, IOResult
 
@@ -225,7 +225,7 @@ async def numfmt(
             for value in texts
         ]
     else:
-        raw = await _read_stdin_async(stdin)
+        raw = await read_stdin_async(stdin)
         data = raw.decode(errors="replace") if raw is not None else ""
         output = [
             _convert_line(line, to_mode, from_mode, suffix, grouping)

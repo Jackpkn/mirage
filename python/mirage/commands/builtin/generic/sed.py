@@ -1,9 +1,14 @@
 import posixpath
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
 
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.constants import (SED_MISSING_SCRIPT,
+                                               SED_NO_INPUT_EXIT,
+                                               SED_NO_INPUT_FILES)
+from mirage.commands.builtin.sed_script import (SedCommand, execute_program,
+                                                parse_one_command,
+                                                parse_program)
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -13,12 +18,8 @@ from mirage.types import PathSpec
 from mirage.utils.errors import FS_ERRORS, fs_error_line
 from mirage.utils.key_prefix import mount_key, mount_prefix_of
 
-from mirage.commands.builtin.sed_helper import (  # isort: skip
-    SED_MISSING_SCRIPT, SED_NO_INPUT_EXIT, SED_NO_INPUT_FILES,
-    _execute_program, _parse_one_command, _parse_program)
 
-
-def _is_simple_sub(commands: list[dict[str, Any]], suppress: bool) -> bool:
+def _is_simple_sub(commands: list[SedCommand], suppress: bool) -> bool:
     return (len(commands) == 1 and commands[0]["cmd"] == "s"
             and commands[0].get("addr_start") is None and not suppress)
 
@@ -35,9 +36,9 @@ async def sed(
     extended: bool = False,
 ) -> tuple[ByteSource | None, IOResult]:
     if ";" in expression or "{" in expression or "\n" in expression:
-        commands = _parse_program(expression)
+        commands = parse_program(expression)
     else:
-        commands = [_parse_one_command(expression)[0]]
+        commands = [parse_one_command(expression)[0]]
 
     if paths and _is_simple_sub(commands, suppress):
         # Run the substitution through the per-line engine rather than a single
@@ -74,10 +75,10 @@ async def sed(
                         break
                     continue
                 text = data.decode(errors="replace")
-                new_text = _execute_program(text,
-                                            commands,
-                                            suppress=suppress,
-                                            extended=extended)
+                new_text = execute_program(text,
+                                           commands,
+                                           suppress=suppress,
+                                           extended=extended)
                 new_data = new_text.encode()
                 await write_bytes(p, new_data)
                 writes[p.mount_path] = new_data
@@ -99,10 +100,10 @@ async def sed(
                     break
                 continue
             text = data.decode(errors="replace")
-            new_text = _execute_program(text,
-                                        commands,
-                                        suppress=suppress,
-                                        extended=extended)
+            new_text = execute_program(text,
+                                       commands,
+                                       suppress=suppress,
+                                       extended=extended)
             outputs.append(new_text)
             read_ok.append(p)
         return "".join(outputs).encode(), IOResult(
@@ -131,10 +132,10 @@ async def sed(
                     break
                 continue
             text = data.decode(errors="replace")
-            result = _execute_program(text,
-                                      commands,
-                                      suppress=suppress,
-                                      extended=extended)
+            result = execute_program(text,
+                                     commands,
+                                     suppress=suppress,
+                                     extended=extended)
             if modifying:
                 if write_bytes is None:
                     raise NotImplementedError(
@@ -156,15 +157,15 @@ async def sed(
         return "".join(all_outputs).encode(), IOResult(exit_code=code,
                                                        stderr=err or None)
 
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is None:
         return None, IOResult(exit_code=SED_NO_INPUT_EXIT,
                               stderr=f"{SED_NO_INPUT_FILES}\n".encode())
     text = raw.decode(errors="replace")
-    result = _execute_program(text,
-                              commands,
-                              suppress=suppress,
-                              extended=extended)
+    result = execute_program(text,
+                             commands,
+                             suppress=suppress,
+                             extended=extended)
     return result.encode(), IOResult()
 
 

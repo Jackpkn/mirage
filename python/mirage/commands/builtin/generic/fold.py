@@ -5,7 +5,7 @@ from mirage.commands.builtin.utils.lines import split_lines
 from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -87,7 +87,7 @@ async def fold(
         return (("\n".join(all_lines) +
                  "\n").encode() if all_lines else b""), IOResult()
 
-    stdin_raw = await _read_stdin_async(stdin)
+    stdin_raw = await read_stdin_async(stdin)
     if stdin_raw is None:
         raise ValueError("fold: missing operand")
     if count_bytes:

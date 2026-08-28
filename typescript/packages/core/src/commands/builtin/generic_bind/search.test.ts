@@ -22,7 +22,7 @@ import { enoent } from '../../../utils/errors.ts'
 import { stripSlash } from '../../../utils/slash.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import type { ByteSource, IOResult } from '../../../io/types.ts'
-import { literalPushdownOperand } from '../grep_helper.ts'
+import { literalPushdownOperand } from '../grep_pushdown.ts'
 import type { CommandIO } from './adapter.ts'
 import { makeSearch } from './search.ts'
 

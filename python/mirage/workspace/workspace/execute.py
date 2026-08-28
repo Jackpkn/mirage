@@ -17,8 +17,8 @@ import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from mirage.commands.builtin.utils.limit import (CommandTimeoutError,
-                                                 run_with_timeout)
+from mirage.commands.builtin.utils.limit import run_with_timeout
+from mirage.commands.errors import CommandTimeoutError
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.observe.context import RecordingScope

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { runOutput } from '../../commands/builtin/general/interpreter.ts'
-import { CommandTimeoutError } from '../../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../../commands/errors.ts'
 import type { ByteSource } from '../../io/types.ts'
 import { IOResult, materialize } from '../../io/types.ts'
 import type { LanguageRuntime } from '../../runtime/language.ts'

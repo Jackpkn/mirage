@@ -24,7 +24,7 @@ import { specOf } from '../../spec/builtins.ts'
 import { FlagView, type FlagValue } from '../../spec/types.ts'
 import { grepGeneric } from '../generic/grep.ts'
 import { rgGeneric } from '../generic/rg.ts'
-import { patternArg } from '../grep_helper.ts'
+import { patternArg } from '../grep_pattern.ts'
 import { formatRecords } from '../utils/output.ts'
 import { resolveGlobOf, type CommandIO } from './adapter.ts'
 

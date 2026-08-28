@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from itertools import groupby
 
-from mirage.commands.builtin.utils.formatting import _ls_mode_string
+from mirage.commands.builtin.utils.formatting import ls_mode_string
 from mirage.commands.builtin.utils.operands import operand_stat
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
@@ -208,7 +208,7 @@ def _directive_value(spec: str, s: FileStat, name: str) -> str:
     if spec == "a":
         return format(_effective_mode(s), "o")
     if spec == "A":
-        return _ls_mode_string(s)
+        return ls_mode_string(s)
     if spec == "f":
         return format(_type_bits(s) | _effective_mode(s), "x")
     if spec in ("u", "U"):

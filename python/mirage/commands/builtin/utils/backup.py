@@ -30,8 +30,6 @@ BACKUP_CONTROLS = {
     "t": "numbered",
 }
 
-DEFAULT_BACKUP_SUFFIX = "~"
-
 _NUMBERED_SUFFIX = re.compile(r"^\.~([0-9]+)~$")
 
 

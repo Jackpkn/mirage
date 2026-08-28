@@ -40,6 +40,10 @@ export function flagKwargName(flag: string): string {
 
 export const NUMERIC_SHORT = /^-\d+$/
 
+// GNU echo is not getopt, so its option surface is a word shape, not a
+// CommandSpec: options are LEADING words matching this pattern only.
+export const ECHO_OPTION = /^-[neE]+$/
+
 // Value shape accepted by an int-typed option: optional sign plus digits,
 // the portable core of Python int() and argparse (no whitespace, no
 // underscores, so both languages accept exactly the same strings).

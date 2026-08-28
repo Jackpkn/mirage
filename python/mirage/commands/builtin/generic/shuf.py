@@ -2,7 +2,7 @@ import random
 from collections.abc import Awaitable, Callable
 
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
@@ -60,7 +60,7 @@ async def shuf(
         result = _sample(all_lines, count, with_replacement)
         rendered = (sep.join(result) + sep).encode()
     else:
-        raw = await _read_stdin_async(stdin)
+        raw = await read_stdin_async(stdin)
         if raw is None:
             raise ValueError("shuf: missing operand")
         text = raw.decode(errors="replace")

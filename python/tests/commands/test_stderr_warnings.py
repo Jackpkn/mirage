@@ -16,8 +16,9 @@ import asyncio
 
 import pytest
 
-from mirage.commands.builtin.grep_helper import compile_pattern, grep_recursive
-from mirage.commands.builtin.rg_helper import rg_full
+from mirage.commands.builtin.grep_pattern import compile_pattern
+from mirage.commands.builtin.grep_scan import grep_recursive
+from mirage.commands.builtin.rg_scan import rg_full
 from mirage.resource.ram import RAMResource
 from mirage.types import ContentType, FileStat, FileType, MountMode, PathSpec
 from mirage.workspace import Workspace
@@ -44,7 +45,7 @@ def _make_stat(files):
 
 
 @pytest.mark.anyio
-async def test_grep_helper_collects_warnings_on_unreadable_file():
+async def test_grep_scan_collects_warnings_on_unreadable_file():
 
     async def read_bytes(path):
         if path == "/good.txt":
@@ -95,7 +96,7 @@ async def test_grep_helper_collects_warnings_on_unreadable_file():
 
 
 @pytest.mark.anyio
-async def test_grep_helper_warns_on_missing_dir():
+async def test_grep_scan_warns_on_missing_dir():
 
     async def read_bytes(path):
         raise FileNotFoundError(path)
@@ -130,7 +131,7 @@ async def test_grep_helper_warns_on_missing_dir():
 
 
 @pytest.mark.anyio
-async def test_rg_helper_collects_warnings_on_unreadable_file():
+async def test_rg_scan_collects_warnings_on_unreadable_file():
 
     async def read_bytes(path):
         if path == "/good.py":

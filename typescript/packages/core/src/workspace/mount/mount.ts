@@ -26,7 +26,8 @@ import type { NamespaceView, ReaddirPath, SessionView, StatPath } from '../../op
 const NOOP_ACCESSOR = new NOOPAccessor()
 import { getExtension } from '../../commands/resolve.ts'
 import { resolveLimit } from '../../policy/index.ts'
-import { CommandTimeoutError, runWithTimeout } from '../../commands/builtin/utils/limit.ts'
+import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../../commands/errors.ts'
 import type { CommandSpec, FlagValue } from '../../commands/spec/types.ts'
 import { CachableAsyncIterator } from '../../io/cachable_iterator.ts'
 import type { ByteSource } from '../../io/types.ts'

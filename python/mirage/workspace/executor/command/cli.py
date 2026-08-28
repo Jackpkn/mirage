@@ -18,8 +18,7 @@ from dataclasses import replace
 from typing import Any
 
 from mirage.commands.builtin.general.interpreter import run_output
-from mirage.commands.builtin.utils.limit import (CommandTimeoutError,
-                                                 maybe_with_timeout,
+from mirage.commands.builtin.utils.limit import (maybe_with_timeout,
                                                  run_with_timeout)
 from mirage.commands.cli.constants import CLI_CONFIG_ENV
 from mirage.commands.cli.refusal import (CLAP_EXIT, clap_missing_operands,
@@ -27,7 +26,7 @@ from mirage.commands.cli.refusal import (CLAP_EXIT, clap_missing_operands,
 from mirage.commands.cli.types import CLIDoors, CLIInvocation, CLISpec
 from mirage.commands.cli.walk import owns_argv, walk
 from mirage.commands.config import HELP_OPTION
-from mirage.commands.errors import UsageError
+from mirage.commands.errors import CommandTimeoutError, UsageError
 from mirage.commands.spec import flag_kwarg_name
 from mirage.commands.spec.help import render_help
 from mirage.commands.spec.types import FlagValue, Operand, UsageStyle

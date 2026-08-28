@@ -335,7 +335,6 @@ module = [
     "mirage.commands.builtin.github.du",
     "mirage.commands.builtin.github.grep",
     "mirage.commands.builtin.gmail.grep",
-    "mirage.commands.builtin.grep_helper",
     "mirage.commands.builtin.utils.limit",
     "mirage.commands.cli.builtin.git.format",
     "mirage.commands.cli.builtin.git.objects",

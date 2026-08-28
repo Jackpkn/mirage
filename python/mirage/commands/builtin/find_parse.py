@@ -12,12 +12,80 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import time
 from dataclasses import dataclass, field
 
 from mirage.commands.builtin.find_eval import (And, Empty, Name, Not, Or, Path,
                                                PredNode, TrueNode, Type)
-from mirage.commands.builtin.find_helper import _parse_mtime, _parse_size
 from mirage.commands.errors import FindParseError
+
+
+def parse_depth(value: str, flag: str) -> int:
+    """One -maxdepth/-mindepth argument as an int, or GNU's refusal.
+
+    Args:
+        value (str): the argument as typed.
+        flag (str): the flag it filled, for the error message.
+    """
+    try:
+        return int(value)
+    except ValueError:
+        raise FindParseError(
+            f"find: invalid argument '{value}' to '{flag}'") from None
+
+
+def parse_size(spec: str) -> tuple[int | None, int | None]:
+    """One -size argument as inclusive byte bounds.
+
+    GNU rounds the file size up to whole units before comparing, and
+    +N / -N are strict: +N keeps ceil(size/unit) > N, -N keeps
+    ceil(size/unit) < N, N alone keeps ceil(size/unit) == N. Expressed
+    as inclusive byte bounds: +N -> [N*unit + 1, inf), -N ->
+    [0, (N-1)*unit], N -> [(N-1)*unit + 1, N*unit].
+
+    Args:
+        spec (str): the argument as typed.
+    """
+    suffixes = {"c": 1, "k": 1024, "M": 1024**2, "G": 1024**3}
+    if spec.startswith(("+", "-")):
+        raw = spec[1:]
+    else:
+        raw = spec
+    digits = raw.rstrip("ckMG")
+    if not digits:
+        raise FindParseError(f"find: invalid argument '{spec}' to '-size'")
+    mult = suffixes.get(raw[-1], 1)
+    try:
+        n = int(digits)
+    except ValueError:
+        raise FindParseError(
+            f"find: invalid argument '{spec}' to '-size'") from None
+    if spec.startswith("+"):
+        return n * mult + 1, None
+    if spec.startswith("-"):
+        return None, (n - 1) * mult
+    return (n - 1) * mult + 1, n * mult
+
+
+def parse_mtime(spec: str) -> tuple[float | None, float | None]:
+    """One -mtime argument as inclusive epoch-second bounds.
+
+    Args:
+        spec (str): the argument as typed.
+    """
+    now = time.time()
+    day = 86400
+    try:
+        n = int(spec.lstrip("+-"))
+    except ValueError:
+        raise FindParseError(
+            f"find: invalid argument '{spec}' to '-mtime'") from None
+    if spec.startswith("+"):
+        return None, now - n * day
+    if spec.startswith("-"):
+        return now - n * day, None
+    return now - (n + 1) * day, now - n * day
+
 
 _VALUE_PREDICATES = frozenset({
     "-name",
@@ -121,17 +189,9 @@ def _type_node(value: str) -> Type:
     raise FindParseError(f"find: Unknown argument to -type: {value}")
 
 
-def _int_arg(value: str, flag: str) -> int:
-    try:
-        return int(value)
-    except ValueError as exc:
-        raise FindParseError(
-            f"find: invalid argument '{value}' to '{flag}'") from exc
-
-
 def _size_arg(value: str) -> tuple[int | None, int | None]:
     try:
-        return _parse_size(value)
+        return parse_size(value)
     except (ValueError, IndexError) as exc:
         raise FindParseError(
             f"find: invalid argument '{value}' to '-size'") from exc
@@ -139,7 +199,7 @@ def _size_arg(value: str) -> tuple[int | None, int | None]:
 
 def _mtime_arg(value: str) -> tuple[float | None, float | None]:
     try:
-        return _parse_mtime(value)
+        return parse_mtime(value)
     except (ValueError, IndexError) as exc:
         raise FindParseError(
             f"find: invalid argument '{value}' to '-mtime'") from exc
@@ -170,10 +230,10 @@ def _parse_primary(state: _State) -> PredNode:
             state.expr.printf = value
             return TrueNode()
         if tok == "-maxdepth":
-            state.expr.maxdepth = _int_arg(value, "-maxdepth")
+            state.expr.maxdepth = parse_depth(value, "-maxdepth")
             return TrueNode()
         if tok == "-mindepth":
-            state.expr.mindepth = _int_arg(value, "-mindepth")
+            state.expr.mindepth = parse_depth(value, "-mindepth")
             return TrueNode()
         if tok == "-size":
             state.expr.min_size, state.expr.max_size = _size_arg(value)

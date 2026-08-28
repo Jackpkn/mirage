@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
@@ -164,7 +164,7 @@ async def tee(
     if not paths:
         raise ValueError("tee: missing operand")
     parsed = parse_flags(flags or {})
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is None:
         raw = (" ".join(texts)).encode() if texts else b""
     return await write_output(paths, raw, parsed, read_stream, write_bytes,

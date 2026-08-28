@@ -20,7 +20,7 @@ import pytest
 from mirage.cache.index import NULL_INDEX
 from mirage.commands.builtin.generic_bind.adapter import CommandIO
 from mirage.commands.builtin.generic_bind.search import make_search
-from mirage.commands.builtin.grep_helper import literal_pushdown_operand
+from mirage.commands.builtin.grep_pushdown import literal_pushdown_operand
 from mirage.commands.builtin.utils.wrap import stream_from_bytes
 from mirage.commands.config import CommandOpts
 from mirage.core.hierarchy.scope import ScopeMatch

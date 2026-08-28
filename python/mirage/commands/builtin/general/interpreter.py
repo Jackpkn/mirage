@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
 from mirage.commands.builtin.utils.paths import resolve_script
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.io.types import ByteSource, CommandOutput, IOResult
 from mirage.runtime.base import Runtime
 from mirage.runtime.language import LanguageRuntime
@@ -275,7 +275,7 @@ async def resolve_source(
         if skip_line:
             code = skip_first_line(code)
 
-    stdin_data = await _read_stdin_async(stdin)
+    stdin_data = await read_stdin_async(stdin)
     if code is None:
         if stdin_data:
             code = stdin_data.decode(errors="replace")

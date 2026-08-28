@@ -27,11 +27,8 @@ import { UsageError } from '../../../commands/errors.ts'
 import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { wordText, type PathSpec } from '../../../types.ts'
 import { concatBytes } from '../../../core/jq/format.ts'
-import {
-  CommandTimeoutError,
-  maybeWithTimeout,
-  runWithTimeout,
-} from '../../../commands/builtin/utils/limit.ts'
+import { maybeWithTimeout, runWithTimeout } from '../../../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../../../commands/errors.ts'
 import type { CLIInstall } from '../../cli/types.ts'
 import type { Session } from '../../session/session.ts'
 import { envSnapshot } from '../../session/state.ts'

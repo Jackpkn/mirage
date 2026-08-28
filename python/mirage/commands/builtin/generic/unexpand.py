@@ -5,7 +5,7 @@ from mirage.commands.builtin.utils.lines import split_lines_keepends
 from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -79,7 +79,7 @@ async def unexpand(
                 _unexpand_line(ln, tabsize, all_spaces) for ln in lines)
         return "".join(all_text).encode(), IOResult()
 
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is None:
         raise ValueError("unexpand: missing operand")
     lines = split_lines_keepends(raw.decode(errors="replace"))

@@ -4,10 +4,10 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 
-from mirage.commands.builtin.grep_helper import (build_pattern_str,
-                                                 resolve_pattern)
+from mirage.commands.builtin.grep_pattern import (build_pattern_str,
+                                                  resolve_pattern)
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
@@ -167,7 +167,7 @@ async def zgrep(
                     any_match = True
                 all_results.extend(result)
     else:
-        stdin_raw = await _read_stdin_async(stdin)
+        stdin_raw = await read_stdin_async(stdin)
         data = gziplib.decompress(stdin_raw) if stdin_raw else b""
         if f.files_only:
             if _files_only_match(data, compiled, f.ignore_case, f.invert):

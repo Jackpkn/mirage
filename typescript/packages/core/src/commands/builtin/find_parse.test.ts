@@ -14,7 +14,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { evalPredicate } from './find_eval.ts'
-import { FindParseError, parseFindExpression } from './find_parse.ts'
+import { FindParseError } from '../errors.ts'
+import { parseFindExpression } from './find_parse.ts'
 
 describe('parseFindExpression', () => {
   it('negation', () => {

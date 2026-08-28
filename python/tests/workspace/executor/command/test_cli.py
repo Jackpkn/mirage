@@ -17,8 +17,8 @@ import asyncio
 import pytest
 from pydantic import BaseModel
 
-from mirage.commands.builtin.utils.limit import CommandTimeoutError
 from mirage.commands.cli.types import CLIInvocation, CLISpec
+from mirage.commands.errors import CommandTimeoutError
 from mirage.commands.spec.parser import parse_command
 from mirage.commands.spec.types import CommandSpec, Operand, Option
 from mirage.io import IOResult

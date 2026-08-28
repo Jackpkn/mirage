@@ -1,11 +1,11 @@
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 
-from mirage.commands.builtin.cut_helper import cut_stream, parse_ranges
+from mirage.commands.builtin.cut_ranges import cut_stream, parse_ranges
 from mirage.commands.builtin.utils.operands import (merge_split_errors,
                                                     normalized_read,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -98,7 +98,7 @@ async def cut(
             for path in paths
         ]
         return async_chain(*outputs), IOResult()
-    source = _resolve_source(stdin, "cut: missing operand")
+    source = resolve_source(stdin, "cut: missing operand")
     return cut_stream(source,
                       ranges=ranges,
                       mode=parsed.mode,
