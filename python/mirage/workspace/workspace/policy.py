@@ -14,9 +14,9 @@
 
 from typing import Any
 
-from mirage.runtime.routing import (PolicyContext, PolicyDecision, RouteError,
-                                   PolicyFn, decide_line, parsed_commands)
 from mirage.runtime.resolver import MountResolver
+from mirage.runtime.routing import (PolicyContext, PolicyDecision, PolicyFn,
+                                    RouteError, decide_line, parsed_commands)
 from mirage.runtime.table import catch_all, runtime_bindings_for
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.session import Session, env_snapshot

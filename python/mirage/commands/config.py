@@ -30,21 +30,67 @@ from mirage.runtime.types import DispatchFn, ExecPathFn
 from mirage.types import Limit, PathSpec
 from mirage.version import __version__
 
+# The promoted shape execute_cmd gives "/" on an unprefixed mount; a
+# frozen PathSpec, so one instance serves as the field default.
+_ROOT_CWD = PathSpec(virtual="/",
+                     directory="/",
+                     resource_path="",
+                     resolved=False)
 
-def cwd_str(cwd: PathSpec | str) -> str:
-    """The virtual directory name of a dispatcher-injected cwd.
 
-    The dispatcher may inject the session cwd as a PathSpec (carrying
-    the mount-relative key) or a plain string; generics that only
-    resolve names use this, generics that default their operands keep
-    the PathSpec (``default_paths``).
+@dataclass(frozen=True, slots=True)
+class LineFacts:
+    """The line's workspace facts, as ``Mount.execute_cmd`` takes them.
+
+    The one bag a dispatcher call site builds (mirrors the options
+    object TypeScript's ``Mount.executeCmd`` has always taken as its
+    fifth argument, named ``LineFacts`` there too). ``execute_cmd``
+    re-boxes these onto ``CommandOpts`` beside the facts only the mount
+    can supply (mount_prefix, index, filetype_fns), so every field here
+    is spelled exactly as ``CommandOpts`` spells it — one fact has one
+    name on both sides of the seam, pinned by
+    ``tests/commands/test_line_facts_parity.py``. ``session_view``
+    stays although no ``opts`` reader wants it today, because
+    ``CLIDoors.session_view`` has production readers and the doors
+    record is pinned to be a subset of ``CommandOpts``.
 
     Args:
-        cwd (PathSpec | str): The injected working directory.
+        stdin (ByteSource | None): Piped standard input, if any.
+        cwd (str): The session's working directory, as a virtual path;
+            ``execute_cmd`` promotes it to the PathSpec handlers read.
+        dispatch (DispatchFn | None): The workspace op dispatch.
+        session_id (str | None): The calling session.
+        env (dict[str, str] | None): The session environment snapshot.
+        exec_allowed (bool): Whether the policy layer permits spawning
+            an interpreter.
+        exec_path_allowed (ExecPathFn | None): Whether code may be
+            loaded from one path.
+        runtime (Runtime | None): The resolved runtime for interpreter
+            commands.
+        runtime_unavailable (str | None): Why the requested runtime is
+            unavailable (python-only; the TS table refuses at
+            resolution time).
+        ns (NamespaceView | None): The name plane's facts.
+        stat_path (StatPath | None): Dispatcher-backed stat of one path.
+        readdir_path (ReaddirPath | None): Dispatcher-backed readdir of
+            one path.
+        session_view (SessionView | None): The session plane's live,
+            gated handle.
     """
-    if isinstance(cwd, PathSpec):
-        return cwd.virtual
-    return cwd or "/"
+
+    stdin: ByteSource | None = None
+    cwd: str = "/"
+    dispatch: DispatchFn | None = None
+    session_id: str | None = None
+    env: dict[str, str] | None = None
+    exec_allowed: bool = True
+    exec_path_allowed: ExecPathFn | None = None
+    runtime: Runtime | None = None
+    runtime_unavailable: str | None = None
+    ns: NamespaceView | None = None
+    stat_path: StatPath | None = None
+    readdir_path: ReaddirPath | None = None
+    session_view: SessionView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +110,10 @@ class CommandOpts:
         stdin (ByteSource | None): Piped standard input, if any.
         flags (Mapping[str, FlagValue]): The parsed command-line flag
             bag — only real flags, no injected context.
-        cwd (PathSpec | str): The session's working directory, as the
-            dispatcher injected it — a PathSpec keeps the mount-relative
-            key for operand defaulting, a plain string is root-mounted.
+        cwd (PathSpec): The session's working directory, promoted by the
+            dispatcher — the mount-relative key rides ``resource_path``
+            for operand defaulting. Always a PathSpec (the TS twin keeps
+            a string and threads ``mount_prefix`` instead).
         mount_prefix (str): The owning mount's prefix, for commands that
             render mount-relative names.
         filetype_fns (Mapping[str, CommandFn] | None): Extension-specific
@@ -108,7 +155,7 @@ class CommandOpts:
 
     stdin: ByteSource | None = None
     flags: Mapping[str, FlagValue] = field(default_factory=dict)
-    cwd: PathSpec | str = "/"
+    cwd: PathSpec = _ROOT_CWD
     mount_prefix: str = ""
     filetype_fns: Mapping[str, "CommandFn"] | None = None
     command: str | None = None

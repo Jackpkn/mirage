@@ -20,14 +20,14 @@ import mirage.runtime.routing.decide as decide_mod
 from mirage.runtime.base import Runtime
 from mirage.runtime.js.base import JsRuntime
 from mirage.runtime.mixin import EvaluatorMixin
-from mirage.runtime.routing import (DenyResult, PolicyContext, RouteDeny,
-                                   RouteError, RouteResult, ScriptSource,
-                                   decide_line, evaluate_policy,
-                                   evaluate_script, evaluator_of,
-                                   parse_verdict, parsed_commands,
-                                   runtime_for_language)
 from mirage.runtime.python.local import LocalRuntime
 from mirage.runtime.python.monty import MontyRuntime
+from mirage.runtime.routing import (DenyResult, PolicyContext, RouteDeny,
+                                    RouteError, RouteResult, ScriptSource,
+                                    decide_line, evaluate_policy,
+                                    evaluate_script, evaluator_of,
+                                    parse_verdict, parsed_commands,
+                                    runtime_for_language)
 from mirage.runtime.table import VFSRuntime
 from mirage.runtime.types import RunArgs, RunResult
 from mirage.shell.parse import parse

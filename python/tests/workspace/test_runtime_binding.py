@@ -20,10 +20,10 @@ from mirage.config import _build_runtime_entries
 from mirage.io.types import materialize
 from mirage.runtime.base import Runtime
 from mirage.runtime.mixin import LineExecutorMixin
-from mirage.runtime.routing import DenyResult, RouteResult
 from mirage.runtime.python import LocalRuntime, MontyRuntime
 from mirage.runtime.python.base import PythonRuntime
 from mirage.runtime.resolver import MountResolver
+from mirage.runtime.routing import DenyResult, RouteResult
 from mirage.runtime.table import VFSRuntime
 from mirage.runtime.types import DispatchFn, RunArgs, RunResult, ScriptSource
 

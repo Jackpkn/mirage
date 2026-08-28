@@ -258,8 +258,7 @@ async def provision_node(
         # command gate here is the enforcement point.
         cmd_name = str(classified[0]) if classified else name
         cmd_args = [
-            p.virtual if isinstance(p, PathSpec) else p
-            for p in classified[1:]
+            p.virtual if isinstance(p, PathSpec) else p for p in classified[1:]
         ]
         cmd_str = " ".join([cmd_name, *cmd_args])
         verdict = await gate(cmd_name, cmd_args, classified[1:], session,

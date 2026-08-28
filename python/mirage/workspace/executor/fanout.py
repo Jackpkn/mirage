@@ -21,6 +21,7 @@ from mirage.commands.builtin.find_parse import parse_find_expression
 from mirage.commands.builtin.generic.crossmount.fanout.du import \
     merge_du_blocks
 from mirage.commands.builtin.generic.crossmount.types import RunSingle
+from mirage.commands.config import LineFacts
 from mirage.commands.errors import FindParseError
 from mirage.commands.spec.types import FlagValue
 from mirage.context import path_allowed
@@ -518,14 +519,9 @@ async def _fan_out_traversal(
                          raw_path=mount_root if du_merge else respell_one(
                              mount_root, target_path, paths[0].raw_path))
             ]
-        stdout, io = await mount.execute_cmd(cmd_name,
-                                             sub_paths,
-                                             sub_texts,
-                                             sub_flags,
-                                             stdin=stdin,
-                                             cwd=cwd,
-                                             ns=ns,
-                                             stat_path=stat_path)
+        stdout, io = await mount.execute_cmd(
+            cmd_name, sub_paths, sub_texts, sub_flags,
+            LineFacts(stdin=stdin, cwd=cwd, ns=ns, stat_path=stat_path))
 
         if mount is not primary_mount and io.exit_code == 127:
             # A descendant that does not serve this command contributes

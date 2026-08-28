@@ -36,8 +36,8 @@ from mirage.policy import (AskHandler, Decisions, Explanation,
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
-from mirage.runtime.routing import PolicyDecision, PolicyFn
 from mirage.runtime.resolver import PrefixResolver
+from mirage.runtime.routing import PolicyDecision, PolicyFn
 from mirage.shell import parse
 from mirage.shell.job_table import ConsoleFactory, JobTable
 from mirage.types import (ConsistencyPolicy, DriftPolicy, FileEvent, FileStat,

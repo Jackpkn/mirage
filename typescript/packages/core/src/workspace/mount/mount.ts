@@ -18,10 +18,10 @@ import type {
   CommandFn,
   CommandFnResult,
   CommandOpts,
+  LineFacts,
   RegisteredCommand,
 } from '../../commands/config.ts'
 import type { OpKwargs } from '../../ops/registry.ts'
-import type { NamespaceView, ReaddirPath, SessionView, StatPath } from '../../ops/types.ts'
 
 const NOOP_ACCESSOR = new NOOPAccessor()
 import { getExtension } from '../../commands/resolve.ts'
@@ -38,8 +38,6 @@ import { runWithMountPrefix, runWithRevisions, withMountPrefix } from '../../obs
 import type { RegisteredOp } from '../../ops/registry.ts'
 import type { Resource } from '../../resource/base.ts'
 import { type Limit, ConsistencyPolicy, FileType, MountMode, PathSpec } from '../../types.ts'
-import type { Runtime } from '../../runtime/base.ts'
-import type { DispatchFn } from '../../runtime/types.ts'
 import { enotsup, erofsReadOnly } from '../../utils/errors.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import {
@@ -395,22 +393,7 @@ export class MountEntry {
     paths: PathSpec[],
     texts: string[],
     flags: Record<string, FlagValue>,
-    opts: {
-      stdin?: ByteSource | null
-      cwd?: string
-      dispatch?: DispatchFn
-      sessionId?: string
-      env?: Record<string, string>
-      sessionView?: SessionView
-      execAllowed?: boolean
-      execPathAllowed?: (virtual: string) => boolean
-      runtime?: Runtime
-      ns?: NamespaceView
-      statPath?: StatPath
-      readdirPath?: ReaddirPath
-      signal?: AbortSignal
-      limitOverride?: Limit | null
-    } = {},
+    opts: LineFacts = {},
   ): Promise<[ByteSource | null, IOResult]> {
     let extension =
       paths.length > 0 && paths[0] !== undefined ? getExtension(paths[0].virtual) : null

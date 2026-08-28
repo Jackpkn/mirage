@@ -14,7 +14,7 @@
 
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from mirage.commands.builtin.general.interpreter import run_output
@@ -156,16 +156,45 @@ async def _script_output(inv: CLIInvocation[Any], script: ScriptSource,
     return run_output(result)
 
 
+@dataclass(frozen=True, slots=True)
+class CliFacts:
+    """Workspace facts the dispatcher can offer but most CLIs do not
+    want: an API client needs no filesystem, while ``git`` is nothing
+    but one. Forwarded whole onto the leaf's doors, so a leaf that does
+    not read them ignores them and there is no allowlist of
+    filesystem-aware CLIs to keep in step (the same rule ``links``
+    follows for mount commands). Mirrors the TS ``CliFacts``
+    (workspace/executor/command/cli.ts).
+
+    Args:
+        entries (list[Runtime] | None): the workspace's ordered
+            runtime world, which a script leaf selects its interpreter
+            from; None (outside a workspace) refuses script installs.
+        dispatch (DispatchFn | None): workspace op dispatcher, for a
+            CLI whose subject is files rather than an API.
+        stat_path (StatPath | None): dispatcher-backed stat asking both
+            channels a backend can answer on.
+        ns (NamespaceView | None): the name plane's facts, which no
+            backend can see, for a verb that walks a tree itself. The
+            mount prefix serving a path is one of them
+            (``ns.mounts.root_of``), so it needs no door of its own.
+        session_view (SessionView | None): the session plane's live,
+            gated handle; ``inv.env`` stays the frozen process view.
+    """
+
+    entries: list[Runtime] | None = None
+    dispatch: DispatchFn | None = None
+    stat_path: StatPath | None = None
+    ns: NamespaceView | None = None
+    session_view: SessionView | None = None
+
+
 async def handle_cli(
     install: CLIInstall,
     parts: list[str | PathSpec],
     session: Session,
     stdin: ByteSource | None = None,
-    entries: list[Runtime] | None = None,
-    dispatch: DispatchFn | None = None,
-    stat_path: StatPath | None = None,
-    ns: NamespaceView | None = None,
-    session_view: SessionView | None = None,
+    facts: CliFacts = CliFacts(),
     drop_caches: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Execute a line whose head word is an installed CLI.
@@ -191,28 +220,22 @@ async def handle_cli(
             for the invocation record).
         stdin (ByteSource | None): stdin data, carried on the
             invocation record.
-        entries (list[Runtime] | None): the workspace's ordered
-            runtime world, which a script leaf selects its interpreter
-            from; None (outside a workspace) refuses script installs.
-        dispatch (DispatchFn | None): workspace op dispatcher, for a CLI
-            whose subject is files rather than an API.
-        stat_path (StatPath | None): dispatcher-backed stat asking both
-            channels a backend can answer on.
-        ns (NamespaceView | None): the name plane's facts, which no
-            backend can see, for a verb that walks a tree itself. The
-            mount prefix serving a path is one of them
-            (``ns.mounts.root_of``), so it needs no door of its own.
-        session_view (SessionView | None): the session plane's live,
-            gated handle; ``inv.env`` stays the frozen process view.
-            These four ride ``inv.doors`` as one CLIDoors, one door per
-            state plane; a verb that never reads it cannot touch a
-            mount, and outside a workspace the field is None.
+        facts (CliFacts): the workspace facts on offer, one bag (the
+            fifth argument TS's ``handleCli`` has always taken). The
+            four door facts ride ``inv.doors`` as one CLIDoors, one
+            door per state plane; a verb that never reads it cannot
+            touch a mount, and outside a workspace the field is None.
         drop_caches (Callable | None): drop cached listings and bodies
             for the mounts this CLI's service serves. Called after a
             write verb succeeds, because an account CLI mutates its
             service by id and no vfs path can be derived from that, so
             per-path invalidation has nothing to aim at.
     """
+    entries = facts.entries
+    dispatch = facts.dispatch
+    stat_path = facts.stat_path
+    ns = facts.ns
+    session_view = facts.session_view
     # Words re-enter string space as typed (word_text): the walk owns
     # interpretation, so a quoted "Lunch?" must not arrive as the
     # glob-classified absolute /Lunch?. Leaf path operands are resolved

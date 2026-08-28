@@ -82,7 +82,9 @@ async def test_export_write_requires_a_threaded_view():
 async def test_export_p_with_name_does_not_print():
     session = make_session()
     seed_var(session, "KEEP", "1")
-    out, io, _ = await handle_export(["-p", "FOO=bar"], session, state=session_view(session))
+    out, io, _ = await handle_export(["-p", "FOO=bar"],
+                                     session,
+                                     state=session_view(session))
     assert io.exit_code == 0
     assert out is None
     assert session.env["FOO"] == "bar"

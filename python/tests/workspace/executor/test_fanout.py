@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from mirage.commands.config import LineFacts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import spec_flag_names
 from mirage.io import IOResult
@@ -28,10 +29,10 @@ class TraversalMount:
         self.exit_code = exit_code
         self.error = error
         self.command_limits = {}
-        self.calls: list[dict] = []
+        self.calls: list[LineFacts] = []
 
-    async def execute_cmd(self, *args, **kwargs):
-        self.calls.append(kwargs)
+    async def execute_cmd(self, name, paths, texts, flags, facts=LineFacts()):
+        self.calls.append(facts)
         if self.error is not None:
             raise self.error
         stderr = b"backend failed\n" if self.exit_code else None
@@ -358,7 +359,7 @@ def test_fanout_offers_the_namespace_view_to_every_sub_run():
                            None,
                            ns=view))
     for mount in (primary, child):
-        assert mount.calls[0]["ns"] is view
+        assert mount.calls[0].ns is view
 
 
 def _linked_workspace(nested: bool) -> Workspace:

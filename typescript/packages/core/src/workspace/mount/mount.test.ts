@@ -14,7 +14,13 @@
 
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
-import { command, type CommandFn, RegisteredCommand } from '../../commands/config.ts'
+import {
+  command,
+  type CommandFn,
+  type CommandOpts,
+  type LineFacts,
+  RegisteredCommand,
+} from '../../commands/config.ts'
 import { CommandSpec, Operand } from '../../commands/spec/types.ts'
 import { IOResult } from '../../io/types.ts'
 import type { Accessor } from '../../accessor/base.ts'
@@ -381,5 +387,20 @@ describe('Mount.registerCross / resolveCross', () => {
     m.registerCross(rc, 'disk')
     expect(m.resolveCross('cp', 'disk')).toBe(rc)
     expect(m.resolveCross('cp', 'gdrive')).toBeNull()
+  })
+})
+
+describe('LineFacts parity with CommandOpts', () => {
+  it('every line fact is spelled as CommandOpts spells it', () => {
+    // executeCmd re-boxes the bag onto CommandOpts, so a fact spelled
+    // two ways across that seam is two vocabularies for one plane.
+    // Checked at compile time because a TS interface has no fields to
+    // enumerate at runtime. `limitOverride` is the one execution
+    // control executeCmd consumes itself rather than forwards, so it
+    // is the one exemption. The Python twin is
+    // tests/commands/test_line_facts_parity.py.
+    type Shared = { [K in keyof Omit<LineFacts, 'limitOverride'>]: CommandOpts[K] }
+    const parity: Shared = {} as LineFacts
+    expect(parity).toBeDefined()
   })
 })

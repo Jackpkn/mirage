@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.commands.config import LineFacts
 from mirage.commands.spec.types import FlagValue
 from mirage.context import (get_current_session, reset_op_policies,
                             suspend_op_policies)
@@ -104,8 +105,7 @@ async def _apply_find_actions(
                 try:
                     _, rm_io = await mount.execute_cmd("rm", [ps], [],
                                                        {"d": True},
-                                                       stdin=None,
-                                                       cwd=cwd)
+                                                       LineFacts(cwd=cwd))
                 finally:
                     reset_op_policies(token)
             except (FileNotFoundError, NotADirectoryError, PermissionError,
@@ -143,10 +143,9 @@ async def _apply_find_actions(
                         "args_l": True,
                         "d": True
                     },
-                    stdin=None,
-                    cwd=cwd,
-                    ns=NamespaceView(child_mounts=child_mounts),
-                    stat_path=stat_path)
+                    LineFacts(cwd=cwd,
+                              ns=NamespaceView(child_mounts=child_mounts),
+                              stat_path=stat_path))
             except (FileNotFoundError, NotADirectoryError, PermissionError,
                     ValueError) as exc:
                 errors.append(f"find: cannot ls '{path}': {exc}\n".encode())

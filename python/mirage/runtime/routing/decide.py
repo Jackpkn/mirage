@@ -23,9 +23,9 @@ from mirage.runtime.language import LanguageRuntime
 from mirage.runtime.mixin import EvaluatorMixin
 from mirage.runtime.routing.errors import RouteDeny, RouteError
 from mirage.runtime.routing.types import (DenyResult, PolicyContext,
-                                         PolicyDecision, PolicyFn,
-                                         PolicyResult, PolicyScript,
-                                         RouteResult, ScriptSource)
+                                          PolicyDecision, PolicyFn,
+                                          PolicyResult, PolicyScript,
+                                          RouteResult, ScriptSource)
 from mirage.runtime.script import eval_with_ctx
 from mirage.runtime.table import bind_commands, catch_all, runtime_bindings_for
 from mirage.runtime.types import EvalValue, Language
@@ -109,7 +109,7 @@ async def _eval_source(source: str, ctx_payload: dict[str, EvalValue],
                                    POLICY_EVAL_TIMEOUT_SECONDS)
     except asyncio.TimeoutError as exc:
         raise RouteError(f"policy script timed out after "
-                          f"{POLICY_EVAL_TIMEOUT_SECONDS:g}s") from exc
+                         f"{POLICY_EVAL_TIMEOUT_SECONDS:g}s") from exc
     except EvalError as exc:
         prefix = ("policy script syntax error: "
                   if exc.syntax else "policy script failed: ")
@@ -188,9 +188,9 @@ def parse_verdict(verdict: Any) -> str | None:
         if isinstance(name, str):
             return name
         raise RouteError("policy verdict dict needs a 'runtime' name "
-                          "or a 'deny' reason")
+                         "or a 'deny' reason")
     raise RouteError(f"policy must return a runtime name, a verdict "
-                      f"dict, or None, got {verdict!r}")
+                     f"dict, or None, got {verdict!r}")
 
 
 async def evaluate_policy(policy: PolicyFn, ctx: PolicyContext,

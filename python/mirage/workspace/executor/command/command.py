@@ -34,7 +34,7 @@ from mirage.shell.call_stack import CallStack
 from mirage.shell.job_table import JobTable
 from mirage.types import PathSpec, Producer
 from mirage.workspace.executor.builtins.links import path_stat
-from mirage.workspace.executor.command.cli import handle_cli
+from mirage.workspace.executor.command.cli import CliFacts, handle_cli
 from mirage.workspace.executor.command.flags import option_error, parse_flags
 from mirage.workspace.executor.command.functions import run_shell_function
 from mirage.workspace.executor.command.routing import (CWD_DEFAULT_RAW,
@@ -123,12 +123,14 @@ async def handle_command(
             parts,
             session,
             stdin,
-            entries=registry.runtime_entries,
-            dispatch=dispatch,
-            stat_path=(functools.partial(path_stat, dispatch)
-                       if dispatch is not None else None),
-            ns=namespace_view_of(registry, namespace, dispatch),
-            session_view=session_view(session, registry.policies),
+            CliFacts(
+                entries=registry.runtime_entries,
+                dispatch=dispatch,
+                stat_path=(functools.partial(path_stat, dispatch)
+                           if dispatch is not None else None),
+                ns=namespace_view_of(registry, namespace, dispatch),
+                session_view=session_view(session, registry.policies),
+            ),
             drop_caches=functools.partial(drop_service_caches, registry,
                                           cli_install.spec.serves),
         )

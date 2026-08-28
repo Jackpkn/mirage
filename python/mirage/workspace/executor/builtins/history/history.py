@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.commands.config import LineFacts
 from mirage.commands.spec.types import FlagValue
 from mirage.io.types import ByteSource, IOResult
 from mirage.resource.history import HISTORY_PREFIX
@@ -109,11 +110,9 @@ async def handle_history(
                               stderr=err), ExecutionNode(command="history",
                                                          exit_code=1,
                                                          stderr=err)
-    stream, io = await mount.execute_cmd("history", [],
-                                         texts,
-                                         flags,
-                                         cwd=session.cwd,
-                                         session_id=session.session_id)
+    stream, io = await mount.execute_cmd(
+        "history", [], texts, flags,
+        LineFacts(cwd=session.cwd, session_id=session.session_id))
     # The view command always returns byte stderr, but io.stderr is typed
     # as a ByteSource (a possible lazy stream); resolve it to bytes so the
     # execution-tree node holds concrete stderr, never an unread stream.

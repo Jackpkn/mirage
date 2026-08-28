@@ -16,6 +16,7 @@ import functools
 from typing import Any
 
 from mirage.commands.builtin.utils.limit import CommandTimeoutError
+from mirage.commands.config import LineFacts
 from mirage.commands.errors import UsageError
 from mirage.commands.spec.types import FlagValue
 from mirage.commands.spec.usage import read_fail_exit
@@ -408,19 +409,21 @@ async def run_on_mount(
             paths,
             texts,
             flag_kwargs,
-            stdin=stdin,
-            cwd=session.cwd,
-            dispatch=dispatch,
-            session_id=session.session_id,
-            env=env_snapshot(session),
-            session_view=session_view(session, registry.policies),
-            exec_allowed=registry.is_exec_allowed(),
-            exec_path_allowed=registry.exec_allowed_at,
-            runtime=line_runtime,
-            runtime_unavailable=registry.runtime_unavailable.get(cmd_name),
-            ns=ns,
-            stat_path=stat_path,
-            readdir_path=readdir_path,
+            LineFacts(
+                stdin=stdin,
+                cwd=session.cwd,
+                dispatch=dispatch,
+                session_id=session.session_id,
+                env=env_snapshot(session),
+                session_view=session_view(session, registry.policies),
+                exec_allowed=registry.is_exec_allowed(),
+                exec_path_allowed=registry.exec_allowed_at,
+                runtime=line_runtime,
+                runtime_unavailable=registry.runtime_unavailable.get(cmd_name),
+                ns=ns,
+                stat_path=stat_path,
+                readdir_path=readdir_path,
+            ),
         )
     except UsageError as exc:
         # Command-owned usage errors (extra operands, missing patterns)
