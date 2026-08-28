@@ -25,6 +25,7 @@ BOUND_METHODS: tuple[str, ...] = (
     "read",
     "write",
     "create",
+    "create_exclusive",
     "mkdir",
     "remove",
     "rename",
@@ -72,6 +73,7 @@ class SessionBoundNFS:
     read: BoundCall
     write: BoundCall
     create: BoundCall
+    create_exclusive: BoundCall
     mkdir: BoundCall
     remove: BoundCall
     rename: BoundCall

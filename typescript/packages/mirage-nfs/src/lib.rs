@@ -62,7 +62,7 @@ impl NfsServerHandle {
 }
 
 /// Start the NFSv3 server for one delegate. Every argument after the
-/// thirteen methods mirrors the PyO3 crate's start().
+/// fourteen methods mirrors the PyO3 crate's start().
 #[napi]
 #[allow(clippy::too_many_arguments)]
 pub async fn start(
@@ -72,6 +72,7 @@ pub async fn start(
     read: bridge::Method<bridge::ReadArgs>,
     write: bridge::Method<bridge::WriteArgs>,
     create: bridge::Method<bridge::NameArgs>,
+    create_exclusive: bridge::Method<bridge::NameArgs>,
     mkdir: bridge::Method<bridge::NameArgs>,
     remove: bridge::Method<bridge::NameArgs>,
     rename: bridge::Method<bridge::RenameArgs>,
@@ -94,6 +95,7 @@ pub async fn start(
         read,
         write,
         create,
+        create_exclusive,
         mkdir,
         remove,
         rename,

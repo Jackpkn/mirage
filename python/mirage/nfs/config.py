@@ -18,6 +18,9 @@ DEFAULT_PORT = 20490
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_IDLE_FLUSH_SECONDS = 5.0
 DEFAULT_MAX_BUFFERED_BYTES = 16 * 1024 * 1024
+# Four handles' worth. The per-handle ceiling bounds one file; without
+# a sum, `cp -r` of many large files grows the process without limit.
+DEFAULT_MAX_TOTAL_BUFFERED_BYTES = 64 * 1024 * 1024
 DEFAULT_TIMEO_DECISECONDS = 50
 DEFAULT_RETRANS = 3
 DEFAULT_DEAD_TIMEOUT_SECONDS = 60
@@ -40,6 +43,11 @@ class NFSConfig:
         max_buffered_bytes (int): per-handle ceiling that forces an early
             flush, so a client that never stops writing cannot grow the
             buffer without bound.
+        max_total_buffered_bytes (int): ceiling across every handle. The
+            per-handle one bounds a single file, so N files written at
+            once cost N times it and a `cp -r` of many large files grew
+            the process without limit; past this the adapter drains its
+            biggest buffers until it is back under.
         soft (bool): mount soft rather than the platform default, hard.
             A hard mount blocks every I/O forever when the server stops
             answering, uninterruptibly, and on macOS that wedges anything
@@ -64,6 +72,7 @@ class NFSConfig:
     port: int = DEFAULT_PORT
     idle_flush_seconds: float = DEFAULT_IDLE_FLUSH_SECONDS
     max_buffered_bytes: int = DEFAULT_MAX_BUFFERED_BYTES
+    max_total_buffered_bytes: int = DEFAULT_MAX_TOTAL_BUFFERED_BYTES
     soft: bool = True
     timeo: int = DEFAULT_TIMEO_DECISECONDS
     retrans: int = DEFAULT_RETRANS
@@ -78,6 +87,11 @@ class NFSConfig:
         if self.max_buffered_bytes <= 0:
             raise ValueError("max_buffered_bytes must be positive: "
                              f"{self.max_buffered_bytes}")
+        if self.max_total_buffered_bytes < self.max_buffered_bytes:
+            raise ValueError(
+                "max_total_buffered_bytes must be at least "
+                f"max_buffered_bytes: {self.max_total_buffered_bytes} < "
+                f"{self.max_buffered_bytes}")
         if self.timeo <= 0:
             raise ValueError(f"timeo must be positive: {self.timeo}")
         if self.retrans <= 0:

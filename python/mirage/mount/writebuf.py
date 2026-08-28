@@ -218,6 +218,55 @@ class WriteBuffer:
         self._forget(fileid)
         return pending
 
+    def total_bytes(self) -> int:
+        """Bytes buffered across every file.
+
+        The per-file ceiling bounds one handle; nothing bounded their
+        sum, so N files written at once cost N times it. A caller that
+        wants a global bound needs this number to compare against.
+
+        Returns:
+            int: total buffered bytes.
+        """
+        return sum(self._sizes.values())
+
+    def heaviest_ids(self) -> list[int]:
+        """Buffered files, largest first.
+
+        The order a caller draining to a global ceiling wants: flushing
+        the biggest buffer first reaches the ceiling in the fewest
+        stores.
+
+        Returns:
+            list[int]: file ids holding pending writes, largest first.
+        """
+        return sorted(self._sizes, key=lambda i: self._sizes[i], reverse=True)
+
+    def requeue(self, fileid: int, writes: list[tuple[int, bytes]]) -> None:
+        """Put a taken batch back after its store failed.
+
+        The client was told these writes were durable -- this server
+        answers FILE_SYNC on every WRITE and is never sent a COMMIT --
+        so a store that raised must not lose them. They go in *front*
+        of anything buffered since: the buffer is arrival-ordered and
+        later-wins, so appending an older batch would let it overwrite
+        the newer bytes it is supposed to sit under.
+
+        Args:
+            fileid (int): the file whose batch to restore.
+            writes (list[tuple[int, bytes]]): the batch ``take``
+                returned. Empty is a no-op.
+        """
+        if not writes:
+            return
+        restored = [*writes, *self._writes.get(fileid, [])]
+        self._writes[fileid] = restored
+        self._sizes[fileid] = sum(len(data) for _, data in restored)
+        # Only when nothing has been written since: a write that landed
+        # during the failed store already stamped a newer time, and
+        # moving it backwards would delay the retry.
+        self._touched.setdefault(fileid, time.monotonic())
+
     def _forget(self, fileid: int) -> None:
         self._writes.pop(fileid, None)
         self._sizes.pop(fileid, None)

@@ -120,6 +120,19 @@ export class NFSManager {
         }
       }
     }
+    // And the prefix, for the same reason from the other side. The
+    // registry is keyed by prefix, so a second setup of one already
+    // mounted overwrote its entry -- and close() unmounts what the
+    // registry holds, so the first mountpoint stayed live with no
+    // server behind it, which is the exact state the soft-mount and
+    // teardown work exists to prevent.
+    const existing = this.mounts.get(prefix)
+    if (existing !== undefined) {
+      throw new Error(
+        `nfs prefix ${JSON.stringify(prefix)} is already mounted at ` +
+          `${JSON.stringify(existing[0])}; unmount it before mounting it again`,
+      )
+    }
     if (this.handle !== null && (session ?? null) !== this.session) {
       throw new Error(
         'this nfs server is bound to a different session; a session-scoped ' +

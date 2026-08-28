@@ -137,6 +137,7 @@ export interface NFSDelegate {
   read: (args: ReadArgs) => Promise<BytesReply>
   write: (args: WriteArgs) => Promise<AttrsReply>
   create: (args: NameArgs) => Promise<IdReply>
+  createExclusive: (args: NameArgs) => Promise<IdReply>
   mkdir: (args: NameArgs) => Promise<IdReply>
   remove: (args: NameArgs) => Promise<UnitReply>
   rename: (args: RenameArgs) => Promise<UnitReply>
@@ -154,6 +155,7 @@ export interface NFSDelegateTarget {
   read: (fileid: number, offset: number, count: number) => Promise<Buffer>
   write: (fileid: number, offset: number, data: Buffer) => Promise<NFSAttrs>
   create: (dirid: number, name: string) => Promise<number>
+  createExclusive: (dirid: number, name: string) => Promise<number>
   mkdir: (dirid: number, name: string) => Promise<number>
   remove: (dirid: number, name: string) => Promise<void>
   rename: (fromDirid: number, fromName: string, toDirid: number, toName: string) => Promise<void>
@@ -177,6 +179,7 @@ export interface NFSAddon {
     read: NFSDelegate['read'],
     write: NFSDelegate['write'],
     create: NFSDelegate['create'],
+    createExclusive: NFSDelegate['createExclusive'],
     mkdir: NFSDelegate['mkdir'],
     remove: NFSDelegate['remove'],
     rename: NFSDelegate['rename'],
@@ -221,7 +224,7 @@ export function loadAddon(): NFSAddon {
 }
 
 /**
- * Wrap one adapter as the thirteen callbacks the addon calls back into.
+ * Wrap one adapter as the fourteen callbacks the addon calls back into.
  *
  * There is no python twin: PyO3 calls methods on the delegate object
  * itself, so its classification lives in rust. napi takes plain
@@ -243,6 +246,7 @@ export function buildDelegate(fs: NFSDelegateTarget, session?: Session | null): 
     },
     write: async ({ id, offset, data }) => attrsReply(id, () => fs.write(id, offset, data)),
     create: async ({ dirId, name }) => idReply(() => fs.create(dirId, name)),
+    createExclusive: async ({ dirId, name }) => idReply(() => fs.createExclusive(dirId, name)),
     mkdir: async ({ dirId, name }) => idReply(() => fs.mkdir(dirId, name)),
     remove: async ({ dirId, name }) => unitReply(() => fs.remove(dirId, name)),
     rename: async ({ fromDirId, fromName, toDirId, toName }) =>
@@ -596,6 +600,7 @@ export async function startServer(
     delegate.read,
     delegate.write,
     delegate.create,
+    delegate.createExclusive,
     delegate.mkdir,
     delegate.remove,
     delegate.rename,

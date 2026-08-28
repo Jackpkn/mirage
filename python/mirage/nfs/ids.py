@@ -24,6 +24,9 @@ def _descendant_prefix(path: str) -> str:
     return path.rstrip("/") + "/"
 
 
+COOKIE_TOMBSTONES = 4096
+
+
 class IdTable:
     """The fileid ↔ path map an NFS server addresses files through.
 
@@ -56,6 +59,13 @@ class IdTable:
         self._next_id = 1
         self._by_id: dict[int, str] = {}
         self._by_path: dict[str, int] = {}
+        # Ids whose entry is gone, kept for cookie ordering only. A
+        # READDIR resuming after an entry that has since been removed
+        # still has to know where in the sorted listing it sat; without
+        # that the resume matches nothing and the rest of the directory
+        # reads to the client as end-of-listing. Bounded, because a
+        # long-lived mount removes files forever.
+        self._removed: dict[int, str] = {}
 
     def alloc(self, path: str) -> int:
         """The id for a path, minting one when the path is new.
@@ -111,8 +121,30 @@ class IdTable:
             fileid (int): the id to drop.
         """
         path = self._by_id.pop(fileid, None)
-        if path is not None:
-            self._by_path.pop(path, None)
+        if path is None:
+            return
+        self._by_path.pop(path, None)
+        self._removed[fileid] = path
+        excess = len(self._removed) - COOKIE_TOMBSTONES
+        if excess > 0:
+            # Ids are minted in order, so the smallest are the oldest.
+            for stale in sorted(self._removed)[:excess]:
+                del self._removed[stale]
+
+    def cookie_path(self, fileid: int) -> str | None:
+        """The path an id named, including one already removed.
+
+        Cookie ordering only -- :meth:`resolve` is still the authority
+        on whether a handle is live, and still refuses a removed one.
+
+        Args:
+            fileid (int): the id a client sent back as a cookie.
+
+        Returns:
+            str | None: the path, or None when the id was never minted.
+        """
+        path = self._by_id.get(fileid)
+        return self._removed.get(fileid) if path is None else path
 
     def guard_rename(self, old: str, new: str) -> None:
         """Refuse a rename whose destination lies inside its source.

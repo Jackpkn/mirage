@@ -17,6 +17,7 @@ import { FileStat, MountMode } from '@struktoai/mirage-core/types'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { Workspace } from '../workspace.ts'
+import { NFSConfig } from './config.ts'
 import { RenameIntoSelfError, StaleHandleError } from './errors.ts'
 import { MirageNFS } from './delegate.ts'
 
@@ -378,4 +379,173 @@ describe('readdir', () => {
 
     expect(await stored('/a.txt')).toBe('AAAAABBBBB')
   })
+
+  // --- the three data-loss paths the review found, both languages ---
+
+  it('refuses an exclusive create without touching the existing file', async () => {
+    // NFSv3 EXCLUSIVE is O_CREAT|O_EXCL on the wire, so it is every
+    // lockfile idiom there is. Routed to the plain create, whose core
+    // truncates, it emptied the file it was meant to refuse.
+    await ws.fs.writeFile('/keep.txt', Buffer.from('important data\n'))
+
+    await expect(fs.createExclusive(root, 'keep.txt')).rejects.toThrow(/exists/i)
+
+    expect(await stored('/keep.txt')).toBe('important data\n')
+  })
+
+  it('still creates a fresh file exclusively', async () => {
+    const fileid = await fs.createExclusive(root, 'new.txt')
+
+    expect(fileid).toBeGreaterThan(0)
+    expect(await stored('/new.txt')).toBe('')
+  })
+
+  it('keeps acknowledged writes when the store fails', async () => {
+    // Every buffered write was answered FILE_SYNC, so the client will
+    // never send them again. take() up front meant a store that threw
+    // lost them for good.
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('NEW'))
+    const real = ws.fs.writeFile.bind(ws.fs)
+    ws.fs.writeFile = () => Promise.reject(new Error('permission denied'))
+
+    await expect(fs.flush(fileid)).rejects.toThrow(/denied/)
+
+    ws.fs.writeFile = real
+    await fs.flush(fileid)
+    expect(await stored('/a.txt')).toBe('NEWlo')
+  })
+
+  it('keeps acknowledged writes when the removal fails', async () => {
+    // A denied unlink used to leave the file in place with its
+    // pre-write bytes while the acknowledged writes were already gone.
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('NEW'))
+    const real = ws.fs.unlink.bind(ws.fs)
+    ws.fs.unlink = () => Promise.reject(new Error('permission denied'))
+
+    await expect(fs.remove(root, 'a.txt')).rejects.toThrow(/denied/)
+
+    ws.fs.unlink = real
+    await fs.flush(fileid)
+    expect(await stored('/a.txt')).toBe('NEWlo')
+  })
+
+  it('drops the buffer once the removal succeeds', async () => {
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('NEW'))
+
+    await fs.remove(root, 'a.txt')
+
+    expect(await missing('/a.txt')).toBe(true)
+  })
+
+  it('propagates an unexpected failure while reading the flush base', async () => {
+    // A bare catch read every transient backend, auth or policy error
+    // as "empty file", and the whole-object write that followed stored
+    // the pending ranges alone -- destroying untouched content.
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 4, Buffer.from('!'))
+    ws.fs.readFile = () => Promise.reject(new Error('permission denied'))
+
+    await expect(fs.flush(fileid)).rejects.toThrow(/denied/)
+  })
+
+  it('fetches the object once across sequential reads', async () => {
+    // NFSv3 has no OPEN, so the prefetch cache's only fill site (open)
+    // never fired for NFS and every 64 KiB READ refetched the whole
+    // file: 16 full fetches to serve 1 MiB, one backend request per
+    // 64 KiB on an API-backed mount.
+    await ws.fs.writeFile('/big.bin', Buffer.alloc(1024 * 1024))
+    const fresh = new MirageNFS(ws.fs)
+    const fileid = await fresh.lookup(fresh.rootDir(), 'big.bin')
+    let fetches = 0
+    const real = ws.fs.readFile.bind(ws.fs)
+    ws.fs.readFile = (path: string, opts?: unknown) => {
+      fetches += 1
+      return real(path, opts as never)
+    }
+
+    let served = 0
+    for (let i = 0; i < 16; i += 1) {
+      served += (await fresh.read(fileid, i * 65536, 65536)).byteLength
+    }
+
+    expect(served).toBe(1024 * 1024)
+    expect(fetches).toBe(1)
+  })
+
+  it('resumes a listing whose cookie entry was removed', async () => {
+    // The resume scan looked for the cookie's fileid and only stopped
+    // skipping on an exact match, so removing that entry between pages
+    // skipped the whole rest of the directory and the empty page read
+    // as end-of-listing.
+    await ws.fs.mkdir('/pages')
+    for (const name of ['a', 'b', 'c', 'e', 'f']) {
+      await ws.fs.writeFile(`/pages/${name}`, Buffer.from('x'))
+    }
+    const pages = await fs.lookup(root, 'pages')
+    const page1 = await fs.readdir(pages, 0, 2)
+    expect(page1.map((e) => e.name)).toEqual(['a', 'b'])
+
+    await fs.remove(pages, 'b')
+
+    const page2 = await fs.readdir(pages, page1.at(-1)?.cookie ?? 0)
+    expect(page2.map((e) => e.name)).toEqual(['c', 'e', 'f'])
+  })
+
+  it('rejects a readdir cookie it never minted', async () => {
+    // Silently returning nothing reads as end-of-directory; a client
+    // can recover from an error by restarting the listing.
+    await expect(fs.readdir(root, 999_999)).rejects.toThrow(StaleHandleError)
+  })
+
+  it('refuses a name that is not one component', async () => {
+    // filename3 is a single component and nfsserve does not filter it,
+    // so the delegate is the only guard. Traversal did not escape only
+    // because nothing below normalizes '..', which is luck, not a check.
+    await ws.fs.mkdir('/sub/deep')
+    await ws.fs.writeFile('/sub/deep/b.txt', Buffer.from('x'))
+    const sub = await fs.lookup(root, 'sub')
+
+    await expect(fs.lookup(sub, 'deep/b.txt')).rejects.toThrow(/single path component/)
+  })
+
+  it('resolves . and .. itself', async () => {
+    // The kernel resolves these above the filesystem for FUSE, which is
+    // why MountCore never had to; over NFSv3 they are the server's job,
+    // and ENOENT was a cold-cache hole.
+    const sub = await fs.lookup(root, 'sub')
+
+    expect(await fs.lookup(sub, '.')).toBe(sub)
+    expect(await fs.lookup(sub, '..')).toBe(root)
+    expect(await fs.lookup(root, '..')).toBe(root)
+  })
+
+  it('refuses a slashed name in every mutating op', async () => {
+    await expect(fs.create(root, 'a/b')).rejects.toThrow(/single path component/)
+    await expect(fs.mkdir(root, 'a/b')).rejects.toThrow(/single path component/)
+    await expect(fs.remove(root, 'a/b')).rejects.toThrow(/single path component/)
+    await expect(fs.symlink(root, 'a/b', 't')).rejects.toThrow(/single path component/)
+    await expect(fs.rename(root, 'a/b', root, 'c')).rejects.toThrow(/single path component/)
+  })
+
+  it('bounds the total buffer across files', async () => {
+    // maxBufferedBytes bounds one handle, so N files written at once
+    // cost N times it and nothing bounded the sum: a `cp -r` of many
+    // large files grew the process without limit.
+    const bounded = new MirageNFS(
+      ws.fs,
+      new NFSConfig({ maxBufferedBytes: 1024, maxTotalBufferedBytes: 2048 }),
+    )
+    const boundedRoot = bounded.rootDir()
+    for (let i = 0; i < 8; i += 1) {
+      await ws.fs.writeFile(`/f${String(i)}`, Buffer.alloc(0))
+      const fileid = await bounded.lookup(boundedRoot, `f${String(i)}`)
+      await bounded.write(fileid, 0, Buffer.alloc(512, 1))
+    }
+
+    expect(bounded.bufferedBytes()).toBeLessThanOrEqual(2048)
+  })
 })
+

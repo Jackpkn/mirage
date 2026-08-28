@@ -32,6 +32,31 @@ from mirage.ops import Ops
 _WHOLE_FILE = 1 << 62
 
 
+def _component(name: str) -> str:
+    """Refuse a name that is not a single path component.
+
+    ``filename3`` is one component by definition, and nfsserve does not
+    filter it, so the delegate is the only guard there is. A ``/`` here
+    is a protocol violation; that it does not escape the mount today is
+    luck -- nothing below this point normalizes ``..`` -- rather than a
+    check. "." and ".." are refused for the mutating ops because
+    neither names an entry to create or remove; ``lookup`` resolves
+    them before calling this.
+
+    Args:
+        name (str): the name as it arrived on the wire.
+
+    Returns:
+        str: the same name, once it is known to be one component.
+
+    Raises:
+        OSError: EINVAL, the name is not a single component.
+    """
+    if name in ("", ".", "..") or "/" in name:
+        raise OSError(errno.EINVAL, "not a single path component", name)
+    return name
+
+
 def _join(parent: str, name: str) -> str:
     return posixpath.join(parent,
                           name) if parent != ROOT_PATH else ROOT_PATH + name
@@ -86,7 +111,18 @@ class MirageNFS:
             StaleHandleError: the parent id is unknown.
             FileNotFoundError: no such entry.
         """
-        path = _join(self._ids.resolve(dirid), name)
+        parent = self._ids.resolve(dirid)
+        # "." and ".." are the server's job over NFSv3: the kernel
+        # resolves them above the filesystem for FUSE, which is why
+        # MountCore never had to, and answering ENOENT for them here is
+        # a cold-cache hole rather than a curiosity.
+        if name == ".":
+            return dirid
+        if name == "..":
+            if parent == ROOT_PATH:
+                return dirid
+            return self._ids.alloc(parent.rsplit("/", 1)[0] or ROOT_PATH)
+        path = _join(parent, _component(name))
         # getattr refuses macOS metadata names and reports a link as a
         # link rather than following it, both of which this repeated.
         await self._core.getattr(path)
@@ -140,6 +176,7 @@ class MirageNFS:
                                    max_bytes=self._config.max_buffered_bytes)
         if full:
             await self._flush_one(fileid, path)
+        await self._drain_to_ceiling()
         return await self._entry_attrs(fileid, path)
 
     async def create(self, dirid: int, name: str) -> int:
@@ -152,11 +189,43 @@ class MirageNFS:
         Returns:
             int: the new file's id.
         """
-        path = _join(self._ids.resolve(dirid), name)
+        path = _join(self._ids.resolve(dirid), _component(name))
         fh = await self._core.create(path)
         # NFSv3 is handle-free; the core's handle would leak.
         await self._core.release(fh)
         return self._ids.alloc(path)
+
+    async def create_exclusive(self, dirid: int, name: str) -> int:
+        """Create a file, refusing a path that already holds one.
+
+        NFSv3's EXCLUSIVE create is what ``O_CREAT|O_EXCL`` becomes on
+        the wire, so it is every lockfile idiom there is -- pip, a git
+        index.lock, any flock-style sentinel. Routed to the plain
+        create, whose core truncates, "refuse to touch it" became
+        "empty it", and the caller was told it had won the race.
+
+        Mirage has no create-verifier to store and replay, so this
+        implements the half of the semantics that carries the data
+        loss: an existing path is refused, never opened.
+
+        Args:
+            dirid (int): the parent directory's id.
+            name (str): the new file's name.
+
+        Returns:
+            int: the new file's id.
+
+        Raises:
+            FileExistsError: something already lives at that path.
+        """
+        path = _join(self._ids.resolve(dirid), _component(name))
+        try:
+            await self._core.attrs_for(path)
+        except FileNotFoundError:
+            pass
+        else:
+            raise FileExistsError(errno.EEXIST, "File exists", path)
+        return await self.create(dirid, name)
 
     async def mkdir(self, dirid: int, name: str) -> int:
         """Create a directory and return its id.
@@ -168,7 +237,7 @@ class MirageNFS:
         Returns:
             int: the new directory's id.
         """
-        path = _join(self._ids.resolve(dirid), name)
+        path = _join(self._ids.resolve(dirid), _component(name))
         await self._core.mkdir(path)
         return self._ids.alloc(path)
 
@@ -183,21 +252,38 @@ class MirageNFS:
             dirid (int): the parent directory's id.
             name (str): the entry to remove.
         """
-        path = _join(self._ids.resolve(dirid), name)
+        path = _join(self._ids.resolve(dirid), _component(name))
         fileid = self._ids.id_for(path)
-        if fileid is not None:
+        if fileid is None:
+            await self._remove_entry(path)
+            return
+        # Under the file's flush lock, and dropping only afterwards.
+        # Dropping first lost acknowledged writes whenever the removal
+        # then failed (a denied unlink, ENOTEMPTY on the rmdir arm):
+        # the file survived, with its pre-write bytes. Doing it outside
+        # the lock instead lets an idle flush land between the unlink
+        # and the drop and recreate what was just removed.
+        async with self._flush_lock(fileid):
+            await self._remove_entry(path)
             self._writes.drop(fileid)
-            self._flush_locks.pop(fileid, None)
-        # The core's unlink unlinks a link rather than following it, and
-        # its getattr reports a link as a link, which keeps one out of
-        # the rmdir arm and lets a broken one be removed at all.
+            self._ids.invalidate(fileid)
+        self._flush_locks.pop(fileid, None)
+
+    async def _remove_entry(self, path: str) -> None:
+        """Remove one entry, picking the op from what it is.
+
+        The core's unlink unlinks a link rather than following it, and
+        its getattr reports a link as a link, which keeps one out of the
+        rmdir arm and lets a broken one be removed at all.
+
+        Args:
+            path (str): the entry's mount path.
+        """
         attrs = await self._core.attrs_for(path)
         if stat_bits.S_ISDIR(attrs.mode):
             await self._core.rmdir(path)
         else:
             await self._core.unlink(path)
-        if fileid is not None:
-            self._ids.invalidate(fileid)
 
     async def rename(self, from_dirid: int, from_name: str, to_dirid: int,
                      to_name: str) -> None:
@@ -217,8 +303,8 @@ class MirageNFS:
             OSError: EINVAL when the destination lies inside the
                 source, refused before the backend is touched.
         """
-        src = _join(self._ids.resolve(from_dirid), from_name)
-        dst = _join(self._ids.resolve(to_dirid), to_name)
+        src = _join(self._ids.resolve(from_dirid), _component(from_name))
+        dst = _join(self._ids.resolve(to_dirid), _component(to_name))
         self._ids.guard_rename(src, dst)
         fileid = self._ids.id_for(src)
         if fileid is not None and self._writes.has_pending(fileid):
@@ -274,7 +360,7 @@ class MirageNFS:
         Returns:
             int: the link's file id.
         """
-        path = _join(self._ids.resolve(dirid), name)
+        path = _join(self._ids.resolve(dirid), _component(name))
         await self._core.symlink(path, target)
         return self._ids.alloc(path)
 
@@ -328,14 +414,24 @@ class MirageNFS:
         # cookie a client resumes from. "." and ".." are absent from the
         # core's per-entry listing because NFSv3 carries them in the
         # reply header rather than as entries.
+        # Resume by NAME, not by scanning for the cookie's fileid. That
+        # scan only ever cleared itself on an exact match, so a cookie
+        # whose entry had since been removed matched nothing, every
+        # remaining entry was skipped, and the empty page read to the
+        # client as end-of-directory: `ls` on a directory another writer
+        # was touching silently lost its tail. A name comparison needs
+        # the entry to have existed, not to still exist.
+        after = None
+        if cookie != 0:
+            resume_path = self._ids.cookie_path(cookie)
+            if resume_path is None:
+                raise StaleHandleError(f"unknown readdir cookie: {cookie}")
+            after = resume_path.rsplit("/", 1)[-1]
         entries: list[DirEntry] = []
-        resuming = cookie != 0
         for entry in await self._core.readdir_entries(path):
-            fileid = self._ids.alloc(entry.path)
-            if resuming:
-                if fileid == cookie:
-                    resuming = False
+            if after is not None and entry.name <= after:
                 continue
+            fileid = self._ids.alloc(entry.path)
             entries.append(
                 DirEntry(name=entry.name,
                          fileid=fileid,
@@ -344,6 +440,23 @@ class MirageNFS:
             if max_entries is not None and len(entries) >= max_entries:
                 break
         return entries
+
+    async def _drain_to_ceiling(self) -> None:
+        """Flush the biggest buffers until the total is under the cap.
+
+        ``max_buffered_bytes`` bounds one handle, so N files written at
+        once cost N times it and nothing bounded the sum: a ``cp -r`` of
+        many large files grew the process without limit, and the idle
+        sweep only ran on its timer. Biggest first, so the fewest stores
+        get back under.
+        """
+        ceiling = self._config.max_total_buffered_bytes
+        if self._writes.total_bytes() <= ceiling:
+            return
+        for fileid in self._writes.heaviest_ids():
+            if self._writes.total_bytes() <= ceiling:
+                return
+            await self._flush_or_drop(fileid)
 
     async def flush(self, fileid: int) -> None:
         """Store one file's buffered writes.
@@ -425,7 +538,17 @@ class MirageNFS:
             pending = self._writes.take(fileid)
             if not pending:
                 return
-            await self._ops.write(path, WriteBuffer.merge(base, pending))
+            try:
+                await self._core.store(path, WriteBuffer.merge(base, pending))
+            except Exception:
+                # Taken up front, this batch was gone the moment the
+                # store raised -- and every one of its writes had been
+                # answered FILE_SYNC, so the client believes they are
+                # durable and will never send them again. Put them back
+                # and let the idle sweep retry; the raise still reaches
+                # the caller.
+                self._writes.requeue(fileid, pending)
+                raise
 
     async def _read_base(self, path: str) -> bytes:
         try:

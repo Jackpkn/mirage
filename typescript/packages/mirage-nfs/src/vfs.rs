@@ -33,6 +33,7 @@ pub struct Delegate {
     pub read: Method<ReadArgs>,
     pub write: Method<WriteArgs>,
     pub create: Method<NameArgs>,
+    pub create_exclusive: Method<NameArgs>,
     pub mkdir: Method<NameArgs>,
     pub remove: Method<NameArgs>,
     pub rename: Method<RenameArgs>,
@@ -210,8 +211,12 @@ impl NFSFileSystem for MirageVFS {
         dirid: fileid3,
         filename: &filename3,
     ) -> Result<fileid3, nfsstat3> {
+        // Its own delegate method, not `create`. EXCLUSIVE is the wire
+        // form of O_CREAT|O_EXCL, and `create` truncates: routing it
+        // here turned every lockfile idiom into a silent wipe of the
+        // file it was meant to refuse to touch.
         let reply: IdReply = call(
-            &self.delegate.create,
+            &self.delegate.create_exclusive,
             NameArgs {
                 dir_id: dirid as f64,
                 name: Self::name(filename)?,

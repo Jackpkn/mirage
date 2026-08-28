@@ -44,10 +44,19 @@ function descendantPrefix(path: string): string {
  * is needed; `state_sync.test.ts` pins that invariant, since one
  * added await would break it silently.
  */
+export const COOKIE_TOMBSTONES = 4096
+
 export class IdTable {
   private nextId = 1
   private readonly byId = new Map<number, string>()
   private readonly byPath = new Map<string, number>()
+  // Ids whose entry is gone, kept for cookie ordering only. A READDIR
+  // resuming after an entry that has since been removed still has to
+  // know where in the sorted listing it sat; without that the resume
+  // matches nothing and the rest of the directory reads to the client
+  // as end-of-listing. Bounded, because a long-lived mount removes
+  // files forever.
+  private readonly removed = new Map<number, string>()
 
   /** The id for a path, minting one when the path is new. */
   alloc(path: string): number {
@@ -82,6 +91,24 @@ export class IdTable {
     if (path === undefined) return
     this.byId.delete(fileid)
     this.byPath.delete(path)
+    this.removed.set(fileid, path)
+    // Ids are minted in order and a Map iterates in insertion order,
+    // so the front is the oldest.
+    while (this.removed.size > COOKIE_TOMBSTONES) {
+      const oldest = this.removed.keys().next()
+      if (oldest.done === true) break
+      this.removed.delete(oldest.value)
+    }
+  }
+
+  /**
+   * The path an id named, including one already removed.
+   *
+   * Cookie ordering only -- `resolve` is still the authority on whether
+   * a handle is live, and still refuses a removed one.
+   */
+  cookiePath(fileid: number): string | undefined {
+    return this.byId.get(fileid) ?? this.removed.get(fileid)
   }
 
   /**

@@ -49,6 +49,7 @@ function target(overrides: Partial<NFSDelegateTarget> = {}): NFSDelegateTarget {
     read: () => Promise.resolve(Buffer.from('abc')),
     write: () => Promise.resolve(ATTRS),
     create: () => Promise.resolve(7),
+    createExclusive: () => Promise.resolve(7),
     mkdir: () => Promise.resolve(7),
     remove: () => Promise.resolve(),
     rename: () => Promise.resolve(),

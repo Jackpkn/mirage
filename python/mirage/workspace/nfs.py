@@ -99,8 +99,9 @@ class NFSManager:
             str: the mountpoint now serving the prefix.
 
         Raises:
-            ValueError: the mountpoint already serves another prefix, or
-                a live server is bound to a different session.
+            ValueError: the mountpoint already serves another prefix,
+                the prefix is already mounted, or a live server is bound
+                to a different session.
         """
         # Collision answers from the registry BEFORE the path is
         # touched: a colliding mountpoint may be a live mount served by
@@ -112,6 +113,17 @@ class NFSManager:
                     raise ValueError(
                         f"nfs mountpoint {mountpoint!r} already serves "
                         f"{other_prefix!r}")
+        # And the prefix, for the same reason from the other side. The
+        # registry is keyed by prefix, so a second setup of one already
+        # mounted overwrote its entry -- and close() unmounts what the
+        # registry holds, so the first mountpoint stayed live with no
+        # server behind it, which is the exact state the soft-mount and
+        # teardown work exists to prevent.
+        existing = self._mounts.get(prefix)
+        if existing is not None:
+            raise ValueError(
+                f"nfs prefix {prefix!r} is already mounted at "
+                f"{existing[0]!r}; unmount it before mounting it again")
         if self._handle is not None and session is not self._session:
             raise ValueError(
                 "this nfs server is bound to a different session; a "

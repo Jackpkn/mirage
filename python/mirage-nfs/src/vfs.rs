@@ -192,11 +192,17 @@ impl NFSFileSystem for MirageVFS {
         dirid: fileid3,
         filename: &filename3,
     ) -> Result<fileid3, nfsstat3> {
-        // Exclusive create maps onto plain create: mirage backends have
-        // no create-verifier to replay, and the adapter's create is
-        // idempotent for an empty file.
+        // Its own delegate method, not `create`. EXCLUSIVE is the wire
+        // form of O_CREAT|O_EXCL, and `create` truncates: routing it
+        // here turned every lockfile idiom into a silent wipe of the
+        // file it was meant to refuse to touch. Mirage still has no
+        // create-verifier to replay; the delegate implements the half
+        // that carries the data loss, refusing an existing path.
         let name = Self::name(filename)?;
-        let obj = self.delegate.call("create", (dirid, name)).await?;
+        let obj = self
+            .delegate
+            .call("create_exclusive", (dirid, name))
+            .await?;
         Python::with_gil(|py| obj.extract::<u64>(py)).map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)
     }
 

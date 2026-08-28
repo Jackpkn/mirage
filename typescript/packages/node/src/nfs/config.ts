@@ -16,6 +16,10 @@ export const DEFAULT_PORT = 20490
 export const DEFAULT_HOST = '127.0.0.1'
 export const DEFAULT_IDLE_FLUSH_SECONDS = 5.0
 export const DEFAULT_MAX_BUFFERED_BYTES = 16 * 1024 * 1024
+// Four handles' worth. The per-handle ceiling bounds one file;
+// without a sum, `cp -r` of many large files grows the process
+// without limit.
+export const DEFAULT_MAX_TOTAL_BUFFERED_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEO_DECISECONDS = 50
 const DEFAULT_RETRANS = 3
 const DEFAULT_DEAD_TIMEOUT_SECONDS = 60
@@ -45,6 +49,7 @@ export interface NFSConfigInit {
    * never stops writing cannot grow the buffer without bound.
    */
   maxBufferedBytes?: number
+  maxTotalBufferedBytes?: number
   /**
    * Mount soft rather than the platform default, hard. A hard mount
    * blocks every I/O forever when the server stops answering,
@@ -81,6 +86,7 @@ export class NFSConfig {
   readonly port: number
   readonly idleFlushSeconds: number
   readonly maxBufferedBytes: number
+  readonly maxTotalBufferedBytes: number
   readonly soft: boolean
   readonly timeo: number
   readonly retrans: number
@@ -91,6 +97,8 @@ export class NFSConfig {
     this.port = init.port ?? DEFAULT_PORT
     this.idleFlushSeconds = init.idleFlushSeconds ?? DEFAULT_IDLE_FLUSH_SECONDS
     this.maxBufferedBytes = init.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES
+    this.maxTotalBufferedBytes =
+      init.maxTotalBufferedBytes ?? DEFAULT_MAX_TOTAL_BUFFERED_BYTES
     this.soft = init.soft ?? true
     this.timeo = init.timeo ?? DEFAULT_TIMEO_DECISECONDS
     this.retrans = init.retrans ?? DEFAULT_RETRANS
@@ -100,6 +108,12 @@ export class NFSConfig {
     }
     if (this.idleFlushSeconds <= 0) {
       throw new RangeError(`idleFlushSeconds must be positive: ${String(this.idleFlushSeconds)}`)
+    }
+    if (this.maxTotalBufferedBytes < this.maxBufferedBytes) {
+      throw new RangeError(
+        `maxTotalBufferedBytes must be at least maxBufferedBytes: ` +
+          `${String(this.maxTotalBufferedBytes)} < ${String(this.maxBufferedBytes)}`,
+      )
     }
     if (this.maxBufferedBytes <= 0) {
       throw new RangeError(`maxBufferedBytes must be positive: ${String(this.maxBufferedBytes)}`)

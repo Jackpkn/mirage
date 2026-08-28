@@ -16,6 +16,7 @@ import { posix } from 'node:path'
 
 import type { Ops } from '@struktoai/mirage-core/ops/ops'
 import { MountCore } from '../mount/core.ts'
+import { EISDIR, ENOENT, classifyErrno, errnoError } from '../mount/errors.ts'
 import type { MountAttrs, SetAttrs } from '../mount/types.ts'
 
 import { NFSConfig } from './config.ts'
@@ -39,6 +40,24 @@ function isDirMode(mode: number): boolean {
 
 function isLinkMode(mode: number): boolean {
   return (mode & S_IFMT) === S_IFLNK
+}
+
+/**
+ * Refuse a name that is not a single path component.
+ *
+ * `filename3` is one component by definition, and nfsserve does not
+ * filter it, so the delegate is the only guard there is. A `/` here is
+ * a protocol violation; that it does not escape the mount today is luck
+ * -- nothing below this point normalizes `..` -- rather than a check.
+ * `.` and `..` are refused for the mutating ops because neither names
+ * an entry to create or remove; `lookup` resolves them before calling
+ * this.
+ */
+function component(name: string): string {
+  if (name === '' || name === '.' || name === '..' || name.includes('/')) {
+    throw errnoError('EINVAL', `not a single path component: ${name}`)
+  }
+  return name
 }
 
 function joinPath(parent: string, name: string): string {
@@ -92,7 +111,17 @@ export class MirageNFS {
 
   /** Resolve a name inside a directory to a file id. */
   async lookup(dirid: number, name: string): Promise<number> {
-    const path = joinPath(this.ids.resolve(dirid), name)
+    const parent = this.ids.resolve(dirid)
+    // '.' and '..' are the server's job over NFSv3: the kernel resolves
+    // them above the filesystem for FUSE, which is why MountCore never
+    // had to, and answering ENOENT for them here is a cold-cache hole
+    // rather than a curiosity.
+    if (name === '.') return dirid
+    if (name === '..') {
+      if (parent === ROOT_PATH) return dirid
+      return this.ids.alloc(parent.slice(0, parent.lastIndexOf('/')) || ROOT_PATH)
+    }
+    const path = joinPath(parent, component(name))
     // getattr refuses macOS metadata names and reports a link as a link
     // rather than following it, both of which this used to repeat.
     await this.core.getattr(path)
@@ -122,21 +151,71 @@ export class MirageNFS {
     const path = this.ids.resolve(fileid)
     const full = this.writes.append(fileid, offset, data, this.config.maxBufferedBytes)
     if (full) await this.flushOne(fileid, path)
+    await this.drainToCeiling()
     return this.entryAttrs(fileid, path)
+  }
+
+  /**
+   * Flush the biggest buffers until the total is under the cap.
+   *
+   * `maxBufferedBytes` bounds one handle, so N files written at once
+   * cost N times it and nothing bounded the sum: a `cp -r` of many
+   * large files grew the process without limit, and the idle sweep only
+   * ran on its timer. Biggest first, so the fewest stores get back
+   * under.
+   */
+  /** Bytes buffered across every file; the ceiling's own measure. */
+  bufferedBytes(): number {
+    return this.writes.totalBytes()
+  }
+
+  private async drainToCeiling(): Promise<void> {
+    const ceiling = this.config.maxTotalBufferedBytes
+    if (this.writes.totalBytes() <= ceiling) return
+    for (const fileid of this.writes.heaviestIds()) {
+      if (this.writes.totalBytes() <= ceiling) return
+      await this.flushOrDrop(fileid)
+    }
   }
 
   /** Create an empty file and return its id. */
   async create(dirid: number, name: string): Promise<number> {
-    const path = joinPath(this.ids.resolve(dirid), name)
+    const path = joinPath(this.ids.resolve(dirid), component(name))
     const fd = await this.core.create(path)
     // NFSv3 is handle-free; the core's handle would leak otherwise.
     await this.core.release(fd)
     return this.ids.alloc(path)
   }
 
+  /**
+   * Create a file, refusing a path that already holds one.
+   *
+   * NFSv3's EXCLUSIVE create is what `O_CREAT|O_EXCL` becomes on the
+   * wire, so it is every lockfile idiom there is -- pip, a git
+   * index.lock, any flock-style sentinel. Routed to the plain create,
+   * whose core truncates, "refuse to touch it" became "empty it", and
+   * the caller was told it had won the race.
+   *
+   * Mirage has no create-verifier to store and replay, so this
+   * implements the half of the semantics that carries the data loss:
+   * an existing path is refused, never opened.
+   */
+  async createExclusive(dirid: number, name: string): Promise<number> {
+    const path = joinPath(this.ids.resolve(dirid), component(name))
+    let taken = true
+    try {
+      await this.core.attrsFor(path)
+    } catch (err) {
+      if (classifyErrno(err) !== ENOENT) throw err
+      taken = false
+    }
+    if (taken) throw errnoError('EEXIST', `File exists: ${path}`)
+    return this.create(dirid, name)
+  }
+
   /** Create a directory and return its id. */
   async mkdir(dirid: number, name: string): Promise<number> {
-    const path = joinPath(this.ids.resolve(dirid), name)
+    const path = joinPath(this.ids.resolve(dirid), component(name))
     await this.core.mkdir(path)
     return this.ids.alloc(path)
   }
@@ -152,19 +231,48 @@ export class MirageNFS {
    * bring the file back.
    */
   async remove(dirid: number, name: string): Promise<void> {
-    const path = joinPath(this.ids.resolve(dirid), name)
+    const path = joinPath(this.ids.resolve(dirid), component(name))
     const fileid = this.ids.idFor(path)
-    if (fileid !== undefined) this.dropBuffered(fileid)
-    // The core's unlink unlinks a link rather than following it, so the
-    // branch here is only file-or-directory. getattr reports a link as
-    // a link, which keeps it out of the rmdir arm.
-    const attrs = await this.core.getattr(path)
+    if (fileid === undefined) {
+      await this.removeEntry(path)
+      return
+    }
+    // Chained behind any in-flight flush, and dropping only afterwards.
+    // Dropping first lost acknowledged writes whenever the removal then
+    // failed (a denied unlink, ENOTEMPTY on the rmdir arm): the file
+    // survived, with its pre-write bytes. Doing it off the chain
+    // instead lets an idle flush land between the unlink and the drop
+    // and recreate what was just removed.
+    const previous = this.flushChains.get(fileid) ?? Promise.resolve()
+    const mine = previous.catch(() => undefined).then(async () => {
+      await this.removeEntry(path)
+      this.writes.drop(fileid)
+      this.ids.invalidate(fileid)
+    })
+    this.flushChains.set(fileid, mine)
+    try {
+      await mine
+    } finally {
+      if (this.flushChains.get(fileid) === mine) this.flushChains.delete(fileid)
+    }
+  }
+
+  /**
+   * Remove one entry, picking the op from what it is.
+   *
+   * The core's unlink unlinks a link rather than following it, so the
+   * branch here is only file-or-directory. attrsFor, not getattr: the
+   * id was minted by a lookup that already applied the name policy,
+   * and re-applying it here would refuse to remove an entry the client
+   * was allowed to create (python's twin has always used attrsFor).
+   */
+  private async removeEntry(path: string): Promise<void> {
+    const attrs = await this.core.attrsFor(path)
     if (isDirMode(attrs.mode)) {
       await this.core.rmdir(path)
     } else {
       await this.core.unlink(path)
     }
-    if (fileid !== undefined) this.ids.invalidate(fileid)
   }
 
   /**
@@ -180,8 +288,8 @@ export class MirageNFS {
     toDirid: number,
     toName: string,
   ): Promise<void> {
-    const src = joinPath(this.ids.resolve(fromDirid), fromName)
-    const dst = joinPath(this.ids.resolve(toDirid), toName)
+    const src = joinPath(this.ids.resolve(fromDirid), component(fromName))
+    const dst = joinPath(this.ids.resolve(toDirid), component(toName))
     this.ids.guardRename(src, dst)
     const fileid = this.ids.idFor(src)
     if (fileid !== undefined && this.writes.hasPending(fileid)) {
@@ -219,7 +327,7 @@ export class MirageNFS {
 
   /** Create a symlink and return its id. */
   async symlink(dirid: number, name: string, target: string): Promise<number> {
-    const path = joinPath(this.ids.resolve(dirid), name)
+    const path = joinPath(this.ids.resolve(dirid), component(name))
     await this.core.symlink(target, path)
     return this.ids.alloc(path)
   }
@@ -256,14 +364,25 @@ export class MirageNFS {
     // cookie a client resumes from. '.' and '..' are absent from the
     // core's per-entry listing because NFSv3 carries them in the reply
     // header rather than as entries.
-    const entries: DirEntry[] = []
-    let resuming = cookie !== 0
-    for (const entry of await this.core.readdirEntries(path)) {
-      const fileid = this.ids.alloc(entry.path)
-      if (resuming) {
-        if (fileid === cookie) resuming = false
-        continue
+    // Resume by NAME, not by scanning for the cookie's fileid. That
+    // scan only ever cleared itself on an exact match, so a cookie
+    // whose entry had since been removed matched nothing, every
+    // remaining entry was skipped, and the empty page read to the
+    // client as end-of-directory: `ls` on a directory another writer
+    // was touching silently lost its tail. A name comparison needs the
+    // entry to have existed, not to still exist.
+    let after: string | undefined
+    if (cookie !== 0) {
+      const resumePath = this.ids.cookiePath(cookie)
+      if (resumePath === undefined) {
+        throw new StaleHandleError(`unknown readdir cookie: ${String(cookie)}`)
       }
+      after = resumePath.slice(resumePath.lastIndexOf('/') + 1)
+    }
+    const entries: DirEntry[] = []
+    for (const entry of await this.core.readdirEntries(path)) {
+      if (after !== undefined && entry.name <= after) continue
+      const fileid = this.ids.alloc(entry.path)
       entries.push({
         name: entry.name,
         fileid,
@@ -347,14 +466,31 @@ export class MirageNFS {
     const base = await this.readBase(path)
     const pending = this.writes.take(fileid)
     if (pending.length === 0) return
-    await this.ops.writeFile(path, WriteBuffer.merge(base, pending))
+    try {
+      await this.core.store(path, WriteBuffer.merge(base, pending))
+    } catch (err) {
+      // Taken up front, this batch was gone the moment the store threw
+      // -- and every one of its writes had been answered FILE_SYNC, so
+      // the client believes they are durable and will never send them
+      // again. Put them back and let the idle sweep retry; the throw
+      // still reaches the caller.
+      this.writes.requeue(fileid, pending)
+      throw err
+    }
   }
 
   private async readBase(path: string): Promise<Buffer> {
     try {
       return Buffer.from(await this.core.read(path, NO_HANDLE, 0, Number.MAX_SAFE_INTEGER))
-    } catch {
-      // missing file or a directory: the write starts from empty
+    } catch (err) {
+      // Only the two conditions a first write legitimately meets: the
+      // file does not exist yet, or the path is a directory. A bare
+      // catch read every transient backend, auth or policy failure as
+      // "empty file", and the whole-object write that followed then
+      // stored the pending ranges alone -- destroying content nobody
+      // touched. Python's twin catches exactly this pair.
+      const code = classifyErrno(err)
+      if (code !== ENOENT && code !== EISDIR) throw err
       return Buffer.alloc(0)
     }
   }

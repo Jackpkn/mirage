@@ -13,10 +13,12 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import errno
 
 import pytest
 
 from mirage.mount.types import SetAttrs
+from mirage.nfs.config import NFSConfig
 from mirage.nfs.delegate import MirageNFS
 from mirage.nfs.errors import StaleHandleError
 from mirage.types import FileStat, FileType
@@ -517,3 +519,181 @@ def test_overlapping_flushes_do_not_lose_an_acknowledged_write():
         return ops.files["/a.txt"]
 
     assert run(scenario()) == b"AAAAABBBBB"
+
+
+# --- the three data-loss paths the review found, all in both languages ---
+
+
+def test_exclusive_create_refuses_an_existing_file_without_touching_it():
+    # NFSv3 EXCLUSIVE is O_CREAT|O_EXCL on the wire, so it is every
+    # lockfile idiom there is. Routed to the plain create, whose core
+    # truncates, it emptied the file it was meant to refuse.
+    fs, ops = make()
+    ops.files["/keep.txt"] = b"important data\n"
+
+    with pytest.raises(FileExistsError):
+        run(fs.create_exclusive(fs.root_dir(), "keep.txt"))
+
+    assert ops.files["/keep.txt"] == b"important data\n"
+
+
+def test_exclusive_create_still_creates_a_fresh_file():
+    fs, ops = make()
+
+    fileid = run(fs.create_exclusive(fs.root_dir(), "new.txt"))
+
+    assert fileid > 0
+    assert ops.files["/new.txt"] == b""
+
+
+def test_a_failed_flush_keeps_the_writes_it_acknowledged():
+    # Every buffered write was answered FILE_SYNC, so the client will
+    # never send them again. take() up front meant a store that raised
+    # lost them for good.
+    fs, ops = make()
+    fileid = run(fs.lookup(fs.root_dir(), "a.txt"))
+    run(fs.write(fileid, 0, b"NEW"))
+
+    async def boom(path: str, data: bytes) -> None:
+        raise PermissionError(path)
+
+    ops.write = boom
+    with pytest.raises(PermissionError):
+        run(fs.flush(fileid))
+
+    assert fs._writes.has_pending(fileid)
+
+    ops.write = FakeOps.write.__get__(ops, FakeOps)
+    run(fs.flush(fileid))
+    assert ops.files["/a.txt"] == b"NEWlo"
+
+
+def test_a_failed_remove_keeps_the_writes_it_acknowledged():
+    # A denied unlink used to leave the file in place with its
+    # pre-write bytes while the acknowledged writes were already gone.
+    fs, ops = make()
+    fileid = run(fs.lookup(fs.root_dir(), "a.txt"))
+    run(fs.write(fileid, 0, b"NEW"))
+
+    async def denied(path: str) -> None:
+        raise PermissionError(path)
+
+    ops.unlink = denied
+    with pytest.raises(PermissionError):
+        run(fs.remove(fs.root_dir(), "a.txt"))
+
+    assert fs._writes.has_pending(fileid)
+
+
+def test_a_successful_remove_still_drops_the_buffer():
+    fs, ops = make()
+    fileid = run(fs.lookup(fs.root_dir(), "a.txt"))
+    run(fs.write(fileid, 0, b"NEW"))
+
+    run(fs.remove(fs.root_dir(), "a.txt"))
+
+    assert not fs._writes.has_pending(fileid)
+    assert "/a.txt" not in ops.files
+
+
+def test_sequential_reads_fetch_the_object_once():
+    # NFSv3 has no OPEN, so the prefetch cache's only fill site (open)
+    # never fired for NFS and every 64 KiB READ refetched the whole
+    # file: 16 full fetches to serve 1 MiB, one backend request per
+    # 64 KiB on an API-backed mount.
+    fs, ops = make()
+    ops.files["/big.bin"] = bytes(1024 * 1024)
+    fileid = run(fs.lookup(fs.root_dir(), "big.bin"))
+
+    async def sixteen_reads() -> int:
+        served = 0
+        for i in range(16):
+            served += len(await fs.read(fileid, i * 65536, 65536))
+        return served
+
+    served = run(sixteen_reads())
+
+    assert served == 1024 * 1024
+    assert [c for c in ops.calls if c[0] == "read"] == [("read", "/big.bin")]
+
+
+def test_readdir_resumes_after_the_cookie_entry_was_removed():
+    # The resume scan looked for the cookie's fileid and only stopped
+    # skipping on an exact match, so removing that entry between pages
+    # skipped the whole rest of the directory and the empty page read
+    # as end-of-listing.
+    fs, ops = make()
+    ops.dirs.add("/pages")
+    for name in ("a", "b", "c", "e", "f"):
+        ops.files[f"/pages/{name}"] = b"x"
+    pages = run(fs.lookup(fs.root_dir(), "pages"))
+    page1 = run(fs.readdir(pages, 0, 2))
+    assert [e.name for e in page1] == ["a", "b"]
+
+    run(fs.remove(pages, "b"))
+
+    page2 = run(fs.readdir(pages, page1[-1].cookie))
+    assert [e.name for e in page2] == ["c", "e", "f"]
+
+
+def test_readdir_rejects_a_cookie_it_never_minted():
+    # Silently returning nothing reads as end-of-directory; a client
+    # can recover from an error by restarting the listing.
+    fs, _ = make()
+    with pytest.raises(StaleHandleError):
+        run(fs.readdir(fs.root_dir(), 999_999))
+
+
+def test_lookup_refuses_a_name_that_is_not_one_component():
+    # filename3 is a single component and nfsserve does not filter it,
+    # so the delegate is the only guard. Traversal did not escape only
+    # because nothing below normalizes "..", which is luck, not a check.
+    fs, ops = make()
+    ops.dirs.add("/sub/deep")
+    ops.files["/sub/deep/b.txt"] = b"x"
+    sub = run(fs.lookup(fs.root_dir(), "sub"))
+    with pytest.raises(OSError) as caught:
+        run(fs.lookup(sub, "deep/b.txt"))
+    assert caught.value.errno == errno.EINVAL
+
+
+def test_lookup_resolves_dot_and_dotdot():
+    # The kernel resolves these above the filesystem for FUSE, which is
+    # why MountCore never had to; over NFSv3 they are the server's job,
+    # and ENOENT was a cold-cache hole.
+    fs, _ = make()
+    root = fs.root_dir()
+    sub = run(fs.lookup(root, "sub"))
+
+    assert run(fs.lookup(sub, ".")) == sub
+    assert run(fs.lookup(sub, "..")) == root
+    assert run(fs.lookup(root, "..")) == root
+
+
+def test_mutating_ops_refuse_a_slashed_name():
+    fs, _ = make()
+    root = fs.root_dir()
+    for call in (lambda: fs.create(root, "a/b"), lambda: fs.mkdir(root, "a/b"),
+                 lambda: fs.remove(root, "a/b"),
+                 lambda: fs.symlink(root, "a/b", "t"),
+                 lambda: fs.rename(root, "a/b", root, "c")):
+        with pytest.raises(OSError) as caught:
+            run(call())
+        assert caught.value.errno == errno.EINVAL
+
+
+def test_the_total_buffer_is_bounded_across_files():
+    # max_buffered_bytes bounds one handle, so N files written at once
+    # cost N times it and nothing bounded the sum: a `cp -r` of many
+    # large files grew the process without limit.
+    config = NFSConfig(max_buffered_bytes=1024,
+                       max_total_buffered_bytes=2048)
+    ops = FakeOps()
+    fs = MirageNFS(ops, config)
+    root = fs.root_dir()
+    for i in range(8):
+        ops.files[f"/f{i}"] = b""
+        fileid = run(fs.lookup(root, f"f{i}"))
+        run(fs.write(fileid, 0, b"x" * 512))
+
+    assert fs._writes.total_bytes() <= 2048

@@ -168,6 +168,52 @@ export class WriteBuffer {
     return pending
   }
 
+  /**
+   * Put a taken batch back after its store failed.
+   *
+   * The client was told these writes were durable -- this server
+   * answers FILE_SYNC on every WRITE and is never sent a COMMIT -- so
+   * a store that threw must not lose them. They go in *front* of
+   * anything buffered since: the buffer is arrival-ordered and
+   * later-wins, so appending an older batch would let it overwrite the
+   * newer bytes it is supposed to sit under.
+   */
+  /**
+   * Bytes buffered across every file.
+   *
+   * The per-file ceiling bounds one handle; nothing bounded their sum,
+   * so N files written at once cost N times it. A caller that wants a
+   * global bound needs this number to compare against.
+   */
+  totalBytes(): number {
+    let total = 0
+    for (const size of this.sizes.values()) total += size
+    return total
+  }
+
+  /**
+   * Buffered files, largest first. The order a caller draining to a
+   * global ceiling wants: flushing the biggest buffer first reaches the
+   * ceiling in the fewest stores.
+   */
+  heaviestIds(): number[] {
+    return [...this.sizes.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id)
+  }
+
+  requeue(fileid: number, writes: [number, Buffer][]): void {
+    if (writes.length === 0) return
+    const restored = [...writes, ...(this.writes.get(fileid) ?? [])]
+    this.writes.set(fileid, restored)
+    this.sizes.set(
+      fileid,
+      restored.reduce((total, [, data]) => total + data.byteLength, 0),
+    )
+    // Only when nothing has been written since: a write that landed
+    // during the failed store already stamped a newer time, and moving
+    // it backwards would delay the retry.
+    if (!this.touched.has(fileid)) this.touched.set(fileid, Date.now())
+  }
+
   private forget(fileid: number): void {
     this.writes.delete(fileid)
     this.sizes.delete(fileid)

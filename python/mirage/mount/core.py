@@ -397,9 +397,33 @@ class MountCore:
         data = self.cached_data(path)
         if data is None:
             data = await self._ops.read(self.resolve(path))
+            # Cache the whole-object fetch here, not only in the one
+            # prefetch_read does on open. NFSv3 has no OPEN, so its
+            # reads never reached that fill and every 64 KiB READ
+            # refetched the entire file: 16 full fetches to serve 1 MiB,
+            # and one backend request per 64 KiB on an API mount. The
+            # bytes are already in hand, so this costs retention only.
+            self._prefetch.put(path, data)
         if ctx is not None:
             ctx.data = data
         return data[offset:offset + size]
+
+    async def store(self, path: str, data: bytes) -> None:
+        """Replace a file's whole content.
+
+        The write an adapter that buffers whole objects needs. It exists
+        so that adapter does not reach the facade directly: a store that
+        bypasses the core also bypasses the cache invalidation, and the
+        next read is served pre-write bytes for the rest of the TTL --
+        which for a flush means losing the batch the flush before it
+        stored.
+
+        Args:
+            path (str): mount path to replace.
+            data (bytes): the new content.
+        """
+        await self._ops.write(self.resolve(path), data)
+        self._prefetch.invalidate(path)
 
     async def _apply_writes(self, path: str, writes: WriteBuf) -> None:
         """Merge buffered writes over the raw base and persist the result.

@@ -307,11 +307,39 @@ export class MountCore {
     // none by default, so this reads raw bytes until a mount adds one.
     // Matches Python's `self._ops.read(path)`, which also dispatches.
     if (ctx !== undefined && ctx.data === undefined) {
-      const cached = this.cachedData(path)
-      ctx.data = cached ?? (await this.ops.readFile(this.resolve(path)))
+      ctx.data = this.cachedData(path) ?? (await this.fetchWhole(path))
     }
-    const data = ctx?.data ?? this.cachedData(path) ?? (await this.ops.readFile(this.resolve(path)))
+    const data = ctx?.data ?? this.cachedData(path) ?? (await this.fetchWhole(path))
     return data.subarray(pos, pos + len)
+  }
+
+  /**
+   * Fetch a whole object and cache it.
+   *
+   * The fill site `read` needs, not only the one `prefetch` does on
+   * open. NFSv3 has no OPEN, so its reads never reached that fill and
+   * every 64 KiB READ refetched the entire file: 16 full fetches to
+   * serve 1 MiB, and one backend request per 64 KiB on an API mount.
+   * The bytes are already in hand, so this costs retention only.
+   */
+  private async fetchWhole(path: string): Promise<Uint8Array> {
+    const data = await this.ops.readFile(this.resolve(path))
+    this.prefetchCache.put(path, data)
+    return data
+  }
+
+  /**
+   * Replace a file's whole content.
+   *
+   * The write an adapter that buffers whole objects needs. It exists so
+   * that adapter does not reach the facade directly: a store that
+   * bypasses the core also bypasses the cache invalidation, and the
+   * next read is served pre-write bytes for the rest of the TTL --
+   * which for a flush means losing the batch the flush before it
+   * stored.
+   */
+  async store(path: string, data: Uint8Array): Promise<void> {
+    await this.writeFile(path, data)
   }
 
   /** Buffer a write on its handle, or apply it directly when there is none. */
