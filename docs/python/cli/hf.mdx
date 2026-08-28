@@ -42,7 +42,7 @@ could not express.
 ```python
 import os
 
-from mirage import Workspace
+from mirage import Mount, MountMode, Workspace
 from mirage.commands.cli.builtin.hf import HF
 from mirage.core.hf_hub.config import HfConfig
 from mirage.resource.hf_models import HfModelsConfig, HfModelsResource
@@ -51,12 +51,17 @@ from mirage.resource.ram import RAMResource
 token = os.environ["HF_TOKEN"]
 ws = Workspace({
     "/m": HfModelsResource(HfModelsConfig(repo_id="acme/model", token=token)),
-    "/work": RAMResource(),
+    "/work": Mount(RAMResource(), mode=MountMode.WRITE),
 })
 ws.register_cli("hf", HF, {"token": token})
 
 await ws.execute("hf auth whoami")
 ```
+
+`/m` keeps the default read mode, which is all a Hub mount can offer. `/work`
+is the mount that takes `MountMode.WRITE`, and that asymmetry is the workflow
+above rather than an oversight: the Hub half is read-only, the local half is
+where edits live.
 
 The Hub resources need no extra: they speak the Hub API over `aiohttp`, which
 mirage already depends on. `mirage-ai[hf-buckets]` is a different product, the

@@ -322,6 +322,28 @@ async function main(): Promise<void> {
       'other/card-data-b',
     )
 
+    // ---- a Space carries one facet its card does not
+    // `hf repo create --repo-type space --space_sdk gradio` stores the sdk and
+    // writes no README, so a card-only tag list left the new Space
+    // unreachable by the facet the Hub spells bare (`gradio/hello_world` ->
+    // ["gradio", "region:us"]) while the body reported it as `sdk`.
+    const made = await fetch(`${fake.endpoint}/api/repos/create`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'sdk-space', type: 'space', sdk: 'gradio' }),
+    })
+    check('a space is created with an sdk', made.status === 200, String(made.status))
+    const spaceInfo = (await get(fake.endpoint, `/api/spaces/${TENANT}/sdk-space`)) as Record<
+      string,
+      JsonValue
+    >
+    eq('the stored sdk is a bare facet', spaceInfo.tags ?? null, ['gradio'])
+    eq(
+      'the new space is reachable by its sdk facet',
+      ids(await get(fake.endpoint, '/api/spaces?filter=gradio')),
+      [`${TENANT}/sdk-space`],
+    )
+
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))
 

@@ -112,6 +112,20 @@ const SORT_KEYS: Record<string, (r: Ranked) => number | string> = {
   trending_score: (r) => r.repo.likes,
 }
 
+// The facet list a repository answers `?filter=` with, and the one `repoBody`
+// renders. It is the card's, plus the one facet a Space carries outside its
+// card: `hf repo create --repo-type space --space_sdk gradio` stores the sdk
+// on the repo and writes no README, so a card-only derivation answered
+// `/api/spaces?filter=gradio` with nothing while the body two fields away
+// reported `sdk: "gradio"`. Both call sites go through here so the answer and
+// the filter cannot drift apart.
+function repoTags(repo: Repo, card: Record<string, JsonValue>): string[] {
+  const tags = cardTags(card, repo.kind)
+  const sdk = repo.sdk ?? ''
+  if (repo.kind !== 'spaces' || sdk === '' || tags.includes(sdk)) return tags
+  return [...tags, sdk].sort()
+}
+
 interface Ranked {
   repo: Repo
   sha: string
@@ -158,9 +172,9 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
     const sha = await headSha(ctx.db, ctx.tenant, key)
     const blobs = sha === '' ? [] : await blobsAt(ctx.db, ctx.tenant, key, sha)
     const readme = blobs.find((b) => b.path === 'README.md')
-    const tags = cardTags(
+    const tags = repoTags(
+      repo,
       readme === undefined ? {} : parseCard(Buffer.from(readme.content).toString('utf8')),
-      repo.kind,
     )
     // Every filter must match, which is the Hub's rule: `?filter=a&filter=b`
     // narrows rather than widens.
@@ -269,7 +283,7 @@ function repoBody(repo: Repo, sha: string, blobs: HfBlobRow[], lastModified: str
     lastModified,
     downloads: repo.downloads,
     likes: repo.likes,
-    tags: cardTags(card, repo.kind),
+    tags: repoTags(repo, card),
     cardData: card,
     ...(models
       ? {
