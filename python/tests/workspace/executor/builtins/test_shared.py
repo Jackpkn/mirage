@@ -26,8 +26,8 @@ from mirage.workspace import Workspace
 from mirage.workspace.executor.builtins.constants import IDENTIFIER_RE
 from mirage.workspace.executor.builtins.shared import (  # yapf: disable
     abs_path, arith_refusal, expand_operands, fail, finish, is_count_word,
-    is_valid_name, ok, operand_text, readonly_refusal, refusal, split_flags,
-    split_value_flags, view_of)
+    is_valid_name, ok, operand_text, readonly_refusal, refusal, require_view,
+    split_flags, split_value_flags)
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import session_view
 
@@ -131,12 +131,15 @@ async def test_expand_operands_globs():
     assert virtuals == ["/data/a.txt", "/data/b.txt", "/data/c.md"]
 
 
-def test_view_of_threads_the_callers_view():
+def test_require_view_returns_the_threaded_view():
     session = Session(session_id="s1")
     view = session_view(session)
-    assert view_of(session, view) is view
-    ungated = view_of(session, None)
-    assert isinstance(ungated, type(view))
+    assert require_view(view) is view
+
+
+def test_require_view_refuses_a_missing_view():
+    with pytest.raises(RuntimeError, match="gated session view"):
+        require_view(None)
 
 
 def test_refusal_speaks_in_the_builtins_voice():

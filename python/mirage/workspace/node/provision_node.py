@@ -29,6 +29,7 @@ from mirage.workspace.expand import (classify_parts, expand_and_classify,
                                      expand_parts, expand_redirects)
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
+from mirage.workspace.node.admission import Refusal, gate
 from mirage.workspace.provision.command import handle_command_provision
 from mirage.workspace.provision.control import (handle_for_provision,
                                                 handle_function_provision,
@@ -181,6 +182,7 @@ async def provision_node(
     node: Any,
     session: Session,
     scope: PlanScope | None = None,
+    agent_id: str = "",
 ) -> ProvisionResult:
     """Walk tree-sitter AST and estimate execution cost.
 
@@ -197,6 +199,8 @@ async def provision_node(
         session (Session): shell session state.
         scope (PlanScope | None): walk-local planner state; created at
             the root and threaded through recursion.
+        agent_id (str): the agent the plan is attributed to, for the
+            same command gate the run itself would clear.
     """
     plan_scope = scope if scope is not None else PlanScope()
     recurse = partial(provision_node,
@@ -204,7 +208,8 @@ async def provision_node(
                       dispatch,
                       execute_fn,
                       namespace,
-                      scope=plan_scope)
+                      scope=plan_scope,
+                      agent_id=agent_id)
     kind = node_kind(node)
 
     if kind == NodeKind.COMMENT:
@@ -238,6 +243,30 @@ async def provision_node(
             return ProvisionResult(precision=Precision.EXACT)
         expanded = await expand_parts(parts, session, execute_fn)
         classified = classify_parts(expanded, registry, session.cwd)
+        # The same admission the run itself would clear, before any
+        # backend I/O prices the line: a dry run stats and lists to
+        # estimate, and a refused command's byte counts are exactly
+        # what the refusal is protecting. `gate` is the dry-run half of
+        # `admit` (no request recorded, no grant consumed, no ask
+        # raised), so a command the chain would deny — or would hold
+        # for an approval no dry run can obtain — plans as an honest
+        # UNKNOWN. Two residuals, both deliberate: the estimator's own
+        # backend reads run against the accessor directly, so `pre_ops`
+        # rules do not see them; and the REDIRECT arm splits redirect
+        # targets off before this arm runs, so the gate judges the
+        # command without them (the run itself still refuses). The
+        # command gate here is the enforcement point.
+        cmd_name = str(classified[0]) if classified else name
+        cmd_args = [
+            p.virtual if isinstance(p, PathSpec) else p
+            for p in classified[1:]
+        ]
+        cmd_str = " ".join([cmd_name, *cmd_args])
+        verdict = await gate(cmd_name, cmd_args, classified[1:], session,
+                             registry, namespace, agent_id)
+        if isinstance(verdict, Refusal) or verdict[1] is not None:
+            return ProvisionResult(command=cmd_str,
+                                   precision=Precision.UNKNOWN)
         result = await handle_command_provision(registry, classified, session,
                                                 namespace)
         if any(has_command_substitution(p) for p in parts):

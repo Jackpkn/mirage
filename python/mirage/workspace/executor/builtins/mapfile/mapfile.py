@@ -25,7 +25,7 @@ from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.array import ShellArray, array_set
 from mirage.utils.quote import single_quote
-from mirage.workspace.executor.builtins.shared import fail
+from mirage.workspace.executor.builtins.shared import fail, require_view
 from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (session_view, visible_arrays,
@@ -124,7 +124,7 @@ async def handle_mapfile(
     name = parse.operands[0] if parse.operands else "MAPFILE"
     if _IDENTIFIER.fullmatch(name) is None:
         return fail(cmd, f"bash: {cmd}: `{name}': not a valid identifier\n", 1)
-    view = state if state is not None else session_view(session)
+    view = require_view(state)
     if view.is_readonly(name):
         return fail(cmd, f"bash: {name}: readonly variable\n", 1)
     if name in visible_assocs(session):

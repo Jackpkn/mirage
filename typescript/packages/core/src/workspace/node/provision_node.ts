@@ -48,6 +48,7 @@ import { expandAndClassify, expandParts } from '../expand/parts.ts'
 import { expandRedirects } from '../expand/redirects.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
+import { gate } from './admission.ts'
 import { handleCommandProvision } from '../provision/command.ts'
 import {
   handleForProvision,
@@ -99,6 +100,7 @@ interface ProvisionContext {
   registry: MountRegistry
   executeFn: ExecuteFn
   namespace?: Namespace | null
+  agentId?: string
 }
 
 /**
@@ -219,6 +221,37 @@ export async function provisionNode(
     if (parts.length === 0) return new ProvisionResult({ precision: Precision.EXACT })
     const expanded = await expandParts(parts, session, ctx.executeFn)
     const classified = classifyParts(expanded, ctx.registry, session.cwd)
+    // The same admission the run itself would clear, before any
+    // backend I/O prices the line: a dry run stats and lists to
+    // estimate, and a refused command's byte counts are exactly what
+    // the refusal is protecting. `gate` is the dry-run half of `admit`
+    // (no request recorded, no grant consumed, no ask raised), so a
+    // command the chain would deny — or would hold for an approval no
+    // dry run can obtain — plans as an honest UNKNOWN. Two residuals,
+    // both deliberate: the estimator's own backend reads run against
+    // the accessor directly, so `preOps` rules do not see them; and
+    // the REDIRECT arm splits redirect targets off before this arm
+    // runs, so the gate judges the command without them (the run
+    // itself still refuses). The command gate here is the enforcement
+    // point.
+    const head = classified[0]
+    const cmdName = head === undefined ? name : head instanceof PathSpec ? head.virtual : head
+    const cmdArgs = classified.slice(1).map((p) => (p instanceof PathSpec ? p.virtual : p))
+    const verdict = await gate(
+      cmdName,
+      cmdArgs,
+      classified.slice(1),
+      session,
+      ctx.registry,
+      ctx.namespace ?? null,
+      ctx.agentId ?? '',
+    )
+    if (!Array.isArray(verdict) || verdict[1] !== null) {
+      return new ProvisionResult({
+        command: [cmdName, ...cmdArgs].join(' '),
+        precision: Precision.UNKNOWN,
+      })
+    }
     const result = await handleCommandProvision(
       ctx.registry,
       classified,

@@ -17,6 +17,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from mirage import MountMode, Workspace
+from mirage.policy import Policy
+from mirage.policy.types import Action, Ask, CommandContext, Deny
 from mirage.provision import Precision
 from mirage.resource.ram import RAMResource
 from mirage.shell.node_kind import NodeKind
@@ -88,6 +90,59 @@ async def test_every_kind_plans(kind):
     assert result.network_write == write, kind
     assert result.precision.value == precision, kind
     await ws.close()
+
+
+class _NoCat(Policy):
+
+    async def pre_command(self, ctx: CommandContext) -> Action | None:
+        if ctx.command == "cat":
+            return Deny("cats are off")
+        return None
+
+
+class _AskCat(Policy):
+
+    async def pre_command(self, ctx: CommandContext) -> Action | None:
+        if ctx.command == "cat":
+            return Ask("cats need approval")
+        return None
+
+
+@pytest.mark.asyncio
+async def test_provision_asks_the_command_gate_first():
+    # A dry run reads the backend to price the line (stats, listings),
+    # so a command the policy refuses is not estimated either: the
+    # denied session must not learn byte counts the run itself would
+    # never be allowed to produce.
+    ws = Workspace({"/data": RAMResource()},
+                   mode=MountMode.WRITE,
+                   policies=[_NoCat()])
+    try:
+        await ws.execute("tee /data/a.txt > /dev/null", stdin=b"x" * 24)
+        result = await ws.execute("cat /data/a.txt", provision=True)
+        assert result.precision is Precision.UNKNOWN
+        assert result.network_read == "0"
+        priced = await ws.execute("head /data/a.txt", provision=True)
+        assert priced.network_read == "0-24"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_provision_does_not_run_ahead_of_an_ask():
+    # An ask cannot be raised from a dry run (nothing here may reach
+    # the host), so a command that would ask is not priced before the
+    # approval it would need.
+    ws = Workspace({"/data": RAMResource()},
+                   mode=MountMode.WRITE,
+                   policies=[_AskCat()])
+    try:
+        await ws.execute("tee /data/a.txt > /dev/null", stdin=b"x" * 24)
+        result = await ws.execute("cat /data/a.txt", provision=True)
+        assert result.precision is Precision.UNKNOWN
+        assert result.network_read == "0"
+    finally:
+        await ws.close()
 
 
 @pytest.mark.asyncio

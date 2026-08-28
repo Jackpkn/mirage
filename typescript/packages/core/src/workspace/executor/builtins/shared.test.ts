@@ -37,7 +37,7 @@ import {
   refusal,
   splitFlags,
   splitValueFlags,
-  viewOf,
+  requireView,
 } from './shared.ts'
 
 const DEC = new TextDecoder()
@@ -163,11 +163,14 @@ describe('builtins/shared: expandOperands', () => {
 })
 
 describe('builtins/shared: the session helpers', () => {
-  it('viewOf threads the caller view and falls back to an ungated one', () => {
+  it('requireView returns the threaded view', () => {
     const session = new Session({ sessionId: 's1' })
     const view = sessionView(session)
-    expect(viewOf(session, view)).toBe(view)
-    expect(viewOf(session, null)).not.toBeNull()
+    expect(requireView(view)).toBe(view)
+  })
+
+  it('requireView refuses a missing view', () => {
+    expect(() => requireView(null)).toThrow(/gated session view/)
   })
 
   it('refusal speaks in the builtin voice', () => {

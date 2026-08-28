@@ -200,9 +200,13 @@ async def execute_line(
             guard = resolve_limit(name) if name else None
             timeout = guard.timeout_seconds if guard is not None else None
             return await run_with_timeout(
-                provision_node(ws._registry, ws.dispatch, plan_eval_stub,
-                               ws._namespace, ast, effective_session), timeout,
-                name)
+                provision_node(ws._registry,
+                               ws.dispatch,
+                               plan_eval_stub,
+                               ws._namespace,
+                               ast,
+                               effective_session,
+                               agent_id=agent or ""), timeout, name)
         line_runtime = ws._runtimes.whole_line(ast, decision)
         if line_runtime is not None:
             # A whole line is a command like any other: the same

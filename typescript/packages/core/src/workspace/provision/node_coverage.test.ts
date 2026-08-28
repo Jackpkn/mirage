@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 import { IOResult } from '../../io/types.ts'
+import type { Action, CommandContext, Policy } from '../../policy/index.ts'
 import { Precision } from '../../provision/types.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { NodeKind } from '../../shell/node_kind.ts'
@@ -72,12 +73,13 @@ const PLANS: Record<NodeKind, [string, string, string, string]> = {
   [NodeKind.UNSUPPORTED]: ['case x', '0', '0', 'unknown'],
 }
 
-function buildWorkspace(): Workspace {
+function buildWorkspace(policies: Policy[] = []): Workspace {
   return new Workspace(
     { '/data': new RAMResource() },
     {
       mode: MountMode.WRITE,
       shellParserFactory: async () => createShellParser({ engineWasm, grammarWasm }),
+      policies,
     },
   )
 }
@@ -223,6 +225,55 @@ describe('planner covers every statement kind', () => {
       expect(result.precision).toBe('exact')
       result = await ws.execute('sed -i s/x/y/ /data/a.txt', { provision: true })
       expect(result.precision).toBe('unknown')
+    } finally {
+      await ws.close()
+    }
+  })
+})
+
+class NoCat implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'cat') return null
+    return { kind: 'deny', reason: 'cats are off', scope: 'command' }
+  }
+}
+
+class AskCat implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'cat') return null
+    return { kind: 'ask', reason: 'cats need approval' }
+  }
+}
+
+describe('provision clears the command gate first', () => {
+  it('a denied command is not priced', async () => {
+    // A dry run reads the backend to price the line (stats, listings),
+    // so a command the policy refuses is not estimated either: the
+    // denied session must not learn byte counts the run itself would
+    // never be allowed to produce.
+    const ws = buildWorkspace([new NoCat()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const result = await ws.execute('cat /data/a.txt', { provision: true })
+      expect(result.precision).toBe(Precision.UNKNOWN)
+      expect(result.networkRead).toBe('0')
+      const priced = await ws.execute('head /data/a.txt', { provision: true })
+      expect(priced.networkRead).toBe('0-24')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a command that would ask is not priced ahead of the approval', async () => {
+    // An ask cannot be raised from a dry run (nothing here may reach
+    // the host), so a command that would ask is not priced before the
+    // approval it would need.
+    const ws = buildWorkspace([new AskCat()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const result = await ws.execute('cat /data/a.txt', { provision: true })
+      expect(result.precision).toBe(Precision.UNKNOWN)
+      expect(result.networkRead).toBe('0')
     } finally {
       await ws.close()
     }

@@ -23,7 +23,7 @@ import type { Session } from '../../../session/session.ts'
 import { visibleEnv } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { readonlyRefusal, refusal, viewOf } from '../shared.ts'
+import { readonlyRefusal, refusal, requireView } from '../shared.ts'
 import type { BuiltinCall, Result } from '../types.ts'
 import { sessionView } from '../../../session/state.ts'
 
@@ -46,7 +46,7 @@ export async function handleLet(
       new ExecutionNode({ command: 'let', exitCode: 1, stderr: err }),
     ]
   }
-  const view = viewOf(session, state)
+  const view = requireView(state)
   let value = 0n
   for (const expr of args) {
     let result: ArithResult

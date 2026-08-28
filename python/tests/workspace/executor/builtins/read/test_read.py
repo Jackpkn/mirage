@@ -4,6 +4,7 @@ from mirage import MountMode, RAMResource, Workspace
 from mirage.io.stream import materialize
 from mirage.workspace.executor.builtins.read import handle_read
 from mirage.workspace.session.session import Session
+from mirage.workspace.session.state import session_view
 
 
 def make_session() -> Session:
@@ -26,7 +27,7 @@ async def test_read_invalid_option_exits_2():
 @pytest.mark.asyncio
 async def test_read_dash_r_consumed_not_a_variable():
     session = make_session()
-    _, io, _ = await handle_read(["-r", "v"], session, b"hello world\n")
+    _, io, _ = await handle_read(["-r", "v"], session, b"hello world\n", state=session_view(session))
     assert io.exit_code == 0
     assert session.env["v"] == "hello world"
     assert "-r" not in session.env
@@ -35,7 +36,7 @@ async def test_read_dash_r_consumed_not_a_variable():
 @pytest.mark.asyncio
 async def test_read_defaults_to_reply():
     session = make_session()
-    _, io, _ = await handle_read([], session, b"hi\n")
+    _, io, _ = await handle_read([], session, b"hi\n", state=session_view(session))
     assert io.exit_code == 0
     assert session.env["REPLY"] == "hi"
 

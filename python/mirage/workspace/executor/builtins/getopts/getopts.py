@@ -17,7 +17,7 @@ from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.call_stack import CallStack
-from mirage.workspace.executor.builtins.shared import is_valid_name, view_of
+from mirage.workspace.executor.builtins.shared import is_valid_name, require_view
 from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.errors import ReadonlyVariableError
@@ -87,6 +87,7 @@ async def handle_getopts(
         call_stack (CallStack | None): function-call positional frames;
             inside a shell function getopts scans the function's own
             positional parameters, matching bash.
+        state (SessionView | None): the session plane's gated door.
     """
     if len(args) < 2:
         err = b"getopts: usage: getopts optstring name [arg]\n"
@@ -94,7 +95,7 @@ async def handle_getopts(
                               stderr=err), ExecutionNode(command="getopts",
                                                          exit_code=2,
                                                          stderr=err)
-    view = view_of(session, state)
+    view = require_view(state)
     optstring = args[0]
     name = args[1]
     if len(args) > 2:

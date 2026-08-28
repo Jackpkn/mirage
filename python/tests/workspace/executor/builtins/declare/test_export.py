@@ -5,7 +5,7 @@ from mirage.io.stream import materialize
 from mirage.shell.variable import VarAttr
 from mirage.workspace.executor.builtins.declare import handle_export
 from mirage.workspace.session.session import Session
-from mirage.workspace.session.state import seed_var, set_attr
+from mirage.workspace.session.state import seed_var, session_view, set_attr
 
 
 def make_session() -> Session:
@@ -69,10 +69,20 @@ async def test_export_invalid_option_exit_2():
 
 
 @pytest.mark.asyncio
+async def test_export_write_requires_a_threaded_view():
+    # A write reached without the workspace's gated view is a wiring
+    # bug, not a mode: the old fallback built an ungated view here, so
+    # `export AWS_SECRET_ACCESS_KEY=x` cleared every pre_session rule.
+    session = make_session()
+    with pytest.raises(RuntimeError, match="gated session view"):
+        await handle_export(["SECRET=x"], session)
+
+
+@pytest.mark.asyncio
 async def test_export_p_with_name_does_not_print():
     session = make_session()
     seed_var(session, "KEEP", "1")
-    out, io, _ = await handle_export(["-p", "FOO=bar"], session)
+    out, io, _ = await handle_export(["-p", "FOO=bar"], session, state=session_view(session))
     assert io.exit_code == 0
     assert out is None
     assert session.env["FOO"] == "bar"
