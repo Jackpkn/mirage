@@ -18,12 +18,13 @@ import {
   CLISpec,
   type CLIInvocation,
   IOResult,
+  Operand,
+  Option,
   RAMResource,
   Workspace,
   z,
   type CommandFnResult,
 } from '@struktoai/mirage-node'
-import { Operand, Option } from '@struktoai/mirage-core/commands/spec/types'
 
 const PagerConfigSchema = z.object({ account: z.enum(['engineering', 'support']) })
 type PagerConfig = z.infer<typeof PagerConfigSchema>
