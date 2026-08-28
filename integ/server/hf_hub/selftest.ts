@@ -220,6 +220,18 @@ async function main(): Promise<void> {
       ids(await get(fake.endpoint, '/api/datasets?sort=downloads')).slice(0, 2),
       ['integ/card-data-a', 'other/card-data-b'],
     )
+    // Ordered AGAINST likes in the fixture on purpose: while the two were
+    // aliased, this assertion and the likes one could not disagree.
+    eq(
+      'sort=trending_score is not sort=likes',
+      ids(await get(fake.endpoint, '/api/datasets?sort=trending_score')).slice(0, 2),
+      ['other/card-data-b', 'integ/card-data-a'],
+    )
+    eq(
+      'sort=likes orders the other way round',
+      ids(await get(fake.endpoint, '/api/datasets?sort=likes')).slice(0, 2),
+      ['integ/card-data-a', 'other/card-data-b'],
+    )
     eq(
       'direction=1 ascends',
       ids(await get(fake.endpoint, '/api/datasets?sort=downloads&direction=1')).slice(-1),
@@ -240,31 +252,61 @@ async function main(): Promise<void> {
       fake.endpoint,
       '/api/models?search=card&expand=likes&expand=downloads',
     )) as JsonValue
-    eq('expand returns id plus the named properties only', expanded, [
-      { id: 'integ/card-model', likes: 42, downloads: 5000 },
+    eq('expand returns id and trendingScore plus the named properties', expanded, [
+      { id: 'integ/card-model', trendingScore: 8, likes: 42, downloads: 5000 },
     ])
 
     // ---- the trimmed row, and the one parameter that un-trims it
     const bare = (await get(fake.endpoint, '/api/models')) as Record<string, JsonValue>[]
     const first = bare[0] ?? {}
-    check('a bare listing is trimmed', first.cardData === undefined, JSON.stringify(first))
-    check('a trimmed row carries no siblings', first.siblings === undefined, '')
-    check('a trimmed row still carries its id', typeof first.id === 'string', String(first.id))
+    // The three field sets are the probed ones. A bare row carries no
+    // author/sha/lastModified/gated, and NO row carries cardData without the
+    // parameter of that name, which is not part of `full`.
+    eq('a bare listing row is the probed trimmed field set', Object.keys(first).sort(), [
+      'createdAt',
+      'downloads',
+      'id',
+      'library_name',
+      'likes',
+      'modelId',
+      'pipeline_tag',
+      'private',
+      'tags',
+      'trendingScore',
+    ])
     const fullRows = (await get(fake.endpoint, '/api/models?full=1')) as Record<string, JsonValue>[]
-    check('full=1 restores cardData', (fullRows[0] ?? {}).cardData !== undefined, '')
-    check('full=1 restores siblings', (fullRows[0] ?? {}).siblings !== undefined, '')
+    const fullFirst = fullRows[0] ?? {}
+    check('full=1 adds siblings', fullFirst.siblings !== undefined, '')
+    check(
+      'full=1 adds author, sha, gated and lastModified',
+      fullFirst.author !== undefined &&
+        fullFirst.sha !== undefined &&
+        fullFirst.gated !== undefined &&
+        fullFirst.lastModified !== undefined,
+      '',
+    )
+    check('full=1 does NOT add cardData', fullFirst.cardData === undefined, '')
+    const carded = (await get(fake.endpoint, '/api/models?cardData=1')) as Record<
+      string,
+      JsonValue
+    >[]
+    check(
+      'cardData=1 adds it to an otherwise trimmed row',
+      (carded[0] ?? {}).cardData !== undefined && (carded[0] ?? {}).siblings === undefined,
+      '',
+    )
     // Upstream's own rule, stated on `list_models`: full "is set to `True` by
     // default when using a filter".
     const filtered = (await get(fake.endpoint, '/api/datasets?filter=license:mit')) as Record<
       string,
       JsonValue
     >[]
-    check('a filter defaults to the full row', (filtered[0] ?? {}).cardData !== undefined, '')
+    check('a filter defaults to the full row', (filtered[0] ?? {}).siblings !== undefined, '')
     const searched = (await get(fake.endpoint, '/api/datasets?search=card')) as Record<
       string,
       JsonValue
     >[]
-    check('search alone stays trimmed', (searched[0] ?? {}).cardData === undefined, '')
+    check('search alone stays trimmed', (searched[0] ?? {}).siblings === undefined, '')
 
     // A repository cannot have been modified before it existed. The fixture
     // states a repo's createdAt and its initial commit's separately, so the
@@ -307,7 +349,7 @@ async function main(): Promise<void> {
     )
     // The info endpoint and the listing derive it the same way, so a fix to
     // one that misses the other fails here.
-    const listed = (await get(fake.endpoint, '/api/datasets?author=other')) as Record<
+    const listed = (await get(fake.endpoint, '/api/datasets?author=other&full=1')) as Record<
       string,
       JsonValue
     >[]
@@ -343,6 +385,81 @@ async function main(): Promise<void> {
       ids(await get(fake.endpoint, '/api/spaces?filter=gradio')),
       [`${TENANT}/sdk-space`],
     )
+
+    // The card outranks the stored sdk. A Space created as gradio whose card
+    // later says docker IS a docker Space; answering ?filter=gradio with it
+    // would be reporting history.
+    const moved = await fetch(`${fake.endpoint}/api/spaces/${TENANT}/sdk-space/commit/main`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/x-ndjson' },
+      body: [
+        JSON.stringify({ key: 'header', value: { summary: 'switch to docker' } }),
+        JSON.stringify({
+          key: 'file',
+          value: { path: 'README.md', content: '---\nsdk: docker\n---\n\n# Space\n' },
+        }),
+      ].join('\n'),
+    })
+    check('the space card lands', moved.status === 200, String(moved.status))
+    const moved2 = (await get(fake.endpoint, `/api/spaces/${TENANT}/sdk-space`)) as Record<
+      string,
+      JsonValue
+    >
+    eq('the card sdk replaces the stored one in tags', moved2.tags ?? null, ['docker'])
+    eq('the rendered sdk agrees with the tag', moved2.sdk ?? null, 'docker')
+    eq(
+      'the old sdk no longer matches',
+      ids(await get(fake.endpoint, '/api/spaces?filter=gradio')),
+      [],
+    )
+
+    // A card key the parser does not model is dropped WHOLE. Half-collecting
+    // it put the string "name: text" into dataset_info, which is worse than
+    // losing the key because it renders malformed cardData to a client.
+    const nested = await fetch(`${fake.endpoint}/api/repos/create`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'nested-card', type: 'dataset' }),
+    })
+    check('a dataset for the nested card is created', nested.status === 200, String(nested.status))
+    const nestedCard = [
+      '---',
+      'license: mit',
+      'dataset_info:',
+      '  features:',
+      '  - name: text',
+      '    dtype: string',
+      'task_categories:',
+      '  - summarization',
+      '---',
+      '',
+      '# Nested',
+      '',
+    ].join('\n')
+    const pushedCard = await fetch(
+      `${fake.endpoint}/api/datasets/${TENANT}/nested-card/commit/main`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/x-ndjson' },
+        body: [
+          JSON.stringify({ key: 'header', value: { summary: 'add a nested card' } }),
+          JSON.stringify({ key: 'file', value: { path: 'README.md', content: nestedCard } }),
+        ].join('\n'),
+      },
+    )
+    check('the nested card lands', pushedCard.status === 200, String(pushedCard.status))
+    const nestedInfo = (await get(fake.endpoint, `/api/datasets/${TENANT}/nested-card`)) as Record<
+      string,
+      JsonValue
+    >
+    const nestedData = (nestedInfo.cardData ?? {}) as Record<string, JsonValue>
+    check(
+      'a nested mapping key is omitted, not half-collected',
+      nestedData.dataset_info === undefined,
+      JSON.stringify(nestedData.dataset_info ?? null),
+    )
+    eq('the keys after it still parse', nestedData.task_categories ?? null, ['summarization'])
+    eq('and so do the keys before it', nestedData.license ?? null, 'mit')
 
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))

@@ -27,6 +27,7 @@ export interface Repo {
   sourceDir: string
   downloads: number
   likes: number
+  trendingScore: number
   gated: string
   seq: number
 }

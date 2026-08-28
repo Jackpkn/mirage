@@ -109,7 +109,7 @@ const SORT_KEYS: Record<string, (r: Ranked) => number | string> = {
   likes: (r) => r.repo.likes,
   created_at: (r) => r.repo.createdAt,
   last_modified: (r) => r.lastModified,
-  trending_score: (r) => r.repo.likes,
+  trending_score: (r) => r.repo.trendingScore,
 }
 
 // The facet list a repository answers `?filter=` with, and the one `repoBody`
@@ -121,9 +121,21 @@ const SORT_KEYS: Record<string, (r: Ranked) => number | string> = {
 // the filter cannot drift apart.
 function repoTags(repo: Repo, card: Record<string, JsonValue>): string[] {
   const tags = cardTags(card, repo.kind)
-  const sdk = repo.sdk ?? ''
-  if (repo.kind !== 'spaces' || sdk === '' || tags.includes(sdk)) return tags
+  if (repo.kind !== 'spaces') return tags
+  const sdk = spaceSdk(repo, card)
+  if (sdk === '' || tags.includes(sdk)) return tags
   return [...tags, sdk].sort()
+}
+
+// The card is where a Space's sdk lives on the Hub. The stored one exists
+// only because a just-created Space has no README yet, so it is a fallback
+// and never an override: a Space created as gradio whose card later says
+// docker IS a docker Space, in the rendered `sdk` and in the facet the filter
+// reads, and answering `?filter=gradio` with it would be reporting history.
+function spaceSdk(repo: Repo, card: Record<string, JsonValue>): string {
+  if (repo.kind !== 'spaces') return repo.sdk ?? ''
+  const fromCard = card.sdk
+  return typeof fromCard === 'string' && fromCard !== '' ? fromCard : (repo.sdk ?? '')
 }
 
 interface Ranked {
@@ -163,6 +175,10 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
   // that flips it. `search` and `sort` do not.
   const rawFull = ctx.query.get('full')
   const full = rawFull === null ? filters.length > 0 : truthy(rawFull)
+  // `cardData` is its own parameter, NOT part of `full`. Easy to assume
+  // otherwise; probed, `?limit=1&full=1` answers without it and
+  // `?limit=1&cardData=1` answers with it on an otherwise trimmed row.
+  const withCard = truthy(ctx.query.get('cardData'))
 
   const ranked: Ranked[] = []
   for (const repo of await reposOfKind(ctx.db, ctx.tenant, kind)) {
@@ -196,7 +212,13 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
 
   const limit = rawLimit === null ? ranked.length : Math.max(0, Number(rawLimit) || 0)
   const rows = ranked.slice(0, limit).map((r) => {
-    const body = obj(repoBody(r.repo, r.sha, r.blobs, r.lastModified))
+    // `trendingScore` is a listing field: it rides every row this endpoint
+    // answers, including an expanded one, and is absent from the repo info
+    // object. Probed on both.
+    const body: Record<string, JsonValue> = {
+      ...obj(repoBody(r.repo, r.sha, r.blobs, r.lastModified)),
+      trendingScore: r.repo.trendingScore,
+    }
     // `expand` wins outright rather than combining with `full`, and a call
     // carrying both is answered rather than refused. Two different rules are
     // easy to conflate here: huggingface_hub raises ValueError client-side
@@ -205,38 +227,47 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
     // `GET /api/models?limit=2&full=1&expand=likes` answers 200 with the
     // expanded shape, so refusing it would be the divergence.
     if (expand.length > 0) {
-      const out: Record<string, JsonValue> = { id: body.id ?? '' }
+      const out: Record<string, JsonValue> = {
+        id: body.id ?? '',
+        trendingScore: body.trendingScore ?? 0,
+      }
       for (const name of expand) if (body[name] !== undefined) out[name] = body[name]
       return out
     }
-    return full ? body : trimmed(body)
+    return listingRow(body, full, withCard)
   })
   return { status: 200, body: rows }
 }
 
-// The Hub's non-`full` row. It is not "the whole object minus siblings": it
-// is a short list the API commits to, and a client that asked for a listing
-// rather than an info call gets exactly this.
-function trimmed(body: Record<string, JsonValue>): Record<string, JsonValue> {
+// The listing row, in the Hub's own field sets. All three were probed on
+// `/api/models?limit=1` rather than derived from the info object, which is a
+// different and larger shape: a bare row carries no `author`, `sha`,
+// `lastModified` or `gated`, and no `full` row carries `cardData`.
+const LISTING_BASE = [
+  'id',
+  'likes',
+  'trendingScore',
+  'private',
+  'downloads',
+  'tags',
+  'pipeline_tag',
+  'library_name',
+  'createdAt',
+  'modelId',
+  'sdk',
+] as const
+
+const LISTING_FULL = ['author', 'gated', 'lastModified', 'sha', 'siblings'] as const
+
+function listingRow(
+  body: Record<string, JsonValue>,
+  full: boolean,
+  withCard: boolean,
+): Record<string, JsonValue> {
   const out: Record<string, JsonValue> = {}
-  for (const k of [
-    'id',
-    'modelId',
-    'author',
-    'sha',
-    'private',
-    'gated',
-    'disabled',
-    'createdAt',
-    'lastModified',
-    'downloads',
-    'likes',
-    'tags',
-    'pipeline_tag',
-    'library_name',
-  ]) {
-    if (body[k] !== undefined) out[k] = body[k]
-  }
+  for (const k of LISTING_BASE) if (body[k] !== undefined) out[k] = body[k]
+  if (full) for (const k of LISTING_FULL) if (body[k] !== undefined) out[k] = body[k]
+  if (withCard && body.cardData !== undefined) out.cardData = body.cardData
   return out
 }
 
@@ -292,7 +323,7 @@ function repoBody(repo: Repo, sha: string, blobs: HfBlobRow[], lastModified: str
         }
       : {}),
     siblings: blobs.map((b) => ({ rfilename: b.path })),
-    ...(repo.sdk !== null ? { sdk: repo.sdk } : {}),
+    ...(spaceSdk(repo, card) === '' ? {} : { sdk: spaceSdk(repo, card) }),
   }
 }
 

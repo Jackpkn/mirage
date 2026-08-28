@@ -51,6 +51,17 @@ export function parseCard(text: string): Record<string, JsonValue> {
   let list: JsonValue[] | null = null
   for (const line of text.slice(FENCE.length + 1, end).split('\n')) {
     if (line.trim() === '' || line.trimStart().startsWith('#')) continue
+    // An INDENTED mapping line means this key is richer than the subset
+    // above, so the key is dropped whole rather than half-collected. Without
+    // this, `dataset_info:` followed by `  features:` and `  - name: text`
+    // kept the top-level list open and appended the string "name: text" to
+    // it, which is worse than losing the key: it renders malformed cardData.
+    if (/^\s+[A-Za-z_][\w-]*:/.test(line)) {
+      if (key !== '') delete out[key]
+      key = ''
+      list = null
+      continue
+    }
     const item = /^\s*-\s+(.*)$/.exec(line)
     if (item !== null && list !== null) {
       list.push(scalar(item[1] ?? ''))
