@@ -240,9 +240,16 @@ async def fetch_into_cache(dispatch: DispatchFn, accessor: HfHubAccessor,
     """
     sha = await head_commit(accessor) or accessor.revision
     folder = repo_folder_name(accessor.repo_id, accessor.repo_type)
-    ref = ref_path(cache_dir, folder, accessor.revision)
-    await ensure_dir(dispatch, posixpath.dirname(ref))
-    await dispatch("write", PathSpec.from_str_path(ref), data=sha.encode())
+    # Only a SYMBOLIC revision earns a ref. Upstream's
+    # `_cache_commit_hash_for_specific_revision` is explicit that it "does
+    # nothing if `revision` is already a proper `commit_hash`", so a
+    # sha-pinned download writes no ref at all; writing one produced a
+    # self-referential `refs/<sha>` holding its own name, which the real
+    # binary never leaves behind.
+    if accessor.revision != sha:
+        ref = ref_path(cache_dir, folder, accessor.revision)
+        await ensure_dir(dispatch, posixpath.dirname(ref))
+        await dispatch("write", PathSpec.from_str_path(ref), data=sha.encode())
     limiter = ConcurrencyLimiter(max(1, workers))
 
     async def one(path: str) -> str:

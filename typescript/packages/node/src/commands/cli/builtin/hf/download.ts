@@ -194,9 +194,17 @@ async function fetchIntoCache(
 ): Promise<[string, string[]]> {
   const sha = (await headCommit(accessor)) || accessor.revision
   const folder = repoFolderName(accessor.repoId, accessor.repoType)
-  const ref = refPath(cacheDir, folder, accessor.revision)
-  await ensureDir(dispatch, parent(ref))
-  await dispatch('write', PathSpec.fromStrPath(ref), [new TextEncoder().encode(sha)])
+  // Only a SYMBOLIC revision earns a ref. Upstream's
+  // `_cache_commit_hash_for_specific_revision` is explicit that it "does
+  // nothing if `revision` is already a proper `commit_hash`", so a sha-pinned
+  // download writes no ref at all; writing one produced a self-referential
+  // `refs/<sha>` holding its own name, which the real binary never leaves
+  // behind.
+  if (accessor.revision !== sha) {
+    const ref = refPath(cacheDir, folder, accessor.revision)
+    await ensureDir(dispatch, parent(ref))
+    await dispatch('write', PathSpec.fromStrPath(ref), [new TextEncoder().encode(sha)])
+  }
   const written = new Array<string>(paths.length)
   let next = 0
   const worker = async (): Promise<void> => {
