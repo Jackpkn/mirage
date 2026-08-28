@@ -22,7 +22,7 @@ import { Router } from './route.ts'
 import type { Ctx } from './route.ts'
 import { DEFAULT_FIXTURE } from './fixture.ts'
 import { applyReset, defaultTenantsOf, parseResetBody, withPathRun } from './reset.ts'
-import { DEFAULT_RUN, resolveRun, resolveTenant, splitRunPath } from './tenant.ts'
+import { DEFAULT_RUN, RUN_PREFIX, resolveRun, resolveTenant, splitRunPath } from './tenant.ts'
 import type { Headers } from './tenant.ts'
 import { unrouted } from './unrouted.ts'
 import type { JsonValue, Reply } from './types.ts'
@@ -258,6 +258,7 @@ async function answer<C extends MinimalClient>(
     body: raw,
     run,
     tenant,
+    runPrefix: pathRun === undefined ? '' : `/${RUN_PREFIX}/${pathRun}`,
     db: rt.pool.client(run),
     clock: st.clock,
     minter: st.minter,

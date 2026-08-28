@@ -62,6 +62,13 @@ export interface RouteMatch {
   body: Buffer
   run: string
   tenant: string
+  // The `/_run/<id>` the request arrived under, or '' when it arrived
+  // unscoped. Two different things are wanted from the path and conflating
+  // them is what broke: a route lookup, an error message and a row key all
+  // want the path WITHOUT it (which is what ctx.url.pathname now is), while a
+  // URL the fake mints for the client to come BACK to needs it, or the client
+  // follows the link into another run.
+  runPrefix: string
 }
 
 export type Handler = (m: RouteMatch) => Promise<Reply> | Reply

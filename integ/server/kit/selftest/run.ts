@@ -672,6 +672,17 @@ async function main(): Promise<void> {
       JSON.stringify(here.json),
     )
     check(
+      'but a URL it mints to be followed BACK keeps the prefix',
+      (here.json as { self: string }).self === '/_run/u1/whereami',
+      JSON.stringify(here.json),
+    )
+    const bare = await call(fake, '/whereami?x=1')
+    check(
+      'and carries no prefix when the request arrived without one',
+      (bare.json as { self: string }).self === '/whereami',
+      JSON.stringify(bare.json),
+    )
+    check(
       'while still being told which run it is in, with the query intact',
       (here.json as { run: string }).run === 'u1' &&
         (here.json as { query: string }).query === '?x=1',

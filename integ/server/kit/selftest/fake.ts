@@ -229,7 +229,15 @@ export const selftestFake: Fake<C> = {
     // pathname into responses and one fake looks rows up by it.
     route('GET', '/whereami', (ctx) => ({
       status: 200,
-      body: { path: ctx.url.pathname, run: ctx.run, query: ctx.url.search },
+      body: {
+        path: ctx.url.pathname,
+        run: ctx.run,
+        query: ctx.url.search,
+        // What a fake mints for the client to come BACK to. github's Link
+        // header is built this way, and a self URL missing the prefix sends
+        // the client into the default run for page two.
+        self: `${ctx.runPrefix}${ctx.url.pathname}`,
+      },
     })),
     route('GET', '/boards', listBoards),
     route('GET', '/boards/:board/cards', listCards),
