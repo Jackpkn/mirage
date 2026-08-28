@@ -16,10 +16,12 @@ import type { JsonValue, KitRoute } from '../kit/typescript/index.ts'
 import { API_PREFIXES, DEFAULT_LOGIN } from './config.ts'
 import type { C } from './config.ts'
 import { commitJson } from './wire.ts'
-import { createReposAllowed } from './seed.ts'
+import { createReposAllowed, initRepo } from './seed.ts'
 import {
   addBranch,
   allRepos,
+  delegateFor,
+  perRepoModels,
   branchFor,
   branchNames,
   commitList,
@@ -223,7 +225,7 @@ const createRepo: Handler = async (ctx) => {
       seq: await nextRepoSeq(ctx.db, ctx.tenant),
     },
   })) as RepoRow
-  await addBranch(ctx.db, ctx.tenant, fullName, created.defaultBranch)
+  await initRepo(ctx.db, ctx.tenant, created)
   if (body.auto_init === true) {
     await ctx.db.githubFile.create({
       data: {
@@ -283,23 +285,15 @@ async function renameRepo(db: C, tenant: string, repo: RepoRow, name: string): P
       seq: repo.seq,
     },
   })) as RepoRow
-  // Every child table moves before the old row goes. A table missed here is
-  // not a silent orphan, it is a 500: each relation is required, so Prisma
-  // refuses to delete a repository anything still points at.
-  const where = { tenant, repo: from }
-  await db.githubBranch.updateMany({ where, data: { repo: to } })
-  await db.githubFile.updateMany({ where, data: { repo: to } })
-  await db.githubSubmodule.updateMany({ where, data: { repo: to } })
-  await db.githubCommit.updateMany({ where, data: { repo: to } })
-  await db.githubIssue.updateMany({ where, data: { repo: to } })
-  await db.githubComment.updateMany({ where, data: { repo: to } })
-  await db.githubPull.updateMany({ where, data: { repo: to } })
-  await db.githubRelease.updateMany({ where, data: { repo: to } })
-  await db.githubWorkflow.updateMany({ where, data: { repo: to } })
-  await db.githubRun.updateMany({ where, data: { repo: to } })
-  await db.githubCheck.updateMany({ where, data: { repo: to } })
-  await db.githubStatus.updateMany({ where, data: { repo: to } })
-  await db.githubStagedTree.updateMany({ where, data: { repo: to } })
+  // Derived from the schema, not listed here. Every relation to GithubRepo is
+  // required and none cascades, so a table left behind is not a silent orphan,
+  // it is a 500 on the delete below. That list went stale twice, once for
+  // GithubStagedTree and once for GithubBranch, so it is no longer written
+  // down: `perRepoModels` reads the DMMF, and a model added to the schema is
+  // moved without anyone remembering to say so.
+  for (const model of perRepoModels()) {
+    await delegateFor(db, model).updateMany({ where: { tenant, repo: from }, data: { repo: to } })
+  }
   await db.githubRepo.delete({ where: { tenant_fullName: { tenant, fullName: from } } })
   return created
 }
@@ -313,37 +307,21 @@ const deleteRepo: Handler = authed(
 
 async function dropRepo(db: C, tenant: string, fullName: string): Promise<void> {
   const where = { tenant, repo: fullName }
-  // A staged entry REQUIRES its tree, and the relation carries no cascade, so
-  // Prisma refuses to delete the tree while an entry still points at it: this
-  // 500'd on any repository that had received a POST /git/trees. Entries are
-  // keyed by tree sha rather than by repository, so the shas have to be read
-  // before their trees go. Deleting the tree first would also have been unsafe
-  // even where the delete succeeded, because the staged sha is derived from the
-  // repository name and a per-repository counter: recreating the repository
-  // reuses sha #0 and would have adopted the orphaned entries.
+  // A staged entry hangs off a staged TREE rather than off the repository, so
+  // it is the one child the schema walk cannot reach: entries are keyed by tree
+  // sha, and they have to go before the trees they require.
   const staged = await db.githubStagedTree.findMany({ where, select: { sha: true } })
   await db.githubStagedEntry.deleteMany({
     where: { tenant, treeSha: { in: staged.map((t) => t.sha) } },
   })
-  await db.githubStagedTree.deleteMany({ where })
-  await db.githubBranch.deleteMany({ where })
-  await db.githubStatus.deleteMany({ where })
-  await db.githubCheck.deleteMany({ where })
-  await db.githubRun.deleteMany({ where })
-  await db.githubWorkflow.deleteMany({ where })
-  await db.githubRelease.deleteMany({ where })
-  await db.githubPull.deleteMany({ where })
-  await db.githubComment.deleteMany({ where })
-  await db.githubIssue.deleteMany({ where })
-  await db.githubCommit.deleteMany({ where })
-  await db.githubSubmodule.deleteMany({ where })
-  await db.githubFile.deleteMany({ where })
+  // In dependency order, deepest first, for the same reason the kit's own
+  // scoped reset derives its order rather than declaring one.
+  for (const model of perRepoModels()) {
+    await delegateFor(db, model).deleteMany({ where })
+  }
   await db.githubRepo.delete({ where: { tenant_fullName: { tenant, fullName } } })
 }
 
-// The copy is deep: a fork the agent then commits to must not write through to
-// the source. GitHub lets the fork be named at creation time, which is how a
-// caller avoids a two-step fork-then-rename.
 const forkRepo: Handler = authed(
   withRepo(async (ctx, source) => {
     const body = jsonBodyOf(ctx)
@@ -362,6 +340,10 @@ const forkRepo: Handler = authed(
         seq: await nextRepoSeq(ctx.db, ctx.tenant),
       },
     })) as RepoRow
+    // The defaults, not the source's: the python fork built a fresh FakeRepo and
+    // copied only the branch trees, submodules and metadata onto it, so a fork
+    // does not inherit the source's issues, releases or runs.
+    await initRepo(ctx.db, ctx.tenant, fork)
     for (const branch of await branchNames(ctx.db, ctx.tenant, source)) {
       await addBranch(ctx.db, ctx.tenant, fullName, branch)
       const tree = await treeOfBranch(ctx.db, ctx.tenant, source, branch)

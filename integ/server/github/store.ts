@@ -12,8 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { tenantWhere } from '../kit/typescript/index.ts'
-import type { JsonValue } from '../kit/typescript/index.ts'
+import { Prisma } from '../../generated/github/index.js'
+import { deleteOrder, tenantWhere } from '../kit/typescript/index.ts'
+import type { Dmmf, JsonValue } from '../kit/typescript/index.ts'
 import { SEARCH_SIZE_LIMIT, config } from './config.ts'
 import type { C } from './config.ts'
 import { blobSha, commitSha, rootCommit, treeSha } from './wire.ts'
@@ -35,6 +36,38 @@ export type Tree = Map<string, Buffer>
 
 export function scope(tenant: string): Record<string, JsonValue> {
   return tenantWhere(tenant, config.tenantKind)
+}
+
+// Every model that carries a `repo` foreign key, deepest dependency first. The
+// repository lifecycle (rename copies then deletes, delete drops) has to touch
+// all of them, and a hand-written list went stale twice. `deleteOrder` is the
+// kit's own topological sort, the one its scoped reset uses, so this orders
+// correctly as well as covering completely.
+export function perRepoModels(): string[] {
+  const dmmf = Prisma.dmmf as unknown as Dmmf
+  const holdsRepo = new Set(
+    dmmf.datamodel.models
+      .filter(
+        (m) =>
+          m.name !== 'GithubRepo' && m.fields.some((f) => f.name === 'repo' && f.kind === 'scalar'),
+      )
+      .map((m) => m.name),
+  )
+  return deleteOrder(dmmf).filter((name) => holdsRepo.has(name))
+}
+
+// One typed door onto a delegate named at runtime. The two lifecycle walks are
+// the only callers, and both do exactly these two things.
+interface RepoScopedDelegate {
+  updateMany(args: { where: Record<string, string>; data: { repo: string } }): Promise<unknown>
+  deleteMany(args: { where: Record<string, string> }): Promise<unknown>
+}
+
+export function delegateFor(db: C, model: string): RepoScopedDelegate {
+  const key = model.charAt(0).toLowerCase() + model.slice(1)
+  const found = (db as unknown as Record<string, RepoScopedDelegate | undefined>)[key]
+  if (found === undefined) throw new Error(`github fake: no delegate for ${model}`)
+  return found
 }
 
 export async function repoByName(db: C, tenant: string, fullName: string): Promise<RepoRow | null> {

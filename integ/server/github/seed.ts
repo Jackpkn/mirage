@@ -150,9 +150,6 @@ function defaultRun(repo: RepoRow): RunSeed {
 }
 
 async function loadTree(db: C, tenant: string, repo: RepoRow): Promise<number> {
-  // Recorded even for a repository with no fixture directory: a repository
-  // always has its default branch, and nothing else would create the row.
-  await addBranch(db, tenant, repo.fullName, repo.defaultBranch)
   if (repo.sourceDir === '') return 0
   const root = join(FIXTURE_ROOT, ...repo.sourceDir.split('/'))
   const branch = repo.sourceBranch === '' ? repo.defaultBranch : repo.sourceBranch
@@ -179,54 +176,60 @@ async function loadTree(db: C, tenant: string, repo: RepoRow): Promise<number> {
   return seq + subs
 }
 
+// Everything a repository has the moment it exists, in ONE place. The python
+// FakeRepo constructor ran for every repository however it came about, so a
+// repository created through POST /user/repos or forked had the same default
+// workflows, checks, statuses and run as a seeded one. Doing this only during
+// seeding left a fresh fork answering the action endpoints empty and 404ing a
+// dispatch. Every creation path calls this, and a new piece of per-repository
+// state is added here rather than at three call sites.
+export async function initRepo(
+  db: C,
+  tenant: string,
+  repo: RepoRow,
+  counts?: Record<string, number>,
+): Promise<void> {
+  const bump = (model: string, n: number): void => {
+    if (counts !== undefined) counts[model] = (counts[model] ?? 0) + n
+  }
+  await addBranch(db, tenant, repo.fullName, repo.defaultBranch)
+  let seq = 0
+  for (const row of defaultWorkflows()) {
+    await db.githubWorkflow.create({ data: { tenant, repo: repo.fullName, ...row, seq } })
+    seq += 1
+  }
+  bump('GithubWorkflow', defaultWorkflows().length)
+  seq = 0
+  for (const row of defaultChecks()) {
+    await db.githubCheck.create({ data: { tenant, repo: repo.fullName, ...row, seq } })
+    seq += 1
+  }
+  bump('GithubCheck', defaultChecks().length)
+  seq = 0
+  for (const row of defaultStatuses()) {
+    await db.githubStatus.create({ data: { tenant, repo: repo.fullName, ...row, seq } })
+    seq += 1
+  }
+  bump('GithubStatus', defaultStatuses().length)
+  await db.githubRun.create({ data: { tenant, repo: repo.fullName, ...defaultRun(repo), seq: 0 } })
+  bump('GithubRun', 1)
+}
+
 // What a fixture cannot state: a repository's 120 files come from the directory
-// its row names, and every repository starts with the same workflows, checks,
-// statuses and one run. Both are counted into the /reset report, because a
-// table no fixture key names would otherwise read back as empty.
+// its row names, and every repository starts with the state initRepo gives it.
+// Both are counted into the /reset report, because a table no fixture key names
+// would otherwise read back as empty.
 export async function seedRepos(
   db: C,
   tenant: string,
   counts: Record<string, number>,
 ): Promise<void> {
-  const repos = await allRepos(db, tenant)
   let files = 0
-  let workflows = 0
-  let checks = 0
-  let statuses = 0
-  let runs = 0
-  for (const repo of repos) {
+  for (const repo of await allRepos(db, tenant)) {
+    await initRepo(db, tenant, repo, counts)
     files += await loadTree(db, tenant, repo)
-    let seq = 0
-    for (const row of defaultWorkflows()) {
-      await db.githubWorkflow.create({ data: { tenant, repo: repo.fullName, ...row, seq } })
-      seq += 1
-      workflows += 1
-    }
-    seq = 0
-    for (const row of defaultChecks()) {
-      await db.githubCheck.create({ data: { tenant, repo: repo.fullName, ...row, seq } })
-      seq += 1
-      checks += 1
-    }
-    seq = 0
-    for (const row of defaultStatuses()) {
-      await db.githubStatus.create({ data: { tenant, repo: repo.fullName, ...row, seq } })
-      seq += 1
-      statuses += 1
-    }
-    await db.githubRun.create({
-      data: { tenant, repo: repo.fullName, ...defaultRun(repo), seq: 0 },
-    })
-    runs += 1
   }
-  const added: Record<string, number> = {
-    GithubFile: files,
-    GithubWorkflow: workflows,
-    GithubCheck: checks,
-    GithubStatus: statuses,
-    GithubRun: runs,
-  }
-  for (const [model, n] of Object.entries(added)) if (n > 0) counts[model] = n
+  if (files > 0) counts.GithubFile = files
   const sorted = Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : 1))
   for (const key of Object.keys(counts)) delete counts[key]
   for (const [key, value] of sorted) counts[key] = value

@@ -3,9 +3,14 @@
 // document: a repository's contents are 120 files of sample source, which read
 // and diff as source and would be unreviewable inlined into JSON. So
 // fixtures/github/v1.json is a MANIFEST naming directories under
-// integ/fixtures/, and afterSeed walks them into rows. That also keeps the
-// `--repo owner/name=<dir>` interface the python fake exposed, which tasks
-// outside this tree seed themselves with.
+// integ/fixtures/, and afterSeed walks them into rows.
+//
+// A manifest row carries what the python fake's `--repo owner/name=<dir>` flag
+// carried, but it is NOT that flag: the command line takes only --port and
+// --fixture, and the kit refuses anything else rather than seeding the default
+// and announcing a healthy server. A caller that used --repo, --metadata,
+// --commits or --no-create-repos names a fixture instead, and fixtures/github/
+// already holds three (v1, cli, empty).
 //
 // Files are per BRANCH; submodules and blobs are per REPOSITORY. That split is
 // the vendor's: a gitlink is a path in a tree with no blob behind its sha, and

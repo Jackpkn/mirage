@@ -18,7 +18,7 @@ import type { Fake, Runtime } from './base.ts'
 import { bindHost } from './bind.ts'
 import type { MinimalClient } from './db.ts'
 import { createKitServer, makeRuntime } from './http.ts'
-import { parseFixture, parsePort } from './port.ts'
+import { checkArgv, parseFixture, parsePort } from './port.ts'
 
 export interface Started<C extends MinimalClient> {
   endpoint: string
@@ -76,6 +76,8 @@ export async function start<C extends MinimalClient>(
 // parses, so it is written after listen resolves and never before.
 export async function serve<C extends MinimalClient>(fake: Fake<C>): Promise<Started<C>> {
   const argv = process.argv.slice(2)
+  // Before the port is taken, so a bad launch fails without ever announcing.
+  checkArgv(argv)
   const started = await start(fake, parsePort(argv, fake.config.defaultPort), parseFixture(argv))
   emit(announceFor(fake.config.service, started.port))
   const bye = (): void => {

@@ -497,6 +497,30 @@ async function main(): Promise<void> {
       alt.child.kill('SIGTERM')
     }
 
+    // A flag the kit does not implement must stop the process, not be skipped.
+    // Every fake here parses argv by scanning for its own flags, so an ignored
+    // one meant a caller asked for one world and silently got the default: the
+    // github fake replaced one that took --repo/--metadata/--commits, and a
+    // launch line carrying those announced a healthy server seeded with v1.
+    process.stdout.write('\n15. an argument the kit does not implement is refused\n')
+    let refusedArgv = ''
+    try {
+      const bad = await launch({}, ['--repo', 'integ/x=dir', '--no-create-repos'])
+      bad.child.kill('SIGTERM')
+    } catch (err: unknown) {
+      refusedArgv = (err as Error).message
+    }
+    check(
+      'an unknown flag fails the launch',
+      refusedArgv.includes('--repo') && refusedArgv.includes('--no-create-repos'),
+      refusedArgv === '' ? 'launched ANYWAY' : (refusedArgv.split('\n')[0] ?? ''),
+    )
+    check(
+      'and it names the flags the kit does take',
+      refusedArgv.includes('--fixture') && refusedArgv.includes('--port'),
+      refusedArgv.split('\n')[0] ?? '',
+    )
+
     process.stdout.write(`\nselftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

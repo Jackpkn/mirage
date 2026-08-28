@@ -40,3 +40,34 @@ export function parseFixture(argv: string[] = process.argv.slice(2)): string | u
   if (raw === undefined) throw new KitError('--fixture requires a value')
   return raw
 }
+
+// Every flag the kit itself understands. An argument outside this set is a
+// caller asking for something the fake will not do.
+const KNOWN_FLAGS = new Set(['--port', '--fixture'])
+
+// Refused, not ignored. `parsePort` and `parseFixture` each scan argv for their
+// own flag and skip everything else, so a fake launched with a flag it does not
+// implement announced a healthy server seeded with the DEFAULT fixture: the
+// caller asked for one world and silently got another, which is the failure a
+// fake exists to make impossible. github is the worked example, since the fake
+// it replaced took a repeatable `--repo owner/name=<dir>` plus `--metadata`,
+// `--commits` and `--no-create-repos`, and none of those survive here.
+export function checkArgv(argv: string[] = process.argv.slice(2)): void {
+  const unknown: string[] = []
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i] ?? ''
+    if (!arg.startsWith('-')) continue
+    if (KNOWN_FLAGS.has(arg)) {
+      i += 1
+      continue
+    }
+    unknown.push(arg)
+  }
+  if (unknown.length > 0) {
+    throw new KitError(
+      `unknown argument${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. ` +
+        `This fake takes only ${[...KNOWN_FLAGS].sort().join(' and ')}; ` +
+        `seed a scenario by naming a fixture under integ/fixtures/<service>/.`,
+    )
+  }
+}
