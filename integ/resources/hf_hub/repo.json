@@ -116,6 +116,49 @@
       "targets": ["hf-hub"],
       "command": "cat /space/one_byte.txt",
       "expect": { "exit": 0, "stdout": "x", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_a_mount_write_is_refused",
+      "seq": 960016,
+      "targets": ["hf-hub"],
+      "command": "echo -n hi > /repo/new.txt",
+      "expect": { "exit": 1, "stdout": "", "stderr": "/repo/new.txt: Operation not supported\n" }
+    },
+    {
+      "id": "hf_hub_a_mount_mkdir_is_refused",
+      "seq": 960017,
+      "targets": ["hf-hub"],
+      "command": "mkdir /repo/dir1",
+      "expect": { "exit": 1, "stdout": "", "stderr": "mkdir: /repo/dir1: Operation not supported\n" }
+    },
+    {
+      "id": "hf_hub_a_mount_rm_is_refused",
+      "seq": 960018,
+      "targets": ["hf-hub"],
+      "command": "rm /repo/one_byte.txt",
+      "expect": { "exit": 1, "stdout": "", "stderr": "rm: /repo/one_byte.txt: Operation not supported\n" }
+    },
+    {
+      "id": "hf_hub_a_mount_cp_is_refused",
+      "seq": 960019,
+      "targets": ["hf-hub"],
+      "command": "cp /repo/one_byte.txt /repo/copy.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cp: /repo/one_byte.txt: Operation not supported\n"
+      }
+    },
+    {
+      "id": "hf_hub_a_refused_write_leaves_the_tree_alone",
+      "seq": 960020,
+      "targets": ["hf-hub"],
+      "command": "echo -n hi > /repo/new.txt; ls /repo/new.txt",
+      "expect": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "/repo/new.txt: Operation not supported\nls: cannot access '/repo/new.txt': No such file or directory\n"
+      }
     }
   ]
 }

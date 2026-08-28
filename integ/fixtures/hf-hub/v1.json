@@ -4,24 +4,28 @@
       "kind": "models",
       "namespace": "integ",
       "name": "repo-v1",
+      "sourceDir": "files/v1",
       "createdAt": "2026-01-01T00:00:00.000Z"
     },
     {
       "kind": "datasets",
       "namespace": "integ",
       "name": "data-v1",
+      "sourceDir": "columnar/v1",
       "createdAt": "2026-01-01T00:00:00.000Z"
     },
     {
       "kind": "models",
       "namespace": "integ",
       "name": "repo-cli",
+      "sourceDir": "files/v1",
       "createdAt": "2026-01-01T00:00:00.000Z"
     },
     {
       "kind": "spaces",
       "namespace": "integ",
       "name": "space-v1",
+      "sourceDir": "files/v1",
       "createdAt": "2026-01-01T00:00:00.000Z"
     }
   ],
