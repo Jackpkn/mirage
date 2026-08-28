@@ -16,24 +16,24 @@ OTHER_FILESYSTEM = "file is on a different filesystem; not dumped"
 # Why a path could not be reached, in GNU's strerror wording. Both ride
 # on a fatal Problem; tar prints them after "Cannot stat: " and Info-ZIP
 # words every unreachable name the same way, so it ignores the reason.
-NO_SUCH = "No such file or directory"
-TOO_MANY_LEVELS = "Too many levels of symbolic links"
+_NO_SUCH = "No such file or directory"
+_TOO_MANY_LEVELS = "Too many levels of symbolic links"
 # A directory below the operand the walk could not open: a rule refused
 # it. Rides on an ``unreadable`` Problem; tar prints it after "Cannot
 # open: " and fails the run, Info-ZIP stores the directory and is silent.
-PERMISSION_DENIED = "Permission denied"
+_PERMISSION_DENIED = "Permission denied"
 
 StatFn = Callable[[PathSpec], Awaitable[FileStat]]
 WalkFn = Callable[[PathSpec, str], Awaitable[Walked]]
 DirProbe = Callable[[PathSpec], Awaitable[bool]]
 
 
-def link_target(stat: FileStat) -> str:
+def _link_target(stat: FileStat) -> str:
     target = stat.extra.get(LINK_TARGET_KEY)
     return target if isinstance(target, str) else ""
 
 
-def child_spec(virtual: str, root: PathSpec) -> PathSpec:
+def _child_spec(virtual: str, root: PathSpec) -> PathSpec:
     """A PathSpec for a walked descendant of one operand.
 
     The walk reports absolute virtual paths; reading their bytes needs
@@ -52,7 +52,7 @@ def child_spec(virtual: str, root: PathSpec) -> PathSpec:
                     raw_path=virtual)
 
 
-def same_mount(mounts: MountView | None, one: str, other: str) -> bool:
+def _same_mount(mounts: MountView | None, one: str, other: str) -> bool:
     """Whether two virtual paths are served by the same mount.
 
     Args:
@@ -66,7 +66,7 @@ def same_mount(mounts: MountView | None, one: str, other: str) -> bool:
     return mounts.root_of(one) == mounts.root_of(other)
 
 
-async def subtree(
+async def _subtree(
     root: PathSpec,
     base: str,
     name_base: str,
@@ -99,7 +99,7 @@ async def subtree(
         stopped the walk, and the virtual path of each directory the
         walk could not open.
     """
-    walked = child_spec(base, root) if base != root.virtual else root
+    walked = _child_spec(base, root) if base != root.virtual else root
     found: dict[str, tuple[MemberKind, str]] = {}
     dirs = await walk(walked, "d")
     for virtual in dirs.paths:
@@ -116,7 +116,7 @@ async def subtree(
     ]
     if links is not None:
         for virtual, stat in links.subtree(base):
-            found[virtual.rstrip("/")] = ("link", link_target(stat))
+            found[virtual.rstrip("/")] = ("link", _link_target(stat))
     # Two lists, because pruning and naming are different questions. A
     # mount the session cannot see still shadows the parent backend's
     # keys, so every descendant prunes; only the ones it may be told
@@ -139,12 +139,12 @@ async def subtree(
             Entry(name_path=named,
                   kind=kind,
                   target=target,
-                  read=child_spec(virtual, root) if kind == "file" else None))
+                  read=_child_spec(virtual, root) if kind == "file" else None))
     entries.sort(key=lambda entry: entry.name_path)
     return entries, [c.rstrip("/") for c in visible_crossings], unreadable
 
 
-async def follow(
+async def _follow(
     virtual: str,
     root: PathSpec,
     stat: StatFn,
@@ -181,20 +181,20 @@ async def follow(
     try:
         target = links.resolve(virtual)
     except CycleError:
-        return [], [], TOO_MANY_LEVELS, []
-    if not same_mount(mounts, virtual, target):
+        return [], [], _TOO_MANY_LEVELS, []
+    if not _same_mount(mounts, virtual, target):
         return [], [OTHER_FILESYSTEM], "", []
-    spec = child_spec(target, root)
+    spec = _child_spec(target, root)
     try:
         target_stat = await stat(spec)
     except (FileNotFoundError, ValueError):
-        return [], [], NO_SUCH, []
+        return [], [], _NO_SUCH, []
     if target_stat.type != FileType.DIRECTORY:
         return [Entry(name_path=virtual, kind="file", read=spec)], [], "", []
     if not recurse:
         return [Entry(name_path=virtual, kind="dir")], [], "", []
-    entries, crossings, unreadable = await subtree(root, target, virtual, walk,
-                                                   links, mounts)
+    entries, crossings, unreadable = await _subtree(root, target, virtual,
+                                                    walk, links, mounts)
     reasons = [OTHER_FILESYSTEM] * len(crossings)
     return ([Entry(name_path=virtual, kind="dir"),
              *entries], reasons, "", unreadable)
@@ -207,7 +207,7 @@ def _unreadable_problems(closed: list[str]) -> list[Problem]:
         closed (list[str]): their absolute virtual paths, walk order.
     """
     return [
-        Problem(path=virtual, reason=PERMISSION_DENIED, unreadable=True)
+        Problem(path=virtual, reason=_PERMISSION_DENIED, unreadable=True)
         for virtual in closed
     ]
 
@@ -250,9 +250,9 @@ async def scan_operand(
     link_stat = links.stat_at(path.virtual) if links is not None else None
     if link_stat is not None and not dereference:
         entries.append(
-            Entry(name_path=base, kind="link", target=link_target(link_stat)))
+            Entry(name_path=base, kind="link", target=_link_target(link_stat)))
     elif link_stat is not None:
-        followed, why, unreachable, closed = await follow(
+        followed, why, unreachable, closed = await _follow(
             base, path, stat, walk, links, mounts, recurse)
         if unreachable:
             return Scan(problems=(Problem(path=base,
@@ -267,7 +267,7 @@ async def scan_operand(
             root_stat = await stat(path)
         except (FileNotFoundError, ValueError):
             return Scan(problems=(Problem(path=base,
-                                          reason=NO_SUCH,
+                                          reason=_NO_SUCH,
                                           fatal=True), ),
                         missing=True)
         if root_stat.type != FileType.DIRECTORY:
@@ -275,7 +275,7 @@ async def scan_operand(
         else:
             entries.append(Entry(name_path=base, kind="dir"))
             if recurse:
-                below, crossings, closed = await subtree(
+                below, crossings, closed = await _subtree(
                     path, base, base, walk, links, mounts)
                 entries.extend(below)
                 problems.extend(_unreadable_problems(closed))
@@ -285,7 +285,7 @@ async def scan_operand(
             if entry.kind != "link":
                 expanded.append(entry)
                 continue
-            followed, why, unreachable, closed = await follow(
+            followed, why, unreachable, closed = await _follow(
                 entry.name_path, path, stat, walk, links, mounts, recurse)
             if unreachable:
                 problems.append(

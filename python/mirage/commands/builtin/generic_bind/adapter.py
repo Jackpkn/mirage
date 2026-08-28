@@ -1442,3 +1442,24 @@ def dir_aware_stream(ops: CommandIO, accessor: Accessor,
             namespace's child names.
     """
     return functools.partial(_stream_refusing_dirs, ops, accessor, opts)
+
+
+async def resolve_or_empty(ops: CommandIO, accessor: Accessor,
+                           paths: list[PathSpec],
+                           index: IndexCacheStore) -> list[PathSpec]:
+    """Expand glob operands, or [] when there is nothing to resolve.
+
+    The read-family wiring entry: an unmounted backend or an empty
+    operand list resolves to no paths, which the generics read as stdin
+    mode. Operand semantics (report-and-continue, directory refusal)
+    live in the generics via ``split_readable``; this is wiring only.
+
+    Args:
+        ops (CommandIO): Backend I/O bundle providing ``resolve_glob``.
+        accessor (Accessor): Backend accessor.
+        paths (list[PathSpec]): Raw path operands (may hold globs).
+        index (IndexCacheStore): Index cache store.
+    """
+    if paths and ops.is_mounted(accessor):
+        return await ops.resolve_glob(accessor, paths, index)
+    return []

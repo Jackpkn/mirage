@@ -138,6 +138,13 @@ describe('parseFindExpression', () => {
     expect(() => parseFindExpression(['-mtime', ''])).toThrow(FindParseError)
   })
 
+  it('refuses trailing garbage after the digits', () => {
+    expect(() => parseFindExpression(['-maxdepth', '12abc'])).toThrow(FindParseError)
+    expect(() => parseFindExpression(['-mindepth', '2x'])).toThrow(FindParseError)
+    expect(() => parseFindExpression(['-size', '12ab'])).toThrow(FindParseError)
+    expect(() => parseFindExpression(['-mtime', '3x'])).toThrow(FindParseError)
+  })
+
   it('throws on unsupported predicates', () => {
     for (const toks of [['-regex', '.*'], ['-newer', 'a'], ['-prune'], ['-nam', 'x']]) {
       expect(() => parseFindExpression(toks)).toThrow(FindParseError)

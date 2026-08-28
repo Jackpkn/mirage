@@ -124,7 +124,7 @@ export function updateMode(cmdName: string, fl: FlagView): string | null {
 
 // The --suffix value, an empty one reading as absent: GNU 9.7
 // `cp --backup --suffix= f g` writes the default `g~`, not a backup whose
-// name is the original's. Python's twin is `fl.as_str('suffix') or None`.
+// name is the original's. Python's twin is cp.suffix_flag.
 export function suffixFlag(fl: FlagView): string | null {
   const value = fl.asStr('suffix')
   return value === undefined || value === '' ? null : value
@@ -161,7 +161,7 @@ export function targetFlags(cmdName: string, fl: FlagView): [PathSpec | string |
 // no-ops (non-interactive control plane: overwrite always proceeds unless
 // -n/--update say otherwise), and --strip-trailing-slashes is a no-op
 // because PathSpec already normalizes trailing slashes.
-export function parseCpFlags(fl: FlagView): CpFlags {
+export function parseFlags(fl: FlagView): CpFlags {
   const update = updateMode('cp', fl)
   const suffix = suffixFlag(fl)
   const control = backupControl('cp', backupRaw(fl), suffix)

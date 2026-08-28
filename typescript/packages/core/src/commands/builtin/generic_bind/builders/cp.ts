@@ -18,7 +18,7 @@ import type { Accessor } from '../../../../accessor/base.ts'
 import type { NativeCopy, PathSpec, PrimitiveCopy, StatFn } from '../../../../types.ts'
 import { hiddenPathsIntersect, pathRulesActive } from '../../../../context/session_context.ts'
 import { walkFind } from '../../../../core/generic/find.ts'
-import { cpGeneric, parseCpFlags } from '../../generic/cp.ts'
+import { cpGeneric, parseFlags } from '../../generic/cp.ts'
 import type { Builder, CommandIO } from '../adapter.ts'
 import { FlagView } from '../../../spec/types.ts'
 import { specOf } from '../../../spec/builtins.ts'
@@ -62,7 +62,7 @@ export const CP_BUILDER: Builder = {
               options,
               idx,
             )
-    const parsed = parseCpFlags(new FlagView(opts.flags, specOf('cp')))
+    const parsed = parseFlags(new FlagView(opts.flags, specOf('cp')))
     // A native copy moves a tree in one backend call and a native find
     // lists it, neither of which passes an entry through the guard the
     // way a read does; while a path rule scopes cp, or a hide could

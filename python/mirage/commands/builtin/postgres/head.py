@@ -16,9 +16,8 @@ from functools import partial
 
 from mirage.accessor.postgres import PostgresAccessor
 from mirage.commands.builtin.generic.head import head_generic, parse_flags
-from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.generic_bind.builders.common import \
-    resolve_or_empty
+from mirage.commands.builtin.generic_bind.adapter import (bound_op,
+                                                          resolve_or_empty)
 from mirage.commands.builtin.postgres.io import IO
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command

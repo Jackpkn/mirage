@@ -21,22 +21,14 @@ import { gzip, gunzip, getCompressionCodec } from '../../../utils/compress.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { readTar, writeTar, type TarEntry } from '../tar_helper.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
-import { COMPRESSION_SIGNATURES } from './tar/constants.ts'
-import {
-  CREATE_ERROR_EXIT,
-  ERROR_TRAILER,
-  planCreate,
-  type DirProbe,
-  type StatFn,
-  type WalkFn,
-} from './tar/create.ts'
+import { COMPRESSION_SIGNATURES, CREATE_ERROR_EXIT, ERROR_TRAILER } from './tar/constants.ts'
+import { planCreate, type DirProbe, type StatFn, type WalkFn } from './tar/create.ts'
 import { fsStrerror, isEacces } from '../../../utils/errors.ts'
 import { ensureDir, extractDest } from './archive/extract.ts'
 import type { Compression, CompressionKind, CreateResult } from './tar/types.ts'
 
 const ENC = new TextEncoder()
 
-export const MISS_TRAILER = 'tar: Exiting with failure status due to previous errors'
 const DOTDOT_NOTICE = "tar: Removing leading `../' from member names"
 
 /**
@@ -306,7 +298,7 @@ export async function tarGeneric(
     const shown = names.filter((_, index) => keep.has(index))
     const out: ByteSource | null = shown.length > 0 ? ENC.encode(shown.join('\n') + '\n') : null
     if (misses.length > 0) {
-      const missStderr = stderrOf([...misses, MISS_TRAILER])
+      const missStderr = stderrOf([...misses, ERROR_TRAILER])
       return [
         out,
         new IOResult({
@@ -385,7 +377,7 @@ export async function tarGeneric(
       const errLines = [
         ...notices,
         ...(verbose ? verboseLines : []),
-        ...(misses.length > 0 ? [...misses, MISS_TRAILER] : []),
+        ...(misses.length > 0 ? [...misses, ERROR_TRAILER] : []),
       ]
       const stderr = stderrOf(errLines)
       return [
@@ -398,7 +390,7 @@ export async function tarGeneric(
     }
     const stdout =
       verbose && verboseLines.length > 0 ? ENC.encode(verboseLines.join('\n') + '\n') : null
-    const errLines = [...notices, ...(misses.length > 0 ? [...misses, MISS_TRAILER] : [])]
+    const errLines = [...notices, ...(misses.length > 0 ? [...misses, ERROR_TRAILER] : [])]
     const stderr = stderrOf(errLines)
     return [
       stdout,

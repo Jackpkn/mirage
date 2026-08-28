@@ -30,8 +30,8 @@ from mirage.utils.errors import FS_ERRORS, fs_strerror
 from mirage.commands.builtin.generic.cp import (  # isort: skip
     TransferPolicy, backup_displaces, backup_raw, copy_entries, entry_kind,
     source_kind, make_backup, overwrite_gate, overwrite_type_error,
-    split_operands, target_dir_error, target_flags, update_mode, walk,
-    wrap_target_dir)
+    split_operands, suffix_flag, target_dir_error, target_flags, update_mode,
+    walk, wrap_target_dir)
 
 _logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class MvFlags:
     no_copy: bool = False
 
 
-def parse_mv_flags(fl: FlagView) -> MvFlags:
+def parse_flags(fl: FlagView) -> MvFlags:
     """Parse the mv flag bag once into a frozen struct.
 
     ``-f``/``-i`` are accepted no-ops (non-interactive control plane:
@@ -66,9 +66,7 @@ def parse_mv_flags(fl: FlagView) -> MvFlags:
         fl (FlagView): Flag view constructed with the mv spec.
     """
     update = update_mode("mv", fl)
-    # An empty --suffix reads as absent: GNU 9.7 `mv --backup --suffix= f g`
-    # writes the default `g~`, not a backup whose name is the original's.
-    suffix = fl.as_str("suffix") or None
+    suffix = suffix_flag(fl)
     control = backup_control("mv", backup_raw(fl), suffix)
     no_clobber = fl.as_bool("no_clobber")
     exchange = fl.as_bool("exchange")

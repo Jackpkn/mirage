@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from dulwich.index import IndexEntry
 from dulwich.objects import ObjectID
 
+from mirage.commands.cli.builtin.git.constants import (EXECUTABLE,
+                                                       OWNER_EXECUTE, REGULAR,
+                                                       SYMLINK)
 from mirage.commands.cli.builtin.git.errors import GitError  # yapf: disable
 from mirage.commands.cli.builtin.git.errors import (  # yapf: disable
     IgnoredPathsError, NothingSpecifiedError, NoWorkspaceError, PathspecError,
@@ -28,9 +31,7 @@ from mirage.commands.cli.builtin.git.io import entry_bytes
 from mirage.commands.cli.builtin.git.objects import store_blob
 from mirage.commands.cli.builtin.git.pathspec import matched, repo_relative
 from mirage.commands.cli.builtin.git.session import opened
-from mirage.commands.cli.builtin.git.types import (EXECUTABLE, OWNER_EXECUTE,
-                                                   REGULAR, SYMLINK,
-                                                   RepoLocation, WorkTree)
+from mirage.commands.cli.builtin.git.types import RepoLocation, WorkTree
 from mirage.commands.cli.builtin.git.util import (check_operands, fatal,
                                                   links_of, start_point)
 from mirage.commands.cli.builtin.git.worktree import UNTRACKED_ALL, scan

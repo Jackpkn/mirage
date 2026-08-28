@@ -611,7 +611,7 @@ async def test_target_dir_missing_fails_whole_command():
 
 
 def test_parse_mv_flags_conflicts_and_grammar():
-    from mirage.commands.builtin.generic.mv import parse_mv_flags
+    from mirage.commands.builtin.generic.mv import parse_flags
     from mirage.commands.errors import UsageError
     from mirage.commands.spec import SPECS
     from mirage.commands.spec.types import FlagView
@@ -620,26 +620,26 @@ def test_parse_mv_flags_conflicts_and_grammar():
         return FlagView(bag, spec=SPECS["mv"])
 
     with pytest.raises(UsageError) as exc:
-        parse_mv_flags(view({"backup": True, "exchange": True}))
+        parse_flags(view({"backup": True, "exchange": True}))
     assert "mv: cannot combine --backup with --exchange, -n, or " \
            "--update=none-fail" in str(exc.value)
     with pytest.raises(UsageError) as exc:
-        parse_mv_flags(view({"backup": True, "no_clobber": True}))
+        parse_flags(view({"backup": True, "no_clobber": True}))
     assert "cannot combine --backup" in str(exc.value)
     with pytest.raises(UsageError) as exc:
-        parse_mv_flags(
+        parse_flags(
             view({
                 "target_directory": "/d",
                 "no_target_directory": True
             }))
     assert "cannot combine --target-directory" in str(exc.value)
-    parsed = parse_mv_flags(view({"update": True, "exchange": True}))
+    parsed = parse_flags(view({"update": True, "exchange": True}))
     assert parsed.update == "older"
     assert parsed.exchange is True
-    assert parse_mv_flags(view({"no_copy": True})).no_copy is True
+    assert parse_flags(view({"no_copy": True})).no_copy is True
     # GNU 9.7: `mv --backup --suffix= f g` writes g~, so an empty suffix
     # reads as absent rather than naming the original as its own backup.
-    assert parse_mv_flags(view({"backup": True, "suffix": ""})).suffix == "~"
+    assert parse_flags(view({"backup": True, "suffix": ""})).suffix == "~"
 
 
 def _tree_rename(files: dict[str, bytes], dirs: set[str]):

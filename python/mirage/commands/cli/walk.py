@@ -16,7 +16,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from mirage.commands.cli.constants import CLAP_EXIT, USAGE_EXIT
-from mirage.commands.cli.types import CLISpec, FlagBag, WalkResult
+from mirage.commands.cli.types import CLISpec, WalkFlagBag, WalkResult
 from mirage.commands.config import HELP_OPTION
 from mirage.commands.spec.compile import (CompiledSpec, compile_spec,
                                           expand_long)
@@ -208,11 +208,11 @@ def _unknown_verb(head: str, name: str, word: str) -> WalkResult:
     return WalkResult(output=text.encode(), stream="stderr", exit_code=1)
 
 
-def _record_bool(flags: FlagBag, cs: CompiledSpec, spelling: str) -> None:
+def _record_bool(flags: WalkFlagBag, cs: CompiledSpec, spelling: str) -> None:
     """Record a boolean occurrence under its canonical dashed spelling.
 
     Args:
-        flags (FlagBag): accumulated group flags.
+        flags (WalkFlagBag): accumulated group flags.
         cs (CompiledSpec): the node's compiled tables.
         spelling (str): dashed spelling as typed.
     """
@@ -224,12 +224,12 @@ def _record_bool(flags: FlagBag, cs: CompiledSpec, spelling: str) -> None:
         flags[dest] = True
 
 
-def _record_value(flags: FlagBag, cs: CompiledSpec, spelling: str,
+def _record_value(flags: WalkFlagBag, cs: CompiledSpec, spelling: str,
                   value: str) -> None:
     """Record a value occurrence under its canonical dashed spelling.
 
     Args:
-        flags (FlagBag): accumulated group flags.
+        flags (WalkFlagBag): accumulated group flags.
         cs (CompiledSpec): the node's compiled tables.
         spelling (str): dashed spelling as typed.
         value (str): the flag's value.
@@ -245,8 +245,8 @@ def _record_value(flags: FlagBag, cs: CompiledSpec, spelling: str,
         flags[dest] = value
 
 
-def _match_short(name: str, node: CLISpec, cs: CompiledSpec, flags: FlagBag,
-                 token: str, next_token: str | None,
+def _match_short(name: str, node: CLISpec, cs: CompiledSpec,
+                 flags: WalkFlagBag, token: str, next_token: str | None,
                  style: UsageStyle) -> tuple[int, WalkResult | None] | None:
     """Match a whole short token against declared spellings.
 
@@ -261,7 +261,7 @@ def _match_short(name: str, node: CLISpec, cs: CompiledSpec, flags: FlagBag,
         name (str): display path walked so far.
         node (CLISpec): the group node being parsed.
         cs (CompiledSpec): the node's compiled tables.
-        flags (FlagBag): accumulated group flags.
+        flags (WalkFlagBag): accumulated group flags.
         token (str): the short token as typed.
         next_token (str | None): the following word, when any.
         style (UsageStyle): the root's dialect, for any refusal.
@@ -310,7 +310,8 @@ def _expand_group_long(node: CLISpec, cs: CompiledSpec,
     return candidates
 
 
-def _resolve_group_paths(cs: CompiledSpec, flags: FlagBag, cwd: str) -> None:
+def _resolve_group_paths(cs: CompiledSpec, flags: WalkFlagBag,
+                         cwd: str) -> None:
     """Resolve PATH-typed group values against the working directory.
 
     A group option declared ``type="path"`` has to mean what it means on
@@ -326,7 +327,7 @@ def _resolve_group_paths(cs: CompiledSpec, flags: FlagBag, cwd: str) -> None:
 
     Args:
         cs (CompiledSpec): the node's compiled tables.
-        flags (FlagBag): accumulated group flags, updated in place.
+        flags (WalkFlagBag): accumulated group flags, updated in place.
         cwd (str): current working directory.
     """
     for dest, kind in cs.kind_by_dest.items():
@@ -339,8 +340,9 @@ def _resolve_group_paths(cs: CompiledSpec, flags: FlagBag, cwd: str) -> None:
             flags[dest] = resolve_path(value, cwd)
 
 
-def _finish_node(name: str, node: CLISpec, cs: CompiledSpec, flags: FlagBag,
-                 cwd: str, style: UsageStyle) -> WalkResult | None:
+def _finish_node(name: str, node: CLISpec, cs: CompiledSpec,
+                 flags: WalkFlagBag, cwd: str,
+                 style: UsageStyle) -> WalkResult | None:
     """Apply a node's declarative option rules after its scan.
 
     Defaults land as if typed and PATH values resolve, then choices and
@@ -351,7 +353,7 @@ def _finish_node(name: str, node: CLISpec, cs: CompiledSpec, flags: FlagBag,
         name (str): display path walked so far.
         node (CLISpec): the group node just scanned.
         cs (CompiledSpec): the node's compiled tables.
-        flags (FlagBag): accumulated group flags.
+        flags (WalkFlagBag): accumulated group flags.
         cwd (str): current working directory, for PATH values.
         style (UsageStyle): the root's dialect, for any refusal.
     """
@@ -421,7 +423,7 @@ def walk(head: str,
     # one voice at every level, so a subcommand cannot pick its own.
     style = spec.usage_style
     path: tuple[str, ...] = ()
-    flags: FlagBag = {}
+    flags: WalkFlagBag = {}
     i = 0
     while True:
         # A script node terminates the walk exactly like an fn leaf:

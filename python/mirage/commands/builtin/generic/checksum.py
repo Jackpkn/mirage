@@ -260,7 +260,7 @@ async def _hash_check(
     return output, stderr, exit_code
 
 
-async def hashsum(
+async def checksum(
     paths: list[PathSpec],
     *,
     factory: DigestFactory,
@@ -312,7 +312,7 @@ async def hashsum(
                         zero), IOResult()
 
 
-async def hashsum_generic(
+async def checksum_generic(
     paths: list[PathSpec],
     texts: list[str],
     opts: CommandOpts,
@@ -343,33 +343,33 @@ async def hashsum_generic(
     """
     parsed = parse_flags(opts.flags, name)
     if parsed.check and paths:
-        return await hashsum(paths,
-                             factory=factory,
-                             algorithm=algorithm,
-                             read_bytes=materialized_read(stream),
-                             read_stream=normalized_read(stream),
-                             stdin=opts.stdin,
-                             check=True,
-                             strict=parsed.strict,
-                             ignore_missing=parsed.ignore_missing,
-                             status=parsed.status,
-                             quiet=parsed.quiet,
-                             warn=parsed.warn,
-                             cwd=opts.cwd)
+        return await checksum(paths,
+                              factory=factory,
+                              algorithm=algorithm,
+                              read_bytes=materialized_read(stream),
+                              read_stream=normalized_read(stream),
+                              stdin=opts.stdin,
+                              check=True,
+                              strict=parsed.strict,
+                              ignore_missing=parsed.ignore_missing,
+                              status=parsed.status,
+                              quiet=parsed.quiet,
+                              warn=parsed.warn,
+                              cwd=opts.cwd)
     readable, err = await split_readable(paths, stat, name)
     if err and not readable:
         return None, IOResult(exit_code=1, stderr=err)
     return await merge_split_errors(
-        await hashsum(readable,
-                      factory=factory,
-                      algorithm=algorithm,
-                      read_bytes=materialized_read(stream),
-                      read_stream=normalized_read(stream),
-                      stdin=opts.stdin,
-                      binary=parsed.binary,
-                      tag=parsed.tag,
-                      zero=parsed.zero,
-                      cwd=opts.cwd), err)
+        await checksum(readable,
+                       factory=factory,
+                       algorithm=algorithm,
+                       read_bytes=materialized_read(stream),
+                       read_stream=normalized_read(stream),
+                       stdin=opts.stdin,
+                       binary=parsed.binary,
+                       tag=parsed.tag,
+                       zero=parsed.zero,
+                       cwd=opts.cwd), err)
 
 
-__all__ = ["Digest", "DigestFactory", "hashsum", "hashsum_generic"]
+__all__ = ["Digest", "DigestFactory", "checksum", "checksum_generic"]

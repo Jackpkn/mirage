@@ -20,3 +20,15 @@ export const COMPRESSION_SIGNATURES: Readonly<Record<CompressionKind, readonly n
     bzip2: [0x42, 0x5a, 0x68],
     xz: [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00],
   })
+
+// Every diagnostic below is GNU tar 1.35's own wording, pinned on
+// debian:stable-slim; only the hint line is mirage's, for the reason
+// usage.oldOptionError gives (mirage's tar serves no --usage).
+export const USAGE_HINT = "Try 'tar --help' for more information."
+export const EMPTY_ARCHIVE = 'tar: Cowardly refusing to create an empty archive'
+export const FATAL_TRAILER = 'tar: Error is not recoverable: exiting now'
+export const ERROR_TRAILER = 'tar: Exiting with failure status due to previous errors'
+export const SELF_DUMP = 'archive cannot contain itself; not dumped'
+// The exit GNU gives an operand it could not read, and a -C it could not
+// enter. Both are fatal for the whole run, not per-operand.
+export const CREATE_ERROR_EXIT = 2

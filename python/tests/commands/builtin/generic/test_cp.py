@@ -562,7 +562,7 @@ async def test_missing_operands_raise_usage_errors():
 
 
 def test_parse_cp_flags_conflicts_and_grammar():
-    from mirage.commands.builtin.generic.cp import parse_cp_flags
+    from mirage.commands.builtin.generic.cp import parse_flags
     from mirage.commands.errors import UsageError
     from mirage.commands.spec import SPECS
     from mirage.commands.spec.types import FlagView
@@ -571,14 +571,14 @@ def test_parse_cp_flags_conflicts_and_grammar():
         return FlagView(bag, spec=SPECS["cp"])
 
     with pytest.raises(UsageError) as exc:
-        parse_cp_flags(view({"backup": True, "no_clobber": True}))
+        parse_flags(view({"backup": True, "no_clobber": True}))
     assert "cp: --backup is mutually exclusive with -n or " \
            "--update=none-fail" in str(exc.value)
     with pytest.raises(UsageError) as exc:
-        parse_cp_flags(view({"backup": True, "update": "none-fail"}))
+        parse_flags(view({"backup": True, "update": "none-fail"}))
     assert "mutually exclusive" in str(exc.value)
     with pytest.raises(UsageError) as exc:
-        parse_cp_flags(
+        parse_flags(
             view({
                 "target_directory": "/d",
                 "no_target_directory": True
@@ -586,24 +586,24 @@ def test_parse_cp_flags_conflicts_and_grammar():
     assert "cannot combine --target-directory (-t) and " \
            "--no-target-directory (-T)" in str(exc.value)
     with pytest.raises(UsageError) as exc:
-        parse_cp_flags(view({"update": "bogus"}))
+        parse_flags(view({"update": "bogus"}))
     assert "invalid argument 'bogus' for '--update'" in str(exc.value)
     with pytest.raises(UsageError) as exc:
-        parse_cp_flags(view({"backup": "bogus"}))
+        parse_flags(view({"backup": "bogus"}))
     assert "invalid argument 'bogus' for 'backup type'" in str(exc.value)
-    assert parse_cp_flags(view({"update": True})).update == "older"
-    assert parse_cp_flags(view({"update": True})).update == "older"
-    assert parse_cp_flags(view({"update": "all"})).update == "all"
-    assert parse_cp_flags(view({})).update is None
-    parsed = parse_cp_flags(view({"suffix": ".bak"}))
+    assert parse_flags(view({"update": True})).update == "older"
+    assert parse_flags(view({"update": True})).update == "older"
+    assert parse_flags(view({"update": "all"})).update == "all"
+    assert parse_flags(view({})).update is None
+    parsed = parse_flags(view({"suffix": ".bak"}))
     assert parsed.backup == "existing"
     assert parsed.suffix == ".bak"
     # GNU 9.7: `cp --backup --suffix= f g` writes g~, so an empty suffix
     # reads as absent rather than naming the original as its own backup.
-    assert parse_cp_flags(view({"backup": True, "suffix": ""})).suffix == "~"
-    assert parse_cp_flags(view({"backup": "t"})).backup == "numbered"
-    assert parse_cp_flags(view({"backup": "nil"})).backup == "existing"
-    assert parse_cp_flags(view({"archive": True})).recursive is True
+    assert parse_flags(view({"backup": True, "suffix": ""})).suffix == "~"
+    assert parse_flags(view({"backup": "t"})).backup == "numbered"
+    assert parse_flags(view({"backup": "nil"})).backup == "existing"
+    assert parse_flags(view({"archive": True})).recursive is True
 
 
 def _typed_backend(files: dict[str, bytes], dirs: set[str]):

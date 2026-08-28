@@ -13,13 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { CommandFnResult } from '../../../config.ts'
+import { HEAD } from './constants.ts'
 import type { FlagView } from '../../../spec/types.ts'
 import { IOResult } from '../../../../io/types.ts'
 import type { GitError } from './errors.ts'
 import { UnrecognizedArgumentError } from './errors.ts'
 
 const ROOT = '/'
-const HEAD = 'HEAD'
 
 const ENC = new TextEncoder()
 

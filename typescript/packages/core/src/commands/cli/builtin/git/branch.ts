@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import git from 'isomorphic-git'
+import { HEAD } from './constants.ts'
 
 import { IOResult } from '../../../../io/types.ts'
 import type { CommandFnResult } from '../../../config.ts'
@@ -37,7 +38,6 @@ import { checkOperands, fatal } from './util.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
 
 const ENC = new TextEncoder()
-const HEAD = 'HEAD'
 const HEADS_PREFIX = 'refs/heads/'
 const REMOTES_PREFIX = 'refs/remotes/'
 const CURRENT = '* '

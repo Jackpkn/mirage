@@ -98,7 +98,7 @@ const TRUNCATED_NOTE = 'du: walk stopped early: the reported sizes are incomplet
  * ahead of the mutually-exclusive checks that run once the whole line is
  * parsed. All three exit 1, du's usage-error code.
  */
-export function parseDuFlags(opts: CommandOpts): DuFlags {
+export function parseFlags(opts: CommandOpts): DuFlags {
   const fl = new FlagView(opts.flags, specOf('du'))
   const s = fl.asBool('s')
   const a = fl.asBool('a')
@@ -557,7 +557,7 @@ export async function runDu(
   truncated?: () => boolean,
   unreadable?: () => readonly string[],
 ): Promise<DuOutput> {
-  const flags = parseDuFlags(opts)
+  const flags = parseFlags(opts)
   // -L dereferences: the operand was already rewritten at dispatch, and
   // withholding the link table stops the links below it from being
   // counted as entries in their own right, which is what GNU does (it

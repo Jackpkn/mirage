@@ -503,4 +503,4 @@ async def awk(
                        variables), IOResult(cache=cache)
 
 
-__all__ = ["awk", "parse_flags", "AwkFlags"]
+__all__ = ["awk"]

@@ -14,7 +14,7 @@
 
 import pytest
 
-from mirage.commands.builtin.generic.checksum import hashsum
+from mirage.commands.builtin.generic.checksum import checksum
 from mirage.types import PathSpec
 
 
@@ -60,14 +60,14 @@ async def _run_check(files: dict[str, str],
                      paths: list[str] | None = None,
                      **flags: bool) -> tuple[str, str, int]:
     read_bytes, read_stream = _fs(files)
-    out, io = await hashsum([_spec(p) for p in (paths or ["/sums.txt"])],
-                            factory=_FakeDigest,
-                            algorithm="md5",
-                            read_bytes=read_bytes,
-                            read_stream=read_stream,
-                            check=True,
-                            cwd=cwd,
-                            **flags)
+    out, io = await checksum([_spec(p) for p in (paths or ["/sums.txt"])],
+                             factory=_FakeDigest,
+                             algorithm="md5",
+                             read_bytes=read_bytes,
+                             read_stream=read_stream,
+                             check=True,
+                             cwd=cwd,
+                             **flags)
     stdout = out.decode() if isinstance(out, bytes) else ""
     stderr = io.stderr.decode() if io.stderr else ""
     return stdout, stderr, io.exit_code
@@ -115,12 +115,12 @@ async def test_non_fs_read_failure_propagates():
         yield b""
 
     with pytest.raises(RuntimeError, match="403 Forbidden"):
-        await hashsum([_spec("/sums.txt")],
-                      factory=_FakeDigest,
-                      algorithm="md5",
-                      read_bytes=read_bytes,
-                      read_stream=read_stream,
-                      check=True)
+        await checksum([_spec("/sums.txt")],
+                       factory=_FakeDigest,
+                       algorithm="md5",
+                       read_bytes=read_bytes,
+                       read_stream=read_stream,
+                       check=True)
 
 
 @pytest.mark.asyncio
@@ -283,12 +283,12 @@ async def test_check_directory_list_operand_is_a_read_error():
     async def read_stream(p: PathSpec):
         yield b"abc"
 
-    out, io = await hashsum([_spec("/d"), _spec("/one.txt")],
-                            factory=_FakeDigest,
-                            algorithm="md5",
-                            read_bytes=read_bytes,
-                            read_stream=read_stream,
-                            check=True)
+    out, io = await checksum([_spec("/d"), _spec("/one.txt")],
+                             factory=_FakeDigest,
+                             algorithm="md5",
+                             read_bytes=read_bytes,
+                             read_stream=read_stream,
+                             check=True)
     assert isinstance(out, bytes) and out.decode() == "/a.txt: OK\n"
     assert io.stderr is not None
     assert io.stderr.decode() == "md5sum: /d: read error\n"
