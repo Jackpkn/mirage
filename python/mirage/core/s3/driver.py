@@ -45,9 +45,13 @@ def _key_prefix_of(accessor: S3Accessor) -> str:
 
 @asynccontextmanager
 async def _connect(accessor: S3Accessor) -> AsyncIterator[S3Conn]:
-    session = async_session(accessor.config)
-    async with session.client(**_client_kwargs(accessor.config)) as client:
-        yield S3Conn(client=client, config=accessor.config)
+    # The client lives on the accessor and is closed with it, which is what
+    # the driver contract means by "a store holding a live client on its
+    # accessor". Opening one per operation cost ~49ms against ~2ms for a
+    # reused one, so a battery of small ops paid the client, not the request.
+    client = await accessor.cached_client(lambda: async_session(
+        accessor.config).client(**_client_kwargs(accessor.config)))
+    yield S3Conn(client=client, config=accessor.config)
 
 
 async def _list_children(conn: S3Conn, pfx: str) -> AsyncIterator[ChildEntry]:
