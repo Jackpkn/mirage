@@ -1,0 +1,114 @@
+{
+  "cases": [
+    {
+      "id": "hf_hub_ls_names_the_seeded_tree",
+      "seq": 960001,
+      "targets": ["hf-hub"],
+      "command": "ls /repo/sub",
+      "expect": { "exit": 0, "stdout": "deep\nnested.txt\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_cat_reads_a_committed_file",
+      "seq": 960002,
+      "targets": ["hf-hub"],
+      "command": "cat /repo/one_byte.txt",
+      "expect": { "exit": 0, "stdout": "x", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_head_reads_a_prefix",
+      "seq": 960003,
+      "targets": ["hf-hub"],
+      "command": "head -2 /repo/poem.txt",
+      "expect": { "exit": 0, "stdout": "roses are red\nviolets are blue\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_wc_counts_the_rendered_bytes",
+      "seq": 960004,
+      "targets": ["hf-hub"],
+      "command": "wc -c < /repo/one_byte.txt",
+      "expect": { "exit": 0, "stdout": "1\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_stat_reports_the_tree_size",
+      "seq": 960005,
+      "targets": ["hf-hub"],
+      "command": "stat -c '%s %n' /repo/one_byte.txt",
+      "expect": { "exit": 0, "stdout": "1 /repo/one_byte.txt\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_find_name_walks_a_subtree",
+      "seq": 960006,
+      "targets": ["hf-hub"],
+      "command": "find /repo/sub -name '*.txt'",
+      "expect": {
+        "exit": 0,
+        "stdout": "/repo/sub/deep/deeper.txt\n/repo/sub/nested.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_hub_find_counts_every_file",
+      "seq": 960007,
+      "targets": ["hf-hub"],
+      "command": "find /repo -type f | wc -l",
+      "expect": { "exit": 0, "stdout": "38\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_find_empty",
+      "seq": 960008,
+      "targets": ["hf-hub"],
+      "command": "find /repo -empty",
+      "expect": { "exit": 0, "stdout": "/repo/empty.txt\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_du_sums_a_subtree",
+      "seq": 960009,
+      "targets": ["hf-hub"],
+      "command": "du -s /repo/sub",
+      "expect": { "exit": 0, "stdout": "20\t/repo/sub\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_grep_r_scans_the_tree",
+      "seq": 960010,
+      "targets": ["hf-hub"],
+      "command": "grep -rl violets /repo",
+      "expect": { "exit": 0, "stdout": "/repo/poem.diff\n/repo/poem.txt\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_grep_counts_in_one_file",
+      "seq": 960011,
+      "targets": ["hf-hub"],
+      "command": "grep -c are /repo/poem.txt",
+      "expect": { "exit": 0, "stdout": "2\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_a_missing_path_is_enoent",
+      "seq": 960012,
+      "targets": ["hf-hub"],
+      "command": "cat /repo/nope.txt",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "cat: /repo/nope.txt: No such file or directory\n"
+      }
+    },
+    {
+      "id": "hf_hub_dataset_mount_lists_its_own_repo",
+      "seq": 960013,
+      "targets": ["hf-hub"],
+      "command": "ls /data",
+      "expect": {
+        "exit": 0,
+        "stdout": "example.feather\nexample.h5\nexample.parquet\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_hub_a_columnar_file_is_raw_bytes",
+      "seq": 960014,
+      "targets": ["hf-hub"],
+      "command": "wc -c < /data/example.parquet",
+      "expect": { "exit": 0, "stdout": "2401\n", "stderr": "" }
+    }
+  ]
+}

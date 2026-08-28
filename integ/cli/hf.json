@@ -1,0 +1,173 @@
+{
+  "cases": [
+    {
+      "id": "hf_auth_whoami_names_the_org",
+      "seq": 960101,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf auth whoami | tail -1",
+      "expect": {
+        "exit": 0,
+        "stdout": "integ-org\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_repo_create_echoes_the_url",
+      "seq": 960102,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf repo create integ/made --repo-type dataset",
+      "expect": {
+        "exit": 0,
+        "stdout": "http://127.0.0.1:5086/datasets/integ/made\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_repo_create_exist_ok_is_idempotent",
+      "seq": 960103,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf repo create integ/made --repo-type dataset --exist-ok",
+      "expect": {
+        "exit": 0,
+        "stdout": "http://127.0.0.1:5086/datasets/integ/made\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_repo_tag_create_then_list",
+      "seq": 960104,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf repo tag create integ/repo-cli v1 --message 'first cut' && hf repo tag list integ/repo-cli",
+      "expect": {
+        "exit": 0,
+        "stdout": "Tag v1 created on integ/repo-cli\nv1\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_download_include_and_exclude_narrow_the_set",
+      "seq": 960105,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli --include '*.txt' --exclude 'poem*' --local-dir /scratch/inc --quiet && ls /scratch/inc | head -4",
+      "expect": {
+        "exit": 0,
+        "stdout": "/scratch/inc\na.txt\nanchors.txt\nb.txt\nc.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_download_revision_reads_the_tag",
+      "seq": 960106,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli one_byte.txt --revision v1 --local-dir /scratch/rev --quiet && cat /scratch/rev/one_byte.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/scratch/rev\nx",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_download_force_refetches",
+      "seq": 960107,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli one_byte.txt --local-dir /scratch/f1 --quiet && hf download integ/repo-cli one_byte.txt --local-dir /scratch/f1 --force-download --quiet && cat /scratch/f1/one_byte.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "/scratch/f1\n/scratch/f1\nx",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_upload_a_file_lands_at_the_named_path",
+      "seq": 960108,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "echo -n hi > /scratch/u.txt && hf upload integ/repo-cli /scratch/u.txt w/u.txt --commit-message m --quiet && hf download integ/repo-cli w/u.txt --local-dir /scratch/back --quiet && cat /scratch/back/w/u.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "http://127.0.0.1:5086/integ/repo-cli/tree/main/w/u.txt\n/scratch/back\nhi",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_repo_files_delete_takes_a_glob",
+      "seq": 960109,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf repo-files delete integ/repo-cli 'sub/*' --commit-message 'drop sub'",
+      "expect": {
+        "exit": 0,
+        "stdout": "Deleted sub/* from integ/repo-cli\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_repo_tag_delete_needs_yes",
+      "seq": 960110,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf repo tag delete integ/repo-cli v1 --yes && hf repo tag list integ/repo-cli",
+      "expect": {
+        "exit": 0,
+        "stdout": "Tag v1 deleted on integ/repo-cli\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_download_a_missing_repo_is_repo_not_found",
+      "seq": 960111,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download nosuch/repo f.txt --local-dir /scratch/x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hf download: Repository Not Found for url: http://127.0.0.1:5086/api/models/nosuch/repo/revision/main.\nPlease make sure you specified the correct `repo_id` and `repo_type`.\nIf you are trying to access a private or gated repo, make sure you are authenticated.\n"
+      }
+    },
+    {
+      "id": "hf_download_a_missing_revision_is_revision_not_found",
+      "seq": 960112,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli one_byte.txt --revision nope --local-dir /scratch/bad",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hf download: Revision Not Found for url: http://127.0.0.1:5086/api/models/integ/repo-cli/revision/nope.\nInvalid rev id: nope\n"
+      }
+    },
+    {
+      "id": "hf_download_a_missing_file_is_entry_not_found",
+      "seq": 960113,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli missing.txt --local-dir /scratch/miss",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hf download: Entry Not Found for url: http://127.0.0.1:5086/integ/repo-cli/resolve/main/missing.txt.\n"
+      }
+    }
+  ]
+}
