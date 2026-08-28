@@ -22,19 +22,15 @@ import { HfModelsResource } from './hf_models.ts'
 // listing is recursive, so one paged fetch is the whole tree and the generic
 // walk over it costs no requests. A native op would buy a constant factor and
 // cost a second implementation of the same traversal.
-const PY_OPS = [
-  'read_bytes',
-  'readdir',
-  'stat',
-  'read_stream',
-  'range_read',
-  'exists',
-  'write',
-  'create',
-  'unlink',
-  'rm_r',
-  'mkdir',
-]
+const PY_OPS = ['read_bytes', 'readdir', 'stat', 'read_stream', 'range_read', 'exists']
+
+// The mount is read-only, so the byte-mutation ops are absent here exactly as
+// they are in python's `_OPS`. This list is the op-dispatcher channel, which a
+// shell command bypasses: it answers `dispatch('write', ...)` and the FUSE
+// adapter, so asserting the absence here is what keeps the two channels
+// agreeing. See commands/builtin/hf_hub/io.ts for why a Hub write belongs to
+// the `hf` CLI rather than to a POSIX write.
+const PY_ABSENT_OPS = ['write', 'create', 'unlink', 'rm_r', 'mkdir']
 
 function treePage(rows: unknown[]): Response {
   return new Response(JSON.stringify(rows), {
@@ -51,6 +47,7 @@ describe('HfModelsResource', () => {
   it('exposes the python-parity ops map and flags', () => {
     const resource = new HfModelsResource({ repoId: 'ns/model' })
     expect(Object.keys(resource.opsMap).sort()).toEqual([...PY_OPS].sort())
+    for (const op of PY_ABSENT_OPS) expect(resource.opsMap[op]).toBeUndefined()
     expect(resource.kind).toBe('hf_models')
     expect(resource.cachesReads).toBe(true)
     expect(resource.supportsSnapshot).toBe(true)
@@ -59,6 +56,9 @@ describe('HfModelsResource', () => {
     expect(optional.copy).toBeUndefined()
     expect(optional.truncate).toBeUndefined()
     expect(optional.rmdir).toBeUndefined()
+    expect(optional.writeFile).toBeUndefined()
+    expect(optional.mkdir).toBeUndefined()
+    expect(optional.unlink).toBeUndefined()
   })
 
   it('redacts the token in state', async () => {
