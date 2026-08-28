@@ -112,10 +112,27 @@ async function main(): Promise<void> {
     eq('cardData carries the license', card.license ?? null, 'apache-2.0')
     eq('pipeline_tag is lifted from the card', info.pipeline_tag ?? null, 'summarization')
     eq('library_name is lifted from the card', info.library_name ?? null, 'transformers')
-    eq('tags are Hub facets, not git tags', info.tags ?? null, [
+    // A MODEL spells its language, library and pipeline bare; only license is
+    // prefixed. Probed on google-bert/bert-base-uncased, which carries
+    // "transformers", "fill-mask", "en" and "license:apache-2.0".
+    eq('a model card becomes model-spelled facets', info.tags ?? null, [
       'conversational',
-      'language:en',
+      'en',
       'license:apache-2.0',
+      'summarization',
+      'transformers',
+    ])
+    // A DATASET prefixes its language and its task categories, which is the
+    // spelling rajpurkar/squad uses.
+    const dsInfo = (await get(fake.endpoint, '/api/datasets/integ/card-data-a')) as Record<
+      string,
+      JsonValue
+    >
+    eq('a dataset card becomes dataset-spelled facets', dsInfo.tags ?? null, [
+      'language:en',
+      'license:mit',
+      'size_categories:n<1K',
+      'task_categories:summarization',
     ])
 
     // A git tag must NOT appear in `tags`. The two were conflated, so
@@ -170,6 +187,28 @@ async function main(): Promise<void> {
       'filter matches a card facet',
       ids(await get(fake.endpoint, '/api/datasets?filter=license:mit')),
       ['integ/card-data-a'],
+    )
+    // The facets a model request actually filters on. These are bare, so a
+    // model-only field left out of `tags` makes the query silently empty.
+    eq(
+      'filter matches a model pipeline tag',
+      ids(await get(fake.endpoint, '/api/models?filter=summarization')),
+      ['integ/card-model'],
+    )
+    eq(
+      'filter matches a model library',
+      ids(await get(fake.endpoint, '/api/models?filter=transformers')),
+      ['integ/card-model'],
+    )
+    eq(
+      'a model language filter is bare, not prefixed',
+      ids(await get(fake.endpoint, '/api/models?filter=en')),
+      ['integ/card-model'],
+    )
+    eq(
+      'a dataset language filter IS prefixed',
+      ids(await get(fake.endpoint, '/api/datasets?filter=language:en')),
+      ['integ/card-data-a', 'other/card-data-b'],
     )
     eq(
       'two filters narrow rather than widen',

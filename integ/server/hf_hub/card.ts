@@ -77,26 +77,65 @@ export function parseCard(text: string): Record<string, JsonValue> {
   return out
 }
 
+// Probed against the live Hub rather than guessed at, because the three kinds
+// genuinely disagree about how a card field is spelled as a facet:
+//
+//   models   google-bert/bert-base-uncased
+//              transformers, fill-mask, en, dataset:bookcorpus,
+//              license:apache-2.0
+//   datasets rajpurkar/squad
+//              task_categories:question-answering, language:en,
+//              license:cc-by-sa-4.0, size_categories:10K<n<100K
+//   spaces   gradio/hello_world
+//              gradio, region:us
+//
+// So a model spells its language, library and pipeline BARE where a dataset
+// prefixes its language, and a model's `datasets:` card field becomes the
+// SINGULAR `dataset:`. Only `license:` and the card's own `tags` are shared.
+const MODEL_FACETS = [
+  ['license', 'license:'],
+  ['library_name', ''],
+  ['pipeline_tag', ''],
+  ['language', ''],
+  ['datasets', 'dataset:'],
+] as const
+
+const DATASET_FACETS = [
+  ['license', 'license:'],
+  ['task_categories', 'task_categories:'],
+  ['language', 'language:'],
+  ['size_categories', 'size_categories:'],
+] as const
+
+const SPACE_FACETS = [
+  ['license', 'license:'],
+  ['sdk', ''],
+] as const
+
+function facetsFor(kind: string): readonly (readonly [string, string])[] {
+  if (kind === 'models') return MODEL_FACETS
+  if (kind === 'spaces') return SPACE_FACETS
+  return DATASET_FACETS
+}
+
 /**
- * The Hub tag list a card implies.
+ * The Hub tag list a card implies, in that kind's spelling.
  *
- * The Hub's `tags` are facets, not git tags: `license:apache-2.0`,
- * `task_categories:summarization`, `language:en`, plus any bare strings the
- * card lists under `tags`. Git tags are reachable at `/refs` and do not
- * belong here; conflating the two made `hf repo tag create v1` show up as a
- * facet on the model object.
+ * The Hub's `tags` are facets, not git tags. Git tags are reachable at
+ * `/refs` and do not belong here; conflating the two made
+ * `hf repo tag create v1` show up as a facet on the model object.
+ *
+ * A real repo also carries framework, format and region facets (`pytorch`,
+ * `format:parquet`, `region:us`). Those are derived from its files and its
+ * hosting rather than from its card, so a fake reading only the card cannot
+ * produce them and does not pretend to.
  */
-export function cardTags(card: Record<string, JsonValue>): string[] {
+export function cardTags(card: Record<string, JsonValue>, kind: string): string[] {
   const out: string[] = []
   const push = (prefix: string, v: JsonValue): void => {
     if (typeof v === 'string' && v !== '') out.push(`${prefix}${v}`)
   }
-  for (const [field, prefix] of [
-    ['license', 'license:'],
-    ['task_categories', 'task_categories:'],
-    ['language', 'language:'],
-    ['size_categories', 'size_categories:'],
-  ] as const) {
+  for (const [field, prefix] of facetsFor(kind)) {
     const v = card[field]
     if (Array.isArray(v)) for (const one of v) push(prefix, one)
     else if (v !== undefined) push(prefix, v)

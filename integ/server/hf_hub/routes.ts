@@ -160,6 +160,7 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
     const readme = blobs.find((b) => b.path === 'README.md')
     const tags = cardTags(
       readme === undefined ? {} : parseCard(Buffer.from(readme.content).toString('utf8')),
+      repo.kind,
     )
     // Every filter must match, which is the Hub's rule: `?filter=a&filter=b`
     // narrows rather than widens.
@@ -182,8 +183,13 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
   const limit = rawLimit === null ? ranked.length : Math.max(0, Number(rawLimit) || 0)
   const rows = ranked.slice(0, limit).map((r) => {
     const body = obj(repoBody(r.repo, r.sha, r.blobs, r.lastModified))
-    // `expand` wins outright rather than combining with `full`: upstream
-    // refuses a call carrying both, so the two never arrive together.
+    // `expand` wins outright rather than combining with `full`, and a call
+    // carrying both is answered rather than refused. Two different rules are
+    // easy to conflate here: huggingface_hub raises ValueError client-side
+    // ("`expand` cannot be used if `full` is passed"), but the SERVER does
+    // not, and this fake is the server. Probed:
+    // `GET /api/models?limit=2&full=1&expand=likes` answers 200 with the
+    // expanded shape, so refusing it would be the divergence.
     if (expand.length > 0) {
       const out: Record<string, JsonValue> = { id: body.id ?? '' }
       for (const name of expand) if (body[name] !== undefined) out[name] = body[name]
@@ -263,7 +269,7 @@ function repoBody(repo: Repo, sha: string, blobs: HfBlobRow[], lastModified: str
     lastModified,
     downloads: repo.downloads,
     likes: repo.likes,
-    tags: cardTags(card),
+    tags: cardTags(card, repo.kind),
     cardData: card,
     ...(models
       ? {
