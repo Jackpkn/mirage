@@ -39,9 +39,10 @@ from mirage.types import (ConsistencyPolicy, FileStat, FileType, PathSpec,
 from mirage.utils.errors import MISS_ERRORS, no_mount
 from mirage.utils.hidden import move_reveals
 from mirage.utils.key_prefix import mount_key
-from mirage.utils.path import norm_dir, owner_prefix
+from mirage.utils.path import norm_dir
 from mirage.utils.ranges import slice_window
 from mirage.utils.remnants import remove_remnants, visible_below
+from mirage.workspace.dispatcher.lineage import require_turf_writable
 from mirage.workspace.mount import MountEntry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.overlay import merge_overlay_stat
@@ -322,6 +323,7 @@ class Dispatcher:
             if op == "setattr":
                 policies = self._namespace.registry.policies
                 await pre_ops_gate(policies, op, path, True, "", _session_id())
+                require_turf_writable(None, path)
                 applied = await self._overlay_setattr(path, kwargs)
                 _memory_answered(report)
                 await post_ops_gate(policies, op, path, True, "", applied)
@@ -595,8 +597,13 @@ class Dispatcher:
         mount prefix above it (the same ownership rule ``_link_allowed``
         reads for), session grants and both gates run, and the write
         leaves an OpRecord — a scoped kernel mount refuses exactly like
-        a scoped shell. A link above every mount is bare namespace
-        structure and clears the gates with an empty prefix.
+        a scoped shell. The turf's mode gates the write too
+        (``require_turf_writable``), so a read-only mount or grant
+        answers EROFS for a link exactly as for a file; a link above
+        every mount is bare namespace structure, gated with an empty
+        prefix and governed by ``/`` (see ``lineage``). A rename's
+        destination is judged on its own turf, since the endpoints need
+        not share one.
 
         Args:
             op (str): ``symlink`` or ``readlink``, or the ``unlink``,
@@ -609,13 +616,14 @@ class Dispatcher:
                 the answer is in hand.
         """
         start = int(time.monotonic() * 1000)
-        owner = owner_prefix(
-            (m.prefix for m in self._namespace.registry.mounts()),
-            path.virtual)
+        mount = self._namespace.try_mount_for(path.virtual)
+        owner = mount.prefix if mount is not None else None
         policies = self._namespace.registry.policies
         write = op in POLICY_WRITE_OPS
         await pre_ops_gate(policies, op, path, write, owner or "",
                            _session_id())
+        if write:
+            require_turf_writable(mount, path)
         result: str | FileStat | None = None
         if op == "unlink":
             target = self._namespace.readlink(path.virtual) or ""
@@ -623,12 +631,16 @@ class Dispatcher:
         elif op == "rename":
             target = self._namespace.readlink(path.virtual) or ""
             dst = kwargs["dst"]
-            # The destination is a create there, gated like the source,
-            # the way the backend path gates both ends of a rename. It
-            # is then replaced as rename(2) replaces it: any node the
-            # table holds at that name (a link, an attr overlay) goes.
-            await pre_ops_gate(policies, op, dst, True, owner or "",
+            # The destination is a create there, gated like the source
+            # and on its own turf, the way the backend path gates both
+            # ends of a rename. It is then replaced as rename(2)
+            # replaces it: any node the table holds at that name (a
+            # link, an attr overlay) goes.
+            dst_mount = self._namespace.try_mount_for(dst.virtual)
+            dst_owner = dst_mount.prefix if dst_mount is not None else ""
+            await pre_ops_gate(policies, op, dst, True, dst_owner,
                                _session_id())
+            require_turf_writable(dst_mount, dst)
             await self._namespace.unlink(dst.virtual)
             await self._namespace.rename(path.virtual, dst.virtual)
         elif op == "symlink":

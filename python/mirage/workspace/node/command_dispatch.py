@@ -414,6 +414,29 @@ async def _run_argv(
         reset_op_policies(ptoken)
 
 
+def unsaid(lines: list[str], said: bytes) -> list[str]:
+    """Drop the refusal lines the command tier already wrote.
+
+    A mount-mode refusal names the mount, not the operand, so the line
+    the node table wrote for a refused link is the very line
+    ``Mount.execute_cmd`` writes for the backend operands beside it on
+    the same mount, and ``rm dlink file`` would say it twice. The tier
+    writes it without a trailing newline, so the comparison is on the
+    stripped text.
+
+    Args:
+        lines (list[str]): the node table's refusal lines, in order.
+        said (bytes): stderr the command tier already produced.
+
+    Returns:
+        list[str]: the lines not already present.
+    """
+    if not said:
+        return lines
+    spoken = {t.strip() for t in said.decode(errors="replace").split("\n")}
+    return [line for line in lines if line.strip() not in spoken]
+
+
 async def _route_argv(
     recurse,
     dispatch,
@@ -527,6 +550,7 @@ async def _route_argv(
     #    on the link entry itself (lstat semantics) ──
     post_unlink: str | None = None
     post_rename: tuple[str, str] | None = None
+    link_errors: list[str] = []
     if namespace.nodes:
         try:
             # Both remove the link entry itself, which no backend can
@@ -537,12 +561,19 @@ async def _route_argv(
             # and `unlink dlink other` with the link still there).
             if name in ("rm", "unlink") and accepts_line(
                     name, argv.args, operands, session.cwd):
-                operands, removed = await strip_link_operands(
-                    namespace, operands)
-                if removed and not any(
+                operands, handled, link_errors = await strip_link_operands(
+                    name, dispatch, namespace, operands, argv.args,
+                    session.cwd)
+                if handled and not any(
                         isinstance(a, PathSpec) for a in operands):
-                    return None, IOResult(), ExecutionNode(command=name,
-                                                           exit_code=0)
+                    if not link_errors:
+                        return None, IOResult(), ExecutionNode(command=name,
+                                                               exit_code=0)
+                    err = "".join(link_errors).encode()
+                    return None, IOResult(
+                        exit_code=1, stderr=err), ExecutionNode(command=name,
+                                                                exit_code=1,
+                                                                stderr=err)
             elif name == "mv":
                 operands, post_unlink, post_rename, early = await prepare_mv(
                     namespace, dispatch, operands)
@@ -598,4 +629,20 @@ async def _route_argv(
             await namespace.unlink(post_unlink)
         if post_rename is not None:
             await namespace.rename(post_rename[0], post_rename[1])
+    if link_errors:
+        # A refused link operand fails the line the way a refused
+        # backend operand does: its lines lead (they were reported
+        # first) and any success stays a partial one. Merged after the
+        # bookkeeping above so the operands the backend did remove
+        # still shed their node meta.
+        tail = io.stderr if isinstance(io.stderr, bytes) else b""
+        err = "".join(unsaid(link_errors, tail)).encode()
+        io.stderr = err + tail
+        if io.exit_code == 0:
+            io.exit_code = 1
+        node_tail = exec_node.stderr or b""
+        node_err = "".join(unsaid(link_errors, node_tail)).encode()
+        exec_node.stderr = node_err + node_tail
+        if exec_node.exit_code == 0:
+            exec_node.exit_code = 1
     return stdout, io, exec_node

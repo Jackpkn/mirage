@@ -18,15 +18,8 @@ import { isEnoent } from '../../../../utils/errors.ts'
 import { CycleError } from '../../../../utils/path.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
-import { expandOperands, fail, finish, splitValueFlags } from '../shared.ts'
-import {
-  isReadOnlyError,
-  parseOwner,
-  readOnlyError,
-  setattrLink,
-  setattrVia,
-  walkOwned,
-} from './metadata.ts'
+import { expandOperands, fail, finish, readOnlyError, splitValueFlags } from '../shared.ts'
+import { isReadOnlyError, parseOwner, setattrLink, setattrVia, walkOwned } from './metadata.ts'
 import type { Result } from '../types.ts'
 
 // chown OWNER[:GROUP] FILE...: set ownership via setattr. Ownership is

@@ -126,7 +126,7 @@ describe('resolve', () => {
 
   it('follows namespace symlinks to the canonical target', async () => {
     const { fs, ws } = await makeFs({ 'a.txt': 'hello' })
-    await ws.fs.links?.symlink('/data/link.txt', '/data/a.txt', Date.now())
+    await ws.fs.symlink('/data/link.txt', '/data/a.txt')
     const viaLink = await fs.resolve('/data/link.txt')
     expect(String(viaLink.targetKey)).toBe('/data/a.txt')
   })
@@ -180,7 +180,7 @@ describe('stat and lstat', () => {
 
   it('lstat reports the link itself, stat its target', async () => {
     const { fs, ws } = await makeFs({ 'a.txt': 'hello' })
-    await ws.fs.links?.symlink('/data/link.txt', '/data/a.txt', Date.now())
+    await ws.fs.symlink('/data/link.txt', '/data/a.txt')
     const path = await fs.lstat('/data/link.txt')
     expect(path?.type).toBe('symlink')
     expect(path?.size).toBe('/data/a.txt'.length)
@@ -282,7 +282,7 @@ describe('listDir', () => {
 
   it('merges namespace symlinks into the listing', async () => {
     const { fs, ws } = await makeFs({ 'a.txt': 'hello' })
-    await ws.fs.links?.symlink('/data/link.txt', '/data/a.txt', Date.now())
+    await ws.fs.symlink('/data/link.txt', '/data/a.txt')
     const entries = await fs.listDir(await fs.resolve('/data'))
     const link = entries.find((e) => e.name === 'link.txt')
     expect(link?.type).toBe('file')
@@ -297,7 +297,7 @@ describe('listDir', () => {
 
   it('lists a cyclic symlink as an entry of unknown kind', async () => {
     const { fs, ws } = await makeFs({ 'a.txt': 'hello' })
-    await ws.fs.links?.symlink('/data/loop', '/data/loop', Date.now())
+    await ws.fs.symlink('/data/loop', '/data/loop')
     const entries = await fs.listDir(await fs.resolve('/data'))
     expect(entries.map((e) => e.name)).toEqual(['a.txt', 'loop'])
     const loop = entries.find((e) => e.name === 'loop')

@@ -608,13 +608,19 @@ class MountEntry:
             for cmd in handlers:
                 # strongest_mode_under, not effective_mode: a mount
                 # whose only writable region is a show entry still runs
-                # the command, and the op door refuses per path.
+                # the command, and the op door refuses per path. The
+                # trailing newline is load-bearing: stderr accumulates
+                # across a line, so two refusals in one list ran
+                # together as `...at /ro/rm: read-only mount at /ro/`,
+                # and the node table's twin of this refusal (a symlink
+                # `rm`, rendered by shared.read_only_error) concatenates
+                # with it.
                 if (cmd.write and not info_only and strongest_mode_under(
                         self.prefix, self.mode) == MountMode.READ):
                     return None, IOResult(
                         exit_code=1,
                         stderr=(f"{cmd_name}: read-only mount "
-                                f"at {self.prefix}".encode()))
+                                f"at {self.prefix}\n".encode()))
                 # The dispatch-level guard only sees default limits
                 # (the mount is unknown before routing), so the
                 # mount-resolved timeout must also bound the command

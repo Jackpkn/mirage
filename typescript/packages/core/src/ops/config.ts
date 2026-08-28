@@ -40,6 +40,18 @@ export const STAMP_WRITE_OPS: ReadonlySet<string> = new Set([
 // Namespace satisfies this structurally; the fs facade and FUSE consume
 // it through this seam so the dependency points downward (workspace
 // injects, lower layers never import workspace modules).
+//
+// Read-only, and the Python twin declares the same five members in the
+// same order. A link is created and removed through the op door
+// (`Ops.symlink`, `Ops.unlink`), never here: the door is the only layer
+// that sees both planes, so it is where symlink(2)'s refusal to
+// overwrite an occupied name is decided, and where session grants,
+// admission policies and the op ledger fire. A mutator on this seam is
+// a write at a layer no session view covers, which is how a
+// session-scoped kernel mount came to delete a link on a mount its
+// profile hides. Routing through the door costs a caller nothing: the
+// dispatcher already answers `unlink` on a link path, because `unlink`
+// is in `LINK_ENTRY_OPS`.
 export interface NamespaceLinks {
   // Resolve symlink prefixes in `path` (identity when none).
   follow(path: string): string
@@ -52,8 +64,4 @@ export interface NamespaceLinks {
   linkStatAt(path: string): FileStat | null
   // Every link path to its stored target, the whole table.
   symlinkTargets(): Map<string, string>
-  // Create or overwrite a symlink entry; target is kept verbatim.
-  symlink(link: string, target: string, mtime: number): Promise<void>
-  // Drop a node entry; true when one existed.
-  unlink(path: string): Promise<boolean>
 }

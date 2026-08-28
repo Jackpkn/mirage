@@ -87,6 +87,23 @@ def test_read_only_blocks_write_cmd():
     assert b"read-only" in io.stderr
 
 
+def test_the_read_only_refusal_is_newline_terminated():
+    # stderr accumulates across a line, so an unterminated refusal ran
+    # into the next one: `{ rm /ro/a; rm /ro/b; }` printed the single
+    # line `rm: read-only mount at /ro/rm: read-only mount at /ro/`.
+    # It is also the line the node table renders for a refused symlink
+    # (shared.read_only_error), which concatenates with this one.
+    reg = MountRegistry()
+    reg.mount("/ro/", RAMResource(), MountMode.READ)
+    mount = reg.mount_for("/ro/file.txt")
+    scope = PathSpec(resource_path="ro/newdir",
+                     virtual="/ro/newdir",
+                     directory="/ro/",
+                     resolved=True)
+    stdout, io = _run(mount.execute_cmd("mkdir", [scope], [], {}))
+    assert io.stderr == b"mkdir: read-only mount at /ro/\n"
+
+
 def test_write_mode_allows_write_cmd():
     reg = MountRegistry()
     reg.mount("/rw/", RAMResource(), MountMode.WRITE)
