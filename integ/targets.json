@@ -1424,22 +1424,19 @@
           "path": "/repo",
           "resource": "hf_models",
           "backend": "hf_hub",
-          "repo": "integ/repo-v1",
-          "fixture": "files/v1"
+          "repo": "integ/repo-v1"
         },
         {
           "path": "/data",
           "resource": "hf_datasets",
           "backend": "hf_hub",
-          "repo": "integ/data-v1",
-          "fixture": "columnar/v1"
+          "repo": "integ/data-v1"
         },
         {
           "path": "/space",
           "resource": "hf_spaces",
           "backend": "hf_hub",
-          "repo": "integ/space-v1",
-          "fixture": "files/v1"
+          "repo": "integ/space-v1"
         }
       ]
     },
@@ -1459,8 +1456,7 @@
           "path": "/repo",
           "resource": "hf_models",
           "backend": "hf_hub",
-          "repo": "integ/repo-cli",
-          "fixture": "files/v1"
+          "repo": "integ/repo-cli"
         },
         {
           "path": "/scratch",

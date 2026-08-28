@@ -168,6 +168,125 @@
         "stdout": "",
         "stderr": "hf download: Entry Not Found for url: http://127.0.0.1:5086/integ/repo-cli/resolve/main/missing.txt.\n"
       }
+    },
+    {
+      "id": "hf_version_names_the_program",
+      "seq": 960114,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf version | sed 's/[0-9][0-9.]*/N/'",
+      "expect": {
+        "exit": 0,
+        "stdout": "hf version N (mirage)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_env_reports_the_endpoint_and_token",
+      "seq": 960115,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf env | grep -E '^- (endpoint|token):'",
+      "expect": {
+        "exit": 0,
+        "stdout": "- endpoint: http://127.0.0.1:5086\n- token: set\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_repo_create_private_takes_the_flag",
+      "seq": 960116,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf repo create integ/priv --private",
+      "expect": {
+        "exit": 0,
+        "stdout": "http://127.0.0.1:5086/integ/priv\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_repo_create_a_space_needs_the_sdk",
+      "seq": 960117,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf repo create integ/spc --repo-type space --space_sdk gradio",
+      "expect": {
+        "exit": 0,
+        "stdout": "http://127.0.0.1:5086/spaces/integ/spc\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_upload_a_directory_spreads_under_the_operand",
+      "seq": 960118,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "mkdir -p /scratch/d/sub && echo -n a > /scratch/d/a.txt && echo -n b > /scratch/d/sub/b.txt && hf upload integ/repo-cli /scratch/d dst --commit-message dir --quiet > /dev/null && hf download integ/repo-cli --include 'dst/*' --local-dir /scratch/dl --quiet > /dev/null && cat /scratch/dl/dst/a.txt /scratch/dl/dst/sub/b.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "ab",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_download_to_the_cache_lays_out_blobs_refs_and_a_snapshot_link",
+      "seq": 960119,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli one_byte.txt --revision c3d4e5f60718293a4b5c6d7e8f90213243546576 --cache-dir /scratch/c --quiet > /dev/null && find /scratch/c -type f | sort && find /scratch/c -type l | sort",
+      "expect": {
+        "exit": 0,
+        "stdout": "/scratch/c/models--integ--repo-cli/blobs/c1b0730e0133447badcfd47fd144e254807b06e1\n/scratch/c/models--integ--repo-cli/snapshots/c3d4e5f60718293a4b5c6d7e8f90213243546576/one_byte.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hf_download_takes_a_commit_sha_as_the_revision",
+      "seq": 960120,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli one_byte.txt --revision c3d4e5f60718293a4b5c6d7e8f90213243546576 --local-dir /scratch/bysha --quiet > /dev/null && cat /scratch/bysha/one_byte.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "x",
+        "stderr": ""
+      }
+    }
+,
+    {
+      "id": "hf_download_to_the_cache_writes_a_ref_for_a_symbolic_revision",
+      "seq": 960121,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli one_byte.txt --revision main --cache-dir /scratch/c2 --quiet > /dev/null && cat /scratch/c2/models--integ--repo-cli/refs/main | head -c 8",
+      "expect": {
+        "exit": 0,
+        "stdout": "00000000",
+        "stderr": ""
+      }
+    }
+,
+    {
+      "id": "hf_a_local_mount_is_the_writable_copy",
+      "seq": 960122,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli one_byte.txt --local-dir /scratch/wt --quiet > /dev/null && echo -n xy > /scratch/wt/one_byte.txt && hf upload integ/repo-cli /scratch/wt/one_byte.txt one_byte.txt --commit-message edit --quiet > /dev/null && hf download integ/repo-cli one_byte.txt --local-dir /scratch/rt --quiet > /dev/null && cat /scratch/rt/one_byte.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "xy",
+        "stderr": ""
+      }
     }
   ]
 }

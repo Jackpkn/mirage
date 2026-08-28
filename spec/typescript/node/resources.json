@@ -740,18 +740,13 @@
       "max_du_entries": 10000,
       "max_glob_matches": 5000,
       "slots": [
-        "create",
         "exists",
         "is_mounted",
-        "mkdir",
         "read_bytes",
         "read_range",
         "read_stream",
         "readdir",
-        "rm_r",
-        "stat",
-        "unlink",
-        "write"
+        "stat"
       ]
     },
     "history": {

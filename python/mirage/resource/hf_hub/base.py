@@ -18,17 +18,12 @@ from typing import Any, Generic, TypeVar
 from mirage.accessor.hf_hub import HfHubAccessor
 from mirage.commands.builtin.hf_hub import COMMANDS as HF_COMMANDS
 from mirage.commands.builtin.hf_hub.io import IO as HF_IO
-from mirage.core.hf_hub.create import create
 from mirage.core.hf_hub.exists import exists
-from mirage.core.hf_hub.mkdir import mkdir
 from mirage.core.hf_hub.read import read_bytes
 from mirage.core.hf_hub.readdir import readdir
-from mirage.core.hf_hub.rm import rm_r
 from mirage.core.hf_hub.stat import stat as hf_stat
 from mirage.core.hf_hub.stream import range_read, read_stream
-from mirage.core.hf_hub.unlink import unlink
 from mirage.core.hf_hub.watch import build_delta_hook
-from mirage.core.hf_hub.write import write_bytes
 from mirage.ops.hf_hub import OPS as HF_OPS
 from mirage.resource.base import BaseResource
 from mirage.types import PathSpec
@@ -41,6 +36,12 @@ from mirage.watch.base import DeltaHook
 # type parameter or mypy reads every subclass as an illegal override.
 A = TypeVar("A", bound=HfHubAccessor)
 
+# Read-only, for the reason spelled out in commands/builtin/hf_hub/io.py:
+# a Hub write is a commit, so it belongs to the `hf` CLI rather than to a
+# POSIX write. This table is the second channel and has to agree with the
+# first: it answers `dispatch("write", ...)` and the FUSE adapter, so
+# leaving the mutations here would have kept every write path open except
+# the shell one.
 _OPS = {
     "read_bytes": read_bytes,
     "readdir": readdir,
@@ -48,11 +49,6 @@ _OPS = {
     "read_stream": read_stream,
     "range_read": range_read,
     "exists": exists,
-    "write": write_bytes,
-    "create": create,
-    "unlink": unlink,
-    "rm_r": rm_r,
-    "mkdir": mkdir,
 }
 
 

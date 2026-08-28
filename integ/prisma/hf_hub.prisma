@@ -38,6 +38,13 @@ model HfRepo {
   // Spaces only; the Hub requires it for one and rejects it for the others.
   sdk       String?
   createdAt String
+  // A directory under integ/fixtures/, expanded into HfBlob rows by the
+  // fake's afterSeed. The repo content has to arrive server-side because
+  // the mount is read-only: it used to be written THROUGH the mount by the
+  // harness, which a read-only mount refuses, and which was only ever
+  // possible because the mount had a write surface it should not have had.
+  // Named rather than inlined so the shared corpus stays one copy.
+  sourceDir String @default("")
   seq       Int
 
   @@id([tenant, kind, namespace, name])

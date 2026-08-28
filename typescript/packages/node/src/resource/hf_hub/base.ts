@@ -24,17 +24,12 @@ import type { DeltaHook } from '@struktoai/mirage-core/watch/index'
 import type { HfHubAccessor } from '../../accessor/hf_hub.ts'
 import { HF_HUB_COMMANDS } from '../../commands/builtin/hf_hub/index.ts'
 import { SCOPE_ERROR } from '../../core/hf_hub/constants.ts'
-import { create as createCore } from '../../core/hf_hub/create.ts'
 import { exists as existsCore } from '../../core/hf_hub/exists.ts'
-import { mkdir as mkdirCore } from '../../core/hf_hub/mkdir.ts'
 import { read as readCore } from '../../core/hf_hub/read.ts'
 import { readdir as readdirCore } from '../../core/hf_hub/readdir.ts'
-import { rmR as rmRCore } from '../../core/hf_hub/rm.ts'
 import { stat as statCore } from '../../core/hf_hub/stat.ts'
 import { rangeRead as rangeReadCore, stream as streamCore } from '../../core/hf_hub/stream.ts'
-import { unlink as unlinkCore } from '../../core/hf_hub/unlink.ts'
 import { buildDeltaHook } from '../../core/hf_hub/watch.ts'
-import { write as writeCore } from '../../core/hf_hub/write.ts'
 import { HF_HUB_OPS } from '../../ops/hf_hub/index.ts'
 
 const globCore = makeResolveGlob(readdirCore, SCOPE_ERROR)
@@ -69,6 +64,12 @@ export abstract class HfHubResource extends BaseResource implements Resource {
   // recursive fetch seeds it whole. A long TTL therefore spares the Hub a
   // full re-walk rather than risking a stale row.
   override readonly indexTtl: number = 86_400
+  // Read-only, for the reason spelled out in commands/builtin/hf_hub/io.ts:
+  // a Hub write is a commit, so it belongs to the `hf` CLI rather than to a
+  // POSIX write. This table is the second channel and has to agree with the
+  // first: it answers `dispatch('write', ...)` and the FUSE adapter, so
+  // leaving the mutations here would have kept every write path open except
+  // the shell one.
   readonly opsMap: Record<string, unknown> = {
     read_bytes: readCore,
     readdir: readdirCore,
@@ -76,11 +77,6 @@ export abstract class HfHubResource extends BaseResource implements Resource {
     read_stream: streamCore,
     range_read: rangeReadCore,
     exists: existsCore,
-    write: writeCore,
-    create: createCore,
-    unlink: unlinkCore,
-    rm_r: rmRCore,
-    mkdir: mkdirCore,
   }
 
   open(): Promise<void> {
@@ -103,10 +99,6 @@ export abstract class HfHubResource extends BaseResource implements Resource {
     return readCore(this.accessor, p, this.index)
   }
 
-  writeFile(p: PathSpec, data: Uint8Array): Promise<void> {
-    return writeCore(this.accessor, p, data)
-  }
-
   readdir(p: PathSpec): Promise<string[]> {
     return readdirCore(this.accessor, p, this.index)
   }
@@ -117,14 +109,6 @@ export abstract class HfHubResource extends BaseResource implements Resource {
 
   exists(p: PathSpec): Promise<boolean> {
     return existsCore(this.accessor, p, this.index)
-  }
-
-  mkdir(p: PathSpec): Promise<void> {
-    return mkdirCore(this.accessor, p)
-  }
-
-  unlink(p: PathSpec): Promise<void> {
-    return unlinkCore(this.accessor, p, this.index)
   }
 
   deltaHook(): DeltaHook {
