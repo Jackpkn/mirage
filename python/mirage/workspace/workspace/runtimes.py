@@ -18,7 +18,7 @@ from typing import Any
 from mirage.runtime.base import Runtime
 from mirage.runtime.language import LanguageRuntime
 from mirage.runtime.mixin import LineExecutorMixin
-from mirage.runtime.policy import PolicyDecision, parsed_commands
+from mirage.runtime.routing import PolicyDecision, parsed_commands
 from mirage.runtime.resolver import MountResolver
 from mirage.runtime.table import (DEFAULT_ENTRIES, NAMED, VFSRuntime,
                                   bind_commands, build_runtime,

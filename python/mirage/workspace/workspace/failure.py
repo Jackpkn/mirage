@@ -15,7 +15,7 @@
 from mirage.commands.builtin.utils.limit import CommandTimeoutError
 from mirage.commands.errors import FindParseError, UsageError
 from mirage.io import IOResult
-from mirage.runtime.policy import PolicyDeny
+from mirage.runtime.routing import RouteDeny
 from mirage.utils.errors import format_fs_error
 from mirage.workspace.workspace.utils import command_name
 
@@ -35,7 +35,7 @@ def failure_result(exc: BaseException, command: str) -> IOResult:
     """
     if isinstance(exc, CommandTimeoutError):
         return IOResult(exit_code=124, stderr=(str(exc) + "\n").encode())
-    if isinstance(exc, PolicyDeny):
+    if isinstance(exc, RouteDeny):
         # A deny is a policy outcome, not a mistake: it folds into the
         # line's result the way a timeout does, never a raise. The
         # denied party is the command, so the message carries its name

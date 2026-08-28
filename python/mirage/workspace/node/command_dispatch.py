@@ -23,7 +23,7 @@ from mirage.io import IOResult
 from mirage.io.types import materialize
 from mirage.policy import PolicyDenied, resolve_limit
 from mirage.policy.types import SessionContext
-from mirage.runtime.policy import PolicyDecision
+from mirage.runtime.routing import PolicyDecision
 from mirage.shell.bytes import encode_text
 from mirage.shell.parse import find_syntax_error, parse, syntax_error_result
 from mirage.shell.types import NodeType as NT

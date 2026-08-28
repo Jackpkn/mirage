@@ -26,7 +26,7 @@ from mirage.policy import (Abandoned, AdmissionRules, Ask, CommandContext,
                            ask_rule, render_deny, render_pending)
 from mirage.policy.match import (Outcome, has_rules, io_refusal, reads_args,
                                  scopes_paths)
-from mirage.runtime.policy import command_nodes
+from mirage.runtime.routing import command_nodes
 from mirage.shell import parse
 from mirage.shell.helpers import (get_parts, get_redirects, get_text,
                                   literal_word, split_env_prefix)

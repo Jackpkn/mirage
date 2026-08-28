@@ -20,7 +20,7 @@ import { CommandTimeoutError } from '../../commands/builtin/utils/limit.ts'
 import { EvalError } from '../errors.ts'
 import { isEvaluator, type Evaluator } from '../mixin.ts'
 import type { EvalValue } from '../types.ts'
-import { PolicyDeny, PolicyError } from './errors.ts'
+import { RouteDeny, RouteError } from './errors.ts'
 import {
   DenyResult,
   RouteResult,
@@ -97,7 +97,7 @@ async function evalSource(
   evaluator: Evaluator | null,
 ): Promise<EvalValue> {
   if (evaluator === null) {
-    throw new PolicyError(
+    throw new RouteError(
       'policy scripts need an evaluator runtime in the workspace ' +
         '(the default python runtime, or use a function instead)',
     )
@@ -112,16 +112,16 @@ async function evalSource(
     )
   } catch (caught) {
     if (caught instanceof CommandTimeoutError) {
-      throw new PolicyError(
+      throw new RouteError(
         `policy script timed out after ${String(POLICY_EVAL_TIMEOUT.seconds)}s`,
         { cause: caught },
       )
     }
     if (caught instanceof EvalError) {
       const prefix = caught.syntax ? 'policy script syntax error: ' : 'policy script failed: '
-      throw new PolicyError(prefix + caught.message, { cause: caught })
+      throw new RouteError(prefix + caught.message, { cause: caught })
     }
-    throw new PolicyError(caught instanceof Error ? caught.message : String(caught), {
+    throw new RouteError(caught instanceof Error ? caught.message : String(caught), {
       cause: caught,
     })
   }
@@ -171,7 +171,7 @@ async function evaluateScript(
     !Array.isArray(verdict) &&
     !(verdict instanceof Uint8Array)
   ) {
-    throw new PolicyError(
+    throw new RouteError(
       'entry scripts answer a boolean (deny and placement belong to ' +
         `the global policy), got ${JSON.stringify(verdict)} from '${runtime.name}'`,
     )
@@ -190,7 +190,7 @@ export function parseVerdict(verdict: unknown): string | null {
   if (verdict === null) return null
   if (typeof verdict === 'string') return verdict
   if (verdict instanceof RouteResult) return verdict.runtime
-  if (verdict instanceof DenyResult) throw new PolicyDeny(verdict.reason)
+  if (verdict instanceof DenyResult) throw new RouteDeny(verdict.reason)
   if (verdict instanceof Map) {
     // A custom evaluator may hand python dicts back as Map (the monty
     // engine did before its boundary normalized); fold to the plain
@@ -205,16 +205,16 @@ export function parseVerdict(verdict: unknown): string | null {
       .filter((key) => key !== 'runtime' && key !== 'deny')
       .sort(compareCodePoints)
     if (unknown.length > 0) {
-      throw new PolicyError(`unknown policy verdict keys: ${JSON.stringify(unknown)}`)
+      throw new RouteError(`unknown policy verdict keys: ${JSON.stringify(unknown)}`)
     }
     if ('deny' in obj && 'runtime' in obj) {
-      throw new PolicyError('policy verdict cannot both place and deny')
+      throw new RouteError('policy verdict cannot both place and deny')
     }
-    if ('deny' in obj) throw new PolicyDeny(String(obj.deny))
+    if ('deny' in obj) throw new RouteDeny(String(obj.deny))
     if (typeof obj.runtime === 'string') return obj.runtime
-    throw new PolicyError("policy verdict dict needs a 'runtime' name or a 'deny' reason")
+    throw new RouteError("policy verdict dict needs a 'runtime' name or a 'deny' reason")
   }
-  throw new PolicyError(
+  throw new RouteError(
     `policy must return a runtime name, a verdict dict, or null, got ${JSON.stringify(verdict)}`,
   )
 }
@@ -263,7 +263,7 @@ export async function decideLine(
       try {
         overlay = runtimeBindingsFor(entries, name)
       } catch (caught) {
-        throw new PolicyError(caught instanceof Error ? caught.message : String(caught), {
+        throw new RouteError(caught instanceof Error ? caught.message : String(caught), {
           cause: caught,
         })
       }

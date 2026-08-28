@@ -18,7 +18,7 @@ import type { TSNodeLike } from '../../shell/types.ts'
 import { commandNodes, parsedCommands } from './facts.ts'
 import { policyContextFromPayload, policyContextPayload, type PolicyContext } from './types.ts'
 
-// Mirrors python/tests/runtime/policy/test_facts.py.
+// Mirrors python/tests/runtime/routing/test_facts.py.
 
 function word(type: string, text: string): TSNodeLike {
   return { type, text, children: [], namedChildren: [] }

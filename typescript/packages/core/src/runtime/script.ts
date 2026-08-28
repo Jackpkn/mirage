@@ -2,7 +2,7 @@ import { runWithTimeout } from '../commands/builtin/utils/limit.ts'
 import type { Runtime } from './base.ts'
 import { LanguageRuntime } from './language.ts'
 import { isEvaluator, type Evaluator } from './mixin.ts'
-import type { ScriptSource } from './policy/types.ts'
+import type { ScriptSource } from './routing/types.ts'
 import { buildRuntime } from './table.ts'
 import type { EvalValue } from './types.ts'
 
@@ -62,7 +62,7 @@ export function scriptEngine(script: ScriptSource, runtime: string): Runtime & E
  *
  * Deliberately throws rather than wording its failures. Each caller
  * refuses in its own voice and its own error type (the runtime router's
- * PolicyError is not the permissions layer's), so a shared wording here
+ * RouteError is not the permissions layer's PolicyError), so a shared wording here
  * would put one layer's words on the other layer's failure.
  *
  * @throws CommandTimeoutError - the script outran `timeoutSeconds`.

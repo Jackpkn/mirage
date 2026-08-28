@@ -26,7 +26,7 @@ import type { Ask, CommandContext, CommandRule, AdmissionRules, Deny } from '../
 import { ioRefusal } from '../../policy/match/rule.ts'
 import { hasRules, readsArgs, scopesPaths } from '../../policy/match/reads.ts'
 import type { ValueType } from '../../commands/spec/types.ts'
-import { commandNodes } from '../../runtime/policy/index.ts'
+import { commandNodes } from '../../runtime/routing/index.ts'
 import {
   getParts,
   getRedirects,

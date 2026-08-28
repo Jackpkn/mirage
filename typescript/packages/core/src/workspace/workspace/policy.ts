@@ -15,11 +15,11 @@
 import {
   parsedCommands,
   decideLine,
-  PolicyError,
+  RouteError,
   type PolicyContext,
   type PolicyDecision,
   type PolicyFn,
-} from '../../runtime/policy/index.ts'
+} from '../../runtime/routing/index.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { MountResolver } from '../../runtime/resolver.ts'
 import { catchAll, runtimeBindingsFor } from '../../runtime/table.ts'
@@ -71,7 +71,7 @@ export class PolicyRouter {
       try {
         overlay = runtimeBindingsFor(this.runtimes.entries, options.runtime)
       } catch (caught) {
-        throw new PolicyError(caught instanceof Error ? caught.message : String(caught), {
+        throw new RouteError(caught instanceof Error ? caught.message : String(caught), {
           cause: caught,
         })
       }

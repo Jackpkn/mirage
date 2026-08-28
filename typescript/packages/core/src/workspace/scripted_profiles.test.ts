@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RAMResource } from '../resource/ram/ram.ts'
-import { ScriptSource } from '../runtime/policy/types.ts'
+import { ScriptSource } from '../runtime/routing/types.ts'
 import { MountMode } from '../types.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
 import { Workspace } from './workspace/workspace.ts'

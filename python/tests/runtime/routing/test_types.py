@@ -15,7 +15,7 @@
 import json
 
 from mirage.runtime.base import Runtime
-from mirage.runtime.policy.types import ParsedCommand, PolicyContext
+from mirage.runtime.routing.types import ParsedCommand, PolicyContext
 from mirage.runtime.types import RunArgs, RunResult
 
 

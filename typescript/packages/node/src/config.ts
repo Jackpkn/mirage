@@ -21,7 +21,7 @@ import type { IndexConfig, RedisIndexConfig } from '@struktoai/mirage-core/cache
 import { CLISpec } from '@struktoai/mirage-core/commands/cli/types'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import type { RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
-import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/index'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/index'
 import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
 import {
   ConsistencyPolicy,

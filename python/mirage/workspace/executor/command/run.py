@@ -27,7 +27,7 @@ from mirage.ops.config import NamespaceLinks
 from mirage.ops.namespace_view import namespace_names
 from mirage.ops.types import LinkView, MountView, NamespaceView
 from mirage.runtime.base import Runtime
-from mirage.runtime.policy import PolicyDecision
+from mirage.runtime.routing import PolicyDecision
 from mirage.runtime.table import VFSRuntime
 from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat, PathSpec, ResourceName

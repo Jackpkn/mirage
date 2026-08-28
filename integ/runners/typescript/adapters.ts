@@ -96,7 +96,7 @@ import {
   type ConsoleFactory,
 } from '@struktoai/mirage-node'
 import { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
-import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/types'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/types'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
 import { ChromaClient } from 'chromadb'

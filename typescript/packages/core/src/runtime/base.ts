@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { coerceRuntimeConfig, type RuntimeConfig } from './config.ts'
-import { ScriptSource, type PolicyScript } from './policy/types.ts'
+import { ScriptSource, type PolicyScript } from './routing/types.ts'
 import type { RuntimeOptions, RuntimeReach } from './types.ts'
 
 /**

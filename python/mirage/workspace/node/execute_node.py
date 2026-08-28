@@ -20,7 +20,7 @@ from mirage.io import IOResult
 from mirage.io.stream import async_chain
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
-from mirage.runtime.policy import PolicyDecision
+from mirage.runtime.routing import PolicyDecision
 from mirage.runtime.types import DispatchFn
 from mirage.shell.arith import evaluate_arith
 from mirage.shell.barrier import BarrierPolicy, apply_barrier

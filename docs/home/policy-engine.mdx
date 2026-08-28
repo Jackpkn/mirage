@@ -96,7 +96,7 @@ In code, the same two arms have a typed spelling, `RouteResult` and
 return from inside the evaluator sandbox:
 
 ```python
-from mirage.runtime.policy import (DenyResult, PolicyContext, PolicyResult,
+from mirage.runtime.routing import (DenyResult, PolicyContext, PolicyResult,
                                    RouteResult)
 
 def policy(ctx: PolicyContext) -> PolicyResult | None:
@@ -128,7 +128,7 @@ When you build the workspace in code rather than from a config file,
 sync or async. It is called directly, so no evaluator is involved:
 
 ```python
-from mirage.runtime.policy import PolicyContext
+from mirage.runtime.routing import PolicyContext
 
 def policy(ctx: PolicyContext) -> str | None:
     stage = ctx.commands[0]

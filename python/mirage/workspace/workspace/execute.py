@@ -24,7 +24,7 @@ from mirage.io.types import ByteSource
 from mirage.observe.context import RecordingScope
 from mirage.policy import resolve_limit
 from mirage.provision import ProvisionResult
-from mirage.runtime.policy import PolicyDecision, PolicyDeny, PolicyError
+from mirage.runtime.routing import PolicyDecision, RouteDeny, RouteError
 from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
                                 parse, syntax_error_result)
 from mirage.workspace.abort import MirageAbortError
@@ -256,11 +256,11 @@ async def execute_line(
         io = failure_result(exc, command)
         session.last_exit_code = io.exit_code
         return io
-    except PolicyDeny as exc:
+    except RouteDeny as exc:
         io = failure_result(exc, command)
         session.last_exit_code = io.exit_code
         return io
-    except (MirageAbortError, ContentDriftError, PolicyError):
+    except (MirageAbortError, ContentDriftError, RouteError):
         # The caller's problem, not the line's: an abort it requested,
         # drift it must reconcile, a policy it misconfigured.
         raise

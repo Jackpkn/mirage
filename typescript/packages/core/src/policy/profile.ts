@@ -14,7 +14,7 @@
 
 import { DEFAULT_ASK_REASON, DEFAULT_DENY_REASON } from './constants.ts'
 import type { CommandRule, AdmissionRules, ProfileScript } from './types.ts'
-import { ScriptSource } from '../runtime/policy/types.ts'
+import { ScriptSource } from '../runtime/routing/types.ts'
 import type { HiddenPaths, HiddenVars, ShowEntry, ShownPaths } from '../types.ts'
 import { type MountMode, parseMountMode } from '../types.ts'
 import type { HideReason } from './types.ts'

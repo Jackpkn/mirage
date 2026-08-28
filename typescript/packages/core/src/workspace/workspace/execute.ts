@@ -28,7 +28,7 @@ import { errorVirtualPath, gnuStrerror } from '../../utils/errors.ts'
 import { makeAbortError, mergeSignals } from '../abort.ts'
 import type { Dispatcher } from '../dispatcher/index.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
-import { PolicyDeny, type PolicyDecision } from '../../runtime/policy/index.ts'
+import { RouteDeny, type PolicyDecision } from '../../runtime/routing/index.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import type { ExecuteFn } from '../expand/node.ts'
 import type { MountRegistry } from '../mount/registry.ts'
@@ -211,7 +211,7 @@ async function runLine(
   try {
     routingDecision = await env.policyRouter.decide(rootNode, command, options, targetSession)
   } catch (caught) {
-    if (caught instanceof PolicyDeny) {
+    if (caught instanceof RouteDeny) {
       return deniedResult(env, command, options, targetSession, caught.reason)
     }
     throw caught

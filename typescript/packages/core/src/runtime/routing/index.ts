@@ -19,7 +19,7 @@ export {
   runtimeForLanguage,
   POLICY_EVAL_TIMEOUT,
 } from './decide.ts'
-export { PolicyDeny, PolicyError } from './errors.ts'
+export { RouteDeny, RouteError } from './errors.ts'
 export { commandNodes, parsedCommands } from './facts.ts'
 export { DenyResult, RouteResult, ScriptSource } from './types.ts'
 export type { PolicyDecision, PolicyContext, PolicyFn } from './types.ts'

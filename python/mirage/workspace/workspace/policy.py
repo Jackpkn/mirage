@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from mirage.runtime.policy import (PolicyContext, PolicyDecision, PolicyError,
+from mirage.runtime.routing import (PolicyContext, PolicyDecision, RouteError,
                                    PolicyFn, decide_line, parsed_commands)
 from mirage.runtime.resolver import MountResolver
 from mirage.runtime.table import catch_all, runtime_bindings_for
@@ -79,7 +79,7 @@ class PolicyRouter:
                 decision, for nested evals.
 
         Raises:
-            PolicyError: an unknown runtime name or a failing policy.
+            RouteError: an unknown runtime name or a failing policy.
         """
         if inherited is not None:
             return inherited
@@ -88,7 +88,7 @@ class PolicyRouter:
             try:
                 overlay = runtime_bindings_for(entries, runtime)
             except ValueError as exc:
-                raise PolicyError(str(exc)) from exc
+                raise RouteError(str(exc)) from exc
             return PolicyDecision(bindings={
                 **self._registry.runtime_bindings,
                 **overlay
@@ -114,7 +114,7 @@ class PolicyRouter:
         try:
             return await decide_line(entries, policy, ctx,
                                      self._registry.runtime_bindings)
-        except PolicyError:
+        except RouteError:
             raise
         except (ValueError, ImportError) as exc:
-            raise PolicyError(str(exc)) from exc
+            raise RouteError(str(exc)) from exc

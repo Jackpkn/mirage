@@ -22,7 +22,7 @@ import {
   runWithOpPolicies,
 } from '../../context/session_context.ts'
 import type { Runtime } from '../../runtime/base.ts'
-import type { PolicyDecision } from '../../runtime/policy/index.ts'
+import type { PolicyDecision } from '../../runtime/routing/index.ts'
 import { mergeSignals } from '../abort.ts'
 import { type ByteSource, IOResult, materialize } from '../../io/types.ts'
 import type { Resource } from '../../resource/base.ts'

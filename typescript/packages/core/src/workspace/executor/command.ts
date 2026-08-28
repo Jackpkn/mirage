@@ -26,7 +26,7 @@ import { MountCommandUnsupported, type MountRegistry } from '../mount/registry.t
 import { makeStorageKey } from '../mount/storage.ts'
 import { Consumer, JOB_BUILTINS, lookup } from '../lookup/index.ts'
 import { type Runtime } from '../../runtime/base.ts'
-import type { PolicyDecision } from '../../runtime/policy/index.ts'
+import type { PolicyDecision } from '../../runtime/routing/index.ts'
 import type { Session } from '../session/session.ts'
 import { ExecutionNode } from '../types.ts'
 import { strategyFor } from '../../commands/builtin/generic/crossmount/detect.ts'

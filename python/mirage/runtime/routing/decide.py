@@ -21,8 +21,8 @@ from mirage.runtime.base import Runtime
 from mirage.runtime.errors import EvalError
 from mirage.runtime.language import LanguageRuntime
 from mirage.runtime.mixin import EvaluatorMixin
-from mirage.runtime.policy.errors import PolicyDeny, PolicyError
-from mirage.runtime.policy.types import (DenyResult, PolicyContext,
+from mirage.runtime.routing.errors import RouteDeny, RouteError
+from mirage.runtime.routing.types import (DenyResult, PolicyContext,
                                          PolicyDecision, PolicyFn,
                                          PolicyResult, PolicyScript,
                                          RouteResult, ScriptSource)
@@ -108,7 +108,7 @@ async def _eval_source(source: str, ctx_payload: dict[str, EvalValue],
         return await eval_with_ctx(source, ctx_payload, evaluator,
                                    POLICY_EVAL_TIMEOUT_SECONDS)
     except asyncio.TimeoutError as exc:
-        raise PolicyError(f"policy script timed out after "
+        raise RouteError(f"policy script timed out after "
                           f"{POLICY_EVAL_TIMEOUT_SECONDS:g}s") from exc
     except EvalError as exc:
         prefix = ("policy script syntax error: "
@@ -133,7 +133,7 @@ async def evaluate_script(script: PolicyScript, ctx: PolicyContext,
             ScriptSource selects its evaluator from it by language.
 
     Raises:
-        PolicyError: the script answered with a policy verdict shape
+        RouteError: the script answered with a policy verdict shape
             (a dict or a PolicyResult arm) instead of a boolean; a
             deny-dict is truthy, so coercing it would mean "willing",
             the opposite of intent.
@@ -148,7 +148,7 @@ async def evaluate_script(script: PolicyScript, ctx: PolicyContext,
         if inspect.isawaitable(verdict):
             verdict = await verdict
     if isinstance(verdict, (Mapping, PolicyResult)):
-        raise PolicyError(
+        raise RouteError(
             f"entry scripts answer a boolean (deny and placement belong "
             f"to the global policy), got {verdict!r} from {runtime.name!r}")
     return bool(verdict)
@@ -166,8 +166,8 @@ def parse_verdict(verdict: Any) -> str | None:
         verdict (Any): whatever the policy returned.
 
     Raises:
-        PolicyDeny: the verdict is DenyResult or {"deny": reason}.
-        PolicyError: the verdict is not a PolicyResult arm, a name,
+        RouteDeny: the verdict is DenyResult or {"deny": reason}.
+        RouteError: the verdict is not a PolicyResult arm, a name,
             None, or a verdict dict (mirrors the TS parseVerdict).
     """
     if verdict is None or isinstance(verdict, str):
@@ -175,21 +175,21 @@ def parse_verdict(verdict: Any) -> str | None:
     if isinstance(verdict, RouteResult):
         return verdict.runtime
     if isinstance(verdict, DenyResult):
-        raise PolicyDeny(verdict.reason)
+        raise RouteDeny(verdict.reason)
     if isinstance(verdict, Mapping):
         unknown = sorted(set(verdict) - {"runtime", "deny"})
         if unknown:
-            raise PolicyError(f"unknown policy verdict keys: {unknown}")
+            raise RouteError(f"unknown policy verdict keys: {unknown}")
         if "deny" in verdict and "runtime" in verdict:
-            raise PolicyError("policy verdict cannot both place and deny")
+            raise RouteError("policy verdict cannot both place and deny")
         if "deny" in verdict:
-            raise PolicyDeny(str(verdict["deny"]))
+            raise RouteDeny(str(verdict["deny"]))
         name = verdict.get("runtime")
         if isinstance(name, str):
             return name
-        raise PolicyError("policy verdict dict needs a 'runtime' name "
+        raise RouteError("policy verdict dict needs a 'runtime' name "
                           "or a 'deny' reason")
-    raise PolicyError(f"policy must return a runtime name, a verdict "
+    raise RouteError(f"policy must return a runtime name, a verdict "
                       f"dict, or None, got {verdict!r}")
 
 
@@ -205,7 +205,7 @@ async def evaluate_policy(policy: PolicyFn, ctx: PolicyContext,
             ScriptSource selects its evaluator from it by language.
 
     Raises:
-        PolicyDeny: the policy refused the line.
+        RouteDeny: the policy refused the line.
         ValueError: the policy returned something other than a
             PolicyVerdict.
     """

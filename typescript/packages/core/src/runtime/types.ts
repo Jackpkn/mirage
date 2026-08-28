@@ -15,7 +15,7 @@
 import type { IOResult, OpReport } from '../io/types.ts'
 import type { PathSpec, SetAttrFields } from '../types.ts'
 import type { RuntimeConfig } from './config.ts'
-import type { PolicyScript } from './policy/types.ts'
+import type { PolicyScript } from './routing/types.ts'
 
 /**
  * The languages a runtime can interpret, one name for both doors (run

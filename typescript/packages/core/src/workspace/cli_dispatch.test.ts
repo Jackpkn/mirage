@@ -26,7 +26,7 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
 import { MountMode } from '../types.ts'
-import { ScriptSource } from '../runtime/policy/types.ts'
+import { ScriptSource } from '../runtime/routing/types.ts'
 import type { RuntimeLanguage } from '../runtime/types.ts'
 import { Workspace } from './workspace/workspace.ts'
 

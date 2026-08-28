@@ -38,7 +38,7 @@ from mirage.ops.types import NamespaceView, SessionView, StatPath
 from mirage.policy import resolve_limit
 from mirage.runtime.base import Runtime
 from mirage.runtime.language import LanguageRuntime
-from mirage.runtime.policy import runtime_for_language
+from mirage.runtime.routing import runtime_for_language
 from mirage.runtime.types import DispatchFn, RunArgs, ScriptSource
 from mirage.types import PathSpec, Producer, word_text
 from mirage.workspace.cli.types import CLIInstall

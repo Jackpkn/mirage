@@ -16,12 +16,12 @@ import asyncio
 
 import pytest
 
-import mirage.runtime.policy.decide as decide_mod
+import mirage.runtime.routing.decide as decide_mod
 from mirage.runtime.base import Runtime
 from mirage.runtime.js.base import JsRuntime
 from mirage.runtime.mixin import EvaluatorMixin
-from mirage.runtime.policy import (DenyResult, PolicyContext, PolicyDeny,
-                                   PolicyError, RouteResult, ScriptSource,
+from mirage.runtime.routing import (DenyResult, PolicyContext, RouteDeny,
+                                   RouteError, RouteResult, ScriptSource,
                                    decide_line, evaluate_policy,
                                    evaluate_script, evaluator_of,
                                    parse_verdict, parsed_commands,
@@ -193,7 +193,7 @@ async def test_js_policy_script_selects_the_js_evaluator():
 @pytest.mark.asyncio
 async def test_hung_policy_script_times_out(monkeypatch):
     monkeypatch.setattr(decide_mod, "POLICY_EVAL_TIMEOUT_SECONDS", 0.05)
-    with pytest.raises(PolicyError, match="timed out after 0.05s"):
+    with pytest.raises(RouteError, match="timed out after 0.05s"):
         await evaluate_policy(ScriptSource("1"), ctx_for("x"),
                               [HangingEvaluator()])
 
@@ -211,11 +211,11 @@ async def test_policy_returns_name_none_or_verdict_dict():
 
 @pytest.mark.asyncio
 async def test_policy_deny_verdict_raises_with_reason():
-    with pytest.raises(PolicyDeny) as caught:
+    with pytest.raises(RouteDeny) as caught:
         await evaluate_policy(lambda c: {"deny": "blocked here"}, ctx_for("x"),
                               [])
     assert caught.value.reason == "blocked here"
-    with pytest.raises(PolicyDeny, match="no python3"):
+    with pytest.raises(RouteDeny, match="no python3"):
         await evaluate_policy(
             ScriptSource("{'deny': 'no python3'} "
                          "if ctx['command'] == 'python3' else None"),
@@ -225,11 +225,11 @@ async def test_policy_deny_verdict_raises_with_reason():
 @pytest.mark.asyncio
 async def test_policy_result_arms_parse():
     assert parse_verdict(RouteResult("beta")) == "beta"
-    with pytest.raises(PolicyDeny, match="not here"):
+    with pytest.raises(RouteDeny, match="not here"):
         parse_verdict(DenyResult("not here"))
     assert await evaluate_policy(lambda c: RouteResult("beta"), ctx_for("x"),
                                  []) == "beta"
-    with pytest.raises(PolicyDeny, match="blocked"):
+    with pytest.raises(RouteDeny, match="blocked"):
         await evaluate_policy(lambda c: DenyResult("blocked"), ctx_for("x"),
                               [])
 
@@ -238,20 +238,20 @@ async def test_policy_result_arms_parse():
 async def test_entry_script_verdict_shapes_fail_loud():
     """A deny-dict is truthy; coercing it would mean willing."""
     runtime = AlphaRuntime()
-    with pytest.raises(PolicyError, match="answer a boolean"):
+    with pytest.raises(RouteError, match="answer a boolean"):
         await evaluate_script(lambda c: {"deny": "x"}, ctx_for("python3 x"),
                               runtime, [])
-    with pytest.raises(PolicyError, match="answer a boolean"):
+    with pytest.raises(RouteError, match="answer a boolean"):
         await evaluate_script(lambda c: DenyResult("x"), ctx_for("python3 x"),
                               runtime, [])
-    with pytest.raises(PolicyError, match="answer a boolean"):
+    with pytest.raises(RouteError, match="answer a boolean"):
         await evaluate_script(ScriptSource("{'deny': 'x'}"),
                               ctx_for("python3 x"), runtime, [MontyRuntime()])
 
 
 def test_parse_verdict_raises_policy_error():
-    """Direct callers get PolicyError, mirroring the TS parseVerdict."""
-    with pytest.raises(PolicyError):
+    """Direct callers get RouteError, mirroring the TS parseVerdict."""
+    with pytest.raises(RouteError):
         parse_verdict(42)
 
 

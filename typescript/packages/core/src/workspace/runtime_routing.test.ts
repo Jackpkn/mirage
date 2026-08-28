@@ -24,17 +24,17 @@ import {
   type LineExecutor,
 } from '../runtime/mixin.ts'
 import type { EvalResult } from '../runtime/types.ts'
-import { POLICY_EVAL_TIMEOUT, evaluatorOf, runtimeForLanguage } from '../runtime/policy/index.ts'
+import { POLICY_EVAL_TIMEOUT, evaluatorOf, runtimeForLanguage } from '../runtime/routing/index.ts'
 import type { RunArgs, RunResult } from '../runtime/types.ts'
 import { MontyRuntime } from '../runtime/python/monty/index.ts'
 import { QuickJsRuntime } from '../runtime/js/quickjs.ts'
 import {
   DenyResult,
   parseVerdict,
-  PolicyDeny,
+  RouteDeny,
   RouteResult,
   ScriptSource,
-} from '../runtime/policy/index.ts'
+} from '../runtime/routing/index.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
 import { Channel, JobConsole } from '../shell/console/index.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
@@ -450,7 +450,7 @@ describe('routing ladder', () => {
 
   it('the typed arms parse like their wire dicts', async () => {
     expect(parseVerdict(new RouteResult('beta'))).toBe('beta')
-    expect(() => parseVerdict(new DenyResult('not here'))).toThrow(PolicyDeny)
+    expect(() => parseVerdict(new DenyResult('not here'))).toThrow(RouteDeny)
     const parser = await getTestParser()
     const ws = new Workspace(
       { '/': new RAMResource() },
@@ -496,7 +496,7 @@ describe('routing ladder', () => {
 
   it('parseVerdict folds a Map verdict into the wire object', () => {
     expect(parseVerdict(new Map([['runtime', 'beta']]))).toBe('beta')
-    expect(() => parseVerdict(new Map([['deny', 'nope']]))).toThrow(PolicyDeny)
+    expect(() => parseVerdict(new Map([['deny', 'nope']]))).toThrow(RouteDeny)
   })
 
   it('parseVerdict fails loud on bad verdict objects', () => {

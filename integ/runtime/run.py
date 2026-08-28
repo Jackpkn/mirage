@@ -37,7 +37,7 @@ from mirage.policy.types import OpsContext  # noqa: E402
 from mirage.policy.types import OpsResultContext  # noqa: E402
 from mirage.runtime.base import Runtime  # noqa: E402
 from mirage.runtime.mixin import LineExecutorMixin  # noqa: E402
-from mirage.runtime.policy import ScriptSource  # noqa: E402
+from mirage.runtime.routing import ScriptSource  # noqa: E402
 from mirage.runtime.table import build_runtime  # noqa: E402
 from mirage.runtime.types import RunResult  # noqa: E402
 from mirage.types import Limit, PathSpec  # noqa: E402

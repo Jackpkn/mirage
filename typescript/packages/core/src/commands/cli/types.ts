@@ -15,7 +15,7 @@
 import type { ByteSource } from '../../io/types.ts'
 import type { Limit, PathSpec, ResourceName } from '../../types.ts'
 import type { NamespaceView, SessionView, StatPath } from '../../ops/types.ts'
-import type { ScriptSource } from '../../runtime/policy/types.ts'
+import type { ScriptSource } from '../../runtime/routing/types.ts'
 import type { CommandFnResult } from '../config.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
 import { compileSpec } from '../spec/compile.ts'

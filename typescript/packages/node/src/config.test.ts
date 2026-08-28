@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { CLISpec } from '@struktoai/mirage-core/commands/cli/types'
-import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/index'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/index'
 import { MountMode } from '@struktoai/mirage-core/types'
 import { RAMNamespaceStore } from '@struktoai/mirage-core/workspace/mount/namespace/ram'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'

@@ -12,12 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.runtime.policy.decide import (decide_line, evaluate_policy,
+from mirage.runtime.routing.decide import (decide_line, evaluate_policy,
                                           evaluate_script, evaluator_of,
                                           parse_verdict, runtime_for_language)
-from mirage.runtime.policy.errors import PolicyDeny, PolicyError
-from mirage.runtime.policy.facts import command_nodes, parsed_commands
-from mirage.runtime.policy.types import (DenyResult, ParsedCommand,
+from mirage.runtime.routing.errors import RouteDeny, RouteError
+from mirage.runtime.routing.facts import command_nodes, parsed_commands
+from mirage.runtime.routing.types import (DenyResult, ParsedCommand,
                                          PolicyContext, PolicyDecision,
                                          PolicyFn, PolicyResult, PolicyScript,
                                          PolicyVerdict, RouteResult,
@@ -30,8 +30,8 @@ __all__ = [
     "PolicyContext",
     "PolicyFn",
     "PolicyScript",
-    "PolicyError",
-    "PolicyDeny",
+    "RouteError",
+    "RouteDeny",
     "PolicyVerdict",
     "PolicyResult",
     "RouteResult",
