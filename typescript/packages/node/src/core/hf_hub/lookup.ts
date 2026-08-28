@@ -30,7 +30,7 @@ export interface Found {
   children: string[] | null
 }
 
-export function exists(found: Found): boolean {
+function exists(found: Found): boolean {
   return found.entry !== null || found.children !== null
 }
 

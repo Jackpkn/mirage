@@ -16,16 +16,11 @@ import { rangeOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/in
 import type { CommandIO } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
 import type { HfHubAccessor } from '../../../accessor/hf_hub.ts'
 import { SCOPE_ERROR } from '../../../core/hf_hub/constants.ts'
-import { create as hubCreate } from '../../../core/hf_hub/create.ts'
 import { exists as hubExists } from '../../../core/hf_hub/exists.ts'
-import { mkdir as hubMkdir } from '../../../core/hf_hub/mkdir.ts'
 import { read as hubRead } from '../../../core/hf_hub/read.ts'
 import { readdir as hubReaddir } from '../../../core/hf_hub/readdir.ts'
-import { rmR as hubRmR } from '../../../core/hf_hub/rm.ts'
 import { stat as hubStat } from '../../../core/hf_hub/stat.ts'
 import { stream as hubStream } from '../../../core/hf_hub/stream.ts'
-import { unlink as hubUnlink } from '../../../core/hf_hub/unlink.ts'
-import { write as hubWrite } from '../../../core/hf_hub/write.ts'
 
 // No native find or du op, and that is not an omission. Those exist to spare
 // an API tree one request per directory, and this mount has no such cost: the
@@ -34,21 +29,23 @@ import { write as hubWrite } from '../../../core/hf_hub/write.ts'
 // here would buy a constant factor and cost a second implementation of the
 // same traversal.
 //
-// cp and mv are absent because the Hub has no server-side copy or rename;
-// both would be read-then-commit, which the generic already spells.
+// The mount is read-only, and the byte-mutation ops are absent the way
+// github's are. A Hub write is a COMMIT: `write` commits one file under one
+// canned message, so `cp -r` over fifty files would leave fifty commits
+// rather than one changeset. A POSIX write cannot say where a commit ends, so
+// the filesystem is the wrong verb for this backend and the `hf` CLI is the
+// right one: `hf upload` batches every file of one invocation into a single
+// commit carrying the message the line gave it. That is the same split github
+// and `git` already draw, and it is why cp and mv are absent too rather than
+// synthesized from read-then-commit.
 export const HF_HUB_IO: CommandIO<HfHubAccessor> = {
   readdir: hubReaddir,
   readBytes: hubRead,
   readRange: rangeOf(hubRead),
   readStream: hubStream,
   stat: hubStat,
+  exists: hubExists,
   isMounted: () => true,
   local: false,
   maxGlobMatches: SCOPE_ERROR,
-  write: hubWrite,
-  exists: hubExists,
-  mkdir: (accessor, path) => hubMkdir(accessor, path),
-  unlink: hubUnlink,
-  rmR: hubRmR,
-  create: hubCreate,
 }

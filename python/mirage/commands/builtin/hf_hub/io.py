@@ -14,17 +14,12 @@
 
 from mirage.commands.builtin.generic_bind import CommandIO
 from mirage.core.hf_hub.constants import SCOPE_ERROR
-from mirage.core.hf_hub.create import create as _create
 from mirage.core.hf_hub.exists import exists as _exists
-from mirage.core.hf_hub.mkdir import mkdir as _mkdir
 from mirage.core.hf_hub.read import read_bytes as _read
 from mirage.core.hf_hub.readdir import readdir as _readdir
-from mirage.core.hf_hub.rm import rm_r as _rm_r
 from mirage.core.hf_hub.stat import stat as _stat
 from mirage.core.hf_hub.stream import range_read as _range_read
 from mirage.core.hf_hub.stream import read_stream as _read_stream
-from mirage.core.hf_hub.unlink import unlink as _unlink
-from mirage.core.hf_hub.write import write_bytes as _write
 
 # No native find or du op, and that is not an omission. Those exist to
 # spare an API tree one request per directory, and this mount has no such
@@ -33,22 +28,24 @@ from mirage.core.hf_hub.write import write_bytes as _write
 # against it. A native walk here would buy a constant factor and cost a
 # second implementation of the same traversal.
 #
-# cp and mv are absent because the Hub has no server-side copy or rename;
-# both would be read-then-commit, which the generic already spells.
+# The mount is read-only, and the byte-mutation ops are absent the way
+# github's are. A Hub write is a COMMIT: `write_bytes` commits one file
+# under one canned message, so `cp -r` over fifty files would leave fifty
+# commits rather than one changeset. A POSIX write cannot say where a
+# commit ends, so the filesystem is the wrong verb for this backend and
+# the `hf` CLI is the right one: `hf upload` batches every file of one
+# invocation into a single commit carrying the message the line gave it.
+# That is the same split github and `git` already draw, and it is why cp
+# and mv are absent too rather than synthesized from read-then-commit.
 IO = CommandIO(
     readdir=_readdir,
     read_bytes=_read,
     read_range=_read,
     read_stream=_read_stream,
     stat=_stat,
+    exists=_exists,
     is_mounted=lambda a: True,
     local=False,
-    write=_write,
-    exists=_exists,
-    mkdir=_mkdir,
-    unlink=_unlink,
-    rm_r=_rm_r,
-    create=_create,
     max_glob_matches=SCOPE_ERROR,
 )
 
