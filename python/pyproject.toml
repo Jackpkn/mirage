@@ -97,7 +97,11 @@ ssh      = ["asyncssh>=2.23.0"]
 nextcloud = ["opendal>=0.47.1"]
 
 # --- huggingface ---
-hf       = ["opendal>=0.47.1"]
+# hf_buckets is HF's Xet object store and reaches it through OpenDAL. The
+# three Hub repo resources (hf_models / hf_datasets / hf_spaces) speak the
+# Hub API over aiohttp, which is a core dependency, so they need no extra
+# at all and must not be documented as needing this one.
+hf-buckets = ["opendal>=0.47.1"]
 
 # --- mount ---
 fuse     = ["mfusepy>=1.0.0"]
@@ -182,7 +186,7 @@ all = [
     "mirage-ai[databricks]",
     "mirage-ai[ssh]",
     "mirage-ai[nextcloud]",
-    "mirage-ai[hf]",
+    "mirage-ai[hf-buckets]",
     "mirage-ai[fuse]",
     "mirage-ai[mongodb]",
     "mirage-ai[gridfs]",
@@ -211,7 +215,7 @@ sandbox = [
     "mirage-ai[databricks]",
     "mirage-ai[ssh]",
     "mirage-ai[nextcloud]",
-    "mirage-ai[hf]",
+    "mirage-ai[hf-buckets]",
     "mirage-ai[fuse]",
     "mirage-ai[mongodb]",
     "mirage-ai[gridfs]",
