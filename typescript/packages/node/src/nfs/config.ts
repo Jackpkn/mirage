@@ -19,7 +19,7 @@ export const DEFAULT_MAX_BUFFERED_BYTES = 16 * 1024 * 1024
 // Four handles' worth. The per-handle ceiling bounds one file;
 // without a sum, `cp -r` of many large files grows the process
 // without limit.
-export const DEFAULT_MAX_TOTAL_BUFFERED_BYTES = 64 * 1024 * 1024
+const DEFAULT_MAX_TOTAL_BUFFERED_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEO_DECISECONDS = 50
 const DEFAULT_RETRANS = 3
 const DEFAULT_DEAD_TIMEOUT_SECONDS = 60
@@ -97,8 +97,7 @@ export class NFSConfig {
     this.port = init.port ?? DEFAULT_PORT
     this.idleFlushSeconds = init.idleFlushSeconds ?? DEFAULT_IDLE_FLUSH_SECONDS
     this.maxBufferedBytes = init.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES
-    this.maxTotalBufferedBytes =
-      init.maxTotalBufferedBytes ?? DEFAULT_MAX_TOTAL_BUFFERED_BYTES
+    this.maxTotalBufferedBytes = init.maxTotalBufferedBytes ?? DEFAULT_MAX_TOTAL_BUFFERED_BYTES
     this.soft = init.soft ?? true
     this.timeo = init.timeo ?? DEFAULT_TIMEO_DECISECONDS
     this.retrans = init.retrans ?? DEFAULT_RETRANS

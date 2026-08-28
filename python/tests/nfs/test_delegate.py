@@ -686,8 +686,7 @@ def test_the_total_buffer_is_bounded_across_files():
     # max_buffered_bytes bounds one handle, so N files written at once
     # cost N times it and nothing bounded the sum: a `cp -r` of many
     # large files grew the process without limit.
-    config = NFSConfig(max_buffered_bytes=1024,
-                       max_total_buffered_bytes=2048)
+    config = NFSConfig(max_buffered_bytes=1024, max_total_buffered_bytes=2048)
     ops = FakeOps()
     fs = MirageNFS(ops, config)
     root = fs.root_dir()

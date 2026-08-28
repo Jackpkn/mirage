@@ -44,7 +44,7 @@ function descendantPrefix(path: string): string {
  * is needed; `state_sync.test.ts` pins that invariant, since one
  * added await would break it silently.
  */
-export const COOKIE_TOMBSTONES = 4096
+const COOKIE_TOMBSTONES = 4096
 
 export class IdTable {
   private nextId = 1

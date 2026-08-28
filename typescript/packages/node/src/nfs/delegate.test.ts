@@ -548,4 +548,3 @@ describe('readdir', () => {
     expect(bounded.bufferedBytes()).toBeLessThanOrEqual(2048)
   })
 })
-

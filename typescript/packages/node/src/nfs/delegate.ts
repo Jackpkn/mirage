@@ -244,11 +244,13 @@ export class MirageNFS {
     // instead lets an idle flush land between the unlink and the drop
     // and recreate what was just removed.
     const previous = this.flushChains.get(fileid) ?? Promise.resolve()
-    const mine = previous.catch(() => undefined).then(async () => {
-      await this.removeEntry(path)
-      this.writes.drop(fileid)
-      this.ids.invalidate(fileid)
-    })
+    const mine = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await this.removeEntry(path)
+        this.writes.drop(fileid)
+        this.ids.invalidate(fileid)
+      })
     this.flushChains.set(fileid, mine)
     try {
       await mine
