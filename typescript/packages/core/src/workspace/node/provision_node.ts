@@ -107,11 +107,17 @@ interface ProvisionContext {
  * Walk-local planner state. Function definitions seen during this
  * plan are recorded here (not on the session: planning must not
  * mutate shell state), and `planning` guards recursive functions
- * from looping the planner.
+ * from looping the planner. `gated` hands the REDIRECT arm's
+ * admission verdict (its classified words, keyed by the command
+ * node) to the inner COMMAND arm: the run admits a redirected
+ * command once, with its targets, so the plan must not consult
+ * `preCommand` a second time for the same statement. Each entry is
+ * deleted by the recursion that consumes it.
  */
 interface PlanScope {
   functions: Map<string, TSNodeLike[]>
   planning: Set<string>
+  gated: Map<TSNodeLike, (string | PathSpec)[]>
 }
 
 // Plan one redirected command: expand targets, cost, degrade. A cmdsub
@@ -220,7 +226,7 @@ async function provisionRedirected(
     const name = getCommandName(cmdNode)
     const [, cmdParts] = splitEnvPrefix(getParts(cmdNode))
     if (cmdParts.length > 0) {
-      const [refusal] = await gateCommand(
+      const [refusal, classified] = await gateCommand(
         ctx,
         name,
         cmdParts,
@@ -229,6 +235,11 @@ async function provisionRedirected(
         targets.map(([, t]) => t),
       )
       if (refusal !== null) return refusal
+      // This verdict, judged with its redirects, covers the whole
+      // statement: the recursion below re-plans the same COMMAND node,
+      // and it consumes this instead of consulting `preCommand` a
+      // second time for one command.
+      planScope.gated.set(cmdNode, classified)
     }
   }
   const result = await handleRedirectProvision(
@@ -273,7 +284,11 @@ export async function provisionNode(
   session: Session,
   scope?: PlanScope,
 ): Promise<ProvisionResult> {
-  const planScope: PlanScope = scope ?? { functions: new Map(), planning: new Set() }
+  const planScope: PlanScope = scope ?? {
+    functions: new Map(),
+    planning: new Set(),
+    gated: new Map(),
+  }
   const recurse = (n: TSNodeLike, s: Session): Promise<ProvisionResult> =>
     provisionNode(ctx, n, s, planScope)
   const recurseUnknown = (n: unknown, s: Session): Promise<ProvisionResult> =>
@@ -305,9 +320,17 @@ export async function provisionNode(
     // The gate fires ahead of the function and builtin arms, mirroring
     // the executor's chokepoint: a denied function must not have its
     // body walked, and a denied builtin must not come back as an
-    // admitted-looking EXACT plan.
-    const [refusal, classified] = await gateCommand(ctx, name, parts, session, planScope)
-    if (refusal !== null) return refusal
+    // admitted-looking EXACT plan. A REDIRECT arm that already admitted
+    // this very node (with its targets) hands its verdict down instead
+    // of a second `preCommand` consultation.
+    let classified = planScope.gated.get(node)
+    if (classified !== undefined) {
+      planScope.gated.delete(node)
+    } else {
+      const [refusal, gatedWords] = await gateCommand(ctx, name, parts, session, planScope)
+      if (refusal !== null) return refusal
+      classified = gatedWords
+    }
     const funcBody =
       planScope.functions.get(name) ?? (session.functions[name] as TSNodeLike[] | undefined)
     if (funcBody !== undefined) {

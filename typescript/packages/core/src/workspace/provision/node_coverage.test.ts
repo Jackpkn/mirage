@@ -266,7 +266,33 @@ class NoInternCat implements Policy {
   }
 }
 
+class Counting implements Policy {
+  readonly commands: string[] = []
+  preCommand(ctx: CommandContext): Action | null {
+    this.commands.push(ctx.command)
+    return null
+  }
+}
+
 describe('provision clears the command gate first', () => {
+  it('preCommand is consulted once per redirected command', async () => {
+    // The run admits `cat < file` on one call, command and targets
+    // together; the plan's REDIRECT arm gates the same way and hands
+    // its verdict to the inner COMMAND recursion, so a stateful or
+    // metered hook is consulted exactly once per statement, never twice.
+    const counting = new Counting()
+    const ws = buildWorkspace([counting])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      counting.commands.length = 0
+      const result = await ws.execute('cat < /data/a.txt', { provision: true })
+      expect(result.networkRead).toBe('24')
+      expect(counting.commands).toEqual(['cat'])
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('a denied command is not priced', async () => {
     // A dry run reads the backend to price the line (stats, listings),
     // so a command the policy refuses is not estimated either: the

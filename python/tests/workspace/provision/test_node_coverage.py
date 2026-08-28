@@ -162,6 +162,36 @@ class _NoF(Policy):
         return None
 
 
+class _Counting(Policy):
+
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+
+    async def pre_command(self, ctx: CommandContext) -> Action | None:
+        self.commands.append(ctx.command)
+        return None
+
+
+@pytest.mark.asyncio
+async def test_provision_consults_pre_command_once_per_redirected_command():
+    # The run admits `cat < file` on one call, command and targets
+    # together; the plan's REDIRECT arm gates the same way and hands
+    # its verdict to the inner COMMAND recursion, so a stateful or
+    # metered hook is consulted exactly once per statement, never twice.
+    counting = _Counting()
+    ws = Workspace({"/data": RAMResource()},
+                   mode=MountMode.WRITE,
+                   policies=[counting])
+    try:
+        await ws.execute("tee /data/a.txt > /dev/null", stdin=b"x" * 24)
+        counting.commands.clear()
+        result = await ws.execute("cat < /data/a.txt", provision=True)
+        assert result.network_read == "24"
+        assert counting.commands == ["cat"]
+    finally:
+        await ws.close()
+
+
 @pytest.mark.asyncio
 async def test_provision_gates_a_builtin_before_pricing_its_redirect():
     # The executor admits every command class at one chokepoint, with

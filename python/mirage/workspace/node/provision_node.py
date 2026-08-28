@@ -88,9 +88,15 @@ class PlanScope:
     Function definitions seen during this plan are recorded here (not
     on the session: planning must not mutate shell state), and
     `planning` guards recursive functions from looping the planner.
+    `gated` hands the REDIRECT arm's admission verdict (its classified
+    words, keyed by the command node's id) to the inner COMMAND arm:
+    the run admits a redirected command once, with its targets, so the
+    plan must not consult ``pre_command`` a second time for the same
+    statement. Each entry is popped by the recursion that consumes it.
     """
     functions: dict[str, FunctionBody] = field(default_factory=dict)
     planning: set[str] = field(default_factory=set)
+    gated: dict[int, list[str | PathSpec]] = field(default_factory=dict)
 
 
 async def handle_builtin_provision() -> ProvisionResult:
@@ -216,17 +222,23 @@ async def _provision_redirected(
         name = get_command_name(command)
         _, cmd_parts = split_env_prefix(get_parts(command))
         if cmd_parts:
-            refusal, _ = await _gate_command(registry,
-                                             namespace,
-                                             execute_fn,
-                                             name,
-                                             cmd_parts,
-                                             session,
-                                             plan_scope,
-                                             agent_id,
-                                             redirects=[t for _, t in targets])
+            refusal, classified = await _gate_command(
+                registry,
+                namespace,
+                execute_fn,
+                name,
+                cmd_parts,
+                session,
+                plan_scope,
+                agent_id,
+                redirects=[t for _, t in targets])
             if refusal is not None:
                 return refusal
+            # This verdict, judged with its redirects, covers the whole
+            # statement: the recursion below re-plans the same COMMAND
+            # node, and it consumes this instead of consulting
+            # ``pre_command`` a second time for one command.
+            plan_scope.gated[id(command)] = classified
     result = await handle_redirect_provision(recurse, registry, command,
                                              targets, session, namespace)
     if any(r.kind not in (RedirectKind.HEREDOC, RedirectKind.HERESTRING) and r.
@@ -338,13 +350,19 @@ async def provision_node(
         # The gate fires ahead of the function and builtin arms,
         # mirroring the executor's chokepoint: a denied function must
         # not have its body walked, and a denied builtin must not come
-        # back as an admitted-looking EXACT plan.
-        refusal, classified = await _gate_command(registry, namespace,
-                                                  execute_fn, name, parts,
-                                                  session, plan_scope,
-                                                  agent_id)
-        if refusal is not None:
-            return refusal
+        # back as an admitted-looking EXACT plan. A REDIRECT arm that
+        # already admitted this very node (with its targets) hands its
+        # verdict down instead of a second ``pre_command`` consultation.
+        gated = plan_scope.gated.pop(id(node), None)
+        if gated is not None:
+            classified = gated
+        else:
+            refusal, classified = await _gate_command(registry, namespace,
+                                                      execute_fn, name, parts,
+                                                      session, plan_scope,
+                                                      agent_id)
+            if refusal is not None:
+                return refusal
         func_body = plan_scope.functions.get(name)
         if func_body is None:
             func_body = session.functions.get(name)
