@@ -230,3 +230,23 @@ def test_run_umount_warns_when_nothing_clears_the_mount(monkeypatch, caplog):
 def test_config_is_reused_for_defaults():
     assert NFSConfig().port == 20490
     assert sys.platform in ("darwin", "linux", "win32")
+
+
+def test_mount_args_take_the_source_host_from_the_config():
+    # The server binds to config.host, so a config naming another
+    # loopback alias would otherwise be mounted from an address nothing
+    # is listening on.
+    argv = mount_args("/tmp/m",
+                      20490,
+                      "/docs",
+                      config=NFSConfig(host="127.0.0.2"),
+                      platform="darwin")
+
+    assert "127.0.0.2:/docs" in argv
+    assert "127.0.0.1:/docs" not in argv
+
+
+def test_mount_args_default_to_loopback():
+    argv = mount_args("/tmp/m", 20490, "/docs", platform="darwin")
+
+    assert "127.0.0.1:/docs" in argv

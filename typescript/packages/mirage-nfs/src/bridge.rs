@@ -20,7 +20,7 @@ use nfsserve::nfs::nfsstat3;
 /// One delegate method: a ThreadsafeFunction taking a single args
 /// object and resolving a reply object. No exception ever crosses the
 /// boundary -- the TS wrapper catches, classifies through the shared
-/// fuse/errors machinery, and resolves `{ errno }`; this side only
+/// mount/errors machinery, and resolves `{ errno }`; this side only
 /// maps errno onto the wire status.
 pub type Method<Args> = ThreadsafeFunction<Args, ErrorStrategy::Fatal>;
 
@@ -54,7 +54,7 @@ pub trait HasErrno {
 
 /// errno -> NFS status, the same table the PyO3 crate carries; the
 /// classification itself (typed error -> errno) happens in TypeScript
-/// through the shared fuse/errors machinery.
+/// through the shared mount/errors machinery.
 pub fn errno_to_status(errno: i32) -> nfsstat3 {
     match errno {
         1 => nfsstat3::NFS3ERR_PERM,

@@ -131,8 +131,13 @@ def mount_args(mountpoint: str,
         list[str]: argv for the platform's mount command.
     """
     tag = sys.platform if platform is None else platform
-    source = f"127.0.0.1:{export}"
-    opts = mount_options(port, config or NFSConfig(), tag)
+    knobs = config or NFSConfig()
+    # The host the server was bound to, not a hardcoded loopback: a
+    # config naming another address (127.0.0.2, a second loopback alias)
+    # binds there and would otherwise be mounted from an address nothing
+    # is listening on.
+    source = f"{knobs.host}:{export}"
+    opts = mount_options(port, knobs, tag)
     if tag == "darwin":
         return ["mount_nfs", "-o", opts, source, mountpoint]
     return ["mount", "-t", "nfs", "-o", opts, source, mountpoint]

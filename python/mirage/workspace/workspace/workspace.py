@@ -26,6 +26,7 @@ from mirage.commands.cli import CLISpec
 from mirage.commands.cli.specs import cli_spec_for
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
+from mirage.mount.backend import KernelRoute, route_of
 from mirage.nfs.config import NFSConfig
 from mirage.observe.observer import Observer
 from mirage.observe.record import OpRecord
@@ -250,9 +251,12 @@ class Workspace:
                 self._registry.clis.install(cli_name, cli_spec, cli_config)
 
         for prefix, target_backend, target_point in kernel_targets(specs):
-            if target_backend is MountBackend.NFS:
+            if route_of(target_backend) is KernelRoute.LOOP:
                 # Served by the caller's loop, which this constructor is
-                # not running on; the first ``execute`` mounts it.
+                # not running on; the first ``execute`` mounts it. Asked
+                # of the route table rather than tested against nfs, so
+                # the next loop-served backend cannot silently take the
+                # thread route and deadlock here.
                 self._kernel_mounts.defer_nfs(prefix, target_point)
             else:
                 self.add_fuse_mount(prefix,

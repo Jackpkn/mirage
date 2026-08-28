@@ -89,8 +89,8 @@ impl Delegate {
 ///
 /// `StaleHandleError` answers STALE directly -- staleness is not a
 /// POSIX condition and carries no errno. Everything else goes through
-/// ``mirage.mount.errors.classify_error``, the same shared table the
-/// FUSE adapter uses, so a mirage exception is named once in one
+/// ``mirage.mount.errors.classify_error``, the shared table every
+/// kernel adapter uses, so a mirage exception is named once in one
 /// place: it classifies typed exceptions (FileNotFoundError and kin)
 /// as well as errno-carrying OSErrors. Anything it cannot name is a
 /// server fault rather than a lie about the file.

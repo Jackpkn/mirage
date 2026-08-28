@@ -51,9 +51,11 @@ impl MirageVFS {
     /// Build a fattr3 from the duck-typed attrs a delegate returns.
     ///
     /// Reads fileid, size, is_dir, is_symlink, plus optional mode and
-    /// mtime_epoch. mode falls back to 755/644 the way the FUSE core's
-    /// dir_stat/file_stat do; uid and gid are the server process's,
-    /// which is what a loopback mount should show.
+    /// mtime_epoch, which is epoch SECONDS -- nfstime3.seconds is a
+    /// u32, so anything finer saturates it and dates every file 2106.
+    /// mode falls back to 755/644 the way mount/stat's dir_stat and
+    /// file_stat do; uid and gid are the server process's, which is
+    /// what a loopback mount should show.
     fn attrs(&self, obj: &Py<PyAny>) -> Result<fattr3, nfsstat3> {
         Python::with_gil(|py| {
             let bound = obj.bind(py);
@@ -140,7 +142,8 @@ impl NFSFileSystem for MirageVFS {
 
     async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3> {
         // Size is the one attribute that acts; the delegate discards
-        // the rest, exactly as the FUSE adapter does.
+        // the rest, the way every mirage kernel mount does -- a backend
+        // has nowhere to persist mode, owner or times.
         let size = match setattr.size {
             set_size3::size(value) => Some(value),
             set_size3::Void => None,

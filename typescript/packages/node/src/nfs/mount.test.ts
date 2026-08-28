@@ -62,6 +62,22 @@ function target(overrides: Partial<NFSDelegateTarget> = {}): NFSDelegateTarget {
 }
 
 describe('mountArgs', () => {
+  it('takes the source host from the config', () => {
+    // The server binds to config.host, so a config naming another
+    // loopback alias would otherwise be mounted from an address
+    // nothing is listening on.
+    const argv = mountArgs('/tmp/m', 20490, '/docs', new NFSConfig({ host: '127.0.0.2' }), 'darwin')
+
+    expect(argv).toContain('127.0.0.2:/docs')
+    expect(argv).not.toContain('127.0.0.1:/docs')
+  })
+
+  it('defaults to loopback', () => {
+    const argv = mountArgs('/tmp/m', 20490, '/docs', new NFSConfig(), 'darwin')
+
+    expect(argv).toContain('127.0.0.1:/docs')
+  })
+
   it('pins port, mountport and actimeo on darwin', () => {
     const argv = mountArgs('/tmp/m', 20490, '/docs', new NFSConfig(), 'darwin')
     expect(argv[0]).toBe('mount_nfs')

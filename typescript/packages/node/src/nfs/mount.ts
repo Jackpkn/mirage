@@ -349,7 +349,11 @@ export function mountArgs(
   config: NFSConfig = new NFSConfig(),
   platform: string = process.platform,
 ): [string, ...string[]] {
-  const source = `127.0.0.1:${exportPath}`
+  // The host the server was bound to, not a hardcoded loopback: a
+  // config naming another address (127.0.0.2, a second loopback alias)
+  // binds there and would otherwise be mounted from an address nothing
+  // is listening on.
+  const source = `${config.host}:${exportPath}`
   const opts = mountOptions(port, config, platform)
   if (platform === 'darwin') return ['mount_nfs', '-o', opts, source, mountpoint]
   return ['mount', '-t', 'nfs', '-o', opts, source, mountpoint]
