@@ -41,6 +41,10 @@ export async function repoOf(
   })
 }
 
+export async function reposOfKind(db: C, tenant: string, kind: string): Promise<Repo[]> {
+  return db.hfRepo.findMany({ where: { tenant, kind }, orderBy: { seq: 'asc' } })
+}
+
 export async function refsOf(db: C, tenant: string, repo: string): Promise<Ref[]> {
   return db.hfRef.findMany({ where: { tenant, repo }, orderBy: { name: 'asc' } })
 }

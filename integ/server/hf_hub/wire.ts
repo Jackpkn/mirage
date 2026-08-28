@@ -24,6 +24,10 @@ export interface Repo {
   private: boolean
   sdk: string | null
   createdAt: string
+  sourceDir: string
+  downloads: number
+  likes: number
+  gated: string
   seq: number
 }
 

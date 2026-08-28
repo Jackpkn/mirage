@@ -27,11 +27,14 @@ import {
   blobsAt,
   commitChanges,
   createRepo,
+  headSha,
   refsOf,
+  reposOfKind,
   repoOf,
   resolveRevision,
   type Change,
 } from './store.ts'
+import { cardTags, parseCard } from './card.ts'
 import {
   dirRow,
   entryNotFound,
@@ -43,6 +46,7 @@ import {
   revisionNotFound,
   treeRow,
   unauthorized,
+  type Blob as HfBlobRow,
   type Repo,
 } from './wire.ts'
 
@@ -94,6 +98,122 @@ function isReply(v: Located | Reply): v is Reply {
   return 'status' in v
 }
 
+// ------------------------------------------------------------------ search
+
+// Upstream's sort keys, verbatim (`ModelSort_T`): a client passes one of
+// these five and nothing else, so an unknown one is ignored rather than
+// guessed at, which is what the Hub does.
+const SORT_KEYS: Record<string, (r: Ranked) => number | string> = {
+  downloads: (r) => r.repo.downloads,
+  likes: (r) => r.repo.likes,
+  created_at: (r) => r.repo.createdAt,
+  last_modified: (r) => r.lastModified,
+  trending_score: (r) => r.repo.likes,
+}
+
+interface Ranked {
+  repo: Repo
+  sha: string
+  blobs: HfBlobRow[]
+  lastModified: string
+  tags: string[]
+}
+
+/**
+ * List or search repositories of one kind.
+ *
+ * Matching is deliberately naive, a case-insensitive substring over the id,
+ * because the Hub's own relevance ranking is not reproducible and pretending
+ * otherwise would bake a fiction into the goldens. What IS aligned is the
+ * part a client breaks on: the parameter names (`search`, `author`, `filter`,
+ * `sort`, `direction`, `limit`, `full`), the five legal sort keys, and the
+ * shape of each row.
+ *
+ * `full=false` is the Hub's default and returns a trimmed row; `expand`
+ * names individual properties instead. A row always carries its id, which is
+ * the one field no `expand` can remove.
+ */
+async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
+  if (!authed(ctx)) return unauthorized()
+  const search = (ctx.query.get('search') ?? '').toLowerCase()
+  const author = ctx.query.get('author') ?? ''
+  const filters = ctx.query.getAll('filter')
+  const sort = ctx.query.get('sort') ?? ''
+  const direction = ctx.query.get('direction') ?? ''
+  const rawLimit = ctx.query.get('limit')
+  const full = truthy(ctx.query.get('full'))
+  const expand = ctx.query.getAll('expand')
+
+  const ranked: Ranked[] = []
+  for (const repo of await reposOfKind(ctx.db, ctx.tenant, kind)) {
+    if (author !== '' && repo.namespace !== author) continue
+    if (search !== '' && !repoId(repo).toLowerCase().includes(search)) continue
+    const sha = await headSha(ctx.db, ctx.tenant, repoKey(repo.kind, repo.namespace, repo.name))
+    const blobs =
+      sha === ''
+        ? []
+        : await blobsAt(ctx.db, ctx.tenant, repoKey(repo.kind, repo.namespace, repo.name), sha)
+    const readme = blobs.find((b) => b.path === 'README.md')
+    const tags = cardTags(
+      readme === undefined ? {} : parseCard(Buffer.from(readme.content).toString('utf8')),
+    )
+    // Every filter must match, which is the Hub's rule: `?filter=a&filter=b`
+    // narrows rather than widens.
+    if (!filters.every((f) => tags.includes(f))) continue
+    ranked.push({ repo, sha, blobs, lastModified: blobs[0]?.lastModified ?? repo.createdAt, tags })
+  }
+
+  const key = SORT_KEYS[sort]
+  if (key !== undefined) {
+    ranked.sort((a, b) => {
+      const [x, y] = [key(a), key(b)]
+      return x < y ? -1 : x > y ? 1 : 0
+    })
+    // The Hub defaults to descending for a named sort, and -1 is the only
+    // spelling it accepts for the other direction.
+    if (direction !== '1') ranked.reverse()
+  }
+
+  const limit = rawLimit === null ? ranked.length : Math.max(0, Number(rawLimit) || 0)
+  const rows = ranked.slice(0, limit).map((r) => {
+    const body = obj(repoBody(r.repo, r.sha, r.blobs))
+    if (full || (expand.length === 0 && sort === '' && search === '' && filters.length === 0)) {
+      return body
+    }
+    if (expand.length === 0) return trimmed(body)
+    const out: Record<string, JsonValue> = { id: body.id ?? '' }
+    for (const name of expand) if (body[name] !== undefined) out[name] = body[name]
+    return out
+  })
+  return { status: 200, body: rows }
+}
+
+// The Hub's non-`full` row. It is not "the whole object minus siblings": it
+// is a short list the API commits to, and a client that asked for a listing
+// rather than an info call gets exactly this.
+function trimmed(body: Record<string, JsonValue>): Record<string, JsonValue> {
+  const out: Record<string, JsonValue> = {}
+  for (const k of [
+    'id',
+    'modelId',
+    'author',
+    'sha',
+    'private',
+    'gated',
+    'disabled',
+    'createdAt',
+    'lastModified',
+    'downloads',
+    'likes',
+    'tags',
+    'pipeline_tag',
+    'library_name',
+  ]) {
+    if (body[k] !== undefined) out[k] = body[k]
+  }
+  return out
+}
+
 // ---------------------------------------------------------------- repo info
 
 async function repoInfo(ctx: Ctx<C>): Promise<Reply> {
@@ -103,23 +223,49 @@ async function repoInfo(ctx: Ctx<C>): Promise<Reply> {
   const revision = ctx.params.rev ?? DEFAULT_REVISION
   const sha = await resolveRevision(ctx.db, ctx.tenant, key, revision)
   if (sha === null) return revisionNotFound(revision)
-  const refs = await refsOf(ctx.db, ctx.tenant, key)
   const blobs = await blobsAt(ctx.db, ctx.tenant, key, sha)
+  return { status: 200, body: repoBody(repo, sha, blobs) }
+}
+
+/**
+ * One repository as the Hub renders it, for both the info and list routes.
+ *
+ * `cardData` is parsed out of README.md rather than stored, because a Hub
+ * card IS that file: two copies of `license` could disagree, and the card is
+ * the one a human edits. `tags` are the Hub's facets derived from it, NOT
+ * git tags, which live at /refs; the two were conflated here, so
+ * `hf repo tag create v1` used to surface as a facet on the model object.
+ */
+function repoBody(repo: Repo, sha: string, blobs: HfBlobRow[]): JsonValue {
+  const readme = blobs.find((b) => b.path === 'README.md')
+  const card = readme === undefined ? {} : parseCard(Buffer.from(readme.content).toString('utf8'))
+  const models = repo.kind === 'models'
   return {
-    status: 200,
-    body: {
-      id: repoId(repo),
-      // The Hub renders the id twice, once bare and once under the kind's own
-      // key, and clients read either.
-      modelId: repo.kind === 'models' ? repoId(repo) : null,
-      sha,
-      private: repo.private,
-      createdAt: repo.createdAt,
-      lastModified: blobs[0]?.lastModified ?? repo.createdAt,
-      tags: refs.filter((r) => r.refType === 'tag').map((r) => r.name),
-      siblings: blobs.map((b) => ({ rfilename: b.path })),
-      ...(repo.sdk !== null ? { sdk: repo.sdk } : {}),
-    },
+    id: repoId(repo),
+    // The Hub renders the id twice, once bare and once under the kind's own
+    // key, and clients read either.
+    modelId: models ? repoId(repo) : null,
+    author: repo.namespace,
+    sha,
+    private: repo.private,
+    // "" is the Hub's "not gated"; the other two values name which flavour of
+    // gating applies, so this is not a boolean.
+    gated: repo.gated === '' ? false : repo.gated,
+    disabled: false,
+    createdAt: repo.createdAt,
+    lastModified: blobs[0]?.lastModified ?? repo.createdAt,
+    downloads: repo.downloads,
+    likes: repo.likes,
+    tags: cardTags(card),
+    cardData: card,
+    ...(models
+      ? {
+          pipeline_tag: card.pipeline_tag ?? null,
+          library_name: card.library_name ?? null,
+        }
+      : {}),
+    siblings: blobs.map((b) => ({ rfilename: b.path })),
+    ...(repo.sdk !== null ? { sdk: repo.sdk } : {}),
   }
 }
 
@@ -568,6 +714,9 @@ function resolveRoutes(kind: string, prefix: string): KitRoute<C>[] {
 export function hfHubRoutes(): KitRoute<C>[] {
   return [
     route('GET', '/api/whoami-v2', whoami),
+    // Two segments, where every repo route has three or more, so these cannot
+    // collide with the `/api/:kind/:name` pair the comment below is about.
+    ...KINDS.map((k) => route<C>('GET', `/api/${k}`, (ctx) => listRepos(k, ctx))),
     route('POST', '/api/repos/create', createRepoRoute, { write: true }),
     route('DELETE', '/api/repos/delete', deleteRepoRoute, { write: true }),
     // Every suffixed route comes FIRST, and the bare repoInfo pair last.
