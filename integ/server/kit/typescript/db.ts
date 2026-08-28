@@ -157,26 +157,38 @@ export class ClientPool<C extends MinimalClient> {
     return made
   }
 
+  // The throwaway is NOT a run, so it is built without ever entering the run
+  // registry or the run directory. Registering it made `runs()` report an
+  // internal build for the length of a seed, and /_kit/health hands that list
+  // straight to whoever is polling, so a caller-inaccessible name briefly
+  // appeared among their own worlds. Keeping it out is better than filtering
+  // it out of `runs()`: there is then nothing to filter, and no way for a
+  // later reader of `clients` to have to know about it either.
   private async buildTemplate(seed: (db: C) => Promise<SeedReport[]>): Promise<SeededTemplate> {
     // Taken ONCE, before the first await, and used for both names. Reading the
     // counter again after the seed gave two concurrent builds the same number,
     // so two different keys could write the same template file and the second
     // silently handed the first key's later runs another fixture's database.
     const n = String(this.builds++)
-    const build = `_build-${n}`
+    const scratch = join(this.internal, `build-${n}.db`)
+    copyFileSync(this.ensureTemplate(), scratch)
+    const db = new this.ctor({ datasourceUrl: `file:${scratch}` })
     try {
-      const rows = await seed(this.client(build))
-      await this.close(build)
+      const rows = await seed(db)
+      // Before the copy, not after: SQLite writes through a -wal that only the
+      // last connection closing folds back in, so a snapshot taken while this
+      // is open would be missing the seed's most recent commits.
+      await db.$disconnect()
       const file = join(this.internal, `seeded-${n}.db`)
-      copyFileSync(this.fileFor(build), file)
+      copyFileSync(scratch, file)
       return { file, rows }
     } finally {
       // Also on the failure path. The rejected promise is evicted so a later
       // reset retries, so without this every retry left another live client
       // and another set of SQLite files behind until disposal.
-      await this.close(build)
+      await db.$disconnect()
       for (const suffix of ['', '-journal', '-wal', '-shm']) {
-        rmSync(`${this.fileFor(build)}${suffix}`, { force: true })
+        rmSync(`${scratch}${suffix}`, { force: true })
       }
     }
   }

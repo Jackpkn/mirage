@@ -804,6 +804,16 @@ async function main(): Promise<void> {
       })
       // Into the middle of the seed, which tenant `slow` holds open for 300ms.
       await new Promise((ok) => setTimeout(ok, 100))
+      // /_kit/health describes the caller's own worlds, so the throwaway the
+      // template is built in must never appear among them. It used to, for the
+      // length of the seed, because it was registered in the same client map
+      // runs() reads.
+      const mid = await call(lazy, '/_kit/health')
+      check(
+        'health lists no internal build while one is running',
+        (mid.json as { runs: string[] }).runs.every((r) => !r.startsWith('_')),
+        JSON.stringify(mid.json),
+      )
       const raced = await call(lazy, '/boards', { runInPath: 'z1', tenant: 'slow' })
       const done = await resetting
       check('the reset succeeds', done.status === 200, JSON.stringify(done.json))
