@@ -274,5 +274,19 @@
         "stderr": ""
       }
     }
+,
+    {
+      "id": "hf_a_local_mount_is_the_writable_copy",
+      "seq": 960122,
+      "targets": [
+        "cli-hf"
+      ],
+      "command": "hf download integ/repo-cli one_byte.txt --local-dir /scratch/wt --quiet > /dev/null && echo -n xy > /scratch/wt/one_byte.txt && hf upload integ/repo-cli /scratch/wt/one_byte.txt one_byte.txt --commit-message edit --quiet > /dev/null && hf download integ/repo-cli one_byte.txt --local-dir /scratch/rt --quiet > /dev/null && cat /scratch/rt/one_byte.txt",
+      "expect": {
+        "exit": 0,
+        "stdout": "xy",
+        "stderr": ""
+      }
+    }
   ]
 }

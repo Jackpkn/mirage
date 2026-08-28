@@ -38,6 +38,12 @@ import { stream as hubStream } from '../../../core/hf_hub/stream.ts'
 // commit carrying the message the line gave it. That is the same split github
 // and `git` already draw, and it is why cp and mv are absent too rather than
 // synthesized from read-then-commit.
+//
+// The writable copy is a LOCAL mount, and that is the workflow rather than a
+// workaround: `hf download --local-dir /work` writes into a ram or disk mount,
+// which is an ordinary writable filesystem, so the files are edited there with
+// ordinary commands and `hf upload /work/f path` sends one commit back. Pinned
+// end to end by `hf_a_local_mount_is_the_writable_copy` in integ/cli/hf.json.
 export const HF_HUB_IO: CommandIO<HfHubAccessor> = {
   readdir: hubReaddir,
   readBytes: hubRead,
