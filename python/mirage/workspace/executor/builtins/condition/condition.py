@@ -23,8 +23,7 @@ from mirage.workspace.executor.builtins.condition.tree import eval_cond
 from mirage.workspace.executor.builtins.condition.types import (CondContext,
                                                                 CondError,
                                                                 CondNode)
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode

@@ -18,12 +18,10 @@ import { parseOptionWord } from '../../../../shell/options.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
-import type { ExecuteStringFn } from '../scope.ts'
-import type { Result } from '../shared.ts'
 import { BASH_LONG_OPTIONS, BASH_START_FLAGS } from './constants.ts'
 import { readScriptFile, scriptError } from './script.ts'
 import type { BashArgs } from './types.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, ExecuteStringFn, Result } from '../types.ts'
 
 function bashArgs(partial: Partial<BashArgs>): BashArgs {
   return {

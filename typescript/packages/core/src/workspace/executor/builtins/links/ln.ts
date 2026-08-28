@@ -19,8 +19,9 @@ import { PolicyDenied } from '../../../../policy/index.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
 import type { Session } from '../../../session/session.ts'
-import { absPath, fail, ok, splitFlags, type Result } from '../shared.ts'
+import { absPath, fail, ok, splitFlags } from '../shared.ts'
 import { posixRelative } from './links.ts'
+import type { Result } from '../types.ts'
 
 // ln -s TARGET LINK: create a namespace symbolic link. Flags: -f remove the
 // destination first (GNU's own algorithm, so it replaces a regular file too),

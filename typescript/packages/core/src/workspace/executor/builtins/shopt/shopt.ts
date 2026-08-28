@@ -18,12 +18,12 @@ import {
   SET_OPTION_NAMES,
   SHOPT_DEFAULTS,
   SHOPT_UNSUPPORTED,
-} from '../../../../shell/types.ts'
+} from '../../../../shell/constants.ts'
 import type { Session } from '../../../session/session.ts'
 import { lastOf, scanOptions } from '../getopt.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { fail, type Result } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import { fail } from '../shared.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 const USAGE = 'shopt: usage: shopt [-pqsu] [-o] [optname ...]'
 

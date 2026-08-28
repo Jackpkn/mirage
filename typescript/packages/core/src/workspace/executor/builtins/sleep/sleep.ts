@@ -15,9 +15,8 @@
 import { IOResult } from '../../../../io/types.ts'
 import { sleep } from '../../../abort.ts'
 import { ExecutionNode } from '../../../types.ts'
-import type { Result } from '../shared.ts'
 import { SLEEP_INTERVAL } from './constants.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 export async function handleSleep(args: string[], signal?: AbortSignal): Promise<Result> {
   const raw = args[0]

@@ -15,19 +15,18 @@
 from mirage.commands.spec.types import FlagValue
 from mirage.io.types import ByteSource, IOResult
 from mirage.resource.history import HISTORY_PREFIX
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.mount.registry import MountRegistry
 from mirage.workspace.session.session import Session
 from mirage.workspace.types import ExecutionNode
 
-USAGE = ("history: usage: history [-c] [-d offset] [n] or "
-         "history -awrn [filename] or history -ps arg [arg...]\n")
-OPTION_CHARS = "cdanrwsp"
+_USAGE = ("history: usage: history [-c] [-d offset] [n] or "
+          "history -awrn [filename] or history -ps arg [arg...]\n")
+_OPTION_CHARS = "cdanrwsp"
 
 
 def _usage_error(message: str) -> tuple[None, IOResult, ExecutionNode]:
-    err = (message + USAGE).encode()
+    err = (message + _USAGE).encode()
     io = IOResult(exit_code=2, stderr=err)
     return None, io, ExecutionNode(command="history", exit_code=2, stderr=err)
 
@@ -64,7 +63,7 @@ def _parse_args(
             j = 1
             while j < len(token):
                 ch = token[j]
-                if ch not in OPTION_CHARS:
+                if ch not in _OPTION_CHARS:
                     return {}, [], f"history: -{ch}: invalid option\n"
                 flags[ch] = True
                 if ch == "d":

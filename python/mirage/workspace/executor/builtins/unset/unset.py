@@ -18,9 +18,9 @@ from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.array import array_extent, array_unset
 from mirage.utils.hidden import var_hidden
-from mirage.workspace.executor.builtins.shared import (TARGET_RE, Result,
-                                                       refusal, view_of)
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.constants import TARGET_RE
+from mirage.workspace.executor.builtins.shared import refusal, view_of
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (deref, env_get, session_view,

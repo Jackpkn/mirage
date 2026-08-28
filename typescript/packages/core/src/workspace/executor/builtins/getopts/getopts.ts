@@ -19,8 +19,8 @@ import { ReadonlyVariableError } from '../../../session/errors.ts'
 import type { Session } from '../../../session/session.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result, isValidName, viewOf } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import { isValidName, viewOf } from '../shared.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 import { sessionView } from '../../../session/state.ts'
 
 async function getoptsFinish(

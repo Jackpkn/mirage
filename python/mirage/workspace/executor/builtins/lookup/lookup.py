@@ -21,8 +21,8 @@ from mirage.workspace.executor.builtins.lookup.constants import (TYPE_OPTIONS,
                                                                  WHICH_OPTIONS,
                                                                  WHICH_USAGE)
 from mirage.workspace.executor.builtins.lookup.types import NameKind
-from mirage.workspace.executor.builtins.shared import Result, result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import result
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.session import Session
 

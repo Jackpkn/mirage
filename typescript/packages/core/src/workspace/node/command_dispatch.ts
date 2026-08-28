@@ -29,7 +29,6 @@ import type { Resource } from '../../resource/base.ts'
 import { encodeText } from '../../shell/bytes.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import {
-  ProcessSubDirection,
   getCommandName,
   getParts,
   getProcessSubBody,
@@ -38,7 +37,7 @@ import {
   splitEnvPrefix,
 } from '../../shell/helpers.ts'
 import type { JobTable } from '../../shell/job_table/index.ts'
-import { NodeType as NT } from '../../shell/types.ts'
+import { NodeType as NT, ProcessSubDirection } from '../../shell/types.ts'
 import { PathSpec, wordText } from '../../types.ts'
 import { Argv, expandArgv } from '../expand/argv.ts'
 import { expandBoundaryGlobs } from '../expand/globs.ts'

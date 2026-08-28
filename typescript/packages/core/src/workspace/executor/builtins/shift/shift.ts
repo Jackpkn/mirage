@@ -16,8 +16,8 @@ import { IOResult } from '../../../../io/types.ts'
 import type { CallStack } from '../../../../shell/call_stack.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result, isCountWord } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import { isCountWord } from '../shared.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 /** Shift positional parameters, with bash's argument checks. */
 export function handleShift(

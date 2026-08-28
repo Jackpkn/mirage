@@ -23,8 +23,7 @@ from mirage.types import PathSpec
 from mirage.utils.errors import FS_ERRORS, fs_strerror
 from mirage.workspace.executor.builtins.exec.constants import CLOSED
 from mirage.workspace.executor.builtins.scope import _to_scope
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.executor.create import create_file
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode

@@ -17,10 +17,10 @@ from mirage.types import FileType, PathSpec
 from mirage.utils.mode import DEFAULT_DIR_MODE, DEFAULT_FILE_MODE, parse_chmod
 from mirage.workspace.executor.builtins.metadata.metadata import (
     apply_attrs, resolve_operand, walk_stats)
-from mirage.workspace.executor.builtins.shared import (Result, expand_operands,
-                                                       fail, finish,
-                                                       operand_text,
+from mirage.workspace.executor.builtins.shared import (expand_operands, fail,
+                                                       finish, operand_text,
                                                        split_value_flags)
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
 
 

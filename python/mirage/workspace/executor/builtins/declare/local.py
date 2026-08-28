@@ -21,10 +21,10 @@ from mirage.shell.variable import VarAttr
 from mirage.workspace.executor.builtins.declare.declare import (
     identifier_failure, identifier_refusal, nameref_refusal, premark,
     store_staged_arrays, write_global)
-from mirage.workspace.executor.builtins.shared import (Result, arith_refusal,
+from mirage.workspace.executor.builtins.shared import (arith_refusal,
                                                        readonly_refusal,
                                                        refusal, view_of)
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (env_get, session_view,
                                             visible_arrays, visible_assocs)

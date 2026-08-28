@@ -25,8 +25,7 @@ from mirage.workspace.executor.builtins.dirs.dirs import (join_raw, norm,
                                                           split_mode_options,
                                                           typed_path)
 from mirage.workspace.executor.builtins.scope import _scope_path, _to_scope
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.expand.classify import classify_bare_path
 from mirage.workspace.session import Session
 from mirage.workspace.session.shell_dirs import (change_dir, home_dir,

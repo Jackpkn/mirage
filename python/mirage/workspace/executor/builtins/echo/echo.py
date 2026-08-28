@@ -17,8 +17,7 @@ from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.shell.bytes import encode_text
 from mirage.workspace.executor.builtins.echo.escapes import interpret_escapes
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.types import ExecutionNode
 
 

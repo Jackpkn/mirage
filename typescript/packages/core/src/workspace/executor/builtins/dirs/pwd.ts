@@ -16,10 +16,9 @@ import { IOResult } from '../../../../io/types.ts'
 import type { Session } from '../../../session/session.ts'
 import { logicalCwd } from '../../../session/shell_dirs.ts'
 import { ExecutionNode } from '../../../types.ts'
-import type { Result } from '../shared.ts'
 import { PWD_OPTIONS, PWD_USAGE } from './constants.ts'
 import { type DirArgs, splitModeOptions } from './dirs.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 // Print the working directory, logical by default and physical under -P
 // (or `set -P`). GNU ignores every operand: `pwd extra` still prints the

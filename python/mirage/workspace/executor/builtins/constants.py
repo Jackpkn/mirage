@@ -12,23 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.io import IOResult
-from mirage.io.types import ByteSource
-from mirage.workspace.executor.builtins.types import BuiltinCall, Result
-from mirage.workspace.session import Session
-from mirage.workspace.types import ExecutionNode
+import re
 
+IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
-async def handle_trap(
-        session: Session,  # noqa: E125
-) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
-    return None, IOResult(), ExecutionNode(command="trap", exit_code=0)
-
-
-async def trap_builtin(call: BuiltinCall) -> Result:
-    """The ``trap`` arm.
-
-    Args:
-        call (BuiltinCall): the invocation.
-    """
-    return await handle_trap(call.session)
+# An assignment target with an optional subscript (`name` or `name[sub]`).
+# A subscript must be non-empty: bash rejects `a[]` as an invalid
+# identifier, while `a[ ]` is a valid arithmetic 0.
+TARGET_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[(.+)\])?\Z")

@@ -25,8 +25,7 @@ from mirage.workspace.executor.builtins.script.constants import (
 from mirage.workspace.executor.builtins.script.script import (read_script_file,
                                                               script_error)
 from mirage.workspace.executor.builtins.script.types import BashArgs
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 

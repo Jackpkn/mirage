@@ -17,9 +17,8 @@ from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.call_stack import CallStack
-from mirage.workspace.executor.builtins.shared import (Result, is_valid_name,
-                                                       view_of)
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import is_valid_name, view_of
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.errors import ReadonlyVariableError
 from mirage.workspace.session.state import session_view

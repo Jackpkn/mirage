@@ -16,12 +16,8 @@ import type { SessionView } from '../../ops/types.ts'
 import { materialize } from '../../io/types.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { ExitSignal } from '../../shell/errors.ts'
-import {
-  getProcessSubBody,
-  getProcessSubDirection,
-  ProcessSubDirection,
-} from '../../shell/helpers.ts'
-import { NodeType as NT, Redirect, RedirectKind } from '../../shell/types.ts'
+import { getProcessSubBody, getProcessSubDirection } from '../../shell/helpers.ts'
+import { NodeType as NT, ProcessSubDirection, Redirect, RedirectKind } from '../../shell/types.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Session } from '../session/session.ts'
 import { visibleEnv } from '../session/state.ts'

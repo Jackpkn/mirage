@@ -20,10 +20,10 @@ import { ArithError } from '../../../../shell/errors.ts'
 import { assignElement } from '../../../session/elements.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { TARGET_RE, type Result } from '../shared.ts'
 import { runPrintf } from './format.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 import { sessionView } from '../../../session/state.ts'
+import { TARGET_RE } from '../constants.ts'
 
 /**
  * Assign `value` to a `printf -v` target (scalar or `name[idx]`).

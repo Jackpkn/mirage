@@ -14,8 +14,7 @@
 
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import env_snapshot
 from mirage.workspace.types import ExecutionNode

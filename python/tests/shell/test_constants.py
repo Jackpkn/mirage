@@ -1,6 +1,6 @@
-from mirage.shell.types import (BUILTIN_GROUP, GRAMMAR_BUILTINS, GROUP_TIER,
-                                TOOL_BUILTINS, BuiltinGroup, BuiltinTier,
-                                ShellBuiltin)
+from mirage.shell.constants import (BUILTIN_GROUP, GRAMMAR_BUILTINS,
+                                    GROUP_TIER, TOOL_BUILTINS)
+from mirage.shell.types import BuiltinGroup, BuiltinTier, ShellBuiltin
 
 
 def test_tiers_partition_the_builtins():

@@ -21,7 +21,7 @@ import type { Session } from '../../../session/session.ts'
 import { envGet, visibleArrays, visibleAssocs } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result, arithRefusal, readonlyRefusal, refusal, viewOf } from '../shared.ts'
+import { arithRefusal, readonlyRefusal, refusal, viewOf } from '../shared.ts'
 import {
   identifierFailure,
   identifierRefusal,
@@ -30,7 +30,7 @@ import {
   storeStagedArrays,
   writeGlobal,
 } from './declare.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 import { sessionView } from '../../../session/state.ts'
 
 export async function handleLocal(
