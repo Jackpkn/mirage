@@ -69,6 +69,14 @@ describe('compileSpec — count/choices/required/default tables', () => {
     const spec = new CommandSpec({ options: [new Option({ short: '-x' })] })
     expect(compileSpec(spec)).toBe(compileSpec(spec))
   })
+
+  it.each([
+    [new Option({ short: '-m' }), new Option({ short: '-m', type: 'str' })],
+    [new Option({ long: '--mode' }), new Option({ long: '--mode', type: 'str' })],
+  ])('rejects duplicate option spellings', (first, second) => {
+    const spec = new CommandSpec({ options: [first, second] })
+    expect(() => compileSpec(spec)).toThrow(/duplicate option spelling/)
+  })
 })
 
 describe('type int validation', () => {

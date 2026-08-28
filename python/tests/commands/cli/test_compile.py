@@ -123,6 +123,14 @@ def test_leaf_option_grammar_is_validated_at_construction():
                 options=(Option(long="--mode", choices=("a", "b")), ))
 
 
+def test_duplicate_leaf_option_spelling_is_rejected_at_construction():
+    with pytest.raises(ValueError, match="duplicate option spelling"):
+        CLISpec(name="mine",
+                fn=_verb,
+                options=(Option(long="--mode"),
+                         Option(long="--mode", type="str")))
+
+
 def test_ancestor_descendant_option_collision_raises():
     with pytest.raises(ValueError, match="collides with subcommand"):
         CLISpec(name="gws",

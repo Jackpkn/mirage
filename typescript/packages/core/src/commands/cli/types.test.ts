@@ -214,6 +214,17 @@ describe('CLISpec', () => {
     ).toThrow(/choices and default require a value flag/)
   })
 
+  it('rejects a duplicate leaf option spelling at construction', () => {
+    expect(
+      () =>
+        new CLISpec({
+          name: 'mine',
+          fn: verb,
+          options: [new Option({ long: '--mode' }), new Option({ long: '--mode', type: 'str' })],
+        }),
+    ).toThrow(/duplicate option spelling/)
+  })
+
   it('rejects an option colliding between a node and a descendant', () => {
     expect(
       () =>
