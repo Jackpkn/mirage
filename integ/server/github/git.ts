@@ -64,10 +64,18 @@ async function stagedTree(db: C, tenant: string, repo: RepoRow, sha: string): Pr
 // than failing, which is what the fake this replaces did.
 const createTree = withRepo(async (ctx, repo) => {
   const body = jsonBodyOf(ctx)
+  // `tree` is required, and a body that omits it or spells it as anything but
+  // an array is refused rather than read as "no entries". Coercing it to an
+  // empty list stages a full copy of the base and answers 201, so a caller's
+  // typo reads as a successful write and only shows up later as a commit that
+  // changed nothing.
+  if (!Array.isArray(body.tree)) {
+    return fail(422, 'Invalid request.\n\n"tree" wasn\'t supplied.')
+  }
+  const entries = body.tree
   const base = str(body, 'base_tree')
   const staged = base === '' ? null : await stagedTree(ctx.db, ctx.tenant, repo, base)
   const files = staged ?? (await treeOfBranch(ctx.db, ctx.tenant, repo, repo.defaultBranch))
-  const entries = Array.isArray(body.tree) ? body.tree : []
   for (const raw of entries) {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue
     const entry = raw as Record<string, unknown>
