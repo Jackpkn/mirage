@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { asyncContextIsolatesTasks, createAsyncContext } from '../utils/async_context.ts'
+import { createAsyncContext } from '../utils/async_context.ts'
 import type { SessionManager } from '../workspace/session/manager.ts'
 import type { Session } from '../workspace/session/session.ts'
 import { stripSlash } from '../utils/slash.ts'
@@ -64,16 +64,37 @@ export function getCurrentSession(): Session | null {
 }
 
 /**
+ * Every session whose binding is live in this context, oldest first.
+ *
+ * On an isolating runtime this is the bound session alone, so a fold
+ * over it computes exactly what `getCurrentSession` implies. On the
+ * fallback storage it is every concurrently bound session, which is
+ * what lets a security predicate merge toward the most restrictive
+ * answer instead of trusting the newest binding: every predicate here
+ * fails open on "no session", so a frame another task shadows or
+ * settles past must keep counting while it is live.
+ */
+export function liveSessions(): Session[] {
+  return sessionStorage.liveStores().map((binding) => binding.session)
+}
+
+/**
  * The bound session, but only when `owner` published it.
  *
  * A session carries one workspace's cwd, env and mount grants, so a
  * second workspace re-entered mid-line must resolve its own session
- * rather than adopt this one.
+ * rather than adopt this one. The owner is the disambiguator, so every
+ * live binding is searched, newest first: on the fallback storage a
+ * concurrent workspace's bind shadowing the newest frame must not hide
+ * this owner's own session.
  */
 export function getCurrentSessionFor(owner: SessionManager): Session | null {
-  const binding = sessionStorage.getStore()
-  if (binding?.owner !== owner) return null
-  return binding.session
+  const bindings = sessionStorage.liveStores()
+  for (let at = bindings.length - 1; at >= 0; at--) {
+    const binding = bindings[at]
+    if (binding?.owner === owner) return binding.session
+  }
+  return null
 }
 
 function normPrefix(mountPrefix: string): string {
@@ -89,12 +110,20 @@ function normPrefix(mountPrefix: string): string {
  * mount sections narrow what the mount already offers and never decide
  * whether it exists. A profile that must not reach a mount hides it, which
  * answers ENOENT rather than a permission error naming something the
- * profile cannot see.
+ * profile cannot see. Folded to the weakest across every live session,
+ * which on an isolating runtime is the bound one alone.
  */
-function sessionMode(mountPrefix: string): MountMode {
-  const sess = getCurrentSession()
-  if (sess?.mountModes == null) return MountMode.EXEC
+function sessionModeOf(sess: Session, mountPrefix: string): MountMode {
+  if (sess.mountModes == null) return MountMode.EXEC
   return sess.mountModes.get(normPrefix(mountPrefix)) ?? MountMode.EXEC
+}
+
+function sessionMode(mountPrefix: string): MountMode {
+  let mode: MountMode = MountMode.EXEC
+  for (const sess of liveSessions()) {
+    mode = weakerMode(mode, sessionModeOf(sess, mountPrefix))
+  }
+  return mode
 }
 
 /**
@@ -106,7 +135,7 @@ function sessionMode(mountPrefix: string): MountMode {
  * nothing, and modes never change what a walk enumerates.
  */
 export function hiddenPathsActive(): boolean {
-  return getCurrentSession()?.hiddenPaths != null
+  return liveSessions().some((sess) => sess.hiddenPaths != null)
 }
 
 /**
@@ -120,8 +149,7 @@ export function hiddenPathsActive(): boolean {
  * force `find` on `/s3` off its native op.
  */
 export function hiddenPathsIntersect(virtual: string): boolean {
-  const sess = getCurrentSession()
-  return sess != null && hidesIntersect(sess.hiddenPaths, virtual)
+  return liveSessions().some((sess) => hidesIntersect(sess.hiddenPaths, virtual))
 }
 
 export const DEFAULT_UMASK = 0o022
@@ -130,10 +158,16 @@ export const DEFAULT_UMASK = 0o022
  * The file-creation mask of the session bound to this context, read by
  * the creators that run inside a command handler (`mkdir`, which cannot
  * be handed the session) the way `pathAllowed` reads the hidden-paths
- * spec. bash's default when no session is bound.
+ * spec. bash's default when no session is bound; ORed across live
+ * sessions otherwise, since a mask can only clear more bits, failing
+ * toward the tighter mode.
  */
 export function sessionUmask(): number {
-  return getCurrentSession()?.umask ?? DEFAULT_UMASK
+  const live = liveSessions()
+  if (live.length === 0) return DEFAULT_UMASK
+  let mask = 0
+  for (const sess of live) mask |= sess.umask
+  return mask
 }
 
 /**
@@ -141,10 +175,14 @@ export function sessionUmask(): number {
  * pathname expansion, which runs in every backend's resolveGlob and so
  * cannot be handed the session: a name starting with `.` is matched
  * only by a pattern that also starts with `.`, unless dotglob relaxes
- * it. False when no session is bound (bash's default).
+ * it. False when no session is bound (bash's default), and unanimous
+ * across live sessions otherwise: dotfiles entering a match set is the
+ * surprising direction, so one session's opt-in must not widen a
+ * concurrent one's expansion.
  */
 export function dotglobActive(): boolean {
-  return getCurrentSession()?.shopts.dotglob === true
+  const live = liveSessions()
+  return live.length > 0 && live.every((sess) => sess.shopts.dotglob === true)
 }
 
 /**
@@ -165,11 +203,13 @@ export function sessionPathAllowed(sess: Session, virtual: string): boolean {
  * ENOENT (EACCES for creates) when it says no, so hiding reads as
  * nonexistence, never as a denial that leaks the name. True when no
  * session is bound. This is how a profile keeps a session away from a
- * mount, since naming mounts only narrows their modes.
+ * mount, since naming mounts only narrows their modes. Every live
+ * session must leave the path visible, so on the fallback storage a
+ * hide stays in force while its command's frame is shadowed, and a
+ * concurrent settle cannot wipe it into visibility.
  */
 export function pathAllowed(virtual: string): boolean {
-  const sess = getCurrentSession()
-  return sess == null || sessionPathAllowed(sess, virtual)
+  return liveSessions().every((sess) => sessionPathAllowed(sess, virtual))
 }
 
 const admissionStorage = createAsyncContext<EntryGate>()
@@ -191,9 +231,28 @@ export function runWithAdmission<T>(gate: EntryGate, fn: () => Promise<T>): Prom
  * The entry gate of the command running in this context, null when no
  * admitted command is bound (a command constructed outside the
  * dispatcher, or a line no gate judged).
+ *
+ * On an isolating runtime one gate is live and answers as bound. On
+ * the fallback storage several commands' gates can be live at once
+ * with nothing to say whose op is asking, so they merge toward
+ * refusal: an entry must pass every live gate's `check`, a rule counts
+ * as granted only when every live gate carries it (a once-grant nodded
+ * for one line must not authorize another's op door), and `scoped` is
+ * true when any live gate scopes, keeping walks off the unfiltered
+ * native fast paths.
  */
 export function getAdmission(): EntryGate | null {
-  return admissionStorage.getStore() ?? null
+  const gates = admissionStorage.liveStores()
+  const first = gates[0]
+  if (first === undefined) return null
+  if (gates.every((gate) => gate === first)) return first
+  return {
+    scoped: gates.some((gate) => gate.scoped),
+    granted: first.granted.filter((rule) => gates.every((gate) => gate.granted.includes(rule))),
+    check(virtual: string): void {
+      for (const gate of gates) gate.check(virtual)
+    },
+  }
 }
 
 /**
@@ -237,23 +296,26 @@ export function runWithSuspendedOpPolicies<T>(fn: () => Promise<T>): Promise<T> 
   return Promise.resolve(opPoliciesStorage.run(null, fn))
 }
 
-/** The policies bound to the running command, null outside one. */
+/**
+ * The policies bound to the running command, null outside one.
+ *
+ * The newest live armed set. On an isolating runtime the live set is
+ * the innermost binding, so a suspension answers null exactly as
+ * bound. On the fallback storage a suspension yields to any
+ * concurrently armed frame, because disarming another command's op
+ * doors is the worse failure: find's delegated `rm` then double-admits
+ * its removal (an over-count, failing closed) instead of a concurrent
+ * command's ops running unguarded.
+ */
 export function getOpPolicies(): Policies | null {
-  return opPoliciesStorage.getStore() ?? null
+  let armed: Policies | null = null
+  for (const policies of opPoliciesStorage.liveStores()) {
+    if (policies !== null) armed = policies
+  }
+  return armed
 }
 
 const mountGateStorage = createAsyncContext<readonly [string, MountMode]>()
-
-// The fallback storage is one global slot, so overlapping commands on
-// different mounts (a pipeline's stages, a background job) would read
-// each other's gate mid-await; every live gate is kept instead, and
-// `mountGateFor` selects among them by the path being judged.
-const liveMountGates: (readonly [string, MountMode])[] = []
-
-function releaseMountGate(gate: readonly [string, MountMode]): void {
-  const at = liveMountGates.indexOf(gate)
-  if (at >= 0) liveMountGates.splice(at, 1)
-}
 
 /**
  * Bind the executing mount's prefix and configured mode for the
@@ -264,31 +326,13 @@ function releaseMountGate(gate: readonly [string, MountMode]): void {
  * a handler mutates: the write-command gate admits a command when any
  * shown subtree grants writes, and this binding is how each individual
  * write is then held to its own region's mode.
- *
- * Where the async context isolates tasks the binding rides it. On the
- * fallback storage (a browser with no AsyncLocalStorage) the gate joins
- * the live list instead, because a permission read off a slot another
- * mount's command can overwrite mid-await would judge a path against
- * the wrong mount.
  */
 export function runWithMountGate<T>(
   prefix: string,
   mode: MountMode,
   fn: () => Promise<T>,
 ): Promise<T> {
-  if (asyncContextIsolatesTasks) {
-    return Promise.resolve(mountGateStorage.run([prefix, mode], fn))
-  }
-  const gate: readonly [string, MountMode] = [prefix, mode]
-  liveMountGates.push(gate)
-  try {
-    return Promise.resolve(fn()).finally(() => {
-      releaseMountGate(gate)
-    })
-  } catch (err) {
-    releaseMountGate(gate)
-    throw err
-  }
+  return Promise.resolve(mountGateStorage.run([prefix, mode], fn))
 }
 
 /**
@@ -296,25 +340,23 @@ export function runWithMountGate<T>(
  * mode], null outside a mount's command (a generic invoked directly in
  * a test, or the scratch tier).
  *
- * Where the async context isolates tasks the binding answers and the
- * path plays no part. On the fallback storage the reader selects among
- * every live gate by the path itself: the longest prefix covering it
- * wins, the way the mount table routes, and two live gates at one
- * prefix (two workspaces sharing a fallback runtime) answer with the
- * weaker mode, failing toward refusal. A path no live gate covers
- * answers null, which is the same inert reading an unbound context
- * gives: the serving mount's own gate is live for the whole run of its
- * handler, so only a path outside every executing mount can miss.
+ * The reader selects among every live gate by the path itself: the
+ * longest prefix covering it wins, the way the mount table routes, and
+ * two live gates at one prefix (two workspaces sharing a fallback
+ * runtime) answer with the weaker mode, failing toward refusal. On an
+ * isolating runtime one binding is live and every caller asks about a
+ * path that mount serves; on the fallback storage (a browser with no
+ * AsyncLocalStorage) overlapping commands on different mounts hold
+ * gates concurrently, and the path is what keeps one from being judged
+ * against the other's. A path no live gate covers answers null, the
+ * same inert reading an unbound context gives.
  */
 export function mountGateFor(virtual: string): readonly [string, MountMode] | null {
-  if (asyncContextIsolatesTasks) {
-    return mountGateStorage.getStore() ?? null
-  }
   const v = normPrefix(virtual)
   let bestLen = -1
   let bestPrefix: string | null = null
   let bestMode: MountMode | null = null
-  for (const [rawPrefix, mode] of liveMountGates) {
+  for (const [rawPrefix, mode] of mountGateStorage.liveStores()) {
     const prefix = normPrefix(rawPrefix)
     if (prefix !== '/' && v !== prefix && !v.startsWith(prefix + '/')) continue
     if (prefix.length > bestLen) {
@@ -352,11 +394,18 @@ export function runWithRedirectPaths<T>(
 /**
  * The redirect targets bound to this command node, empty for any other
  * node or when none are bound.
+ *
+ * The node is the disambiguator, so every live binding is searched,
+ * newest first: on the fallback storage a concurrent statement's bind
+ * shadowing the newest frame must not hide this node's own targets.
  */
 export function redirectPathsFor(node: object): readonly PathSpec[] {
-  const bound = redirectStorage.getStore()
-  if (bound?.[0] !== node) return []
-  return bound[1]
+  const bindings = redirectStorage.liveStores()
+  for (let at = bindings.length - 1; at >= 0; at--) {
+    const bound = bindings[at]
+    if (bound?.[0] === node) return bound[1]
+  }
+  return []
 }
 
 /**
@@ -370,11 +419,13 @@ export function redirectPathsFor(node: object): readonly PathSpec[] {
  * statement whose targets a rule refused never reaches the write at all.
  * So a bound target is one the line was admitted with, and re-deriving a
  * verdict for it from a door that knows neither the line nor the nod it
- * holds can only get it wrong.
+ * holds can only get it wrong. Every live binding counts, because a
+ * target is only ever bound after its own line's door judged it: on the
+ * fallback storage a concurrent statement's frame must not shadow this
+ * one's targets into a re-derived refusal.
  */
 export function redirectTargetJudged(virtual: string): boolean {
-  const bound = redirectStorage.getStore()
-  return bound?.[1].some((p) => p.virtual === virtual) ?? false
+  return redirectStorage.liveStores().some(([, paths]) => paths.some((p) => p.virtual === virtual))
 }
 
 /**
@@ -399,14 +450,15 @@ export function effectiveMountMode(mountPrefix: string, mountMode: MountMode): M
  * repo and writes only the build tree; an equal-depth pair takes the
  * weaker, failing toward refusal. The configured mode stays the
  * strongest answer possible: the document never grants past it.
+ * Folded to the weakest across every live session, which on an
+ * isolating runtime is the bound one alone.
  */
-export function effectivePathMode(
+function pathModeUnder(
+  sess: Session,
   virtual: string,
   mountPrefix: string,
   mountMode: MountMode,
 ): MountMode {
-  const sess = getCurrentSession()
-  if (sess == null) return mountMode
   const prefix = normPrefix(mountPrefix)
   const cap = sess.mountModes?.get(prefix) ?? null
   let bestDepth = cap != null ? anchorDepth(prefix) : null
@@ -423,6 +475,18 @@ export function effectivePathMode(
   }
   if (bestMode == null) return mountMode
   return weakerMode(mountMode, bestMode)
+}
+
+export function effectivePathMode(
+  virtual: string,
+  mountPrefix: string,
+  mountMode: MountMode,
+): MountMode {
+  let mode = mountMode
+  for (const sess of liveSessions()) {
+    mode = weakerMode(mode, pathModeUnder(sess, virtual, mountPrefix, mountMode))
+  }
+  return mode
 }
 
 /**
@@ -448,12 +512,17 @@ function reachesUnder(head: string, prefix: string): boolean {
  * What the whole-mount gates read: a write command stays runnable on a
  * mount whose only writable region is a show entry (the op door then
  * refuses per path), and the interpreters' any-`x` rule counts a show
- * grant the way it counts a whole mount.
+ * grant the way it counts a whole mount. Each live session's strongest
+ * reach is computed on its own, then folded to the weakest across
+ * sessions: a command runs only when every live session would let it.
  */
-export function strongestModeUnder(mountPrefix: string, mountMode: MountMode): MountMode {
-  let best = effectiveMountMode(mountPrefix, mountMode)
-  const sess = getCurrentSession()
-  if (sess?.shownPaths == null) return best
+function strongestUnderSession(
+  sess: Session,
+  mountPrefix: string,
+  mountMode: MountMode,
+): MountMode {
+  let best = weakerMode(mountMode, sessionModeOf(sess, mountPrefix))
+  if (sess.shownPaths == null) return best
   const prefix = normPrefix(mountPrefix)
   for (const entry of sess.shownPaths.entries) {
     if (entry.mode == null) continue
@@ -461,6 +530,14 @@ export function strongestModeUnder(mountPrefix: string, mountMode: MountMode): M
       const reached = weakerMode(mountMode, entry.mode)
       if (MOUNT_MODE_RANK[reached] > MOUNT_MODE_RANK[best]) best = reached
     }
+  }
+  return best
+}
+
+export function strongestModeUnder(mountPrefix: string, mountMode: MountMode): MountMode {
+  let best = mountMode
+  for (const sess of liveSessions()) {
+    best = weakerMode(best, strongestUnderSession(sess, mountPrefix, mountMode))
   }
   return best
 }
@@ -477,15 +554,16 @@ export function strongestModeUnder(mountPrefix: string, mountMode: MountMode): M
  * the operand up front. An exact entry is blamed by its anchor, the
  * row GNU would report the refusal on; a pattern names no single
  * anchor, so the operand itself is blamed whenever the pattern's
- * match space could reach below it, failing toward refusal.
+ * match space could reach below it, failing toward refusal. The first
+ * blame any live session raises answers.
  */
-export function readonlyBelow(
+function readonlyBelowUnder(
+  sess: Session,
   virtual: string,
   mountPrefix: string,
   mountMode: MountMode,
 ): string | null {
-  const sess = getCurrentSession()
-  if (sess?.shownPaths == null) return null
+  if (sess.shownPaths == null) return null
   const v = '/' + virtual.replace(/^\/+|\/+$/g, '')
   for (const entry of sess.shownPaths.entries) {
     if (entry.mode == null) continue
@@ -498,9 +576,21 @@ export function readonlyBelow(
     const anchor = '/' + entry.path.replace(/^\/+|\/+$/g, '')
     const below = v === '/' ? anchor !== '/' : anchor.startsWith(v + '/')
     if (!below) continue
-    if (effectivePathMode(anchor, mountPrefix, mountMode) === MountMode.READ) {
+    if (pathModeUnder(sess, anchor, mountPrefix, mountMode) === MountMode.READ) {
       return anchor
     }
+  }
+  return null
+}
+
+export function readonlyBelow(
+  virtual: string,
+  mountPrefix: string,
+  mountMode: MountMode,
+): string | null {
+  for (const sess of liveSessions()) {
+    const blame = readonlyBelowUnder(sess, virtual, mountPrefix, mountMode)
+    if (blame !== null) return blame
   }
   return null
 }
