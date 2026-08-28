@@ -56,6 +56,18 @@ export function checkName(kind: string, value: string): string {
   return value
 }
 
+// decodeURIComponent throws a URIError on a malformed escape (`/_run/%ZZ`),
+// which is caller-controlled input and so must arrive as the same 400 an
+// illegal NAME gets. Left as a URIError it reached the internal 500 envelope,
+// which reports a fake bug for a typed URL.
+function decodeRun(raw: string): string {
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    throw new TenantError(`invalid run name: ${JSON.stringify(raw)}`)
+  }
+}
+
 // The run also rides the URL, as a LEADING PATH SEGMENT, and that is the
 // spelling a harness can actually use. The header and the query parameter are
 // only reachable by a caller that builds its own requests; every mount here
@@ -66,7 +78,7 @@ export function checkName(kind: string, value: string): string {
 export function splitRunPath(pathname: string): { run?: string; path: string } {
   const parts = pathname.split('/')
   if (parts.length < 3 || parts[1] !== RUN_PREFIX) return { path: pathname }
-  const run = checkName('run', decodeURIComponent(parts[2] ?? ''))
+  const run = checkName('run', decodeRun(parts[2] ?? ''))
   const rest = parts.slice(3).join('/')
   return { run, path: rest === '' ? '/' : `/${rest}` }
 }

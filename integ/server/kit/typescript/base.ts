@@ -42,9 +42,14 @@ export interface Fake<C extends MinimalClient> {
     extras: Record<string, JsonValue>,
   ) => Promise<void>
   defaultTenants?: string[]
-  // How this fake refuses a tenant it was never seeded with. The kit knows
-  // WHICH tenant is unknown and nothing about how the vendor says so, so the
-  // status and body come from here; the default below is a generic 401.
+  // How this fake refuses a tenant it was never seeded with, and by being
+  // present, THAT it refuses one at all. Declaring it is opt-in for the same
+  // reason tenantFromBearer is: what an unseeded tenant means is the vendor's
+  // question, not the kit's. Notion hands an integration one workspace that
+  // has to exist, so an unknown one is a bad token. Dropbox mints an account
+  // per mount and never resets it, so an unseeded tenant there is an ordinary
+  // EMPTY account and refusing it broke every dropbox case. A fake that says
+  // nothing keeps serving unseeded tenants, which is what it did before.
   unknownTenant?: (tenant: string) => Reply
 }
 
@@ -88,10 +93,19 @@ export class RunState {
     return made
   }
 
+  // Starting a reset UNMARKS the tenant, and only markSeeded re-marks it. The
+  // two are separate because a reset that throws half way through leaves a
+  // world that is partly the old fixture and partly nothing: marking here
+  // would serve that as valid, and never unmarking would serve a failed
+  // RESEED of an already-good tenant the same way.
   reset(tenant: string, epoch?: string): void {
     const st = this.of(tenant)
     st.clock.setEpoch(epoch)
     st.minter.reset()
+    this.seeded.delete(tenant)
+  }
+
+  markSeeded(tenant: string): void {
     this.seeded.add(tenant)
   }
 

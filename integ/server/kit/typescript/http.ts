@@ -72,13 +72,25 @@ export function makeRuntime<C extends MinimalClient>(fake: Fake<C>): Runtime<C> 
 // for a body that parseResetBody will reject; an invalid body is a 400 that
 // still must not jump the queue.
 // The prefix and the body must not disagree, and the prefix is the one the
-// caller cannot have set by accident.
+// caller cannot have set by accident. Only an ABSENT run is filled in: a body
+// carrying `{"run": 12}` or `{"run": ""}` is malformed and has to reach
+// parseResetBody to be refused, and overwriting it turned a request that owes
+// a 400 into a successful reset of somebody else's run.
 function withPathRun(body: JsonValue, pathRun: string | undefined): JsonValue {
   if (pathRun === undefined) return body
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return body
   const named = (body as Record<string, JsonValue>).run
-  if (typeof named === 'string' && named !== '' && named !== pathRun) {
-    throw new ResetBodyError(`/reset run ${named} contradicts the /_run/${pathRun} it was sent to`)
+  if (named !== undefined) {
+    // A non-empty string that differs is a caller contradicting itself. Every
+    // other present value (a number, an empty string) is malformed, and is
+    // handed on unchanged so parseResetBody refuses it in its own words
+    // rather than being reported as a contradiction it is not.
+    if (typeof named === 'string' && named !== '' && named !== pathRun) {
+      throw new ResetBodyError(
+        `/reset run ${named} contradicts the /_run/${pathRun} it was sent to`,
+      )
+    }
+    return body
   }
   return { ...(body as Record<string, JsonValue>), run: pathRun }
 }
@@ -146,17 +158,6 @@ function envelope(service: string, err: unknown): Reply {
 // so, so the body is the fake's whenever it declares one. The fallback is a
 // 401 rather than a 404 because the tenant is reached through a credential in
 // every fake that has one, and refusing the credential is what the vendor does.
-function unknownTenant<C extends MinimalClient>(fake: Fake<C>, tenant: string): Reply {
-  if (fake.unknownTenant !== undefined) return fake.unknownTenant(tenant)
-  return {
-    status: 401,
-    body: {
-      error: 'unknown_tenant',
-      message: `${fake.config.service} fake: no tenant ${tenant}; seed it with /reset`,
-    },
-  }
-}
-
 async function answer<C extends MinimalClient>(
   rt: Runtime<C>,
   router: Router<C>,
@@ -178,7 +179,10 @@ async function answer<C extends MinimalClient>(
     path = split.path
   } catch (err: unknown) {
     if (err instanceof TenantError) {
-      return { status: 400, body: { error: 'bad_run', kind: err.constructor.name, message: err.message } }
+      return {
+        status: 400,
+        body: { error: 'bad_run', kind: err.constructor.name, message: err.message },
+      }
     }
     throw err
   }
@@ -244,8 +248,15 @@ async function answer<C extends MinimalClient>(
   // a legal name that was never seeded, and the DEFAULT_TENANT that an illegal
   // one falls back to, were two separate 500s with one cause.
   const runState = rt.state(run)
-  if (tenantKind !== 'none' && !runState.isSeeded(tenant)) {
-    return unknownTenant(rt.fake, tenant)
+  const refuse = rt.fake.unknownTenant
+  if (refuse !== undefined && tenantKind !== 'none' && !runState.isSeeded(tenant)) {
+    // The tenant may be BEING seeded right now: /reset is queued on the run
+    // and a read only waits for that queue inside Router.run, which is after
+    // this point. Checked first and awaited only on a miss, so the ordinary
+    // request pays nothing and a request racing its own reset is not told the
+    // tenant does not exist when an accepted reset is about to create it.
+    await router.settled(run)
+    if (!runState.isSeeded(tenant)) return refuse(tenant)
   }
   const hit = router.match(method, path)
   if (hit === null) return unrouted(service, method, path)

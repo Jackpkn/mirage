@@ -606,24 +606,60 @@ async function main(): Promise<void> {
     check('a write into run u1 is 201', wroteU1.status === 201, JSON.stringify(wroteU1.json))
     check(
       'u1 sees it',
-      titles((await call(fake, '/boards/brd_1/cards', { runInPath: 'u1', tenant: 'shared' })).json)
-        .includes('only-in-u1'),
+      titles(
+        (await call(fake, '/boards/brd_1/cards', { runInPath: 'u1', tenant: 'shared' })).json,
+      ).includes('only-in-u1'),
       JSON.stringify(
-        titles((await call(fake, '/boards/brd_1/cards', { runInPath: 'u1', tenant: 'shared' })).json),
+        titles(
+          (await call(fake, '/boards/brd_1/cards', { runInPath: 'u1', tenant: 'shared' })).json,
+        ),
       ),
     )
     check(
       'and u2 does NOT, under the very same tenant name',
-      !titles((await call(fake, '/boards/brd_1/cards', { runInPath: 'u2', tenant: 'shared' })).json)
-        .includes('only-in-u1'),
+      !titles(
+        (await call(fake, '/boards/brd_1/cards', { runInPath: 'u2', tenant: 'shared' })).json,
+      ).includes('only-in-u1'),
       JSON.stringify(
-        titles((await call(fake, '/boards/brd_1/cards', { runInPath: 'u2', tenant: 'shared' })).json),
+        titles(
+          (await call(fake, '/boards/brd_1/cards', { runInPath: 'u2', tenant: 'shared' })).json,
+        ),
       ),
     )
     const noPrefix = await call(fake, '/boards')
-    check('an unprefixed URL still means the default run', noPrefix.status === 200, JSON.stringify(noPrefix.json))
+    check(
+      'an unprefixed URL still means the default run',
+      noPrefix.status === 200,
+      JSON.stringify(noPrefix.json),
+    )
     const badRun = await call(fake, '/boards', { runInPath: 'bad%2Fname' })
-    check('an illegal run in the path is 400, not 500', badRun.status === 400, JSON.stringify(badRun.json))
+    check(
+      'an illegal run in the path is 400, not 500',
+      badRun.status === 400,
+      JSON.stringify(badRun.json),
+    )
+    // decodeURIComponent throws a URIError on this, which is not a TenantError
+    // and so reached the 500 envelope: a typed URL reported as a fake bug.
+    const badEscape = await call(fake, '/boards', { runInPath: '%ZZ' })
+    check(
+      'a malformed percent escape in the run is 400, not 500',
+      badEscape.status === 400,
+      JSON.stringify(badEscape.json),
+    )
+    // The prefix fills in an ABSENT run only. Overwriting a malformed one
+    // turned a request that owes a 400 into a successful reset.
+    for (const bad of [12, '']) {
+      const malformed = await call(fake, '/reset', {
+        method: 'POST',
+        runInPath: 'u1',
+        body: { run: bad, tenants: ['shared'] },
+      })
+      check(
+        `a malformed body run ${JSON.stringify(bad)} is still refused`,
+        malformed.status === 400,
+        JSON.stringify(malformed.json),
+      )
+    }
     const clash = await call(fake, '/reset', {
       method: 'POST',
       runInPath: 'u1',
