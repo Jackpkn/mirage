@@ -1,152 +1,150 @@
 ---
-title: Route Policy
-description: Script which runtime serves each command line; route-policy scripts run on the workspace's evaluator runtime.
-icon: route
+title: Policy Engine
+description: Every command, VFS op and session write clears one ordered stack of Policy hooks; profiles compile into it, and a host extends it with policies of its own.
+icon: gavel
 ---
 
-A workspace can hold several runtimes for the same command, with different
-trade-offs. `monty` runs `python3` in-process, sandboxed, stdlib-only:
-perfect for quick one-liners and pipe transforms, useless for a script that
-imports `pandas`. A `docker` entry is the opposite: your container, your
-installed packages, but every line pays the exec round-trip. The **route policy**
-decides per line which one serves it:
+The admission gate that [Permissions](/home/permissions) describes
+declaratively is one client of a general mechanism: the **policy
+engine**, an ordered stack of `Policy` objects the workspace consults at
+every state-changing surface. A `Policy` is one concern's answers to the
+workspace lifecycle. It overrides only the hooks it cares about, answers
+an action to state an opinion or nothing to stay silent, and a hook that
+raises fails closed: the command or op is refused, naming the policy.
 
-```yaml
-mode: exec
-runtimes:
-  - monty # captures python3 by default: sandboxed, stdlib-only
-  - name: docker
-    captures: ["python3"] # your container, has pandas installed
-    config:
-      container: my-box
-  - vfs
-route_policy: ./policy.py
+```python
+from mirage import Workspace
+from mirage.policy import CommandContext, Deny, Policy
+
+class NoForcePush(Policy):
+    async def pre_command(self, ctx: CommandContext) -> Deny | None:
+        if ctx.program[:2] == ("git", "push") and "--force" in ctx.argv:
+            return Deny("force pushes go through an operator")
+        return None
+
+ws = Workspace(mounts, policies=[NoForcePush()])
 ```
 
-```python policy.py
-# Jobs under /jobs need the container's packages; anything else
-# stays on the fast in-process sandbox. The LAST EXPRESSION is
-# the verdict.
-stage = ctx["commands"][0]
-in_jobs = any(p.startswith("/jobs/") for p in stage["paths"])
-"docker" if in_jobs else "monty"
-```
-
-So `python3 /jobs/train.py --epochs 3` runs in the container, while
-`cat data.csv | python3 -c "import sys; print(len(sys.stdin.read()))"`
-stays on monty.
-
-## Input: the line's context
-
-The script sees one global, `ctx`, the parsed line before any routing.
-This payload is captured from a live run of the config above, routing
-`python3 /jobs/train.py --epochs 3`:
-
-```json
-{
-  "line": "python3 /jobs/train.py --epochs 3",
-  "commands": [
-    {
-      "command": "python3",
-      "words": ["python3", "/jobs/train.py", "--epochs", "3"],
-      "builtin": true,
-      "paths": ["/jobs/train.py"]
-    }
-  ],
-  "command": "python3",
-  "builtin": true,
-  "cwd": "/",
-  "env": {},
-  "session_id": "019fb2fc-19a3-77cf-bbbe-c76069eed523",
-  "agent_id": "",
-  "mounts": ["/.bash_history/", "/data/", "/dev/", "/"]
+```typescript
+const noForcePush: Policy = {
+  async preCommand(ctx) {
+    if (ctx.program?.[0] === 'git' && ctx.program?.[1] === 'push' &&
+        ctx.argv.includes('--force'))
+      return { kind: 'deny', reason: 'force pushes go through an operator' }
+    return null
+  },
 }
+const ws = new Workspace(mounts, { policies: [noForcePush] })
 ```
 
-- `commands`: one entry per pipeline stage (`cat x | python3 -` has two),
-  each with its full words and its absolute-path operands.
-- `command`, `builtin`: mirror the first stage. `builtin` means mirage has
-  a builtin spec for the command (`python3` is a builtin that hands its
-  code to a runtime), as opposed to an unknown name.
-- `env`: the session environment (empty here, no `export` yet).
-- `session_id`: the executing session's id. `agent_id` is empty until an
-  agent identity is attached.
-- `mounts`: the workspace's mount prefixes, including built-ins like
-  `/dev/`.
+More arrive later through `ws.policies.add(...)`. Hooks left
+un-overridden are detected at the seam and never called, so an empty
+policy costs nothing.
 
-The payload round-trips through JSON (`RouteContext.from_dict`), so you
-can store one and replay a decision in tests.
+## The five hooks
 
-## Output: the verdict
+Each hook fires on one plane, and each accepts a fixed set of answers —
+returning a kind the hook cannot carry is a loud `PolicyError`, never a
+silent allow.
 
-- **A runtime name** (`"docker"`): that entry serves every command it
-  captures on this line.
-- **`None`**: no opinion; the first capturer in the `runtimes` list order
-  serves each command (here, `monty`).
-- **`{"deny": reason}`**: the line is refused before anything runs. It
-  exits 126 with `<command>: policy denied: <reason>` on stderr.
-- Anything else is a routing error; the line fails rather than guessing.
+- **`pre_command`** — once per classified command, before it runs. The
+  `CommandContext` carries the name, the raw `argv`, every path the
+  line names (`paths`, with `operands` alone beside it for rules that
+  read a slot by position), the admission `tokens` with their `program`
+  head (a CLI's verb path canonicalized), the cwd, and the session and
+  agent ids. May answer **Deny or Ask**.
+- **`pre_ops`** — once per VFS op at the op doors (the dispatcher and
+  the `ws.ops` facade, which is also how FUSE, the runtime guests,
+  `find -delete` and the warm cache arrive) and on the command tier's
+  backend I/O, before any backend or cache read. The op is named per
+  door, so a portable policy keys on `write` and `path`. May answer
+  **Deny**, which the doors raise as `EACCES`. This is the hot path —
+  thousands of ops under one recursive command — so keep it cheap;
+  expensive decisions belong at `pre_command` or precomputed into
+  policy state.
+- **`pre_session`** — once per session-state write, before it lands.
+  `export`, a plain assignment, `${X:=default}`, `$((X=5))` and
+  `printf -v` all clear the same gate, because every writer goes
+  through `SessionView.set`. The context carries a key, never a
+  pseudo-path, so a path-scoped rule cannot match one by accident. May
+  answer **Deny**.
+- **`post_ops`** — one completed op at the doors. A **Deny** suppresses
+  the result; a **Limit** caps a byte-producing one.
+- **`post_execute`** — one finished `execute()` line. A **Limit**
+  returned here merges with every other opining policy's and caps the
+  line's output at the workspace boundary.
 
-`{"runtime": "docker"}` is the dict spelling of a name, and the dict is
-where the verdict grows: new powers arrive as new keys, never as new
-return types.
+## The answers
 
-In code, the same two arms have a typed spelling, `RouteResult` and
-`DenyResult`; the dict is their wire form, the only shape a script can
-return from inside the evaluator sandbox:
+- **Silence** (`None`/`null`): no opinion, the next policy speaks.
+- **`Deny(reason, scope)`**: with the default `COMMAND` scope the line
+  reads `<command>: policy denied: <reason>` at exit 126; the
+  `OPERAND` scope keeps the GNU operand voice instead —
+  `<command>: <reason>` at the command's own operand exit code, the
+  reason naming the operand
+  (`cat: /vault/aws.token: credentials are never read by hand`,
+  exit 1). Exit codes derive from the plane and the scope, never from
+  a number a policy returns. At the op and session doors a Deny is
+  `EACCES`.
+- **`Ask(reason)`** (`pre_command` only): the line does not run, the
+  agent reads `requires approval` with an ask id at exit 126, and the
+  question lands in `ws.decisions` for a host to answer — the same
+  ledger, `on_ask` handler, CLI and REST doors as a profile's `ask`
+  rules; see [Asks](/home/permissions#asks).
+- **`Limit(max_bytes, max_lines, timeout_seconds, on_exceed)`**: a
+  bound on a result. Every opining policy's limits merge to the
+  tightest value per field.
 
-```python
-from mirage.runtime.routing import (DenyResult, RouteContext, RouteOutcome,
-                                   RouteResult)
+## The stack and its order
 
-def policy(ctx: RouteContext) -> RouteOutcome | None:
-    if any(p.startswith("/prod/") for p in ctx.commands[0].paths):
-        return DenyResult("writes under /prod are blocked")
-    return RouteResult("docker") if "/jobs/" in ctx.line else None
-```
+Policies are consulted in registration order, and the order is the
+tie-breaker, not the security model: a policy can only tighten the
+workspace, never loosen it. On a pre hook the **first Deny wins**. An
+Ask is remembered while the loop keeps looking for a Deny, so a later
+policy's refusal is not re-opened as a question; the first Ask is
+returned only when nothing refused.
 
-Besides the global `route_policy`, each runtime entry can carry its own `script:`
-with the same `ctx` input but a boolean verdict: am I willing to serve this
-line? Unwilling entries step aside and the first willing capturer wins.
+The registry seeds two built-ins ahead of everything: `MountRootPolicy`
+(mount-root semantics are mount semantics: the POSIX `EBUSY` rules for
+`rm`/`rmdir`/`mv`/`mkdir`/`touch`/`ln` on a mount root, and the refusal
+to read one whole into an archive or copy) and `OutputCapPolicy` (the
+per-command output caps, fed the per-mount overrides). The workspace
+follows with the profile pair — `PermissionsPolicy`, reading each
+session's compiled [profile](/home/permissions), and `ScriptPolicy` for
+profile scripts — then `policies=` in list order, then anything added
+later through `ws.policies.add()`.
 
-## What runs the scripts
+A policy that raises does not fail open: the loop answers a Deny naming
+the policy and the error is logged.
 
-`policy.py` is never imported: the workspace evaluates its source on the
-**policy engine**, an entry in the `runtimes` list with the evaluator
-capability. The script's file extension picks the engine: `route_policy:
-./policy.py` runs on the first python evaluator (monty, or pyodide in
-TypeScript) and `route_policy: ./policy.js` on the first JS evaluator
-(quickjs), even when an evaluator of the other language sits earlier in
-the list; with no language match the first evaluator serves. A config
-with policy scripts but no evaluator entry fails at the first decision.
+## One line, two judgments
 
-Evaluation is bounded: a policy script that hangs fails the line with a
-policy error after 10 seconds instead of freezing the workspace.
+The policy engine admits; the [route policy](/home/route-policy)
+places. A typed line clears them in a fixed order:
 
-When you build the workspace in code rather than from a config file,
-`route_policy=` also accepts a plain function with the same decision contract,
-sync or async. It is called directly, so no evaluator is involved:
+1. **Syntax.** An unparsable line exits 2 and no policy of either kind
+   is consulted.
+2. **Route.** The route policy sees the whole parsed line and picks the
+   runtime that serves it — or refuses it. A route deny short-circuits:
+   the line dies whole, and the admission hooks below are never
+   consulted, so one line produces at most one refusal.
+3. **Admission, per command.** Every command in the line is judged
+   before any of it runs, so a rule-refused line never runs halfway.
+   This holds on both lanes: a whole line handed to a runtime clears
+   the same per-command gate before the runtime sees a byte of it.
+4. **Execution.** Each VFS op clears `pre_ops` — including ops a
+   routed runtime performs against the mounts — every env write clears
+   `pre_session`, and the finished line is bounded by `post_ops` and
+   `post_execute`.
 
-```python
-from mirage.runtime.routing import RouteContext
+Both layers refuse in the same voice (`policy denied`, exit 126) on
+purpose, so an agent reads one grammar; a host tells them apart by what
+they judge. The route policy speaks once per line and can only place or
+deny; the policy engine speaks per command, per op and per write, and
+only it can ask instead of denying. Nested lines (`$()`, `eval`,
+`source`, `xargs`) inherit the outer line's route decision and never
+re-route, but every nested command clears admission itself.
 
-def policy(ctx: RouteContext) -> str | None:
-    stage = ctx.commands[0]
-    in_jobs = any(p.startswith("/jobs/") for p in stage.paths)
-    return "docker" if in_jobs else "monty"
-
-ws = Workspace(mounts, runtimes=runtimes, route_policy=policy)
-```
-
-A per-entry `script=` likewise accepts `(ctx) -> bool` in code.
-
-## Bring your own
-
-The capability is open: inherit `EvaluatorMixin` (Python) or implement
-`Evaluator` with the `EVALUATOR` brand (TypeScript) on your own runtime,
-and it becomes eligible as the policy engine. `eval(code, inputs=...)`
-returns the last expression's value; how the value travels is your
-runtime's choice. The docker examples give a stock container the
-capability by piping a harness to `python3 -`:
-[python](https://github.com/strukto-ai/mirage/blob/main/examples/python/runtimes/docker/docker_eval.py),
-[typescript](https://github.com/strukto-ai/mirage/blob/main/examples/typescript/runtimes/docker/docker_eval.ts).
+`ws.explain(line, session_id)` runs the admission gate without running
+the line, and answers with the exact refusal the agent would see; see
+[Dry runs](/home/permissions#dry-runs).
