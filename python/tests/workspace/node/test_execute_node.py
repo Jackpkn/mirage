@@ -16,7 +16,7 @@ import asyncio
 from functools import partial
 from unittest.mock import AsyncMock, MagicMock
 
-from mirage.commands.config import LineFacts
+from mirage.commands.config import ExecContext
 from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.policy import Policies
@@ -98,11 +98,14 @@ def _mock_registry():
     return reg, mount
 
 
-async def _sort_execute_cmd(name, paths, texts, flag_kwargs,
-                            facts=LineFacts()):
+async def _sort_execute_cmd(name,
+                            paths,
+                            texts,
+                            flag_kwargs,
+                            context=ExecContext()):
     """Mock execute_cmd that sorts stdin for sort command."""
-    if name == "sort" and facts.stdin:
-        data = facts.stdin if isinstance(facts.stdin, bytes) else b""
+    if name == "sort" and context.stdin:
+        data = context.stdin if isinstance(context.stdin, bytes) else b""
         lines = data.decode().strip().split("\n")
         lines.sort()
         return "\n".join(lines).encode() + b"\n", IOResult()
@@ -1009,9 +1012,9 @@ def test_command_flags_stay_text():
     assert "pattern" in texts
 
 
-def test_execute_cmd_receives_the_positional_args_and_one_facts_bag():
+def test_execute_cmd_receives_the_positional_args_and_one_context():
     """execute_cmd is called with (cmd_name, paths, texts, flag_kwargs,
-    facts) — the line's workspace facts arrive as one LineFacts value."""
+    context) — the workspace's side arrives as one ExecContext value."""
     _, _, _, _, mount, _ = _exec("cat /data/file.txt")
     args = mount.execute_cmd.call_args[0]
     assert len(args) == 5
@@ -1019,7 +1022,7 @@ def test_execute_cmd_receives_the_positional_args_and_one_facts_bag():
     assert isinstance(args[1], list)
     assert isinstance(args[2], list)
     assert isinstance(args[3], dict)
-    assert isinstance(args[4], LineFacts)
+    assert isinstance(args[4], ExecContext)
 
 
 def test_flag_kwargs_is_empty_without_spec():

@@ -19,6 +19,7 @@ from typing import Any, Callable, Protocol, cast
 
 from mirage.accessor.base import Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
+from mirage.commands.constants import ROOT_CWD
 from mirage.commands.spec import CommandSpec
 from mirage.commands.spec.help import render_help
 from mirage.commands.spec.types import FlagValue, Option
@@ -30,26 +31,20 @@ from mirage.runtime.types import DispatchFn, ExecPathFn
 from mirage.types import Limit, PathSpec
 from mirage.version import __version__
 
-# The promoted shape execute_cmd gives "/" on an unprefixed mount; a
-# frozen PathSpec, so one instance serves as the field default.
-_ROOT_CWD = PathSpec(virtual="/",
-                     directory="/",
-                     resource_path="",
-                     resolved=False)
-
 
 @dataclass(frozen=True, slots=True)
-class LineFacts:
-    """The line's workspace facts, as ``Mount.execute_cmd`` takes them.
+class ExecContext:
+    """The execution context ``Mount.execute_cmd`` takes: everything
+    the workspace supplies for one invocation beyond the parsed line.
 
     The one bag a dispatcher call site builds (mirrors the options
     object TypeScript's ``Mount.executeCmd`` has always taken as its
-    fifth argument, named ``LineFacts`` there too). ``execute_cmd``
+    fifth argument, named ``ExecContext`` there too). ``execute_cmd``
     re-boxes these onto ``CommandOpts`` beside the facts only the mount
     can supply (mount_prefix, index, filetype_fns), so every field here
     is spelled exactly as ``CommandOpts`` spells it — one fact has one
     name on both sides of the seam, pinned by
-    ``tests/commands/test_line_facts_parity.py``. ``session_view``
+    ``tests/commands/test_exec_context_parity.py``. ``session_view``
     stays although no ``opts`` reader wants it today, because
     ``CLIDoors.session_view`` has production readers and the doors
     record is pinned to be a subset of ``CommandOpts``.
@@ -155,7 +150,7 @@ class CommandOpts:
 
     stdin: ByteSource | None = None
     flags: Mapping[str, FlagValue] = field(default_factory=dict)
-    cwd: PathSpec = _ROOT_CWD
+    cwd: PathSpec = ROOT_CWD
     mount_prefix: str = ""
     filetype_fns: Mapping[str, "CommandFn"] | None = None
     command: str | None = None

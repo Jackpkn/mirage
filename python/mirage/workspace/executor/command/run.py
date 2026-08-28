@@ -15,7 +15,7 @@
 import functools
 from typing import Any
 
-from mirage.commands.config import LineFacts
+from mirage.commands.config import ExecContext
 from mirage.commands.errors import CommandTimeoutError, UsageError
 from mirage.commands.spec.types import FlagValue
 from mirage.commands.spec.usage import read_fail_exit
@@ -408,7 +408,7 @@ async def run_on_mount(
             paths,
             texts,
             flag_kwargs,
-            LineFacts(
+            ExecContext(
                 stdin=stdin,
                 cwd=session.cwd,
                 dispatch=dispatch,

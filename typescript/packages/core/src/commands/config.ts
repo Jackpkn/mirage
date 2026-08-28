@@ -25,9 +25,10 @@ import { renderHelp } from './spec/help.ts'
 import { CommandSpec, Option, type FlagValue } from './spec/types.ts'
 
 /**
- * The line's workspace facts, as `Mount.executeCmd` takes them — the
+ * The execution context `Mount.executeCmd` takes: everything the
+ * workspace supplies for one invocation beyond the parsed line — the
  * one bag its fifth argument has always been, now named (mirrors
- * Python's `LineFacts`, commands/config.py). `executeCmd` re-boxes
+ * Python's `ExecContext`, commands/config.py). `executeCmd` re-boxes
  * these onto `CommandOpts` beside the facts only the mount can supply
  * (mountPrefix, index, filetypeFns), so every field is spelled exactly
  * as `CommandOpts` spells it — pinned by a mapped type in
@@ -39,7 +40,7 @@ import { CommandSpec, Option, type FlagValue } from './spec/types.ts'
  * `CLIDoors.sessionView` has production readers and the doors record
  * is pinned to be a subset of `CommandOpts`.
  */
-export interface LineFacts {
+export interface ExecContext {
   stdin?: ByteSource | null
   cwd?: string
   dispatch?: DispatchFn

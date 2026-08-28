@@ -20,7 +20,7 @@ from typing import Any, Callable
 from mirage.cache.context import push_cache_manager
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.utils.limit import run_with_timeout
-from mirage.commands.config import CommandOpts, LineFacts, RegisteredCommand
+from mirage.commands.config import CommandOpts, ExecContext, RegisteredCommand
 from mirage.commands.resolve import get_extension
 from mirage.commands.spec import CommandSpec
 from mirage.commands.spec.types import FlagValue
@@ -461,7 +461,7 @@ class MountEntry:
         paths: list[PathSpec],
         texts: list[str],
         flag_kwargs: dict[str, FlagValue],
-        facts: LineFacts = LineFacts(),
+        context: ExecContext = ExecContext(),
     ) -> tuple[ByteSource | None, IOResult]:
         """Execute a command on this mount's resource.
 
@@ -474,16 +474,17 @@ class MountEntry:
             paths (list[PathSpec]): positional path args.
             texts (list[str]): positional text args.
             flag_kwargs (dict): parsed flags from upstream.
-            facts (LineFacts): the line's workspace facts, one bag (the
-                fifth argument TypeScript's ``executeCmd`` has always
-                taken); re-boxed whole onto ``CommandOpts`` beside the
-                facts only this mount can supply. A handler reads the
-                fields it wants, so no list of command names is kept
-                here.
+            context (ExecContext): the invocation's execution context —
+                everything the workspace supplies beyond the parsed line
+                (the fifth argument TypeScript's ``executeCmd`` has
+                always taken); re-boxed whole onto ``CommandOpts``
+                beside the facts only this mount can supply. A handler
+                reads the fields it wants, so no list of command names
+                is kept here.
         """
-        stdin = facts.stdin
-        cwd = facts.cwd
-        stat_path = facts.stat_path
+        stdin = context.stdin
+        cwd = context.cwd
+        stat_path = context.stat_path
         extension = get_extension(paths[0].virtual) if paths else None
         # A filetype handler is selected from the operand's NAME, and a
         # directory can carry any extension, so the cascade would hand a
@@ -556,17 +557,17 @@ class MountEntry:
             mount_prefix=mount_prefix,
             filetype_fns=(filetype_fns if not is_filetype_cmd else None),
             index=self.resource.index,
-            dispatch=facts.dispatch,
-            session_id=facts.session_id,
-            env=facts.env,
-            exec_allowed=facts.exec_allowed,
-            exec_path_allowed=facts.exec_path_allowed,
-            runtime=facts.runtime,
-            runtime_unavailable=facts.runtime_unavailable,
-            ns=facts.ns,
+            dispatch=context.dispatch,
+            session_id=context.session_id,
+            env=context.env,
+            exec_allowed=context.exec_allowed,
+            exec_path_allowed=context.exec_path_allowed,
+            runtime=context.runtime,
+            runtime_unavailable=context.runtime_unavailable,
+            ns=context.ns,
             stat_path=stat_path,
-            readdir_path=facts.readdir_path,
-            session_view=facts.session_view,
+            readdir_path=context.readdir_path,
+            session_view=context.session_view,
         )
 
         prev_prefix = push_mount_prefix(mount_prefix)

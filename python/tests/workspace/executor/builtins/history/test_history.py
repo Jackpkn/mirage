@@ -14,7 +14,7 @@
 
 import pytest
 
-from mirage.commands.config import LineFacts
+from mirage.commands.config import ExecContext
 from mirage.io.types import IOResult
 from mirage.workspace.executor.builtins.history.history import (_parse_args,
                                                                 handle_history)
@@ -27,8 +27,13 @@ class FakeMount:
         self.io = io or IOResult()
         self.calls = []
 
-    async def execute_cmd(self, name, paths, texts, flags, facts=LineFacts()):
-        self.calls.append((name, texts, flags, facts))
+    async def execute_cmd(self,
+                          name,
+                          paths,
+                          texts,
+                          flags,
+                          context=ExecContext()):
+        self.calls.append((name, texts, flags, context))
         return b"1  ls\n", self.io
 
 
@@ -128,12 +133,12 @@ async def test_history_routes_flags_and_operands_to_the_view_mount():
     mount = FakeMount()
     stream, io, node = await handle_history(FakeRegistry(mount),
                                             ["-s", "echo hi"], session())
-    name, texts, flags, facts = mount.calls[0]
+    name, texts, flags, context = mount.calls[0]
     assert name == "history"
     assert texts == ["echo hi"]
     assert flags == {"s": True}
-    assert facts.cwd == "/"
-    assert facts.session_id == "test"
+    assert context.cwd == "/"
+    assert context.session_id == "test"
     assert stream == b"1  ls\n"
     assert io.exit_code == 0
     assert node.command == "history"

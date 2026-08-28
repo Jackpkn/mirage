@@ -18,7 +18,7 @@ import {
   command,
   type CommandFn,
   type CommandOpts,
-  type LineFacts,
+  type ExecContext,
   RegisteredCommand,
 } from '../../commands/config.ts'
 import { CommandSpec, Operand } from '../../commands/spec/types.ts'
@@ -390,7 +390,7 @@ describe('Mount.registerCross / resolveCross', () => {
   })
 })
 
-describe('LineFacts parity with CommandOpts', () => {
+describe('ExecContext parity with CommandOpts', () => {
   it('every line fact is spelled as CommandOpts spells it', () => {
     // executeCmd re-boxes the bag onto CommandOpts, so a fact spelled
     // two ways across that seam is two vocabularies for one plane.
@@ -398,9 +398,9 @@ describe('LineFacts parity with CommandOpts', () => {
     // enumerate at runtime. `limitOverride` is the one execution
     // control executeCmd consumes itself rather than forwards, so it
     // is the one exemption. The Python twin is
-    // tests/commands/test_line_facts_parity.py.
-    type Shared = { [K in keyof Omit<LineFacts, 'limitOverride'>]: CommandOpts[K] }
-    const parity: Shared = {} as LineFacts
+    // tests/commands/test_exec_context_parity.py.
+    type Shared = { [K in keyof Omit<ExecContext, 'limitOverride'>]: CommandOpts[K] }
+    const parity: Shared = {} as ExecContext
     expect(parity).toBeDefined()
   })
 })

@@ -32,7 +32,7 @@ from mirage.shell.variable import VarAttr
 from mirage.types import Limit, PathSpec
 from mirage.workspace import Workspace
 from mirage.workspace.cli.types import CLIInstall
-from mirage.workspace.executor.command.cli import CliFacts, handle_cli
+from mirage.workspace.executor.command.cli import CLIContext, handle_cli
 from mirage.workspace.executor.command.flags import option_error, parse_flags
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import seed_var, set_attr
@@ -248,7 +248,7 @@ async def test_script_selects_by_language_and_runs():
     install = script_install()
     stdout, io, node = await handle_cli(install, ["pager", "report.txt", "x"],
                                         Session("t"),
-                                        facts=CliFacts(entries=[js, py]))
+                                        context=CLIContext(entries=[js, py]))
     assert io.exit_code == 0
     assert await materialize(stdout) == b"ran\n"
     assert js.seen == []
@@ -269,7 +269,7 @@ async def test_script_declared_options_still_pass_verbatim():
         options=(Option(short="-n", long="--lines", type="int"), ))
     _, io, _ = await handle_cli(install, ["pager", "-n", "3", "report.txt"],
                                 Session("t"),
-                                facts=CliFacts(entries=[py]))
+                                context=CLIContext(entries=[py]))
     assert io.exit_code == 0
     assert py.seen.pop().args == ["-n", "3", "report.txt"]
 
@@ -286,7 +286,7 @@ async def test_script_module_bit_reaches_the_runtime_as_a_flag():
     install = CLIInstall(name="pager", spec=spec, config=None)
     _, io, _ = await handle_cli(install, ["pager"],
                                 Session("t"),
-                                facts=CliFacts(entries=[js]))
+                                context=CLIContext(entries=[js]))
     assert io.exit_code == 0
     assert js.seen.pop().flags == {"module": True}
 
@@ -296,7 +296,7 @@ async def test_script_without_the_module_bit_sends_no_flags():
     py = FakePyRuntime()
     await handle_cli(script_install(), ["pager"],
                      Session("t"),
-                     facts=CliFacts(entries=[py]))
+                     context=CLIContext(entries=[py]))
     assert py.seen.pop().flags == {}
 
 
@@ -312,7 +312,7 @@ async def test_script_env_carries_mirage_config_json():
     set_attr(session, "EDITOR", VarAttr.EXPORT)
     _, io, _ = await handle_cli(install, ["pager"],
                                 session,
-                                facts=CliFacts(entries=[py]))
+                                context=CLIContext(entries=[py]))
     assert io.exit_code == 0
     run = py.seen.pop()
     assert run.env == {
@@ -327,7 +327,7 @@ async def test_script_env_omits_mirage_config_without_config():
     py = FakePyRuntime()
     _, _, _ = await handle_cli(script_install(), ["pager"],
                                Session("t"),
-                               facts=CliFacts(entries=[py]))
+                               context=CLIContext(entries=[py]))
     assert "MIRAGE_CLI_CONFIG" not in py.seen.pop().env
 
 
@@ -341,7 +341,7 @@ async def test_script_is_named_by_its_installed_head_word():
                          config=None)
     await handle_cli(install, ["renamed", "report.txt"],
                      Session("t"),
-                     facts=CliFacts(entries=[py]))
+                     context=CLIContext(entries=[py]))
     run = py.seen.pop()
     assert run.prog == "renamed"
     assert run.args == ["report.txt"]
@@ -353,7 +353,7 @@ async def test_script_stdin_materializes_to_bytes():
     await handle_cli(script_install(), ["pager"],
                      Session("t"),
                      stdin=b"body",
-                     facts=CliFacts(entries=[py]))
+                     context=CLIContext(entries=[py]))
     assert py.seen.pop().stdin == b"body"
 
 
@@ -364,7 +364,7 @@ async def test_script_help_reaches_a_program_that_declared_nothing():
     py = FakePyRuntime()
     _, io, _ = await handle_cli(script_install(), ["pager", "--help"],
                                 Session("t"),
-                                facts=CliFacts(entries=[py]))
+                                context=CLIContext(entries=[py]))
     assert io.exit_code == 0
     assert py.seen.pop().args == ["--help"]
 
@@ -378,7 +378,7 @@ async def test_script_help_renders_when_the_spec_declares_a_grammar():
         options=(Option(short="-n", long="--lines", type="int"), ))
     stdout, io, _ = await handle_cli(install, ["pager", "--help"],
                                      Session("t"),
-                                     facts=CliFacts(entries=[py]))
+                                     context=CLIContext(entries=[py]))
     assert io.exit_code == 0
     out = await materialize(stdout)
     assert out.startswith(b"pager\n")
@@ -395,7 +395,7 @@ async def test_script_undeclared_flag_reaches_the_program():
     _, io, _ = await handle_cli(script_install(),
                                 ["pager", "--width", "80", "-n", "x"],
                                 Session("t"),
-                                facts=CliFacts(entries=[py]))
+                                context=CLIContext(entries=[py]))
     assert io.exit_code == 0
     assert py.seen.pop().args == ["--width", "80", "-n", "x"]
 
@@ -407,7 +407,7 @@ async def test_script_with_a_grammar_refuses_an_undeclared_flag():
         options=(Option(short="-n", long="--lines", type="int"), ))
     _, io, _ = await handle_cli(install, ["pager", "--frobnicate"],
                                 Session("t"),
-                                facts=CliFacts(entries=[py]))
+                                context=CLIContext(entries=[py]))
     assert io.exit_code == 2
     assert io.stderr.startswith(b"pager: unrecognized option '--frobnicate'")
     assert py.seen == []
@@ -421,7 +421,7 @@ async def test_script_runtime_pin_is_honored():
     install = script_install(runtime="otherpy")
     _, io, _ = await handle_cli(install, ["pager"],
                                 Session("t"),
-                                facts=CliFacts(entries=[first, pinned]))
+                                context=CLIContext(entries=[first, pinned]))
     assert io.exit_code == 0
     assert first.seen == []
     assert len(pinned.seen) == 1
@@ -432,7 +432,7 @@ async def test_script_unknown_pin_exits_127():
     py = FakePyRuntime()
     _, io, node = await handle_cli(script_install(runtime="local"), ["pager"],
                                    Session("t"),
-                                   facts=CliFacts(entries=[py]))
+                                   context=CLIContext(entries=[py]))
     assert io.exit_code == 127
     assert io.stderr == (b"pager: unknown runtime: 'local' "
                          b"(workspace runtimes: 'fakepy')\n")
@@ -445,7 +445,7 @@ async def test_script_pin_language_mismatch_exits_127():
     js = FakeJsRuntime()
     _, io, _ = await handle_cli(script_install(runtime="fakejs"), ["pager"],
                                 Session("t"),
-                                facts=CliFacts(entries=[js]))
+                                context=CLIContext(entries=[js]))
     assert io.exit_code == 127
     assert io.stderr == (b"pager: runtime 'fakejs' does not run "
                          b"python scripts\n")
@@ -457,7 +457,7 @@ async def test_script_no_language_match_exits_127():
     py = FakePyRuntime()
     _, io, _ = await handle_cli(script_install(language="js"), ["pager"],
                                 Session("t"),
-                                facts=CliFacts(entries=[py]))
+                                context=CLIContext(entries=[py]))
     assert io.exit_code == 127
     assert io.stderr == (b"pager: no workspace runtime runs js scripts "
                          b"(workspace runtimes: 'fakepy')\n")
@@ -476,7 +476,7 @@ async def test_script_crash_reports_prog_prefixed_exit_1():
     crash = CrashingRuntime()
     _, io, _ = await handle_cli(script_install(), ["pager"],
                                 Session("t"),
-                                facts=CliFacts(entries=[crash]))
+                                context=CLIContext(entries=[crash]))
     assert io.exit_code == 1
     assert io.stderr == b"pager: engine exploded\n"
 
@@ -487,7 +487,7 @@ async def test_script_exit_code_and_stderr_surface():
     py.result = RunResult(stdout=b"", stderr=b"boom\n", exit_code=3)
     stdout, io, node = await handle_cli(script_install(), ["pager"],
                                         Session("t"),
-                                        facts=CliFacts(entries=[py]))
+                                        context=CLIContext(entries=[py]))
     assert stdout is None
     assert io.exit_code == 3
     assert io.stderr == b"boom\n"
@@ -504,7 +504,7 @@ async def test_script_limit_bounds_the_run():
     with pytest.raises(CommandTimeoutError, match="pager"):
         await handle_cli(install, ["pager"],
                          Session("t"),
-                         facts=CliFacts(entries=[sleepy]))
+                         context=CLIContext(entries=[sleepy]))
 
 
 def test_env_fills_an_option_the_line_omitted():

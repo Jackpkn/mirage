@@ -156,13 +156,13 @@ async def _script_output(inv: CLIInvocation[Any], script: ScriptSource,
 
 
 @dataclass(frozen=True, slots=True)
-class CliFacts:
+class CLIContext:
     """Workspace facts the dispatcher can offer but most CLIs do not
     want: an API client needs no filesystem, while ``git`` is nothing
     but one. Forwarded whole onto the leaf's doors, so a leaf that does
     not read them ignores them and there is no allowlist of
     filesystem-aware CLIs to keep in step (the same rule ``links``
-    follows for mount commands). Mirrors the TS ``CliFacts``
+    follows for mount commands). Mirrors the TS ``CLIContext``
     (workspace/executor/command/cli.ts).
 
     Args:
@@ -193,7 +193,7 @@ async def handle_cli(
     parts: list[str | PathSpec],
     session: Session,
     stdin: ByteSource | None = None,
-    facts: CliFacts = CliFacts(),
+    context: CLIContext = CLIContext(),
     drop_caches: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Execute a line whose head word is an installed CLI.
@@ -219,22 +219,23 @@ async def handle_cli(
             for the invocation record).
         stdin (ByteSource | None): stdin data, carried on the
             invocation record.
-        facts (CliFacts): the workspace facts on offer, one bag (the
-            fifth argument TS's ``handleCli`` has always taken). The
-            four door facts ride ``inv.doors`` as one CLIDoors, one
-            door per state plane; a verb that never reads it cannot
-            touch a mount, and outside a workspace the field is None.
+        context (CLIContext): the workspace context on offer, one bag
+            (the fifth argument TS's ``handleCli`` has always taken).
+            The four door facts ride ``inv.doors`` as one CLIDoors,
+            one door per state plane; a verb that never reads it
+            cannot touch a mount, and outside a workspace the field
+            is None.
         drop_caches (Callable | None): drop cached listings and bodies
             for the mounts this CLI's service serves. Called after a
             write verb succeeds, because an account CLI mutates its
             service by id and no vfs path can be derived from that, so
             per-path invalidation has nothing to aim at.
     """
-    entries = facts.entries
-    dispatch = facts.dispatch
-    stat_path = facts.stat_path
-    ns = facts.ns
-    session_view = facts.session_view
+    entries = context.entries
+    dispatch = context.dispatch
+    stat_path = context.stat_path
+    ns = context.ns
+    session_view = context.session_view
     # Words re-enter string space as typed (word_text): the walk owns
     # interpretation, so a quoted "Lunch?" must not arrive as the
     # glob-classified absolute /Lunch?. Leaf path operands are resolved
