@@ -12,17 +12,14 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import asyncio
-import logging
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
 
 from mirage.accessor.base import Accessor
+from mirage.accessor.pool import LoopClientCache
 from mirage.utils import key_prefix as kp
-
-logger = logging.getLogger(__name__)
 
 
 class S3Config(BaseModel):
@@ -51,89 +48,30 @@ class S3Accessor(Accessor):
     def __init__(self, config: S3Config) -> None:
         self.config = config
         # One live client per event loop, the way GridFSAccessor keeps its
-        # motor client, because an aioboto3 client is bound to the loop that
-        # opened it. Opening one costs ~50ms (botocore builds the S3 service
-        # model and a fresh connection pool), so the old client-per-operation
-        # made every op 24x its own cost.
+        # motor client. Opening one costs ~50ms (botocore builds the S3
+        # service model and a fresh connection pool), so the old
+        # client-per-operation made every op 24x its own cost.
         #
-        # The accessor owns the LIFETIME and the driver owns the
-        # CONSTRUCTION: building a client needs the kwargs helpers in
-        # mirage.core.s3.client, and that module imports S3Config from here,
-        # so constructing one here would be a cycle.
-        self._stacks: dict[asyncio.AbstractEventLoop, AsyncExitStack] = {}
-        self._clients: dict[asyncio.AbstractEventLoop, Any] = {}
-        self._locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+        # The cache owns the lifetime and the driver owns the construction:
+        # building a client needs the kwargs helpers in mirage.core.s3.client,
+        # and that module imports S3Config from here, so constructing one here
+        # would be a cycle.
+        self._clients = LoopClientCache("s3")
 
     async def cached_client(
             self, factory: Callable[[],
                                     AbstractAsyncContextManager[Any]]) -> Any:
-        """Return this loop's live client, opening one when there is none.
+        """Return this loop's open client, opening one when there is none.
 
         Args:
-            factory (Callable): builds the client context manager. Called
-                only on a miss, so a hit costs one dict lookup.
+            factory (Callable): builds the client context manager, called
+                only when this loop has no client yet.
 
         Returns:
             Any: the open aioboto3 client for the running loop.
         """
-        loop = asyncio.get_running_loop()
-        # Keyed by the loop OBJECT, never by id(loop): CPython reuses the
-        # address of a collected loop, so a second asyncio.run() could hash to
-        # a client bound to the first run's closed loop. Holding the key also
-        # keeps that reuse impossible.
-        await self._release_closed()
-        live = self._clients.get(loop)
-        if live is not None:
-            return live
-        # Opening is serialized per loop. `factory()` may suspend (resolving
-        # credentials can reach IMDS or SSO), and two callers that both miss
-        # would then each open a client and each store it under this one key,
-        # so the loser's AsyncExitStack becomes unreachable and `close` can
-        # never close its connection pool. setdefault is atomic here because
-        # nothing awaits between the read and the write, so both callers take
-        # the same lock. TypeScript's SSH accessor guards the same way with a
-        # cached connectPromise.
-        lock = self._locks.setdefault(loop, asyncio.Lock())
-        async with lock:
-            live = self._clients.get(loop)
-            if live is not None:
-                return live
-            stack = AsyncExitStack()
-            client = await stack.enter_async_context(factory())
-            self._stacks[loop] = stack
-            self._clients[loop] = client
-            return client
-
-    async def _release_closed(self) -> None:
-        """Close the clients whose loop has gone.
-
-        A closing loop does not run the client's context manager, so dropping
-        the AsyncExitStack without executing it abandons the aiohttp session
-        and its connector and the connection is never released. Running the
-        stack from a LATER loop does work, so close it rather than forgetting
-        it.
-        """
-        for dead in [one for one in self._clients if one.is_closed()]:
-            stack = self._stacks.pop(dead, None)
-            self._clients.pop(dead, None)
-            self._locks.pop(dead, None)
-            if stack is None:
-                continue
-            try:
-                await stack.aclose()
-            except Exception as exc:
-                # Not fatal to the caller's operation, and not silent either:
-                # the transports belonged to a loop that is gone, so the
-                # sockets are reclaimed when the objects are collected.
-                logger.debug(
-                    "s3: closing a client from a closed loop failed: %s", exc)
+        return await self._clients.get(factory)
 
     async def close(self) -> None:
         """Close every client this accessor opened."""
-        await self._release_closed()
-        stacks = list(self._stacks.values())
-        self._stacks.clear()
-        self._clients.clear()
-        self._locks.clear()
-        for stack in stacks:
-            await stack.aclose()
+        await self._clients.close()
