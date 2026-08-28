@@ -214,6 +214,12 @@ describe('CLISpec', () => {
     ).toThrow(/choices and default require a value flag/)
   })
 
+  it('rejects a spelling-less leaf option at construction', () => {
+    expect(() => new CLISpec({ name: 'mine', fn: verb, options: [new Option()] })).toThrow(
+      /requires a short or long spelling/,
+    )
+  })
+
   it('rejects a duplicate leaf option spelling at construction', () => {
     expect(
       () =>

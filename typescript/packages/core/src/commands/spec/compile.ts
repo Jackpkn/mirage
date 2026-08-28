@@ -183,7 +183,9 @@ export function compileSpec(spec: CommandSpec): CompiledSpec {
 
   for (const opt of spec.options) {
     const canonical = opt.long ?? opt.short
-    if (canonical === null) continue
+    if (canonical === null) {
+      throw new Error('option requires a short or long spelling')
+    }
     for (const spelling of [opt.short, opt.long]) {
       if (spelling === null) continue
       if (seenSpellings.has(spelling)) {

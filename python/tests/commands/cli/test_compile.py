@@ -12,6 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from dataclasses import dataclass
+
 import pytest
 from pydantic import BaseModel
 
@@ -26,6 +28,14 @@ class _Config(BaseModel):
 
 async def _verb(config, paths, *texts, **flags):
     return None
+
+
+@dataclass
+class _StatefulVerb:
+    calls: int = 0
+
+    async def __call__(self, invocation):
+        self.calls += 1
 
 
 def test_name_must_be_a_single_word():
@@ -121,6 +131,17 @@ def test_leaf_option_grammar_is_validated_at_construction():
         CLISpec(name="mine",
                 fn=_verb,
                 options=(Option(long="--mode", choices=("a", "b")), ))
+
+
+def test_unhashable_callable_handler_is_valid():
+    handler = _StatefulVerb()
+    spec = CLISpec(name="mine", fn=handler)
+    assert spec.fn is handler
+
+
+def test_spellingless_leaf_option_is_rejected_at_construction():
+    with pytest.raises(ValueError, match="requires a short or long spelling"):
+        CLISpec(name="mine", fn=_verb, options=(Option(), ))
 
 
 def test_duplicate_leaf_option_spelling_is_rejected_at_construction():

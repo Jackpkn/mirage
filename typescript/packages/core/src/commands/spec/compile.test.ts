@@ -70,6 +70,11 @@ describe('compileSpec — count/choices/required/default tables', () => {
     expect(compileSpec(spec)).toBe(compileSpec(spec))
   })
 
+  it('requires an option spelling', () => {
+    const spec = new CommandSpec({ options: [new Option()] })
+    expect(() => compileSpec(spec)).toThrow(/requires a short or long spelling/)
+  })
+
   it.each([
     [new Option({ short: '-m' }), new Option({ short: '-m', type: 'str' })],
     [new Option({ long: '--mode' }), new Option({ long: '--mode', type: 'str' })],

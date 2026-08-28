@@ -186,7 +186,7 @@ def compile_spec(spec: CommandSpec) -> CompiledSpec:
     for opt in spec.options:
         canonical = opt.long if opt.long else opt.short
         if canonical is None:
-            continue
+            raise ValueError("option requires a short or long spelling")
         for spelling in (opt.short, opt.long):
             if spelling is None:
                 continue
