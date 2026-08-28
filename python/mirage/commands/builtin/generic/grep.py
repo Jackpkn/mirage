@@ -4,21 +4,19 @@ from functools import partial
 
 from mirage.cache.read_through import (cache_aware_bound_bytes,
                                        cache_aware_bound_stream)
-from mirage.commands.builtin.grep_helper import WalkFilters  # yapf: disable
-from mirage.commands.builtin.grep_helper import \
-    compile_pattern  # yapf: disable
-from mirage.commands.builtin.grep_helper import \
-    parse_file_globs  # yapf: disable
-from mirage.commands.builtin.grep_helper import (count_exit_stream,
-                                                 count_records_have_matches,
-                                                 exit_code_for, file_admitted,
-                                                 grep_files_only, grep_lines,
-                                                 grep_recursive, grep_stream,
-                                                 prefix_lines, resolve_pattern)
+from mirage.commands.builtin.grep_pattern import (compile_pattern,
+                                                  resolve_pattern)
+from mirage.commands.builtin.grep_scan import (count_exit_stream,
+                                               count_records_have_matches,
+                                               exit_code_for, grep_files_only,
+                                               grep_lines, grep_recursive,
+                                               grep_stream, prefix_lines)
+from mirage.commands.builtin.grep_select import (WalkFilters, file_admitted,
+                                                 parse_file_globs)
 from mirage.commands.builtin.utils.lines import split_lines
 from mirage.commands.builtin.utils.output import (format_optional_records,
                                                   format_records)
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.builtin.utils.wrap import (call_read_bytes, call_readdir,
                                                 call_stat,
                                                 mount_parent_readdir,
@@ -332,9 +330,9 @@ async def grep(
             out = prefix_lines(out, f"{paths[0].raw_path}:")
         return out, io
 
-    source = _resolve_source(stdin,
-                             "grep: usage: grep [flags] pattern [path]",
-                             error_cls=UsageError)
+    source = resolve_source(stdin,
+                            "grep: usage: grep [flags] pattern [path]",
+                            error_cls=UsageError)
     pat = compile_pattern(pattern, f.ignore_case, f.fixed_string, f.whole_word,
                           f.basic_regexp)
     stream = grep_stream(

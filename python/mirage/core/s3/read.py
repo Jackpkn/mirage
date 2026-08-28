@@ -17,7 +17,8 @@ from typing import Any
 
 from mirage.accessor.s3 import S3Accessor
 from mirage.cache.index import NULL_INDEX, IndexCacheStore
-from mirage.core.s3.client import _client_kwargs, _key, async_session
+from mirage.core.s3.client import (_client_kwargs, _key, async_session,
+                                   closing_body)
 from mirage.observe.context import record, revision_for
 from mirage.types import PathSpec
 from mirage.utils.errors import enoent
@@ -69,21 +70,25 @@ async def read_bytes(accessor: S3Accessor,
     window = range_header(offset, size)
     if window is not None:
         kwargs["Range"] = window
-    session = async_session(config)
+    # The accessor's cached client, not a fresh one: opening a client costs
+    # ~160ms against ~2ms for a reused one, so a read-heavy battery paid the
+    # client rather than the request.
+    client = await accessor.cached_client(
+        lambda: async_session(config).client(**_client_kwargs(config)))
     start_ms = int(time.monotonic() * 1000)
     try:
-        async with session.client(**_client_kwargs(config)) as client:
-            resp = await client.get_object(**kwargs)
-            data = await resp["Body"].read()
-            fingerprint, revision = _fp_rev_from_response(resp)
-            record("read",
-                   path,
-                   "s3",
-                   len(data),
-                   start_ms,
-                   fingerprint=fingerprint,
-                   revision=revision)
-            return data
+        resp = await client.get_object(**kwargs)
+        async with closing_body(resp["Body"]) as body:
+            data = await body.read()
+        fingerprint, revision = _fp_rev_from_response(resp)
+        record("read",
+               path,
+               "s3",
+               len(data),
+               start_ms,
+               fingerprint=fingerprint,
+               revision=revision)
+        return data
     except Exception as exc:
         if (hasattr(exc, "response")
                 and exc.response.get("Error", {}).get("Code") == "NoSuchKey"):

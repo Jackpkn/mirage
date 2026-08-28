@@ -14,7 +14,7 @@
 
 from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.commands.builtin.generic_bind.search import make_search
-from mirage.commands.builtin.grep_helper import pushdown_operand
+from mirage.commands.builtin.grep_pushdown import pushdown_operand
 from mirage.commands.builtin.mongodb.io import IO
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command

@@ -18,7 +18,7 @@ import { ResourceName } from '../../../types.ts'
 import { command } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { makeSearch } from '../generic_bind/search.ts'
-import { literalPushdownOperand } from '../grep_helper.ts'
+import { literalPushdownOperand } from '../grep_pushdown.ts'
 import { POSTGRES_IO } from './io.ts'
 
 // The push-down is a literal-substring search that prints each matching

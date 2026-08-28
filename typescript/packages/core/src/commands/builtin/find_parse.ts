@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { FindParseError } from '../errors.ts'
 import type { PredNode } from './find_eval.ts'
 
 const VALUE_PREDICATES = new Set([
@@ -38,8 +39,6 @@ const VALID_TYPES = new Set(['b', 'c', 'd', 'p', 'f', 'l', 's'])
 
 const MAX_DEPTH = 100
 
-export class FindParseError extends Error {}
-
 export interface FindExpr {
   tree: PredNode
   maxDepth: number | null
@@ -63,15 +62,17 @@ export function parseSize(spec: string): [number | null, number | null] {
   const last = raw[raw.length - 1] ?? ''
   const mult = suffixes[last] ?? 1
   const n = Number.parseInt(raw.replace(/[ckMG]$/, ''), 10)
+  if (Number.isNaN(n)) throw new FindParseError(`find: invalid argument '${spec}' to '-size'`)
   if (spec.startsWith('+')) return [n * mult + 1, null]
   if (spec.startsWith('-')) return [null, (n - 1) * mult]
   return [(n - 1) * mult + 1, n * mult]
 }
 
-function parseMtime(spec: string): [number | null, number | null] {
+export function parseMtime(spec: string): [number | null, number | null] {
   const day = 86400
   const now = Date.now() / 1000
   const n = Number.parseInt(spec.replace(/^[+-]/, ''), 10)
+  if (Number.isNaN(n)) throw new FindParseError(`find: invalid argument '${spec}' to '-mtime'`)
   if (spec.startsWith('+')) return [null, now - n * day]
   if (spec.startsWith('-')) return [now - n * day, null]
   return [now - (n + 1) * day, now - n * day]
@@ -84,24 +85,10 @@ function typeNode(value: string): PredNode {
   throw new FindParseError(`find: Unknown argument to -type: ${value}`)
 }
 
-function intArg(value: string, flag: string): number {
+export function parseDepth(value: string, flag: string): number {
   const n = Number.parseInt(value, 10)
   if (Number.isNaN(n)) throw new FindParseError(`find: invalid argument '${value}' to '${flag}'`)
   return n
-}
-
-function sizeArg(value: string): [number | null, number | null] {
-  const [lo, hi] = parseSize(value)
-  if ((lo !== null && Number.isNaN(lo)) || (hi !== null && Number.isNaN(hi)))
-    throw new FindParseError(`find: invalid argument '${value}' to '-size'`)
-  return [lo, hi]
-}
-
-function mtimeArg(value: string): [number | null, number | null] {
-  const [lo, hi] = parseMtime(value)
-  if ((lo !== null && Number.isNaN(lo)) || (hi !== null && Number.isNaN(hi)))
-    throw new FindParseError(`find: invalid argument '${value}' to '-mtime'`)
-  return [lo, hi]
 }
 
 // GNU find's link-policy options are leading options, not predicates:
@@ -175,15 +162,15 @@ export function parseFindExpression(tokens: string[]): FindExpr {
         return { op: 'true' }
       }
       if (tok === '-maxdepth') {
-        g.maxDepth = intArg(value, '-maxdepth')
+        g.maxDepth = parseDepth(value, '-maxdepth')
         return { op: 'true' }
       }
       if (tok === '-mindepth') {
-        g.minDepth = intArg(value, '-mindepth')
+        g.minDepth = parseDepth(value, '-mindepth')
         return { op: 'true' }
       }
       if (tok === '-size') {
-        ;[g.minSize, g.maxSize] = sizeArg(value)
+        ;[g.minSize, g.maxSize] = parseSize(value)
         return { op: 'true' }
       }
       // The flat window cannot evaluate -mtime per predicate node, so
@@ -191,7 +178,7 @@ export function parseFindExpression(tokens: string[]): FindExpr {
       // tautology `-mtime +0 -o -mtime -1` imposes no bounds instead of
       // last-wins dropping everything. An AND of disjoint windows
       // over-matches (documented divergence from GNU).
-      const [mtLo, mtHi] = mtimeArg(value)
+      const [mtLo, mtHi] = parseMtime(value)
       if (!mtimeSeen) {
         ;[g.mtimeMin, g.mtimeMax] = [mtLo, mtHi]
         mtimeSeen = true

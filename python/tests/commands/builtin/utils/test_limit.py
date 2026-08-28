@@ -17,10 +17,10 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from mirage.commands.builtin.utils.limit import (CommandTimeoutError,
-                                                 apply_limit,
+from mirage.commands.builtin.utils.limit import (apply_limit,
                                                  maybe_with_timeout,
                                                  run_with_timeout)
+from mirage.commands.errors import CommandTimeoutError
 from mirage.io.types import materialize
 from mirage.types import Limit, OnExceed
 

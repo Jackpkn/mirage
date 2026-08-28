@@ -17,7 +17,7 @@ from typing import Any
 
 from mirage.accessor.base import Accessor
 from mirage.commands.builtin.generic_bind.provision import pure_provision
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
@@ -60,7 +60,7 @@ async def bc(
 ) -> tuple[ByteSource | None, IOResult]:
     fl = FlagView(opts.flags, spec=SPECS["bc"])
     use_math = fl.as_bool("args_l")
-    raw = await _read_stdin_async(opts.stdin)
+    raw = await read_stdin_async(opts.stdin)
     if raw is None:
         raw = b""
     lines = raw.decode(errors="replace").strip().splitlines()

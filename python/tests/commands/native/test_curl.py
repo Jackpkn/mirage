@@ -21,8 +21,9 @@ import asyncio
 import pytest
 
 from mirage.accessor.base import NOOPAccessor
+from mirage.commands.builtin.errors import HttpConnectError
 from mirage.commands.builtin.general.curl import curl
-from mirage.commands.builtin.utils.http import HttpConnectError, HttpResponse
+from mirage.commands.builtin.utils.http import HttpResponse
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.types import PathSpec
@@ -57,7 +58,7 @@ def _stub(monkeypatch, resp=None, exc=None) -> list[dict]:
             raise exc
         return resp if resp is not None else _ok()
 
-    monkeypatch.setitem(curl.__wrapped__.__globals__, "_http_request", fake)
+    monkeypatch.setitem(curl.__wrapped__.__globals__, "http_request", fake)
     return calls
 
 
@@ -218,7 +219,7 @@ def test_form_field_uses_the_form_helper(monkeypatch):
         calls.append({"url": url, "method": method, "form_data": form_data})
         return _ok(b"form ok")
 
-    monkeypatch.setitem(curl.__wrapped__.__globals__, "_http_form_request",
+    monkeypatch.setitem(curl.__wrapped__.__globals__, "http_form_request",
                         fake_form)
     body, io = _run("http://x.test/form", F="field=value")
     assert io.exit_code == 0

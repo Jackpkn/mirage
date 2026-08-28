@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from mirage.commands.builtin.utils.operands import (merge_split_errors,
                                                     normalized_read,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -203,7 +203,7 @@ async def nl(
 
     if paths:
         return _nl_multi(paths, read_stream, config), IOResult()
-    source = _resolve_source(stdin, "nl: missing operand")
+    source = resolve_source(stdin, "nl: missing operand")
     return _nl_stream(source, config, NlState(start)), IOResult()
 
 

@@ -24,7 +24,7 @@ import {
 } from '../../../core/github/pushdown.ts'
 import { narrowPaths } from '../../../core/github/search.ts'
 import type { PathSpec } from '../../../types.ts'
-import { isLiteralPattern, searchQuery } from '../grep_helper.ts'
+import { isLiteralPattern, searchQuery } from '../grep_pushdown.ts'
 
 const resolveGlob = resolveGlobOf(GITHUB_IO)
 

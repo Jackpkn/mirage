@@ -41,6 +41,10 @@ export async function repoOf(
   })
 }
 
+export async function reposOfKind(db: C, tenant: string, kind: string): Promise<Repo[]> {
+  return db.hfRepo.findMany({ where: { tenant, kind }, orderBy: { seq: 'asc' } })
+}
+
 export async function refsOf(db: C, tenant: string, repo: string): Promise<Ref[]> {
   return db.hfRef.findMany({ where: { tenant, repo }, orderBy: { name: 'asc' } })
 }
@@ -72,6 +76,25 @@ export async function resolveRevision(
 
 export async function headSha(db: C, tenant: string, repo: string): Promise<string> {
   return (await resolveRevision(db, tenant, repo, DEFAULT_REVISION)) ?? ''
+}
+
+/**
+ * When one commit was made. "" if the sha names no commit.
+ *
+ * A repository's modification time is this, never a blob's: `blobsAt` orders
+ * by path and a commit carries every unchanged file forward with its old
+ * timestamp, so the first blob is stale the moment a later commit touched
+ * anything sorting after it, or only deleted something.
+ */
+export async function commitTime(
+  db: C,
+  tenant: string,
+  repo: string,
+  sha: string,
+): Promise<string> {
+  if (sha === '') return ''
+  const commit = await db.hfCommit.findUnique({ where: { tenant_repo_sha: { tenant, repo, sha } } })
+  return commit === null ? '' : commit.createdAt
 }
 
 export async function blobsAt(db: C, tenant: string, repo: string, sha: string): Promise<Blob[]> {

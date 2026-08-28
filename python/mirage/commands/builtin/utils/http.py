@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from mirage.commands.builtin.errors import HttpConnectError
+
 # httpx is the [http] extra, so it stays optional: top-level import guarded the
 # same way the databricks accessor guards its SDK.
 httpx: Any
@@ -50,24 +52,6 @@ class HttpResponse:
         return self.status >= 400
 
 
-class HttpConnectError(Exception):
-    """The request never got an HTTP response.
-
-    Carries the host and port instead of an errno: the errno for a refused
-    connection differs by platform (61 on macOS, 111 on Linux), so a message
-    built from it cannot be asserted in a cross-platform test.
-
-    Args:
-        host (str): host from the requested URL.
-        port (int): port from the requested URL, defaulted by scheme.
-    """
-
-    def __init__(self, host: str, port: int) -> None:
-        super().__init__(f"Failed to connect to {host} port {port}")
-        self.host = host
-        self.port = port
-
-
 def _with_default_ua(headers: dict[str, str] | None) -> dict[str, str]:
     merged = {"User-Agent": DEFAULT_USER_AGENT}
     if headers:
@@ -89,7 +73,7 @@ def _response(resp: Any, url: str) -> HttpResponse:
                         url=url)
 
 
-def _http_request(
+def http_request(
     url: str,
     method: str = "GET",
     headers: dict[str, str] | None = None,
@@ -112,7 +96,7 @@ def _http_request(
         return _response(resp, url)
 
 
-def _http_form_request(
+def http_form_request(
     url: str,
     method: str = "POST",
     form_data: dict[str, str] | None = None,
@@ -135,14 +119,14 @@ def _http_form_request(
         return _response(resp, url)
 
 
-def _http_get(
+def http_get(
     url: str,
     headers: dict[str, str] | None = None,
     timeout: int = 30,
     follow_redirects: bool = True,
 ) -> HttpResponse:
-    return _http_request(url,
-                         method="GET",
-                         headers=headers,
-                         timeout=timeout,
-                         follow_redirects=follow_redirects)
+    return http_request(url,
+                        method="GET",
+                        headers=headers,
+                        timeout=timeout,
+                        follow_redirects=follow_redirects)

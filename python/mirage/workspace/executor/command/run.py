@@ -15,9 +15,8 @@
 import functools
 from typing import Any
 
-from mirage.commands.builtin.utils.limit import CommandTimeoutError
 from mirage.commands.config import LineFacts
-from mirage.commands.errors import UsageError
+from mirage.commands.errors import CommandTimeoutError, UsageError
 from mirage.commands.spec.types import FlagValue
 from mirage.commands.spec.usage import read_fail_exit
 from mirage.context import path_allowed

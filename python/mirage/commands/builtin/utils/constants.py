@@ -21,6 +21,9 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
 
 EPOCH_LS_TIME = "Jan  1 00:00"
 
+# GNU's simple-backup suffix (mv/cp -b), overridable with -S.
+DEFAULT_BACKUP_SUFFIX = "~"
+
 # A terminal `cat` of an endless character device must be bounded before
 # workspace materialization. Regular files keep the ordinary line-only cap.
 CHAR_DEVICE_MAX_BYTES = 8 << 20

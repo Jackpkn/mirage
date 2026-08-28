@@ -14,11 +14,11 @@
 
 import pytest
 
+from mirage.commands.builtin.errors import HttpConnectError
 from mirage.commands.builtin.utils import http as http_mod
 from mirage.commands.builtin.utils.http import (DEFAULT_USER_AGENT,
-                                                HttpConnectError, HttpResponse,
-                                                _endpoint, _http_request,
-                                                _with_default_ua)
+                                                HttpResponse, _endpoint,
+                                                _with_default_ua, http_request)
 
 
 class _FakeResponse:
@@ -103,7 +103,7 @@ def test_is_error_is_status_driven():
 def test_error_status_is_returned_not_raised(monkeypatch):
     fake = _FakeHttpx(resp=_FakeResponse(404, "Not Found", b"nope"))
     monkeypatch.setattr(http_mod, "httpx", fake)
-    resp = _http_request("http://x.test/missing")
+    resp = http_request("http://x.test/missing")
     assert (resp.status, resp.reason, resp.body) == (404, "Not Found", b"nope")
     assert resp.is_error
 
@@ -112,20 +112,20 @@ def test_transport_error_becomes_http_connect_error(monkeypatch):
     fake = _FakeHttpx(exc=_FakeTransportError("refused"))
     monkeypatch.setattr(http_mod, "httpx", fake)
     with pytest.raises(HttpConnectError) as excinfo:
-        _http_request("http://127.0.0.1:1/x")
+        http_request("http://127.0.0.1:1/x")
     assert (excinfo.value.host, excinfo.value.port) == ("127.0.0.1", 1)
 
 
 def test_redirects_are_not_followed_by_default(monkeypatch):
     fake = _FakeHttpx(resp=_FakeResponse(200, "OK", b"ok"))
     monkeypatch.setattr(http_mod, "httpx", fake)
-    _http_request("http://x.test/r")
+    http_request("http://x.test/r")
     assert fake.client_kwargs["follow_redirects"] is False
-    _http_request("http://x.test/r", follow_redirects=True)
+    http_request("http://x.test/r", follow_redirects=True)
     assert fake.client_kwargs["follow_redirects"] is True
 
 
 def test_missing_httpx_raises_with_the_extra_hint(monkeypatch):
     monkeypatch.setattr(http_mod, "httpx", None)
     with pytest.raises(ImportError, match=r"mirage\[http\]"):
-        _http_request("http://x.test/x")
+        http_request("http://x.test/x")

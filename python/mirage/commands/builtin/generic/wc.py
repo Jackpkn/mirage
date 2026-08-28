@@ -7,7 +7,7 @@ from typing import Any, Callable
 from mirage.cache.read_through import cache_aware_read
 from mirage.commands.builtin.utils.operands import operands_io
 from mirage.commands.builtin.utils.output import format_records
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -361,7 +361,7 @@ async def wc_generic(
                                        max_line_length=parsed.max_line_length,
                                        total=parsed.total)
         return body, operands_io(err)
-    source = _resolve_source(opts.stdin, "wc: missing operand")
+    source = resolve_source(opts.stdin, "wc: missing operand")
     counts = await wc(source)
     return format_stdin(counts, parsed), IOResult()
 

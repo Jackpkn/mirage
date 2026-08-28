@@ -31,3 +31,27 @@ class UsageError(ValueError):
 
 class FindParseError(ValueError):
     """Invalid numeric argument to a find predicate (GNU find: exit 1)."""
+
+
+class CommandTimeoutError(Exception):
+    """A command or op overran its timeout budget (exit 124).
+
+    Args:
+        command (str): the command or op name for the message.
+        seconds (float): the budget that was overrun.
+    """
+
+    def __init__(self, command: str, seconds: float) -> None:
+        super().__init__(f"{command}: timed out after {seconds}s")
+        self.command = command
+        self.seconds = seconds
+
+
+class LimitExceededError(Exception):
+    """A hard cap refused output the producer had already made.
+
+    The cap is applied to a result that exists: at an op door the
+    backend has already moved those bytes, and the door reports that
+    through the caller's ``OpReport`` before the cap runs, so this
+    error carries no accounting of its own.
+    """

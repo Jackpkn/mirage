@@ -16,8 +16,8 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
-from mirage.commands.builtin.utils.backup import (DEFAULT_BACKUP_SUFFIX,
-                                                  backup_control, sibling_path)
+from mirage.commands.builtin.utils.backup import backup_control, sibling_path
+from mirage.commands.builtin.utils.constants import DEFAULT_BACKUP_SUFFIX
 from mirage.commands.builtin.utils.copy import (backend_key_default,
                                                 copy_targets, path_exists)
 from mirage.commands.errors import UsageError

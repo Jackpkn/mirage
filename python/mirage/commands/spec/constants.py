@@ -25,6 +25,10 @@ ARG_PLACEHOLDER = "ARG"
 # cluster or a path.
 NUMERIC_SHORT = re.compile(r"^-[0-9]+$")
 
+# GNU echo is not getopt, so its option surface is a word shape, not a
+# CommandSpec: options are LEADING words matching this pattern only.
+ECHO_OPTION = re.compile(r"-[neE]+")
+
 # Value shapes accepted by int- and float-typed options: the portable
 # core of Python int()/float() and argparse (no whitespace, underscores,
 # inf, or nan, so both languages accept exactly the same strings).

@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { runWithSession } from '../context/session_context.ts'
-import { LimitExceededError } from '../commands/builtin/utils/limit.ts'
+import { LimitExceededError } from '../commands/errors.ts'
 import { OpsRegistry } from './registry.ts'
 import type { Policy } from '../policy/base.ts'
 import { PolicyDenied, PolicyError } from '../policy/errors.ts'

@@ -5,14 +5,14 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from mirage.cache.read_through import cache_aware_read
-from mirage.commands.builtin.tail_helper import (number_flag_error,
+from mirage.commands.builtin.tail_counts import (number_flag_error,
                                                  parse_byte_count)
 from mirage.commands.builtin.utils.constants import CHAR_DEVICE_MAX_BYTES
 from mirage.commands.builtin.utils.limit import truncate_stream
 from mirage.commands.builtin.utils.operands import (normalized_read,
                                                     operands_io,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -235,7 +235,7 @@ async def head_generic(
                           c=parsed.bytes_,
                           show_headers=show_headers,
                           zero_terminated=parsed.zero_terminated), io
-    source = _resolve_source(opts.stdin, "head: missing operand")
+    source = resolve_source(opts.stdin, "head: missing operand")
     return head(source,
                 n=parsed.lines,
                 c=parsed.bytes_,

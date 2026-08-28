@@ -38,11 +38,8 @@ import type { DispatchFn } from '../../runtime/types.ts'
 import { handleCrossMount, isCrossMount } from './cross_mount.ts'
 import type { RunSingle } from '../../commands/builtin/generic/crossmount/index.ts'
 import { fanOutTraversal, runWithFanout, shouldFanOut } from './fanout.ts'
-import {
-  FindParseError,
-  findExprTail,
-  parseFindExpression,
-} from '../../commands/builtin/find_parse.ts'
+import { findExprTail, parseFindExpression } from '../../commands/builtin/find_parse.ts'
+import { FindParseError } from '../../commands/errors.ts'
 import { maybeWithTimeout } from '../../commands/builtin/utils/limit.ts'
 import { resolveProducer, resolveLimit } from '../../policy/index.ts'
 import type { ExecuteNodeFn, JobHandlerResult } from './jobs.ts'

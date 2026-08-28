@@ -17,7 +17,7 @@ import errno
 import pytest
 
 from mirage import Action, CommandContext, Deny, Policy, Workspace
-from mirage.commands.builtin.utils.limit import LimitExceededError
+from mirage.commands.errors import LimitExceededError
 from mirage.io import IOResult
 from mirage.policy import (CommandRule, ExecuteResultContext, OpsContext,
                            OpsResultContext, PolicyError)

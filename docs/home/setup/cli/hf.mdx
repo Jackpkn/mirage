@@ -1,0 +1,30 @@
+---
+title: hf
+icon: /images/huggingface-logo.svg
+description: Set up the Hugging Face CLI with Python or TypeScript.
+---
+
+Create a token in [HF Models setup](/home/setup/hf_models), then register it on
+an existing `ws`. Commands: [Python](/python/cli/hf) ·
+[TypeScript](/typescript/cli/hf).
+
+<Tabs>
+  <Tab title="Python" icon="/images/python-logo.svg">
+    ```python
+    from mirage.commands.cli.builtin.hf import HF
+
+    ws.register_cli("hf", HF, {"token": "hf_..."})
+    ```
+  </Tab>
+  <Tab title="TypeScript" icon="/images/typescript-logo.svg">
+    ```typescript
+    import { HF } from '@struktoai/mirage-node'
+
+    ws.registerCli('hf', HF, { token: 'hf_...' })
+    ```
+  </Tab>
+</Tabs>
+
+A Hub mount reads; `hf` writes. Editing a Hub file is download into a local
+mount, edit it there, then upload, because a Hub write is a commit and the
+filesystem has no way to say where one ends.

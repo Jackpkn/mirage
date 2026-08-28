@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from mirage.commands.builtin.generic.grep import grep as generic_grep
 from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic_bind.adapter import CommandIO, bound_op
-from mirage.commands.builtin.grep_helper import pattern_arg
+from mirage.commands.builtin.grep_pattern import pattern_arg
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS

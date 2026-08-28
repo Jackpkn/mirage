@@ -18,7 +18,8 @@ from dataclasses import replace
 from mirage.accessor.slack import SlackAccessor
 from mirage.commands.builtin.generic.grep import grep as generic_grep
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import pattern_arg, pushdown_operand
+from mirage.commands.builtin.grep_pattern import pattern_arg
+from mirage.commands.builtin.grep_pushdown import pushdown_operand
 from mirage.commands.builtin.slack._provision import file_read_provision
 from mirage.commands.builtin.slack.io import resolve_glob
 from mirage.commands.builtin.utils.output import format_records

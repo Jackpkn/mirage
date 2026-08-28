@@ -16,14 +16,9 @@ import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import { mountKey } from '../../../utils/key_prefix.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
-import {
-  buildConfig,
-  compareLines,
-  SortKeyError,
-  sortLines,
-  splitSortLines,
-  type SortConfig,
-} from '../sort_helper.ts'
+import { SortKeyError } from '../errors.ts'
+import { buildConfig, compareLines, sortLines, type SortConfig } from '../sort_keys.ts'
+import { splitLines } from '../utils/lines.ts'
 import { readStdinAsync } from '../utils/stream.ts'
 import type { FlagValue } from '../../spec/types.ts'
 
@@ -86,7 +81,7 @@ function parseFlags(flags: Record<string, FlagValue>): SortFlags | string {
 }
 
 function splitRecords(raw: Uint8Array, zeroTerminated: boolean): string[] {
-  if (!zeroTerminated) return splitSortLines(DEC.decode(raw))
+  if (!zeroTerminated) return splitLines(DEC.decode(raw))
   const records: string[] = []
   let start = 0
   for (let index = 0; index < raw.byteLength; index++) {

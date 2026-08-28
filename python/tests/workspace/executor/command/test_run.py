@@ -17,7 +17,7 @@ import inspect
 
 import pytest
 
-from mirage.commands.builtin.generic_bind.builders import _BUILDERS
+from mirage.commands.builtin.generic_bind.builders import BUILDERS
 from mirage.resource.disk import DiskResource
 from mirage.types import MountMode, ResourceName
 from mirage.workspace import Workspace
@@ -120,7 +120,7 @@ def test_stat_overlay_is_read_where_stats_render():
     """The overlay used to carry its own list of command names; now the
     builders that render stats read it off `opts`."""
     named = set()
-    for builder in _BUILDERS:
+    for builder in BUILDERS:
         module = inspect.getmodule(inspect.unwrap(builder.fn))
         if module is None:
             continue

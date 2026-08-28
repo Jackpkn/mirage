@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -52,7 +52,7 @@ async def expand(
             all_text.append(expander(data, tabsize))
         return "".join(all_text).encode(), IOResult()
 
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is None:
         raise ValueError("expand: missing operand")
     text = raw.decode(errors="replace")

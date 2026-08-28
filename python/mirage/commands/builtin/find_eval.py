@@ -349,3 +349,25 @@ def args_to_tree(args: FindArgs) -> PredNode:
                       name_exclude=args.name_exclude,
                       or_names=args.or_names,
                       empty=args.empty)
+
+
+def unrespell_raw(row: str, virtual: str, raw: str) -> str:
+    """Map one respelled display row back to its virtual path.
+
+    The inverse of ``respell_one``: rows were rewritten to carry the
+    operand as typed, and the stat probe needs the resolved spelling
+    back.
+
+    Args:
+        row (str): the display row.
+        virtual (str): the operand's resolved absolute path.
+        raw (str): the operand as typed.
+    """
+    if not raw or raw == virtual:
+        return row
+    if row == raw:
+        return virtual
+    stem = raw if raw.endswith("/") else raw + "/"
+    if row.startswith(stem):
+        return (virtual.rstrip("/") or "") + "/" + row[len(stem):]
+    return row

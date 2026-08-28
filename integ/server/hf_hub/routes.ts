@@ -26,12 +26,16 @@ import {
   blobAt,
   blobsAt,
   commitChanges,
+  commitTime,
   createRepo,
+  headSha,
   refsOf,
+  reposOfKind,
   repoOf,
   resolveRevision,
   type Change,
 } from './store.ts'
+import { cardTags, parseCard } from './card.ts'
 import {
   dirRow,
   entryNotFound,
@@ -43,6 +47,7 @@ import {
   revisionNotFound,
   treeRow,
   unauthorized,
+  type Blob as HfBlobRow,
   type Repo,
 } from './wire.ts'
 
@@ -94,6 +99,217 @@ function isReply(v: Located | Reply): v is Reply {
   return 'status' in v
 }
 
+// ------------------------------------------------------------------ search
+
+// Upstream's sort keys, verbatim (`ModelSort_T`): a client passes one of
+// these five and nothing else, so an unknown one is ignored rather than
+// guessed at, which is what the Hub does.
+const SORT_KEYS: Record<string, (r: Ranked) => number | string> = {
+  downloads: (r) => r.repo.downloads,
+  likes: (r) => r.repo.likes,
+  created_at: (r) => r.repo.createdAt,
+  last_modified: (r) => r.lastModified,
+  trending_score: (r) => r.repo.trendingScore,
+}
+
+// The facet list a repository answers `?filter=` with, and the one `repoBody`
+// renders. It is the card's, plus the one facet a Space carries outside its
+// card: `hf repo create --repo-type space --space_sdk gradio` stores the sdk
+// on the repo and writes no README, so a card-only derivation answered
+// `/api/spaces?filter=gradio` with nothing while the body two fields away
+// reported `sdk: "gradio"`. Both call sites go through here so the answer and
+// the filter cannot drift apart.
+function repoTags(repo: Repo, card: Record<string, JsonValue>): string[] {
+  const tags = cardTags(card, repo.kind)
+  if (repo.kind !== 'spaces') return tags
+  const sdk = spaceSdk(repo, card)
+  if (sdk === '' || tags.includes(sdk)) return tags
+  return [...tags, sdk].sort()
+}
+
+// The card is where a Space's sdk lives on the Hub. The stored one exists
+// only because a just-created Space has no README yet, so it is a fallback
+// and never an override: a Space created as gradio whose card later says
+// docker IS a docker Space, in the rendered `sdk` and in the facet the filter
+// reads, and answering `?filter=gradio` with it would be reporting history.
+function spaceSdk(repo: Repo, card: Record<string, JsonValue>): string {
+  if (repo.kind !== 'spaces') return repo.sdk ?? ''
+  const fromCard = card.sdk
+  return typeof fromCard === 'string' && fromCard !== '' ? fromCard : (repo.sdk ?? '')
+}
+
+interface Ranked {
+  repo: Repo
+  sha: string
+  blobs: HfBlobRow[]
+  lastModified: string
+  tags: string[]
+}
+
+/**
+ * List or search repositories of one kind.
+ *
+ * Matching is deliberately naive, a case-insensitive substring over the id,
+ * because the Hub's own relevance ranking is not reproducible and pretending
+ * otherwise would bake a fiction into the goldens. What IS aligned is the
+ * part a client breaks on: the parameter names (`search`, `author`, `filter`,
+ * `sort`, `direction`, `limit`, `full`), the five legal sort keys, and the
+ * shape of each row.
+ *
+ * A row is trimmed unless `full` says otherwise, and `expand` names
+ * individual properties instead. A row always carries its id, which is the
+ * one field no `expand` can remove.
+ */
+async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
+  if (!authed(ctx)) return unauthorized()
+  const search = (ctx.query.get('search') ?? '').toLowerCase()
+  const author = ctx.query.get('author') ?? ''
+  const filters = ctx.query.getAll('filter')
+  const sort = ctx.query.get('sort') ?? ''
+  const direction = ctx.query.get('direction') ?? ''
+  const rawLimit = ctx.query.get('limit')
+  const expand = ctx.query.getAll('expand')
+  // `full` is not simply off by default. Upstream states the rule on
+  // `list_models` itself: it "is set to `True` by default when using a
+  // filter", so a bare listing is trimmed and `filter` is the one parameter
+  // that flips it. `search` and `sort` do not.
+  const rawFull = ctx.query.get('full')
+  const full = rawFull === null ? filters.length > 0 : truthy(rawFull)
+  // `cardData` is its own parameter, NOT part of `full`. Easy to assume
+  // otherwise; probed, `?limit=1&full=1` answers without it and
+  // `?limit=1&cardData=1` answers with it on an otherwise trimmed row.
+  const withCard = truthy(ctx.query.get('cardData'))
+
+  const ranked: Ranked[] = []
+  for (const repo of await reposOfKind(ctx.db, ctx.tenant, kind)) {
+    if (author !== '' && repo.namespace !== author) continue
+    if (search !== '' && !repoId(repo).toLowerCase().includes(search)) continue
+    const key = repoKey(repo.kind, repo.namespace, repo.name)
+    const sha = await headSha(ctx.db, ctx.tenant, key)
+    const blobs = sha === '' ? [] : await blobsAt(ctx.db, ctx.tenant, key, sha)
+    const readme = blobs.find((b) => b.path === 'README.md')
+    const tags = repoTags(
+      repo,
+      readme === undefined ? {} : parseCard(Buffer.from(readme.content).toString('utf8')),
+    )
+    // Every filter must match, which is the Hub's rule: `?filter=a&filter=b`
+    // narrows rather than widens.
+    if (!filters.every((f) => tags.includes(f))) continue
+    const when = await commitTime(ctx.db, ctx.tenant, key, sha)
+    ranked.push({ repo, sha, blobs, lastModified: when === '' ? repo.createdAt : when, tags })
+  }
+
+  const key = SORT_KEYS[sort]
+  if (key !== undefined) {
+    ranked.sort((a, b) => {
+      const [x, y] = [key(a), key(b)]
+      return x < y ? -1 : x > y ? 1 : 0
+    })
+    // The Hub defaults to descending for a named sort, and -1 is the only
+    // spelling it accepts for the other direction.
+    if (direction !== '1') ranked.reverse()
+  }
+
+  const limit = rawLimit === null ? ranked.length : Math.max(0, Number(rawLimit) || 0)
+  const rows = ranked.slice(0, limit).map((r) => {
+    // `trendingScore` is a listing field: it rides every row this endpoint
+    // answers, including an expanded one, and is absent from the repo info
+    // object. Probed on both.
+    const body: Record<string, JsonValue> = {
+      ...obj(repoBody(r.repo, r.sha, r.blobs, r.lastModified)),
+      trendingScore: r.repo.trendingScore,
+    }
+    // `expand` wins outright rather than combining with `full`, and a call
+    // carrying both is answered rather than refused. Two different rules are
+    // easy to conflate here: huggingface_hub raises ValueError client-side
+    // ("`expand` cannot be used if `full` is passed"), but the SERVER does
+    // not, and this fake is the server. Probed:
+    // `GET /api/models?limit=2&full=1&expand=likes` answers 200 with the
+    // expanded shape, so refusing it would be the divergence.
+    if (expand.length > 0) {
+      const out: Record<string, JsonValue> = {
+        id: body.id ?? '',
+        trendingScore: body.trendingScore ?? 0,
+      }
+      for (const name of expand) if (body[name] !== undefined) out[name] = body[name]
+      return out
+    }
+    return listingRow(kind, body, full, withCard)
+  })
+  return { status: 200, body: rows }
+}
+
+// The listing row, per kind. Probed on /api/{models,datasets,spaces}?limit=1
+// and again with full=1, rather than derived from the info object, which is a
+// different and larger shape. The three kinds disagree more than they agree,
+// so one shared list was wrong for two of them: a dataset's bare row is
+// already almost complete and `full` adds nothing to it, a space's is the
+// narrowest of the three, and `modelId` exists only on a model.
+//
+// `cardData` is its own parameter for all three and is never part of `full`.
+//
+// Real rows also carry `_id`, a dataset carries `description` and `key`, and
+// a space carries `subdomain`. The fake stores none of those and does not
+// invent them.
+const MODEL_ROW = {
+  base: [
+    'id',
+    'modelId',
+    'private',
+    'createdAt',
+    'downloads',
+    'likes',
+    'trendingScore',
+    'tags',
+    'pipeline_tag',
+    'library_name',
+  ],
+  full: ['author', 'gated', 'lastModified', 'sha', 'siblings'],
+} as const
+
+const DATASET_ROW = {
+  base: [
+    'id',
+    'author',
+    'private',
+    'createdAt',
+    'disabled',
+    'downloads',
+    'gated',
+    'lastModified',
+    'likes',
+    'sha',
+    'tags',
+    'trendingScore',
+  ],
+  full: [],
+} as const
+
+const SPACE_ROW = {
+  base: ['id', 'private', 'createdAt', 'likes', 'trendingScore', 'tags', 'sdk'],
+  full: ['author', 'lastModified', 'sha', 'siblings'],
+} as const
+
+function rowFieldsFor(kind: string): { base: readonly string[]; full: readonly string[] } {
+  if (kind === 'models') return MODEL_ROW
+  if (kind === 'spaces') return SPACE_ROW
+  return DATASET_ROW
+}
+
+function listingRow(
+  kind: string,
+  body: Record<string, JsonValue>,
+  full: boolean,
+  withCard: boolean,
+): Record<string, JsonValue> {
+  const fields = rowFieldsFor(kind)
+  const out: Record<string, JsonValue> = {}
+  for (const k of fields.base) if (body[k] !== undefined) out[k] = body[k]
+  if (full) for (const k of fields.full) if (body[k] !== undefined) out[k] = body[k]
+  if (withCard && body.cardData !== undefined) out.cardData = body.cardData
+  return out
+}
+
 // ---------------------------------------------------------------- repo info
 
 async function repoInfo(ctx: Ctx<C>): Promise<Reply> {
@@ -103,23 +319,50 @@ async function repoInfo(ctx: Ctx<C>): Promise<Reply> {
   const revision = ctx.params.rev ?? DEFAULT_REVISION
   const sha = await resolveRevision(ctx.db, ctx.tenant, key, revision)
   if (sha === null) return revisionNotFound(revision)
-  const refs = await refsOf(ctx.db, ctx.tenant, key)
   const blobs = await blobsAt(ctx.db, ctx.tenant, key, sha)
+  const when = await commitTime(ctx.db, ctx.tenant, key, sha)
+  return { status: 200, body: repoBody(repo, sha, blobs, when === '' ? repo.createdAt : when) }
+}
+
+/**
+ * One repository as the Hub renders it, for both the info and list routes.
+ *
+ * `cardData` is parsed out of README.md rather than stored, because a Hub
+ * card IS that file: two copies of `license` could disagree, and the card is
+ * the one a human edits. `tags` are the Hub's facets derived from it, NOT
+ * git tags, which live at /refs; the two were conflated here, so
+ * `hf repo tag create v1` used to surface as a facet on the model object.
+ */
+function repoBody(repo: Repo, sha: string, blobs: HfBlobRow[], lastModified: string): JsonValue {
+  const readme = blobs.find((b) => b.path === 'README.md')
+  const card = readme === undefined ? {} : parseCard(Buffer.from(readme.content).toString('utf8'))
+  const models = repo.kind === 'models'
   return {
-    status: 200,
-    body: {
-      id: repoId(repo),
-      // The Hub renders the id twice, once bare and once under the kind's own
-      // key, and clients read either.
-      modelId: repo.kind === 'models' ? repoId(repo) : null,
-      sha,
-      private: repo.private,
-      createdAt: repo.createdAt,
-      lastModified: blobs[0]?.lastModified ?? repo.createdAt,
-      tags: refs.filter((r) => r.refType === 'tag').map((r) => r.name),
-      siblings: blobs.map((b) => ({ rfilename: b.path })),
-      ...(repo.sdk !== null ? { sdk: repo.sdk } : {}),
-    },
+    id: repoId(repo),
+    // The Hub renders the id twice, once bare and once under the kind's own
+    // key, and clients read either.
+    modelId: models ? repoId(repo) : null,
+    author: repo.namespace,
+    sha,
+    private: repo.private,
+    // "" is the Hub's "not gated"; the other two values name which flavour of
+    // gating applies, so this is not a boolean.
+    gated: repo.gated === '' ? false : repo.gated,
+    disabled: false,
+    createdAt: repo.createdAt,
+    lastModified,
+    downloads: repo.downloads,
+    likes: repo.likes,
+    tags: repoTags(repo, card),
+    cardData: card,
+    ...(models
+      ? {
+          pipeline_tag: card.pipeline_tag ?? null,
+          library_name: card.library_name ?? null,
+        }
+      : {}),
+    siblings: blobs.map((b) => ({ rfilename: b.path })),
+    ...(spaceSdk(repo, card) === '' ? {} : { sdk: spaceSdk(repo, card) }),
   }
 }
 
@@ -568,6 +811,9 @@ function resolveRoutes(kind: string, prefix: string): KitRoute<C>[] {
 export function hfHubRoutes(): KitRoute<C>[] {
   return [
     route('GET', '/api/whoami-v2', whoami),
+    // Two segments, where every repo route has three or more, so these cannot
+    // collide with the `/api/:kind/:name` pair the comment below is about.
+    ...KINDS.map((k) => route<C>('GET', `/api/${k}`, (ctx) => listRepos(k, ctx))),
     route('POST', '/api/repos/create', createRepoRoute, { write: true }),
     route('DELETE', '/api/repos/delete', deleteRepoRoute, { write: true }),
     // Every suffixed route comes FIRST, and the bare repoInfo pair last.

@@ -1,0 +1,104 @@
+---
+title: hf
+description: "Act on the Hugging Face Hub in the official CLI's vocabulary, alongside hf_models, hf_datasets and hf_spaces mounts that read a repo as files."
+icon: /images/huggingface-logo.svg
+---
+
+Act on the [Hugging Face Hub](https://huggingface.co) in the official
+[CLI](https://github.com/huggingface/huggingface_hub)'s vocabulary. A repo is
+a tree, so mirage already reads one as files: the
+[`hf_models`](/python/resource/hf_models),
+[`hf_datasets`](/python/resource/hf_datasets) and
+[`hf_spaces`](/python/resource/hf_spaces) mounts are the read half, and `ls`,
+`cat` and `grep` are how an agent explores one without downloading it. `hf` is
+the write half.
+
+## The three tiers
+
+A Hub write is a **commit**, and a POSIX write cannot say where a commit ends,
+so the mount does not take one. That is the same split `github` and `git`
+already draw, and it gives three places rather than two:
+
+| Tier | What it does | Example |
+| --- | --- | --- |
+| Hub mount | reads a remote repo, downloading nothing | `cat /m/config.json` |
+| Local mount | holds the writable copy | `echo x > /work/f.txt` |
+| `hf` CLI | moves between them, one commit per invocation | `hf upload acme/m /work/f.txt f.txt` |
+
+So editing a Hub file is download, edit, upload:
+
+```bash
+hf download acme/model config.json --local-dir /work
+sed -i 's/1024/2048/' /work/config.json
+hf upload acme/model /work/config.json config.json --commit-message "widen"
+```
+
+`hf upload` batches every file of one invocation into a single commit carrying
+the message the line gave it, which is exactly what a `cp -r` onto a mount
+could not express.
+
+## Install
+
+```python
+import os
+
+from mirage import Mount, MountMode, Workspace
+from mirage.commands.cli.builtin.hf import HF
+from mirage.core.hf_hub.config import HfConfig
+from mirage.resource.hf_models import HfModelsConfig, HfModelsResource
+from mirage.resource.ram import RAMResource
+
+token = os.environ["HF_TOKEN"]
+ws = Workspace({
+    "/m": HfModelsResource(HfModelsConfig(repo_id="acme/model", token=token)),
+    "/work": Mount(RAMResource(), mode=MountMode.WRITE),
+})
+ws.register_cli("hf", HF, {"token": token})
+
+await ws.execute("hf auth whoami")
+```
+
+`/m` keeps the default read mode, which is all a Hub mount can offer. `/work`
+is the mount that takes `MountMode.WRITE`, and that asymmetry is the workflow
+above rather than an oversight: the Hub half is read-only, the local half is
+where edits live.
+
+The Hub resources need no extra: they speak the Hub API over `aiohttp`, which
+mirage already depends on. `mirage-ai[hf-buckets]` is a different product, the
+Xet object store behind [HF Buckets](/python/resource/hf_buckets).
+
+## Commands
+
+| Verb | What it does |
+| --- | --- |
+| `hf auth whoami` | the account the token names |
+| `hf auth list` | the stored tokens |
+| `hf repo create <id>` | create a repo; `--repo-type`, `--private`, `--space_sdk`, `--exist-ok` |
+| `hf repo tag create\|list\|delete` | git tags on a repo |
+| `hf repo-files delete <id> <glob>` | delete paths in one commit |
+| `hf download <id> [file...]` | fetch to `--local-dir` or the cache |
+| `hf upload <id> <local> [path]` | upload a file or directory as one commit |
+| `hf env`, `hf version` | the endpoint and version in use |
+
+There is no `hf auth login` or `logout`, and that is deliberate rather than
+missing: the token comes from the config the embedding program registers, so
+there is nothing to log in to.
+
+## Downloads
+
+`--local-dir` writes the files as themselves. Without it, `hf download` builds
+upstream's cache layout under `--cache-dir`, byte for byte:
+
+```text
+models--acme--model/
+  blobs/<etag>
+  refs/main                 ← only for a symbolic revision
+  snapshots/<sha>/config.json → ../../blobs/<etag>
+```
+
+`refs/<name>` is written only when the revision is a branch or tag. A
+sha-pinned download writes no ref, which is what the real binary does.
+
+`--revision` takes a branch, a tag or a commit sha. `--include` and
+`--exclude` take globs, and `--force-download` refetches rather than reusing
+the cached blob.

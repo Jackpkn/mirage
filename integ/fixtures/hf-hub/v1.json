@@ -27,6 +27,37 @@
       "name": "space-v1",
       "sourceDir": "files/v1",
       "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "kind": "models",
+      "namespace": "integ",
+      "name": "card-model",
+      "sourceDir": "hf-cards/model-a",
+      "downloads": 5000,
+      "likes": 42,
+      "trendingScore": 8,
+      "createdAt": "2026-01-02T00:00:00.000Z"
+    },
+    {
+      "kind": "datasets",
+      "namespace": "integ",
+      "name": "card-data-a",
+      "sourceDir": "hf-cards/data-a",
+      "downloads": 1200,
+      "likes": 7,
+      "trendingScore": 5,
+      "createdAt": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "kind": "datasets",
+      "namespace": "other",
+      "name": "card-data-b",
+      "sourceDir": "hf-cards/data-b",
+      "downloads": 90,
+      "likes": 3,
+      "trendingScore": 60,
+      "gated": "auto",
+      "createdAt": "2026-01-04T00:00:00.000Z"
     }
   ],
   "commits": [
@@ -53,6 +84,24 @@
       "sha": "d4e5f60718293a4b5c6d7e8f9021324354657687",
       "message": "initial commit",
       "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "repo": "models/integ/card-model",
+      "sha": "e5f60718293a4b5c6d7e8f902132435465768798",
+      "message": "initial commit",
+      "createdAt": "2026-01-02T00:00:00.000Z"
+    },
+    {
+      "repo": "datasets/integ/card-data-a",
+      "sha": "f60718293a4b5c6d7e8f902132435465768798a9",
+      "message": "initial commit",
+      "createdAt": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "repo": "datasets/other/card-data-b",
+      "sha": "0718293a4b5c6d7e8f902132435465768798a9ba",
+      "message": "initial commit",
+      "createdAt": "2026-01-04T00:00:00.000Z"
     }
   ],
   "refs": [
@@ -79,6 +128,24 @@
       "refType": "branch",
       "name": "main",
       "sha": "d4e5f60718293a4b5c6d7e8f9021324354657687"
+    },
+    {
+      "repo": "models/integ/card-model",
+      "refType": "branch",
+      "name": "main",
+      "sha": "e5f60718293a4b5c6d7e8f902132435465768798"
+    },
+    {
+      "repo": "datasets/integ/card-data-a",
+      "refType": "branch",
+      "name": "main",
+      "sha": "f60718293a4b5c6d7e8f902132435465768798a9"
+    },
+    {
+      "repo": "datasets/other/card-data-b",
+      "refType": "branch",
+      "name": "main",
+      "sha": "0718293a4b5c6d7e8f902132435465768798a9ba"
     }
   ],
   "blobs": []

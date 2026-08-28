@@ -6,7 +6,7 @@ from mirage.commands.builtin.find_eval import (And, Empty, FindEntry, Name,
                                                display_path, emit_start_path,
                                                eval_predicate, keep,
                                                prefix_path_nodes,
-                                               tree_has_type)
+                                               tree_has_type, unrespell_raw)
 # yapf: enable
 from mirage.commands.builtin.generic.find import FindArgs
 from mirage.types import FindType
@@ -212,3 +212,9 @@ def test_emit_start_path_directory_size_zero():
                     min_size=None,
                     max_size=5)
     assert results == ["/data"]
+
+
+def test_unrespell_raw_round_trip():
+    assert unrespell_raw("./sub/x", "/data", ".") == "/data/sub/x"
+    assert unrespell_raw(".", "/data", ".") == "/data"
+    assert unrespell_raw("/data/x", "/data", "/data") == "/data/x"

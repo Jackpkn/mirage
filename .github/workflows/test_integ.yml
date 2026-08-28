@@ -508,6 +508,14 @@ jobs:
         working-directory: integ
         run: pnpm run selftest
 
+      # Same reason one fake down. Listing and search are HTTP surface with no
+      # client inside mirage: the `hf` CLI has no `models ls` verb and a mount
+      # never calls /api/models, so no corpus case can send the request and the
+      # whole endpoint would otherwise ship untested.
+      - name: Assert the hf_hub fake (card metadata, facets, search)
+        working-directory: integ
+        run: pnpm run hf-hub:selftest
+
       - name: Run declarative battery (typescript hosts)
         working-directory: integ
         run: pnpm exec tsx runners/typescript/main.ts --facet core --strict --allow-skip chroma,lancedb,nextcloud,notion,postgres,qdrant

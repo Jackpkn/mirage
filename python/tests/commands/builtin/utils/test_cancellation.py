@@ -17,9 +17,8 @@ import time
 
 import pytest
 
-from mirage.commands.builtin.utils.limit import (CommandTimeoutError,
-                                                 run_with_timeout,
-                                                 with_timeout)
+from mirage.commands.builtin.utils.limit import run_with_timeout, with_timeout
+from mirage.commands.errors import CommandTimeoutError
 from mirage.io.types import materialize
 
 

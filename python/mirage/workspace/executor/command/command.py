@@ -14,7 +14,7 @@
 
 import functools
 
-from mirage.commands.builtin.find_parse import (FindParseError, find_expr_tail,
+from mirage.commands.builtin.find_parse import (find_expr_tail,
                                                 parse_find_expression)
 from mirage.commands.builtin.generic.crossmount import (handle_cross_mount,
                                                         is_cross_mount)
@@ -23,6 +23,7 @@ from mirage.commands.builtin.generic.crossmount.types import Strategy
 from mirage.commands.builtin.generic.tar.mode import is_create_mode
 from mirage.commands.builtin.utils.limit import maybe_with_timeout
 from mirage.commands.config import version_request
+from mirage.commands.errors import FindParseError
 from mirage.commands.spec import SPECS
 from mirage.io import IOResult
 from mirage.io.stream import materialize

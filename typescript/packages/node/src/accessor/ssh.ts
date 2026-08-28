@@ -69,6 +69,14 @@ export class SSHAccessor extends Accessor {
     }
     return new Promise<SFTPWrapper>((resolveFn, rejectFn) => {
       c.on('ready', () => {
+        // SFTP is a request/response protocol over small packets, and node
+        // leaves Nagle ON. Paired with Linux's 40ms delayed ACK that stalls
+        // roughly every exchange, which is why the same battery costs 41.8ms
+        // per case on a Linux runner and ~3ms on a BSD-derived stack. ssh2
+        // offers setNoDelay but never calls it; asyncssh sets TCP_NODELAY on
+        // every connection (connection.py), which is the whole reason the
+        // python host was 44x faster against the same server.
+        c.setNoDelay(true)
         c.sftp((err: Error | undefined, sftp: SFTPWrapper) => {
           if (err !== undefined) {
             rejectFn(err)

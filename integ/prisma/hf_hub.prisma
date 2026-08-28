@@ -45,6 +45,19 @@ model HfRepo {
   // possible because the mount had a write surface it should not have had.
   // Named rather than inlined so the shared corpus stays one copy.
   sourceDir String @default("")
+  // Counters the Hub keeps server-side. They are stored rather than derived
+  // because nothing in the repository implies them, and `hf models ls --sort
+  // downloads` orders on them.
+  downloads Int @default(0)
+  likes     Int @default(0)
+  // A distinct Hub ranking value, not a synonym for likes: probed on
+  // /api/models?limit=1, Qwen3.8-Flash-Next reported likes 4033 and
+  // trendingScore 3938. Aliasing the two made `sort=trending_score` an
+  // advertised key no fixture could tell apart from `sort=likes`.
+  trendingScore Int @default(0)
+  // "", "auto" or "manual", the three values the Hub reports. Not a boolean:
+  // clients branch on which of the two gating flavours is in force.
+  gated     String @default("")
   seq       Int
 
   @@id([tenant, kind, namespace, name])

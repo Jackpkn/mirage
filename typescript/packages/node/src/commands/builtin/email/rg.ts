@@ -15,13 +15,10 @@
 import type { IndexCacheStore } from '@struktoai/mirage-core/cache/index/store'
 import { rgGeneric } from '@struktoai/mirage-core/commands/builtin/generic/rg'
 import { resolveGlobOf } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
-import {
-  compilePattern,
-  grepLines,
-  patternArg,
-  pushdownOperand,
-} from '@struktoai/mirage-core/commands/builtin/grep_helper'
-import type { GrepLinesOptions } from '@struktoai/mirage-core/commands/builtin/grep_helper'
+import { compilePattern, patternArg } from '@struktoai/mirage-core/commands/builtin/grep_pattern'
+import { pushdownOperand } from '@struktoai/mirage-core/commands/builtin/grep_pushdown'
+import { grepLines } from '@struktoai/mirage-core/commands/builtin/grep_scan'
+import type { GrepLinesOptions } from '@struktoai/mirage-core/commands/builtin/grep_scan'
 import { command } from '@struktoai/mirage-core/commands/config'
 import type { CommandFnResult, CommandOpts } from '@struktoai/mirage-core/commands/config'
 import { FlagView, specOf } from '@struktoai/mirage-core/commands/spec/index'
