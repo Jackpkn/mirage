@@ -194,6 +194,15 @@ export const selftestFake: Fake<C> = {
   client: PrismaClient,
   dmmf: Prisma.dmmf as unknown as Dmmf,
   defaultTenants: ['default'],
+  // A seed that FAILS, on demand. The failure paths are the ones no ordinary
+  // request reaches, and they are where the interesting bugs were: a tenant
+  // left marked seeded, and a throwaway build client left open and holding
+  // SQLite files. A reserved tenant name is the only way to reach them from
+  // the outside, so the selftest fake grows one.
+  afterSeed: (_db: C, tenant: string): Promise<void> => {
+    if (tenant === 'boom') throw new Error('selftest fake: afterSeed refused tenant boom')
+    return Promise.resolve()
+  },
   // Opted in, because the refusal is opt-in and this is where it is covered.
   // A fake that says nothing here keeps serving unseeded tenants, which is
   // what dropbox and the other lazily-created accounts need.

@@ -100,25 +100,61 @@ export async function applyReset<C extends MinimalClient>(
   // gone either way; it matters now that a reset is a delete.
   const fixture = loadFixture(fake.config.service, req.fixture)
   const scoped = fake.config.tenantKind !== 'none'
+  // A run that does not exist yet can be COPIED into being from a template
+  // that is already seeded, which is the difference between a file copy and a
+  // full seed (github's v1 measures ~175ms against ~1ms). It is only sound
+  // because seeding is deterministic: seedFixture reads the fixture and
+  // nothing else, and every input that CAN vary is in the key below. An
+  // existing run still clears and reseeds, since replacing its file would
+  // destroy the tenants this reset did not name.
+  const fresh = !pool.has(req.run)
+  // `onSeeded` is how the caller marks progress, and the template build passes
+  // none: it seeds a THROWAWAY database, so marking this run's tenants there
+  // would claim a world that the copy has not made yet.
+  const seedInto = async (into: C, onSeeded?: (tenant: string) => void): Promise<SeedReport[]> => {
+    const out: SeedReport[] = []
+    for (const tenant of req.tenants) {
+      const rows = await seedFixture(into, fixture, {
+        dmmf: fake.dmmf,
+        tenant,
+        tenantKind: fake.config.tenantKind,
+        ...(fake.seedRoots === undefined ? {} : { roots: fake.seedRoots }),
+      })
+      if (fake.afterSeed !== undefined) await fake.afterSeed(into, tenant, rows, req.extras)
+      out.push({ tenant, rows })
+      onSeeded?.(tenant)
+    }
+    return out
+  }
+  if (scoped && fresh) {
+    const template = await pool.seededTemplate(templateKey(req), seedInto)
+    pool.clientFromSeeded(req.run, template)
+    const st = state(req.run)
+    // Marked right after the copy, because the copy IS the seed here. Reached
+    // only once seededTemplate has resolved, so a template build that threw
+    // leaves every tenant unmarked exactly as a failed seed does.
+    for (const tenant of req.tenants) {
+      st.reset(tenant, req.epoch)
+      st.markSeeded(tenant)
+    }
+    return {
+      ok: true,
+      run: req.run,
+      epoch: req.epoch ?? null,
+      scoped,
+      tenants: req.tenants,
+      seeded: template.rows,
+    }
+  }
   const db = scoped ? pool.client(req.run) : await pool.recreate(req.run)
   if (scoped) await clearTenants(db, fake.dmmf, req.tenants)
   const st = state(req.run)
   for (const tenant of req.tenants) st.reset(tenant, req.epoch)
-  const seeded: SeedReport[] = []
-
-  for (const tenant of req.tenants) {
-    const rows = await seedFixture(db, fixture, {
-      dmmf: fake.dmmf,
-      tenant,
-      tenantKind: fake.config.tenantKind,
-      ...(fake.seedRoots === undefined ? {} : { roots: fake.seedRoots }),
-    })
-    if (fake.afterSeed !== undefined) await fake.afterSeed(db, tenant, rows, req.extras)
-    seeded.push({ tenant, rows })
-    // After this tenant's own seed and afterSeed, not after the loop: a later
-    // tenant throwing must not unmark the ones already finished.
+  // Marked per tenant as each one finishes, not after the loop: a later tenant
+  // throwing must not unmark the ones already seeded.
+  const seeded = await seedInto(db, (tenant) => {
     st.markSeeded(tenant)
-  }
+  })
   return {
     ok: true,
     run: req.run,
@@ -127,6 +163,21 @@ export async function applyReset<C extends MinimalClient>(
     tenants: req.tenants,
     seeded,
   }
+}
+
+// Everything a seed can depend on, and nothing else. The fixture NAME rather
+// than its content because a fixture file is fixed on disk; the tenants
+// because every seeded row carries the tenant column and afterSeed is handed
+// the name; extras because afterSeed reads them. Epoch is absent on purpose:
+// it sets the run's in-memory clock and never reaches a row.
+//
+// The tenants are NOT sorted. Sorting would let ['b','a'] and ['a','b'] share
+// a template whose cached report is in the first caller's order, so the second
+// answered `tenants: ['a','b']` beside `seeded: [b, a]` where the uncached
+// path has both in request order. Two orders are two keys, which costs a
+// second template in a case that does not arise and cannot disagree.
+function templateKey(req: ResetRequest): string {
+  return JSON.stringify([req.fixture, req.tenants, req.extras])
 }
 
 export function defaultTenantsOf<C extends MinimalClient>(fake: Fake<C>): string[] {

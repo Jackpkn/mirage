@@ -688,6 +688,79 @@ async function main(): Promise<void> {
       JSON.stringify(clash.json),
     )
 
+    process.stdout.write('\n18. a run copied from the seeded template is complete\n')
+    // A new run is served by copying a template that was itself seeded once,
+    // rather than by seeding again. The hazard is SQLite's -wal: only the last
+    // connection to close folds it back into the .db, so snapshotting a LIVE
+    // run file captures a database missing its most recent commits. The
+    // template is therefore built in a throwaway run that is disconnected
+    // first, and this is what proves that worked: a copied run must be
+    // indistinguishable from one that ran the seed itself.
+    const copied = await call(fake, '/boards/brd_1/cards', { runInPath: 'w1', tenant: 'x' })
+    check('a run never reset yet is not served', copied.status === 401, JSON.stringify(copied.json))
+    await call(fake, '/reset', { method: 'POST', runInPath: 'w1', body: { tenants: ['x'] } })
+    const fromTemplate = await call(fake, '/boards/brd_1/cards', { runInPath: 'w1', tenant: 'x' })
+    const fromSeed = await call(fake, '/boards/brd_1/cards')
+    check(
+      'and once seeded it matches a run that seeded itself, exactly',
+      JSON.stringify(fromTemplate.json) === JSON.stringify(fromSeed.json),
+      `${JSON.stringify(fromTemplate.json)} vs ${JSON.stringify(fromSeed.json)}`,
+    )
+    // The row report has to survive too: a run served from a copy never ran
+    // the seed that counts them, so /reset would answer an empty report.
+    const report = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'w2',
+      body: { tenants: ['x'] },
+    })
+    check(
+      'and /reset still reports the rows it would have seeded',
+      Object.keys(rowsOf(report.json, 'x') as Record<string, JsonValue>).length > 0,
+      JSON.stringify(rowsOf(report.json, 'x')),
+    )
+
+    process.stdout.write('\n19. a seed that fails leaves nothing behind\n')
+    const boom = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'v1',
+      body: { tenants: ['boom'] },
+    })
+    check('a reset whose afterSeed throws is 500', boom.status === 500, JSON.stringify(boom.json))
+    // The tenant must NOT count as seeded: it was marked at the START of the
+    // reset once, which served a half-built world as a valid one.
+    const afterBoom = await call(fake, '/boards', { runInPath: 'v1', tenant: 'boom' })
+    check(
+      'and the tenant it failed on is not served',
+      afterBoom.status === 401,
+      JSON.stringify(afterBoom.json),
+    )
+    // And the pool must not be wedged. The failed build's promise is evicted
+    // so this retries the seed rather than replaying the rejection, which is
+    // exactly why its throwaway client and files have to be cleaned up too.
+    const recover = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'v2',
+      body: { tenants: ['fine'] },
+    })
+    check('a later reset still works', recover.status === 200, JSON.stringify(recover.json))
+    check(
+      'and serves its data',
+      (await call(fake, '/boards', { runInPath: 'v2', tenant: 'fine' })).status === 200,
+      JSON.stringify((await call(fake, '/boards', { runInPath: 'v2', tenant: 'fine' })).json),
+    )
+    // Retried twice, because the first failure is the one that evicts and the
+    // second is the one that would replay a remembered rejection.
+    const boomAgain = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'v3',
+      body: { tenants: ['boom'] },
+    })
+    check(
+      'a repeat of the failing reset still reaches the seed',
+      boomAgain.status === 500,
+      JSON.stringify(boomAgain.json),
+    )
+
     process.stdout.write(`\nselftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

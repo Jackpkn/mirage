@@ -14,10 +14,11 @@
 
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { KitError } from './errors.ts'
+import type { SeedReport } from './types.ts'
 import { runId } from './tenant.ts'
 
 export interface MinimalClient {
@@ -58,12 +59,22 @@ function pushTemplate(schema: string, target: string): void {
 // and lives inside a file. The client is constructed with `datasourceUrl`, not
 // by mutating process.env: env is process-wide, so the env route cannot serve
 // a second run at all (whichever client was constructed last wins).
+// The template file and the seed report it would have produced. The report
+// rides along because /reset answers with it, and a run served from a copy
+// never ran the seed that counts the rows.
+export interface SeededTemplate {
+  file: string
+  rows: SeedReport[]
+}
+
 export class ClientPool<C extends MinimalClient> {
   readonly service: string
   readonly schema: string
   readonly root: string
   private readonly ctor: ClientCtor<C>
   private readonly clients = new Map<string, C>()
+  private readonly seeded = new Map<string, Promise<SeededTemplate>>()
+  private builds = 0
   private template: string | null = null
 
   constructor(opts: PoolOptions<C>) {
@@ -77,6 +88,10 @@ export class ClientPool<C extends MinimalClient> {
     return join(this.root, `${run}.db`)
   }
 
+  has(run: string): boolean {
+    return this.clients.has(run) || existsSync(this.fileFor(run))
+  }
+
   private ensureTemplate(): string {
     if (this.template === null) {
       const path = join(this.root, '_template.db')
@@ -87,13 +102,76 @@ export class ClientPool<C extends MinimalClient> {
   }
 
   client(run: string): C {
+    return this.clientFrom(run, this.ensureTemplate())
+  }
+
+  private clientFrom(run: string, template: string): C {
     const live = this.clients.get(run)
     if (live !== undefined) return live
     const file = this.fileFor(run)
-    copyFileSync(this.ensureTemplate(), file)
+    copyFileSync(template, file)
     const made = new this.ctor({ datasourceUrl: `file:${file}` })
     this.clients.set(run, made)
     return made
+  }
+
+  // A run whose seed is already on disk costs a file copy instead of a seed.
+  // The template is built ONCE per key, in a throwaway run that is then
+  // DISCONNECTED before the file is copied: SQLite writes through a -wal that
+  // only the last connection closing folds back in, so snapshotting a live run
+  // file would capture a database missing its most recent commits. The
+  // throwaway is the reason this cannot just copy the run that happened to be
+  // seeded first.
+  //
+  // Only NEW runs can use it. An existing run is reset by deleting its named
+  // tenants and reseeding them, because recreating its file would destroy the
+  // other tenants living in it, which is the whole reason a scoped reset
+  // exists.
+  // The IN-FLIGHT build is cached, not just the finished one. Router.enqueue
+  // serializes per RUN, so two fresh runs sharing a fixture is the ordinary
+  // parallel-host case rather than a corner: with only the finished template
+  // cached, both callers saw the miss before either could store a result, and
+  // each paid a full seed and left an orphaned template file behind. Storing
+  // the promise means the second caller awaits the first caller's build.
+  seededTemplate(key: string, seed: (db: C) => Promise<SeedReport[]>): Promise<SeededTemplate> {
+    const live = this.seeded.get(key)
+    if (live !== undefined) return live
+    const made = this.buildTemplate(seed)
+    this.seeded.set(key, made)
+    // A failed build must not be remembered, or every later run with this key
+    // replays the same rejection instead of retrying the seed.
+    made.catch(() => {
+      if (this.seeded.get(key) === made) this.seeded.delete(key)
+    })
+    return made
+  }
+
+  private async buildTemplate(seed: (db: C) => Promise<SeedReport[]>): Promise<SeededTemplate> {
+    // Taken ONCE, before the first await, and used for both names. Reading the
+    // counter again after the seed gave two concurrent builds the same number,
+    // so two different keys could write the same template file and the second
+    // silently handed the first key's later runs another fixture's database.
+    const n = String(this.builds++)
+    const build = `_build-${n}`
+    try {
+      const rows = await seed(this.client(build))
+      await this.close(build)
+      const file = join(this.root, `_seeded-${n}.db`)
+      copyFileSync(this.fileFor(build), file)
+      return { file, rows }
+    } finally {
+      // Also on the failure path. The rejected promise is evicted so a later
+      // reset retries, so without this every retry left another live client
+      // and another set of SQLite files behind until disposal.
+      await this.close(build)
+      for (const suffix of ['', '-journal', '-wal', '-shm']) {
+        rmSync(`${this.fileFor(build)}${suffix}`, { force: true })
+      }
+    }
+  }
+
+  clientFromSeeded(run: string, template: SeededTemplate): C {
+    return this.clientFrom(run, template.file)
   }
 
   // /reset recreates the run rather than deleting rows: a copy of the
@@ -124,5 +202,6 @@ export class ClientPool<C extends MinimalClient> {
     }
     rmSync(this.root, { recursive: true, force: true })
     this.template = null
+    this.seeded.clear()
   }
 }
