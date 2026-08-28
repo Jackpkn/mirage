@@ -17,6 +17,7 @@ import json
 import logging
 import pkgutil
 import sys
+from collections.abc import Sequence
 from dataclasses import MISSING, Field, asdict, fields
 from pathlib import Path
 from typing import Any
@@ -71,13 +72,14 @@ def _collect_registrations() -> dict[str, list[RegisteredCommand]]:
             continue
         candidates = list(vars(mod).values())
         commands = getattr(mod, "COMMANDS", None)
-        if isinstance(commands, list):
+        if isinstance(commands, Sequence):
             candidates.extend(commands)
         for attr in candidates:
-            if not callable(attr) or id(attr) in seen:
+            if id(attr) in seen:
                 continue
             seen.add(id(attr))
-            rcs = getattr(attr, "_registered_commands", None)
+            rcs = ([attr] if isinstance(attr, RegisteredCommand) else getattr(
+                attr, "_registered_commands", None))
             if not rcs:
                 continue
             for rc in rcs:

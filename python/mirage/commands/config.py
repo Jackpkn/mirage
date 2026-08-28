@@ -232,7 +232,14 @@ def _with_help_support(
     return new_spec, wrapper
 
 
-@dataclass
+class _Unset:
+    __slots__ = ()
+
+
+_UNSET = _Unset()
+
+
+@dataclass(frozen=True, slots=True)
 class RegisteredCommand:
     name: str
     spec: CommandSpec
@@ -245,6 +252,20 @@ class RegisteredCommand:
     dst: str | None = None
     write: bool = False
     limit: Limit | None = None
+
+    def with_overrides(
+        self,
+        *,
+        fn: CommandFn | _Unset = _UNSET,
+        provision: ProvisionFn | None | _Unset = _UNSET,
+    ) -> "RegisteredCommand":
+        """Return an independent command definition with selected changes."""
+        return replace(
+            self,
+            fn=(self.fn if fn is _UNSET else cast(CommandFn, fn)),
+            provision_fn=(self.provision_fn if provision is _UNSET else cast(
+                ProvisionFn | None, provision)),
+        )
 
 
 def command(
@@ -264,7 +285,10 @@ def command(
         resources = (resource if isinstance(resource, list) else [resource])
         new_spec, wrapped_fn = _with_help_support(name, spec, fn)
         provision_fn = cast(ProvisionFn | None, provision or dry_run)
-        cmds = getattr(wrapped_fn, "_registered_commands", [])
+        # functools.wraps copies function attributes by reference. Copy the
+        # registration list before extending it so wrapping a builtin cannot
+        # add registrations to the shared backend command.
+        cmds = list(getattr(wrapped_fn, "_registered_commands", []))
         for p in resources:
             rc = RegisteredCommand(
                 name=name,

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { RegisteredCommand } from '../../commands/config.ts'
+import { RegisteredCommand } from '../../commands/config.ts'
 import type { RegisteredOp } from '../../ops/registry.ts'
 import { ResourceName } from '../../types.ts'
 
@@ -25,8 +25,7 @@ export function remapOpsResource(ops: readonly RegisteredOp[], to: string): Regi
 }
 
 /**
- * Same as `remapOpsResource` but for registered commands, which are
- * class instances: copy via the prototype to keep methods intact.
+ * Same as `remapOpsResource` but for registered commands.
  */
 export function remapCommandsResource(
   commands: readonly RegisteredCommand[],
@@ -34,9 +33,18 @@ export function remapCommandsResource(
 ): RegisteredCommand[] {
   return commands.map((cmd) => {
     if (cmd.resource !== ResourceName.S3) return cmd
-    const proto = Object.getPrototypeOf(cmd) as object
-    const copy = Object.assign(Object.create(proto) as RegisteredCommand, cmd)
-    Object.assign(copy, { resource: to })
-    return copy
+    return new RegisteredCommand({
+      name: cmd.name,
+      spec: cmd.spec,
+      resource: to,
+      filetype: cmd.filetype,
+      fn: cmd.fn,
+      provisionFn: cmd.provisionFn,
+      aggregate: cmd.aggregate,
+      src: cmd.src,
+      dst: cmd.dst,
+      write: cmd.write,
+      limit: cmd.limit,
+    })
   })
 }

@@ -94,6 +94,18 @@ class TestCommandDecorator:
         rc = my_fn._registered_commands[0]
         assert rc.provision_fn is my_provision
 
+    def test_wrapping_a_registered_function_does_not_mutate_it(self):
+        original = command("cat", resource="s3",
+                           spec=CommandSpec())(_noop_handler)
+        original_registrations = list(original._registered_commands)
+
+        wrapped = command("cat", resource="s3", spec=CommandSpec())(original)
+
+        assert original._registered_commands == original_registrations
+        assert (wrapped._registered_commands
+                is not original._registered_commands)
+        assert len(wrapped._registered_commands) == 2
+
     def test_write_defaults_false(self):
         rc = RegisteredCommand(
             name="cat",

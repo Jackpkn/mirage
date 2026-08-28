@@ -48,6 +48,43 @@ export enum CommandName {
 // touch classification sites.
 export type ValueType = 'bool' | 'str' | 'int' | 'float' | 'path'
 
+class ImmutableSet<T> implements ReadonlySet<T> {
+  readonly #values: Set<T>
+
+  constructor(values: Iterable<T>) {
+    this.#values = new Set(values)
+    Object.freeze(this)
+  }
+
+  get size(): number {
+    return this.#values.size
+  }
+
+  has(value: T): boolean {
+    return this.#values.has(value)
+  }
+
+  forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: unknown): void {
+    for (const value of this.#values) callbackfn.call(thisArg, value, value, this)
+  }
+
+  entries(): IterableIterator<[T, T]> {
+    return this.#values.entries()
+  }
+
+  keys(): IterableIterator<T> {
+    return this.#values.keys()
+  }
+
+  values(): IterableIterator<T> {
+    return this.#values.values()
+  }
+
+  [Symbol.iterator](): IterableIterator<T> {
+    return this.values()
+  }
+}
+
 /**
  * Which program's voice a CLI answers usage questions in.
  *
@@ -324,7 +361,7 @@ export class CommandSpec {
     this.options = Object.freeze([...(init.options ?? [])])
     this.positional = Object.freeze([...(init.positional ?? [])])
     this.rest = init.rest ?? null
-    this.ignoreTokens = new Set(init.ignoreTokens ?? [])
+    this.ignoreTokens = new ImmutableSet(init.ignoreTokens ?? [])
     this.description = init.description ?? null
     this.epilog = init.epilog ?? null
     this.oldOptionStyle = init.oldOptionStyle ?? false

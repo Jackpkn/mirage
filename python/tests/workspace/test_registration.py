@@ -76,6 +76,17 @@ def test_register_fns_adds_command(ws):
     assert "test_custom" in m.commands()
 
 
+def test_register_fns_adds_registered_command(ws):
+
+    @command("test_custom", resource="ram", spec=SPECS["cat"])
+    async def custom(accessor, paths, *texts, **kw):
+        return b"custom", IOResult()
+
+    m = ws.mount("/data/")
+    m.register_fns(custom._registered_commands)
+    assert "test_custom" in m.commands()
+
+
 def test_register_fns_adds_op(ws):
 
     @op("test_custom_op", resource="ram")

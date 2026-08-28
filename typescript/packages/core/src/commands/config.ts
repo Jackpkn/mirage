@@ -115,6 +115,11 @@ export interface RegisteredCommandInit {
   limit?: Limit | null
 }
 
+export interface RegisteredCommandOverrides {
+  fn?: CommandFn
+  provision?: ProvisionFn | null
+}
+
 export class RegisteredCommand {
   readonly name: string
   readonly spec: CommandSpec
@@ -140,6 +145,67 @@ export class RegisteredCommand {
     this.dst = init.dst ?? null
     this.write = init.write ?? false
     this.limit = init.limit ?? null
+    Object.freeze(this)
+  }
+
+  /** Return an independent command definition with selected changes. */
+  withOverrides(overrides: RegisteredCommandOverrides): RegisteredCommand {
+    return new RegisteredCommand({
+      name: this.name,
+      spec: this.spec,
+      resource: this.resource,
+      filetype: this.filetype,
+      fn: overrides.fn ?? this.fn,
+      provisionFn: overrides.provision === undefined ? this.provisionFn : overrides.provision,
+      aggregate: this.aggregate,
+      src: this.src,
+      dst: this.dst,
+      write: this.write,
+      limit: this.limit,
+    })
+  }
+}
+
+/** Immutable command array with exact name/filetype lookup. */
+export class CommandCatalog extends Array<RegisteredCommand> {
+  readonly #byKey: ReadonlyMap<string, RegisteredCommand>
+
+  constructor(commands: readonly RegisteredCommand[]) {
+    super(...commands)
+    const byKey = new Map<string, RegisteredCommand>()
+    for (const command of commands) {
+      byKey.set(CommandCatalog.key(command.name, command.filetype), command)
+    }
+    this.#byKey = byKey
+    Object.freeze(this)
+  }
+
+  get size(): number {
+    return this.length
+  }
+
+  toArray(): readonly RegisteredCommand[] {
+    return this
+  }
+
+  get(name: string, filetype: string | null = null): RegisteredCommand | null {
+    return this.#byKey.get(CommandCatalog.key(name, filetype)) ?? null
+  }
+
+  require(name: string, filetype: string | null = null): RegisteredCommand {
+    const command = this.get(name, filetype)
+    if (command === null) {
+      throw new Error(`command '${name}' with filetype ${String(filetype)} is not registered`)
+    }
+    return command
+  }
+
+  private static key(name: string, filetype: string | null): string {
+    return `${name}\0${filetype ?? ''}`
+  }
+
+  static override get [Symbol.species](): ArrayConstructor {
+    return Array
   }
 }
 

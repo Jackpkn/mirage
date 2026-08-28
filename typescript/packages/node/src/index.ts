@@ -82,6 +82,7 @@ export {
 } from './fuse/mount.ts'
 export { isMacosMetadata } from './fuse/platform/macos.ts'
 export { S3Resource, type S3ResourceState } from './resource/s3/s3.ts'
+export { S3_COMMANDS } from '@struktoai/mirage-core/commands/builtin/s3/index'
 export { GridFSResource, type GridFSResourceState } from './resource/gridfs/gridfs.ts'
 export {
   normalizeGridFSConfig,

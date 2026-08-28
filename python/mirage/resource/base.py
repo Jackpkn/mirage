@@ -153,6 +153,9 @@ class BaseResource:
         return self._ops_list
 
     def register(self, fn: Any) -> None:
+        if isinstance(fn, RegisteredCommand):
+            self._commands.append(fn)
+            return
         for rc in fn._registered_commands:
             self._commands.append(rc)
 
