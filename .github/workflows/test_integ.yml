@@ -1501,6 +1501,17 @@ jobs:
           cat /tmp/discord.log
           echo "DISCORD_URL=http://127.0.0.1:5090" >> "$GITHUB_ENV"
 
+      # A different Hugging Face product from the hf/ Xet store: hf_hub/ is
+      # the git-backed Hub the `hf` CLI acts on.
+      - name: Start fake Hugging Face Hub
+        if: matrix.facet == 'cli'
+        working-directory: integ
+        run: |
+          nohup ./node_modules/.bin/tsx server/hf_hub/main.ts --port 5086 > /tmp/hfhub.log 2>&1 &
+          for i in $(seq 1 30); do grep -q "HF_HUB_URL=" /tmp/hfhub.log && break; sleep 1; done
+          cat /tmp/hfhub.log
+          echo "HF_HUB_URL=http://127.0.0.1:5086" >> "$GITHUB_ENV"
+
       # The `cli` fixture is the second github scenario: one repository and
       # no repository creation, where the shared setup seeds three and allows
       # it. Same server binary, named at startup and replayed by every later

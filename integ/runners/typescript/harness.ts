@@ -44,6 +44,8 @@ export interface Mount {
   seed_root?: boolean
   folder?: string
   bucket?: string
+  // The repository a repo-shaped mount names (github, hf_hub).
+  repo?: string
   volume?: string
   prefix?: string
   root?: string

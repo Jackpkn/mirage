@@ -133,6 +133,20 @@ runs:
         cat /tmp/hfsrv.log
         echo "HF_URL=http://127.0.0.1:5099" >> "$GITHUB_ENV"
 
+    # A different Hugging Face product from the one above: hf/ is the Xet
+    # object store, hf_hub/ is the git-backed Hub the repo resources mount.
+    - name: Start fake Hugging Face Hub (Prisma)
+      working-directory: integ
+      shell: bash
+      run: |
+        nohup ./node_modules/.bin/tsx server/hf_hub/main.ts --port 5086 > /tmp/hfhubsrv.log 2>&1 &
+        for i in $(seq 1 30); do
+          grep -q "HF_HUB_URL=" /tmp/hfhubsrv.log && break
+          sleep 1
+        done
+        cat /tmp/hfhubsrv.log
+        echo "HF_HUB_URL=http://127.0.0.1:5086" >> "$GITHUB_ENV"
+
     - name: Wait for GreenMail
       shell: bash
       run: |
