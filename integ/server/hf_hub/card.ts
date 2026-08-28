@@ -62,6 +62,19 @@ export function parseCard(text: string): Record<string, JsonValue> {
       list = null
       continue
     }
+    // A list of MAPPINGS is the other shape a nested structure takes, and it
+    // can carry no indented `key:` line at all: `configs:` followed by
+    // `- config_name: default` is one item with one key, so the rule above
+    // never fires and the item was collected as the string
+    // "config_name: default". The colon has to be followed by a space or the
+    // end of the line, which is what YAML requires of a key and what keeps a
+    // facet-shaped value such as `arxiv:1606.05250` a scalar.
+    if (/^\s*-\s+[A-Za-z_][\w-]*:(\s|$)/.test(line)) {
+      if (key !== '') delete out[key]
+      key = ''
+      list = null
+      continue
+    }
     const item = /^\s*-\s+(.*)$/.exec(line)
     if (item !== null && list !== null) {
       list.push(scalar(item[1] ?? ''))
@@ -77,6 +90,14 @@ export function parseCard(text: string): Record<string, JsonValue> {
       continue
     }
     list = null
+    // A block scalar (`|`, `>`) keeps its value on the lines that follow, and
+    // a flow mapping holds a shape this subset cannot. Both were stored as
+    // the literal text after the colon, so `extra_gated_prompt: |` rendered
+    // as the string "|".
+    if (rest.startsWith('|') || rest.startsWith('>') || rest.startsWith('{')) {
+      key = ''
+      continue
+    }
     if (rest.startsWith('[') && rest.endsWith(']')) {
       const inner = rest.slice(1, -1).trim()
       out[key] = inner === '' ? [] : inner.split(',').map((p) => scalar(p))
@@ -111,10 +132,19 @@ const MODEL_FACETS = [
   ['datasets', 'dataset:'],
 ] as const
 
+// Every one of these was read off rajpurkar/squad, whose card carries all of
+// them and whose Hub tags spell each as `<field>:<value>`. A field missing
+// from this table is not a cosmetic gap: `?filter=task_ids:extractive-qa`
+// answers with nothing, silently, because the filter reads only this list.
 const DATASET_FACETS = [
   ['license', 'license:'],
   ['task_categories', 'task_categories:'],
+  ['task_ids', 'task_ids:'],
   ['language', 'language:'],
+  ['language_creators', 'language_creators:'],
+  ['annotations_creators', 'annotations_creators:'],
+  ['multilinguality', 'multilinguality:'],
+  ['source_datasets', 'source_datasets:'],
   ['size_categories', 'size_categories:'],
 ] as const
 

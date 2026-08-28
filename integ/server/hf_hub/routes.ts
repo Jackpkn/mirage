@@ -234,39 +234,78 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
       for (const name of expand) if (body[name] !== undefined) out[name] = body[name]
       return out
     }
-    return listingRow(body, full, withCard)
+    return listingRow(kind, body, full, withCard)
   })
   return { status: 200, body: rows }
 }
 
-// The listing row, in the Hub's own field sets. All three were probed on
-// `/api/models?limit=1` rather than derived from the info object, which is a
-// different and larger shape: a bare row carries no `author`, `sha`,
-// `lastModified` or `gated`, and no `full` row carries `cardData`.
-const LISTING_BASE = [
-  'id',
-  'likes',
-  'trendingScore',
-  'private',
-  'downloads',
-  'tags',
-  'pipeline_tag',
-  'library_name',
-  'createdAt',
-  'modelId',
-  'sdk',
-] as const
+// The listing row, per kind. Probed on /api/{models,datasets,spaces}?limit=1
+// and again with full=1, rather than derived from the info object, which is a
+// different and larger shape. The three kinds disagree more than they agree,
+// so one shared list was wrong for two of them: a dataset's bare row is
+// already almost complete and `full` adds nothing to it, a space's is the
+// narrowest of the three, and `modelId` exists only on a model.
+//
+// `cardData` is its own parameter for all three and is never part of `full`.
+//
+// Real rows also carry `_id`, a dataset carries `description` and `key`, and
+// a space carries `subdomain`. The fake stores none of those and does not
+// invent them.
+const MODEL_ROW = {
+  base: [
+    'id',
+    'modelId',
+    'private',
+    'createdAt',
+    'downloads',
+    'likes',
+    'trendingScore',
+    'tags',
+    'pipeline_tag',
+    'library_name',
+  ],
+  full: ['author', 'gated', 'lastModified', 'sha', 'siblings'],
+} as const
 
-const LISTING_FULL = ['author', 'gated', 'lastModified', 'sha', 'siblings'] as const
+const DATASET_ROW = {
+  base: [
+    'id',
+    'author',
+    'private',
+    'createdAt',
+    'disabled',
+    'downloads',
+    'gated',
+    'lastModified',
+    'likes',
+    'sha',
+    'tags',
+    'trendingScore',
+  ],
+  full: [],
+} as const
+
+const SPACE_ROW = {
+  base: ['id', 'private', 'createdAt', 'likes', 'trendingScore', 'tags', 'sdk'],
+  full: ['author', 'lastModified', 'sha', 'siblings'],
+} as const
+
+function rowFieldsFor(kind: string): { base: readonly string[]; full: readonly string[] } {
+  if (kind === 'models') return MODEL_ROW
+  if (kind === 'spaces') return SPACE_ROW
+  return DATASET_ROW
+}
 
 function listingRow(
+  kind: string,
   body: Record<string, JsonValue>,
   full: boolean,
   withCard: boolean,
 ): Record<string, JsonValue> {
+  const fields = rowFieldsFor(kind)
   const out: Record<string, JsonValue> = {}
-  for (const k of LISTING_BASE) if (body[k] !== undefined) out[k] = body[k]
-  if (full) for (const k of LISTING_FULL) if (body[k] !== undefined) out[k] = body[k]
+  for (const k of fields.base) if (body[k] !== undefined) out[k] = body[k]
+  if (full) for (const k of fields.full) if (body[k] !== undefined) out[k] = body[k]
   if (withCard && body.cardData !== undefined) out.cardData = body.cardData
   return out
 }

@@ -274,6 +274,30 @@ async function main(): Promise<void> {
       'tags',
       'trendingScore',
     ])
+    const bareData = (await get(fake.endpoint, '/api/datasets')) as Record<string, JsonValue>[]
+    eq('a dataset row is wider and carries no modelId', Object.keys(bareData[0] ?? {}).sort(), [
+      'author',
+      'createdAt',
+      'disabled',
+      'downloads',
+      'gated',
+      'id',
+      'lastModified',
+      'likes',
+      'private',
+      'sha',
+      'tags',
+      'trendingScore',
+    ])
+    const bareSpace = (await get(fake.endpoint, '/api/spaces')) as Record<string, JsonValue>[]
+    eq('a space row is the narrowest of the three', Object.keys(bareSpace[0] ?? {}).sort(), [
+      'createdAt',
+      'id',
+      'likes',
+      'private',
+      'tags',
+      'trendingScore',
+    ])
     const fullRows = (await get(fake.endpoint, '/api/models?full=1')) as Record<string, JsonValue>[]
     const fullFirst = fullRows[0] ?? {}
     check('full=1 adds siblings', fullFirst.siblings !== undefined, '')
@@ -297,12 +321,12 @@ async function main(): Promise<void> {
     )
     // Upstream's own rule, stated on `list_models`: full "is set to `True` by
     // default when using a filter".
-    const filtered = (await get(fake.endpoint, '/api/datasets?filter=license:mit')) as Record<
+    const filtered = (await get(fake.endpoint, '/api/models?filter=summarization')) as Record<
       string,
       JsonValue
     >[]
     check('a filter defaults to the full row', (filtered[0] ?? {}).siblings !== undefined, '')
-    const searched = (await get(fake.endpoint, '/api/datasets?search=card')) as Record<
+    const searched = (await get(fake.endpoint, '/api/models?search=card')) as Record<
       string,
       JsonValue
     >[]
@@ -422,15 +446,40 @@ async function main(): Promise<void> {
       body: JSON.stringify({ name: 'nested-card', type: 'dataset' }),
     })
     check('a dataset for the nested card is created', nested.status === 200, String(nested.status))
+    // Modelled on rajpurkar/squad, whose card carries all three constructs
+    // this subset refuses AND every dataset facet field. `configs:` is the
+    // one that has no indented `key:` line at all: its single item IS the
+    // mapping, so only the item-shape rule catches it.
     const nestedCard = [
       '---',
       'license: mit',
+      'annotations_creators:',
+      '  - crowdsourced',
+      'language_creators:',
+      '  - crowdsourced',
+      '  - found',
+      'language:',
+      '  - en',
+      'multilinguality:',
+      '  - monolingual',
+      'size_categories:',
+      '  - 10K<n<100K',
+      'source_datasets:',
+      '  - extended|wikipedia',
+      'task_categories:',
+      '  - question-answering',
+      'task_ids:',
+      '  - extractive-qa',
+      'extra_gated_prompt: |',
+      '  You agree not to do bad things.',
+      '  Second line.',
       'dataset_info:',
       '  features:',
       '  - name: text',
       '    dtype: string',
-      'task_categories:',
-      '  - summarization',
+      'configs:',
+      '  - config_name: default',
+      'pretty_name: Nested',
       '---',
       '',
       '# Nested',
@@ -458,8 +507,33 @@ async function main(): Promise<void> {
       nestedData.dataset_info === undefined,
       JSON.stringify(nestedData.dataset_info ?? null),
     )
-    eq('the keys after it still parse', nestedData.task_categories ?? null, ['summarization'])
-    eq('and so do the keys before it', nestedData.license ?? null, 'mit')
+    check(
+      'a bare sequence of mappings is omitted too',
+      nestedData.configs === undefined,
+      JSON.stringify(nestedData.configs ?? null),
+    )
+    check(
+      'a block scalar is omitted rather than stored as "|"',
+      nestedData.extra_gated_prompt === undefined,
+      JSON.stringify(nestedData.extra_gated_prompt ?? null),
+    )
+    eq('and the key after all three still parses', nestedData.pretty_name ?? null, 'Nested')
+    eq('the keys before them still parse', nestedData.license ?? null, 'mit')
+    // The facet list the real squad card produces on the Hub, minus the
+    // facets derived from files and hosting (format:, modality:, library:,
+    // region:) that a card-only fake cannot know.
+    eq('every dataset card facet is spelled', nestedInfo.tags ?? null, [
+      'annotations_creators:crowdsourced',
+      'language:en',
+      'language_creators:crowdsourced',
+      'language_creators:found',
+      'license:mit',
+      'multilinguality:monolingual',
+      'size_categories:10K<n<100K',
+      'source_datasets:extended|wikipedia',
+      'task_categories:question-answering',
+      'task_ids:extractive-qa',
+    ])
 
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))
