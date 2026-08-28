@@ -61,19 +61,6 @@ repos:
         name: Upgrade Python syntax
         args: [--py38-plus]
 
-  - repo: https://github.com/PyCQA/autoflake
-    rev: v2.3.1
-    hooks:
-      - id: autoflake
-        name: Remove unused imports and variables
-        args: [
-          --remove-all-unused-imports,
-          --remove-unused-variables,
-          --remove-duplicate-keys,
-          --ignore-init-module-imports,
-          --in-place,
-        ]
-
   - repo: https://github.com/google/yapf
     rev: v0.43.0
     hooks:
@@ -100,19 +87,11 @@ repos:
               python/mirage/utils/generated/.*
           )$
 
-  - repo: https://github.com/PyCQA/flake8
-    rev: 7.3.0
-    hooks:
-      - id: flake8
-        name: Check PEP8
-        args: [--toml-config=python/pyproject.toml]
-        additional_dependencies: [Flake8-pyproject]
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.3
     hooks:
       - id: ruff
-        name: Ruff formatting
+        name: Lint and fix Python
         args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/executablebooks/mdformat
@@ -172,7 +151,10 @@ repos:
         name: Type check (integ mock servers)
         entry: bash -c 'cd integ && pnpm exec tsc -p tsconfig.check.json'
         language: system
-        files: ^integ/(server/(kit|discord|linear|trello|gws)/.*\.ts|tsconfig(\.check)?\.json)$
+        # Every server directory, not a hand-kept list: the list had already
+        # fallen five fakes behind tsconfig.check.json, so editing one of those
+        # skipped the only hook that type checks it.
+        files: ^integ/(server/.*\.ts|tsconfig(\.check)?\.json)$
         pass_filenames: false
       - id: py-mypy
         name: Type check (mypy)

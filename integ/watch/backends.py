@@ -420,23 +420,27 @@ async def build_box(spec: dict) -> Pair | None:
 
 
 async def build_hf(spec: dict) -> Pair | None:
-    """Hugging Face battery against the in-process Hub fake.
+    """Hugging Face battery against the external hub fake.
 
     Covers the shared opendal walk on a lister that omits per-entry
     metadata, which is the stat-backfill branch Nextcloud never reaches.
-    The fake freezes ``modified``, so only the ETag can move: a case that
-    passes here passes on the ETag alone.
+    opendal reports no last_modified for a Hub object at all, so only the
+    ETag can move: a case that passes here passes on the ETag alone.
+
+    The fake is TypeScript and shared across runs, so this needs ``HF_URL``
+    and each run takes its own account -- the token is the account here.
 
     Args:
         spec (dict): Parsed case file.
     """
-    module = _load(SERVER_DIR / "hf_server.py", "integ_watch_hf")
-    _hub, server, _runner = await module.start_fake_hub()
-    bucket = f"integ/watch-{uuid.uuid4().hex[:8]}"
+    url = os.environ.get("HF_URL")
+    if not url:
+        return None
+    token = f"watch-hf-{uuid.uuid4().hex[:8]}"
     return _pair(
         spec, lambda: HfBucketsResource(
             HfBucketsConfig(
-                bucket=bucket, token="integ-token", endpoint=server.endpoint)))
+                bucket="integ/watch", token=token, endpoint=url.rstrip("/"))))
 
 
 async def build_gdrive(spec: dict) -> Pair | None:
@@ -475,24 +479,37 @@ async def build_gdrive(spec: dict) -> Pair | None:
 
 
 async def build_github(spec: dict) -> Pair | None:
-    """GitHub battery against the in-process fake.
+    """GitHub battery against the external github fake.
 
     The one target whose writer is not a workspace, because a git ref
     has no write ops to lend one. It is also the only backend whose
     fingerprint is a git blob sha, so a rewrite of identical bytes is
     correctly reported as nothing at all.
 
+    The server is TypeScript now, so this needs ``GITHUB_URL``. It is
+    seeded empty and the repository is created here, which is what the
+    in-process fake did by reaching into its store directly.
+
     Args:
         spec (dict): Parsed case file.
     """
-    module = _load(SERVER_DIR / "github_server.py", "integ_watch_github")
-    state, _server, _runner = await module.start_fake_github()
-    state.repo(GITHUB_OWNER, GITHUB_REPO)
+    url = os.environ.get("GITHUB_URL")
+    if not url:
+        return None
+    url = url.rstrip("/")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+                f"{url}/orgs/{GITHUB_OWNER}/repos",
+                headers={"Authorization": "Bearer integ-github-token"},
+                json={"name": GITHUB_REPO}) as resp:
+            # 422 is "it is already there", which a re-run makes ordinary.
+            if resp.status not in (201, 422):
+                resp.raise_for_status()
     config = GitHubConfig(token=SecretStr("integ-github-token"),
                           owner=GITHUB_OWNER,
                           repo=GITHUB_REPO,
                           ref=GITHUB_REF,
-                          base_url=state.base)
+                          base_url=url)
     resource = GitHubResource(config)
     ws = Workspace({spec["mount"]: resource}, mode=MountMode.WRITE)
     return ws, GitHubWriter(config, GITHUB_OWNER, GITHUB_REPO, GITHUB_REF)

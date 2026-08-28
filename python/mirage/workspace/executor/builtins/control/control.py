@@ -16,8 +16,8 @@ from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
-from mirage.workspace.executor.builtins.shared import Result, is_count_word
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import is_count_word
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.executor.control import (BreakSignal, ContinueSignal,
                                                ReturnSignal)
 from mirage.workspace.session import Session

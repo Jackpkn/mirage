@@ -20,9 +20,9 @@ from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.bytes import encode_text
 from mirage.shell.errors import ArithError
+from mirage.workspace.executor.builtins.constants import TARGET_RE
 from mirage.workspace.executor.builtins.printf.format import run_printf
-from mirage.workspace.executor.builtins.shared import TARGET_RE, Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.elements import assign_element
 from mirage.workspace.session.state import session_view

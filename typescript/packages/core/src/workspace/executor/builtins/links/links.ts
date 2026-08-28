@@ -20,8 +20,9 @@ import { CycleError, gnuBasename } from '../../../../utils/path.ts'
 import { rstripSlash } from '../../../../utils/slash.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
-import { fail, ok, splitFlags, type Result } from '../shared.ts'
+import { fail, ok, splitFlags } from '../shared.ts'
 import { statOrNull } from './probe.ts'
+import type { Result } from '../types.ts'
 
 export function posixRelative(target: string, startDir: string): string {
   const t = target.split('/').filter(Boolean)

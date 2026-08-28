@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import CommandName, FlagValue, FlagView
@@ -121,7 +121,7 @@ async def _load_patch_data(
         return await read_bytes(i)
     if paths and has_resource:
         return await read_bytes(paths[0])
-    data = await _read_stdin_async(stdin)
+    data = await read_stdin_async(stdin)
     if data is None:
         return b""
     return data

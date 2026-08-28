@@ -14,15 +14,15 @@
 
 import math
 
-from mirage.commands.builtin.utils.formatting import _human_size, human_scaled
+from mirage.commands.builtin.utils.formatting import human_scaled, human_size
 from mirage.runtime.types import DispatchFn
 from mirage.types import CapacityResult, CapacityState, PathSpec
 from mirage.utils.path import resolve_path
 from mirage.workspace.executor.builtins.df.constants import (BLOCK_SUFFIX,
                                                              SI_UNITS)
-from mirage.workspace.executor.builtins.shared import (Result, fail, ok,
-                                                       operand_text,
+from mirage.workspace.executor.builtins.shared import (fail, ok, operand_text,
                                                        split_value_flags)
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.mount import MountEntry
 from mirage.workspace.mount.registry import MountRegistry
 from mirage.workspace.session import Session
@@ -148,7 +148,7 @@ def _num_cells(cap: CapacityResult, human: bool, si: bool, block: int,
         used = cap.used or 0
         avail = cap.available or 0
         if human:
-            fmt = _human_si if si else _human_size
+            fmt = _human_si if si else human_size
             return [fmt(cap.total), fmt(used), fmt(avail)]
         return [
             _scale(cap.total, block),

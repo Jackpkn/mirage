@@ -17,17 +17,17 @@ import { PathSpec } from '../../../types.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { parseCommand } from '../../spec/parser.ts'
 import { enoent } from '../../../utils/errors.ts'
-import { parseTeeFlags, writeOutput } from './tee.ts'
+import { parseFlags, writeOutput } from './tee.ts'
 
 const DEC = new TextDecoder()
 
-describe('parseTeeFlags', () => {
+describe('parseFlags', () => {
   it('accepts -a / --append', () => {
-    expect(parseTeeFlags({ append: true })).toEqual({ append: true, stopOnError: false })
+    expect(parseFlags({ append: true })).toEqual({ append: true, stopOnError: false })
   })
 
   it('treats -i / -p as accepted no-ops', () => {
-    expect(parseTeeFlags({ ignore_interrupts: true, p: true })).toEqual({
+    expect(parseFlags({ ignore_interrupts: true, p: true })).toEqual({
       append: false,
       stopOnError: false,
     })
@@ -37,21 +37,21 @@ describe('parseTeeFlags', () => {
     // Only this axis is observable: the -nopipe half distinguishes a pipe
     // sink from a file sink, and every operand tee writes is a file.
     for (const mode of ['warn', 'warn-nopipe']) {
-      expect(parseTeeFlags({ output_error: mode })).toEqual({ append: false, stopOnError: false })
+      expect(parseFlags({ output_error: mode })).toEqual({ append: false, stopOnError: false })
     }
     for (const mode of ['exit', 'exit-nopipe']) {
-      expect(parseTeeFlags({ output_error: mode })).toEqual({ append: false, stopOnError: true })
+      expect(parseFlags({ output_error: mode })).toEqual({ append: false, stopOnError: true })
     }
   })
 
   it('treats a bare --output-error as warn, like GNU 9.7', () => {
-    expect(parseTeeFlags({ output_error: true })).toEqual({ append: false, stopOnError: false })
+    expect(parseFlags({ output_error: true })).toEqual({ append: false, stopOnError: false })
   })
 
   it('reports an invalid --output-error mode through the parser channel', () => {
     // Value validation moved to the spec's choices=: the parser reports a
     // bad mode and the executor refuses with GNU's ARGMATCH shape before
-    // tee runs, so parseTeeFlags no longer rejects.
+    // tee runs, so parseFlags no longer rejects.
     const parsed = parseCommand(specOf('tee'), ['--output-error=bogus', '/f'], '/')
     expect(parsed.invalidValueOptions).toEqual([
       ['--output-error', 'bogus', ['warn', 'warn-nopipe', 'exit', 'exit-nopipe']],

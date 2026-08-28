@@ -16,8 +16,8 @@ from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.utils.mode import parse_chmod
 from mirage.workspace.executor.builtins.getopt import scan_options
-from mirage.workspace.executor.builtins.shared import Result, fail
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import fail
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 

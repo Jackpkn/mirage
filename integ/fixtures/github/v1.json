@@ -1,0 +1,31 @@
+{
+  "repos": [
+    {
+      "fullName": "integ/repo-v1",
+      "owner": "integ",
+      "name": "repo-v1",
+      "defaultBranch": "main",
+      "sourceDir": "github/repo-v1"
+    },
+    {
+      "fullName": "integ/repo-trunc",
+      "owner": "integ",
+      "name": "repo-trunc",
+      "defaultBranch": "main",
+      "sourceDir": "github/repo-v1",
+      "truncated": true
+    },
+    {
+      "fullName": "integ/repo-cli",
+      "owner": "integ",
+      "name": "repo-cli",
+      "defaultBranch": "main",
+      "sourceDir": "github/repo-v1"
+    }
+  ],
+  "settings": [
+    {
+      "createRepos": true
+    }
+  ]
+}

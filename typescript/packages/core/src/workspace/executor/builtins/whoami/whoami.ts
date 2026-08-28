@@ -15,8 +15,7 @@
 import { IOResult } from '../../../../io/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 export function handleWhoami(namespace: Namespace): Result {
   // GNU whoami reports the effective user and never consults $USER; the

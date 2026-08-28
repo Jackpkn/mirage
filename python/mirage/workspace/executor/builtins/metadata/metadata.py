@@ -22,9 +22,9 @@ from mirage.utils.errors import format_fs_error
 from mirage.utils.path import CycleError
 from mirage.workspace.mount.namespace import Namespace
 
-TOUCH_STAMP_RE = re.compile(r"(\d{8}|\d{10}|\d{12})(\.\d{2})?")
+_TOUCH_STAMP_RE = re.compile(r"(\d{8}|\d{10}|\d{12})(\.\d{2})?")
 
-TOUCH_STAMP_FMT = {10: "%y%m%d%H%M", 12: "%Y%m%d%H%M"}
+_TOUCH_STAMP_FMT = {10: "%y%m%d%H%M", 12: "%Y%m%d%H%M"}
 
 
 def parse_owner(text: str) -> tuple[int | str | None, int | str | None]:
@@ -96,13 +96,13 @@ def parse_touch_stamp(t: str | None, d: str | None) -> str | None:
         parse_touch_stamp(None, "2026-01-02")   -> "2026-01-02T00:00:00+00:00"
     """
     if t is not None:
-        if TOUCH_STAMP_RE.fullmatch(t) is None:
+        if _TOUCH_STAMP_RE.fullmatch(t) is None:
             raise ValueError(t)
         raw, _, seconds = t.partition(".")
         if len(raw) == 8:
             raw = f"{datetime.now(timezone.utc).year:04d}{raw}"
         try:
-            dt = datetime.strptime(raw, TOUCH_STAMP_FMT[len(raw)])
+            dt = datetime.strptime(raw, _TOUCH_STAMP_FMT[len(raw)])
             dt = dt.replace(second=int(seconds) if seconds else 0,
                             tzinfo=timezone.utc)
         except ValueError:

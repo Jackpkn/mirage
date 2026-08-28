@@ -35,10 +35,24 @@ def test_config_immutable():
 def test_resource_registers_ops():
     r = HfDatasetsResource(HfDatasetsConfig(repo_id="org/dataset"))
     op_names = {o.name for o in r.ops_list()}
-    assert {"read", "readdir", "stat", "write", "create", "unlink"} <= op_names
+    assert {"read", "readdir", "stat"} <= op_names
+
+
+def test_resource_registers_no_mutation_ops():
+    """A Hub mount is read-only; the `hf` CLI is what commits.
+
+    The op table is the second of the two channels a write can arrive on,
+    and it is the one a command bypasses: it answers `dispatch("write",
+    ...)` and the FUSE adapter directly. Asserting the absence here is
+    what keeps the two agreeing.
+    """
+    r = HfDatasetsResource(HfDatasetsConfig(repo_id="org/dataset"))
+    op_names = {o.name for o in r.ops_list()}
+    assert not {"write", "create", "unlink", "rm_r", "mkdir"} & op_names
 
 
 def test_resource_registers_commands():
     r = HfDatasetsResource(HfDatasetsConfig(repo_id="org/dataset"))
     cmd_names = {c.name for c in r.commands()}
-    assert {"cat", "ls", "grep", "stat", "touch", "rm"} <= cmd_names
+    assert {"cat", "ls", "grep", "stat"} <= cmd_names
+    assert not {"touch", "rm", "cp", "mv", "mkdir"} & cmd_names

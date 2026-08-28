@@ -18,7 +18,8 @@ from mirage.commands.builtin.generic_bind.adapter import bound_op
 from mirage.commands.builtin.gmail.grep import (SEARCH_HONORED,
                                                 SEARCH_MAX_RESULTS)
 from mirage.commands.builtin.gmail.io import resolve_glob
-from mirage.commands.builtin.grep_helper import pattern_arg, pushdown_operand
+from mirage.commands.builtin.grep_pattern import pattern_arg
+from mirage.commands.builtin.grep_pushdown import pushdown_operand
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError

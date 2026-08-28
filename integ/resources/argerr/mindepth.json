@@ -26,6 +26,33 @@
         "stdout": "",
         "stderr": "find: invalid argument 'xx' to '-mindepth'\n"
       }
+    },
+    {
+      "id": "find_arg_mindepth_trailing",
+      "seq": 320005,
+      "targets": [
+        "argerr-databricks",
+        "argerr-discord",
+        "argerr-email",
+        "argerr-gdocs",
+        "argerr-gdrive",
+        "argerr-gmail",
+        "argerr-gsheets",
+        "argerr-gslides",
+        "argerr-langfuse",
+        "argerr-linear",
+        "argerr-mem0",
+        "argerr-onedrive",
+        "argerr-sharepoint",
+        "argerr-slack",
+        "argerr-trello"
+      ],
+      "command": "find {mount} -mindepth 2x",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "find: invalid argument '2x' to '-mindepth'\n"
+      }
     }
   ]
 }

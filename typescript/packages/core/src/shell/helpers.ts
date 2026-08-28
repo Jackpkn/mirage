@@ -15,7 +15,7 @@
 import { expandTilde } from '../utils/path.ts'
 import { decodeAnsiC, unescapeDquoted, unescapeUnquoted } from './escapes.ts'
 import type { TSNodeLike } from './types.ts'
-import { NodeType as NT, Redirect, RedirectKind } from './types.ts'
+import { NodeType as NT, ProcessSubDirection, Redirect, RedirectKind } from './types.ts'
 
 export function getText(node: TSNodeLike): string {
   return node.text
@@ -654,12 +654,6 @@ function normalizeHeredocBody(body: string, delimiter: string): string {
   if (out !== '' && !out.endsWith('\n')) out += '\n'
   return out
 }
-
-export const ProcessSubDirection = {
-  INPUT: 'input',
-  OUTPUT: 'output',
-} as const
-export type ProcessSubDirection = (typeof ProcessSubDirection)[keyof typeof ProcessSubDirection]
 
 export function getProcessSubDirection(node: TSNodeLike): ProcessSubDirection | null {
   const open = node.children[0]?.type ?? ''

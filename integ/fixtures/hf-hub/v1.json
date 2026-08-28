@@ -1,0 +1,152 @@
+{
+  "repos": [
+    {
+      "kind": "models",
+      "namespace": "integ",
+      "name": "repo-v1",
+      "sourceDir": "files/v1",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "kind": "datasets",
+      "namespace": "integ",
+      "name": "data-v1",
+      "sourceDir": "columnar/v1",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "kind": "models",
+      "namespace": "integ",
+      "name": "repo-cli",
+      "sourceDir": "files/v1",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "kind": "spaces",
+      "namespace": "integ",
+      "name": "space-v1",
+      "sourceDir": "files/v1",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "kind": "models",
+      "namespace": "integ",
+      "name": "card-model",
+      "sourceDir": "hf-cards/model-a",
+      "downloads": 5000,
+      "likes": 42,
+      "trendingScore": 8,
+      "createdAt": "2026-01-02T00:00:00.000Z"
+    },
+    {
+      "kind": "datasets",
+      "namespace": "integ",
+      "name": "card-data-a",
+      "sourceDir": "hf-cards/data-a",
+      "downloads": 1200,
+      "likes": 7,
+      "trendingScore": 5,
+      "createdAt": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "kind": "datasets",
+      "namespace": "other",
+      "name": "card-data-b",
+      "sourceDir": "hf-cards/data-b",
+      "downloads": 90,
+      "likes": 3,
+      "trendingScore": 60,
+      "gated": "auto",
+      "createdAt": "2026-01-04T00:00:00.000Z"
+    }
+  ],
+  "commits": [
+    {
+      "repo": "models/integ/repo-v1",
+      "sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9021324354",
+      "message": "initial commit",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "repo": "datasets/integ/data-v1",
+      "sha": "b2c3d4e5f60718293a4b5c6d7e8f902132435465",
+      "message": "initial commit",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "repo": "models/integ/repo-cli",
+      "sha": "c3d4e5f60718293a4b5c6d7e8f90213243546576",
+      "message": "initial commit",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "repo": "spaces/integ/space-v1",
+      "sha": "d4e5f60718293a4b5c6d7e8f9021324354657687",
+      "message": "initial commit",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "repo": "models/integ/card-model",
+      "sha": "e5f60718293a4b5c6d7e8f902132435465768798",
+      "message": "initial commit",
+      "createdAt": "2026-01-02T00:00:00.000Z"
+    },
+    {
+      "repo": "datasets/integ/card-data-a",
+      "sha": "f60718293a4b5c6d7e8f902132435465768798a9",
+      "message": "initial commit",
+      "createdAt": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "repo": "datasets/other/card-data-b",
+      "sha": "0718293a4b5c6d7e8f902132435465768798a9ba",
+      "message": "initial commit",
+      "createdAt": "2026-01-04T00:00:00.000Z"
+    }
+  ],
+  "refs": [
+    {
+      "repo": "models/integ/repo-v1",
+      "refType": "branch",
+      "name": "main",
+      "sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9021324354"
+    },
+    {
+      "repo": "datasets/integ/data-v1",
+      "refType": "branch",
+      "name": "main",
+      "sha": "b2c3d4e5f60718293a4b5c6d7e8f902132435465"
+    },
+    {
+      "repo": "models/integ/repo-cli",
+      "refType": "branch",
+      "name": "main",
+      "sha": "c3d4e5f60718293a4b5c6d7e8f90213243546576"
+    },
+    {
+      "repo": "spaces/integ/space-v1",
+      "refType": "branch",
+      "name": "main",
+      "sha": "d4e5f60718293a4b5c6d7e8f9021324354657687"
+    },
+    {
+      "repo": "models/integ/card-model",
+      "refType": "branch",
+      "name": "main",
+      "sha": "e5f60718293a4b5c6d7e8f902132435465768798"
+    },
+    {
+      "repo": "datasets/integ/card-data-a",
+      "refType": "branch",
+      "name": "main",
+      "sha": "f60718293a4b5c6d7e8f902132435465768798a9"
+    },
+    {
+      "repo": "datasets/other/card-data-b",
+      "refType": "branch",
+      "name": "main",
+      "sha": "0718293a4b5c6d7e8f902132435465768798a9ba"
+    }
+  ],
+  "blobs": []
+}

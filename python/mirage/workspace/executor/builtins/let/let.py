@@ -18,10 +18,9 @@ from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.arith import evaluate_arith
 from mirage.shell.errors import ArithError
-from mirage.workspace.executor.builtins.shared import (Result,
-                                                       readonly_refusal,
+from mirage.workspace.executor.builtins.shared import (readonly_refusal,
                                                        refusal, view_of)
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.elements import assign_element
 from mirage.workspace.session.state import (ensure_var_visible,

@@ -178,7 +178,7 @@
     },
     "hf_datasets": {
       "caches_reads": true,
-      "index_ttl": 600,
+      "index_ttl": 86400,
       "sizes_always_known": true,
       "statfs": false,
       "storage_id": false,
@@ -186,7 +186,7 @@
     },
     "hf_models": {
       "caches_reads": true,
-      "index_ttl": 600,
+      "index_ttl": 86400,
       "sizes_always_known": true,
       "statfs": false,
       "storage_id": false,
@@ -194,7 +194,7 @@
     },
     "hf_spaces": {
       "caches_reads": true,
-      "index_ttl": 600,
+      "index_ttl": 86400,
       "sizes_always_known": true,
       "statfs": false,
       "storage_id": false,
@@ -736,6 +736,20 @@
         "write"
       ]
     },
+    "hf_hub": {
+      "local": false,
+      "max_du_entries": 10000,
+      "max_glob_matches": 5000,
+      "slots": [
+        "exists",
+        "is_mounted",
+        "read_bytes",
+        "read_range",
+        "read_stream",
+        "readdir",
+        "stat"
+      ]
+    },
     "history": {
       "local": false,
       "max_du_entries": 10000,
@@ -1084,6 +1098,9 @@
     "gsheets",
     "gslides",
     "hf_buckets",
+    "hf_datasets",
+    "hf_models",
+    "hf_spaces",
     "history",
     "jaeger",
     "lancedb",

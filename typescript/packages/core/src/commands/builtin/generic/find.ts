@@ -18,7 +18,8 @@ import { modifiedTs } from '../../../core/generic/find.ts'
 import { isEnoent } from '../../../utils/errors.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import type { FindOptions } from '../../../resource/base.ts'
-import { parseFindExpression, parseSize } from '../find_parse.ts'
+import { FindParseError } from '../../errors.ts'
+import { parseDepth, parseFindExpression, parseMtime, parseSize } from '../find_parse.ts'
 import { FileType, PathSpec, type FileStat } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { rstripSlash, stripSlash } from '../../../utils/slash.ts'
@@ -26,42 +27,30 @@ import { respellRaw } from '../../../utils/path.ts'
 import { mountKey, mountPrefixOf } from '../../../utils/key_prefix.ts'
 import {
   emitStartPath,
-  expandPrintf,
-  printfKind,
   hasLinkChildren,
   keep,
   optionsTree,
   prefixPathNodes,
-  printfNeedsStat,
   startBasename,
   unrespellRaw,
   type FindEntry,
   type PredNode,
-  type PrintfStatFacts,
 } from '../find_eval.ts'
+import { expandPrintf, printfKind, printfNeedsStat, type PrintfStatFacts } from '../find_printf.ts'
 import type { LinkView } from '../../../ops/types.ts'
 import { pathAllowed } from '../../../context/session_context.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
 
 const ENC = new TextEncoder()
 
-function invalidFindArg(value: string, flag: string): CommandFnResult {
+function invalidFindArg(message: string): CommandFnResult {
   return [
     null,
     new IOResult({
       exitCode: 1,
-      stderr: ENC.encode(`find: invalid argument '${value}' to '${flag}'\n`),
+      stderr: ENC.encode(`${message}\n`),
     }),
   ]
-}
-
-function parseMtime(spec: string): [number | null, number | null] {
-  const now = Date.now() / 1000
-  const day = 86_400
-  const n = Number.parseInt(spec.replace(/^[+-]/, ''), 10)
-  if (spec.startsWith('+')) return [null, now - n * day]
-  if (spec.startsWith('-')) return [now - n * day, null]
-  return [now - (n + 1) * day, now - n * day]
 }
 
 async function applyMtimeFilter(
@@ -327,18 +316,21 @@ export async function findGeneric(
   // (namespace symlinks), and collapsing anything else to "no filter" would
   // make the flag form print every entry where python prints none.
   const findType: string | null = typeFlag
-  const maxDepth = maxDepthFlag !== null ? Number.parseInt(maxDepthFlag, 10) : null
-  const minDepth = minDepthFlag !== null ? Number.parseInt(minDepthFlag, 10) : null
-  const [minSize, maxSize] = sizeFlag !== null ? parseSize(sizeFlag) : [null, null]
-  const [mtimeMin, mtimeMax] = mtimeFlag !== null ? parseMtime(mtimeFlag) : [null, null]
-  const isNan = (v: number | null): boolean => v !== null && Number.isNaN(v)
-  let badArg: readonly [string, string] | null = null
-  if (maxDepthFlag !== null && isNan(maxDepth)) badArg = [maxDepthFlag, '-maxdepth']
-  else if (minDepthFlag !== null && isNan(minDepth)) badArg = [minDepthFlag, '-mindepth']
-  else if (sizeFlag !== null && (isNan(minSize) || isNan(maxSize))) badArg = [sizeFlag, '-size']
-  else if (mtimeFlag !== null && (isNan(mtimeMin) || isNan(mtimeMax)))
-    badArg = [mtimeFlag, '-mtime']
-  if (badArg !== null) return invalidFindArg(badArg[0], badArg[1])
+  let maxDepth: number | null = null
+  let minDepth: number | null = null
+  let minSize: number | null = null
+  let maxSize: number | null = null
+  let mtimeMin: number | null = null
+  let mtimeMax: number | null = null
+  try {
+    maxDepth = maxDepthFlag !== null ? parseDepth(maxDepthFlag, '-maxdepth') : null
+    minDepth = minDepthFlag !== null ? parseDepth(minDepthFlag, '-mindepth') : null
+    ;[minSize, maxSize] = sizeFlag !== null ? parseSize(sizeFlag) : [null, null]
+    ;[mtimeMin, mtimeMax] = mtimeFlag !== null ? parseMtime(mtimeFlag) : [null, null]
+  } catch (err) {
+    if (err instanceof FindParseError) return invalidFindArg(err.message)
+    throw err
+  }
   const nameExclude = extractNotName(texts)
   const orNames = extractOrNames(nameFlag, texts)
   const emptyFlag = fl.asBool('empty')

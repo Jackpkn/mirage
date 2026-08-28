@@ -233,7 +233,7 @@ class Workspace:
 
         self._runtimes, self._policy_router = wire_runtime_world(
             self._registry, self.dispatch,
-            PrefixResolver(self._ops.mount_prefixes,
+            PrefixResolver(self._sandbox_visible_mounts,
                            self._namespace.link_names_under), runtimes)
         reject_config_script("policy", policy)
         self._policy = policy
@@ -412,6 +412,29 @@ class Workspace:
     def clis(self) -> dict[str, CLIInstall]:
         """Snapshot of the installed CLIs keyed by head word."""
         return self._registry.clis.items()
+
+    def _sandbox_visible_mounts(self) -> list[str]:
+        """The mount prefixes announced to sandboxed runtimes, read live.
+
+        Two are withheld, and neither is withheld for being ``/``. An
+        explicit root mount is forwarded like any other prefix, and a
+        runtime that cannot serve it refuses on its own (pyodide does,
+        because Emscripten already owns ``/``). What is withheld is the
+        history view, which is a shell surface rather than a place to
+        put files, and the synthetic root anchor, which nobody mounted:
+        the workspace adds it so arg-less commands and root listing
+        have somewhere to resolve, so announcing it as a mount would
+        make every runtime report a claim on a resource the embedder
+        never asked for (TS ``sandboxVisibleMounts``).
+        """
+        prefixes: list[str] = []
+        for entry in self._registry.mounts():
+            if entry.prefix in (HISTORY_PREFIX, HISTORY_PREFIX + "/"):
+                continue
+            if self._implicit_root and entry.prefix == "/":
+                continue
+            prefixes.append(entry.prefix)
+        return prefixes
 
     def add_runtime(self, runtime: Runtime | str) -> Runtime:
         """Append a runtime entry to the workspace's ordered set.

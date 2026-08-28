@@ -15,8 +15,8 @@
 from mirage.accessor.github import GitHubAccessor
 from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.github.io import resolve_glob
-from mirage.commands.builtin.grep_helper import (is_literal_pattern,
-                                                 search_query)
+from mirage.commands.builtin.grep_pushdown import (is_literal_pattern,
+                                                   search_query)
 from mirage.core.github.constants import SCOPE_WARN
 from mirage.core.github.pushdown import (count_scope_files, scope_relative_key,
                                          should_use_search)

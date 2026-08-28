@@ -15,8 +15,7 @@
 import functools
 from typing import Any
 
-from mirage.commands.builtin.utils.limit import CommandTimeoutError
-from mirage.commands.errors import UsageError
+from mirage.commands.errors import CommandTimeoutError, UsageError
 from mirage.commands.spec.types import FlagValue
 from mirage.commands.spec.usage import read_fail_exit
 from mirage.context import path_allowed
@@ -142,8 +141,8 @@ def link_view(namespace: Namespace | None,
               dispatch: DispatchFn | None) -> LinkView | None:
     """The symlink facts on offer, or None when there are no links.
 
-    Which commands actually receive this is decided at dispatch, by
-    whether the handler names a ``links`` parameter, so there is no list
+    Offered to every command as ``opts.ns.links``, whether or not it
+    looks: a command opts in by reading the field, so there is no list
     of symlink-aware commands to keep in step here or anywhere else.
 
     Args:
@@ -220,10 +219,9 @@ def mount_root_of(registry: MountRegistry, virtual: str) -> str:
 def mount_view(registry: MountRegistry) -> MountView:
     """The mount-boundary facts on offer to every command.
 
-    Which commands receive it is decided at dispatch by whether the
-    handler names a ``mounts`` parameter, the same opt-in ``links``
-    uses, so there is no list of boundary-aware commands to keep in
-    step.
+    Offered to every command as ``opts.ns.mounts``, the same way
+    ``links`` is: a command opts in by reading the field, so there is
+    no list of boundary-aware commands to keep in step.
 
     Args:
         registry (MountRegistry): registry holding the mount table.
@@ -240,10 +238,10 @@ def namespace_view_of(registry: MountRegistry, namespace: Namespace | None,
                       dispatch: DispatchFn | None) -> NamespaceView:
     """The name plane's facts on offer, bundled as one view.
 
-    Which commands receive it is decided at dispatch by whether the
-    handler names an ``ns`` parameter, the opt-in ``links`` used before
-    the fold; a command that grows a new name-plane need reads another
-    field instead of threading a new keyword through ``execute_cmd``.
+    Stamped on every invocation's ``CommandOpts`` as ``ns``, whether or
+    not the handler looks; a command opts in by reading the field it
+    wants, and one that grows a new name-plane need reads another field
+    instead of threading a new keyword through ``execute_cmd``.
 
     Args:
         registry (MountRegistry): registry holding the mount table.

@@ -36,6 +36,15 @@ import type { BridgeDispatchFn, RunArgs, RunResult, RuntimeLanguage } from './ty
  * sandboxed interpreter bridges file I/O through the workspace
  * dispatch attached here, while a host subprocess only sees the host
  * filesystem and keeps the default no-op attach.
+ *
+ * The doors are the data plane (dispatch) and the name plane
+ * (resolver), and the list is complete on purpose: there is no
+ * session door. A guest reads the frozen `RunArgs.env` snapshot; an
+ * env write lands on the guest's own copy and dies with the run,
+ * never reaching the live session, so guest code can neither trip nor
+ * bypass a `preSession` rule. That blindness is a security boundary,
+ * not a gap — a runtime that ever needs session state must take a
+ * gated `SessionView`, never a bare session reference.
  */
 export abstract class LanguageRuntime extends Runtime {
   abstract readonly language: RuntimeLanguage

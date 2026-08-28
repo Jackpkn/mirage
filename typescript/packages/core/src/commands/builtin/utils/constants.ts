@@ -31,6 +31,9 @@ export const MONTHS = [
 
 export const EPOCH_LS_TIME = 'Jan  1 00:00'
 
+// GNU's simple-backup suffix (mv/cp -b), overridable with -S.
+export const DEFAULT_BACKUP_SUFFIX = '~'
+
 export const CHAR_DEVICE_MAX_BYTES = 8 << 20
 
 export const TYPE_CHARS: Partial<Record<FileType, string>> = {

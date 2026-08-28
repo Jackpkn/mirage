@@ -20,8 +20,8 @@ from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.path import CycleError
 from mirage.workspace.executor.builtins.links.probe import stat_or_none
-from mirage.workspace.executor.builtins.shared import (Result, fail, ok,
-                                                       split_flags)
+from mirage.workspace.executor.builtins.shared import fail, ok, split_flags
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
 
 

@@ -351,3 +351,49 @@ def test_find_unterminated_backtick_flags_open_region(command):
     ])
 def test_find_unterminated_backtick_accepts_balanced(command):
     assert find_unterminated_backtick(command) is None
+
+
+# tree-sitter-bash 0.25.1 drops a later unbraced `$var` out of its word
+# when the name is cut short by a name-terminating character: the `$`
+# stays behind as a literal token and the rest splits into a sibling
+# word (`/api/$c/$id.json` -> `/api/$c/$` + `id.json`). parse() rebraces
+# the orphaned expansion and reparses, so consumers see one whole word.
+@pytest.mark.parametrize(("command", "target"), [
+    ("echo hi > /api/$c/$id.json", "/api/$c/${id}.json"),
+    ("echo hi > /api/$c/$id-x", "/api/$c/${id}-x"),
+    ("echo hi > /w/$a/$b/$c", "/w/$a/${b}/$c"),
+    ("echo hi > ${a}.$b.json", "${a}.${b}.json"),
+    ("echo hi > /w/$c/$1.json", "/w/$c/${1}.json"),
+])
+def test_redirect_target_later_unbraced_var_stays_one_word(command, target):
+    node = parse(command).named_children[0]
+    assert node.type == NT.REDIRECTED_STATEMENT
+    _, redirects = get_redirects(node)
+    assert len(redirects) == 1
+    assert redirects[0].target == target
+
+
+def test_word_later_unbraced_var_stays_one_argument():
+    cmd = parse("echo /api/$c/$id.json").named_children[0]
+    parts = get_parts(cmd)
+    assert [get_text(p) for p in parts] == ["echo", "/api/$c/${id}.json"]
+
+
+def test_assignment_later_unbraced_var_stays_one_assignment():
+    # The broken parse split this into an assignment holding
+    # `p=/api/$c/$` plus a command named `id.json`.
+    node = parse("p=/api/$c/$id.json").named_children[0]
+    assert node.type == NT.VARIABLE_ASSIGNMENT
+    assert get_text(node) == "p=/api/$c/${id}.json"
+
+
+@pytest.mark.parametrize(
+    ("command", "words"),
+    [
+        # A `$` bash keeps literal is left alone: no name character follows.
+        ("echo a$ b", ["echo", "a$", "b"]),
+        ("echo $", ["echo", "$"]),
+    ])
+def test_literal_dollar_words_stay_untouched(command, words):
+    cmd = parse(command).named_children[0]
+    assert [get_text(p) for p in get_parts(cmd)] == words

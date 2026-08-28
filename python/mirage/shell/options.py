@@ -12,7 +12,8 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.shell.types import SET_FLAG_TO_OPTION, OptionWord
+from mirage.shell.constants import SET_FLAG_TO_OPTION
+from mirage.shell.types import OptionWord
 
 
 def parse_option_word(word: str, nxt: str | None) -> OptionWord | None:

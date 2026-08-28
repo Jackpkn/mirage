@@ -7,7 +7,7 @@ from mirage.commands.builtin.generic.awk_types import (  # yapf: disable
     CMP_OP_PATTERN, FIELD_PREFIX, PRINT_STMT, USAGE, AwkBlock, AwkBoolOp,
     AwkBuiltin, AwkCmpOp, AwkFlags)
 from mirage.commands.builtin.utils.formatting import format_number, to_number
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.errors import UsageError
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -496,11 +496,11 @@ async def awk(
         sources = [read_stream(p) for p in paths]
         cache = [p.mount_path for p in paths]
     else:
-        sources = [_resolve_source(stdin)]
+        sources = [resolve_source(stdin)]
         cache = []
 
     return _awk_stream(sources, program, f.field_separator,
                        variables), IOResult(cache=cache)
 
 
-__all__ = ["awk", "parse_flags", "AwkFlags"]
+__all__ = ["awk"]

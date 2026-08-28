@@ -18,7 +18,7 @@ import { isEnoent } from '../../../../utils/errors.ts'
 import { CycleError } from '../../../../utils/path.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
-import { expandOperands, fail, finish, splitValueFlags, type Result } from '../shared.ts'
+import { expandOperands, fail, finish, splitValueFlags } from '../shared.ts'
 import {
   isReadOnlyError,
   parseOwner,
@@ -27,6 +27,7 @@ import {
   setattrVia,
   walkOwned,
 } from './metadata.ts'
+import type { Result } from '../types.ts'
 
 // chown OWNER[:GROUP] FILE...: set ownership via setattr. Ownership is
 // stored, not enforced (mirage has no user model); names are kept

@@ -14,7 +14,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { evalPredicate } from './find_eval.ts'
-import { FindParseError, parseFindExpression } from './find_parse.ts'
+import { FindParseError } from '../errors.ts'
+import { parseFindExpression } from './find_parse.ts'
 
 describe('parseFindExpression', () => {
   it('negation', () => {
@@ -135,6 +136,13 @@ describe('parseFindExpression', () => {
     expect(() => parseFindExpression(['-size', ''])).toThrow(FindParseError)
     expect(() => parseFindExpression(['-size', 'abc'])).toThrow(FindParseError)
     expect(() => parseFindExpression(['-mtime', ''])).toThrow(FindParseError)
+  })
+
+  it('refuses trailing garbage after the digits', () => {
+    expect(() => parseFindExpression(['-maxdepth', '12abc'])).toThrow(FindParseError)
+    expect(() => parseFindExpression(['-mindepth', '2x'])).toThrow(FindParseError)
+    expect(() => parseFindExpression(['-size', '12ab'])).toThrow(FindParseError)
+    expect(() => parseFindExpression(['-mtime', '3x'])).toThrow(FindParseError)
   })
 
   it('throws on unsupported predicates', () => {

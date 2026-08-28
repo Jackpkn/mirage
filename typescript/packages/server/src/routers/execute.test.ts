@@ -95,6 +95,31 @@ describe('execute router', () => {
     await app.close()
   })
 
+  it('honors record=false by leaving no history entry', async () => {
+    const app = buildApp()
+    await createWs(app, 'erec')
+    await app.inject({
+      method: 'POST',
+      url: '/v1/workspaces/erec/execute',
+      payload: { command: 'echo recorded' },
+    })
+    await app.inject({
+      method: 'POST',
+      url: '/v1/workspaces/erec/execute',
+      payload: { command: 'echo hidden', record: false },
+    })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/workspaces/erec/execute',
+      payload: { command: 'history' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{ stdout: string }>()
+    expect(body.stdout).toContain('echo recorded')
+    expect(body.stdout).not.toContain('echo hidden')
+    await app.close()
+  })
+
   it('POST /v1/jobs/:id/wait accepts an empty body', async () => {
     const app = buildApp()
     await createWs(app, 'ewait')

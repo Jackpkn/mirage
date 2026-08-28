@@ -24,9 +24,8 @@ import type { SessionView } from '../../../../ops/types.ts'
 import type { Session } from '../../../session/session.ts'
 import { sessionView, visibleArrays, visibleAssocs } from '../../../session/state.ts'
 import { ExecutionNode } from '../../../types.ts'
-import type { ExecuteStringFn } from '../scope.ts'
-import { fail, type Result } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import { fail } from '../shared.ts'
+import type { BuiltinCall, ExecuteStringFn, Result } from '../types.ts'
 
 const USAGE =
   'mapfile: usage: mapfile [-d delim] [-n count] [-O origin] [-s count] [-t] [-u fd] [-C callback] [-c quantum] [array]'

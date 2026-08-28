@@ -23,13 +23,9 @@ import { respellRaw } from '../../../utils/path.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { FlagView } from '../../spec/types.ts'
-import {
-  compilePattern,
-  grepStream,
-  nonzeroCountStream,
-  resolvePatternFromFlags,
-} from '../grep_helper.ts'
-import { rgFolderFiletype, rgFull } from '../rg_helper.ts'
+import { compilePattern, resolvePattern } from '../grep_pattern.ts'
+import { grepStream, nonzeroCountStream } from '../grep_scan.ts'
+import { rgFolderFiletype, rgFull } from '../rg_scan.ts'
 import { resolveSource } from '../utils/stream.ts'
 import { grepGeneric } from './grep.ts'
 
@@ -59,7 +55,7 @@ interface RgFlags {
   hidden: boolean
 }
 
-function parseRgFlags(fl: FlagView): RgFlags {
+function parseFlags(fl: FlagView): RgFlags {
   const a = fl.asInt('A')
   const b = fl.asInt('B')
   const c = fl.asInt('C')
@@ -101,14 +97,7 @@ export async function rgGeneric(
   stream: Stream,
 ): Promise<CommandFnResult> {
   stream = cacheAwareStream(stream)
-  const resolution = await resolvePatternFromFlags(
-    'rg',
-    texts,
-    opts.flags,
-    paths,
-    opts.mountPrefix,
-    stream,
-  )
+  const resolution = await resolvePattern('rg', texts, opts.flags, paths, opts.mountPrefix, stream)
   if (resolution.error !== null) {
     return [null, new IOResult({ exitCode: 2, stderr: ENC.encode(resolution.error) })]
   }
@@ -119,7 +108,7 @@ export async function rgGeneric(
       new IOResult({ exitCode: 2, stderr: ENC.encode('rg: usage: rg [flags] pattern [path]\n') }),
     ]
   }
-  const flags = parseRgFlags(new FlagView(opts.flags, specOf('rg')))
+  const flags = parseFlags(new FlagView(opts.flags, specOf('rg')))
   if (resolution.neverMatch) flags.fixedString = false
   // ripgrep labels when searching multiple files; -H forces the label for a
   // single file and -I suppresses it (cross-mount fanout forces -H so

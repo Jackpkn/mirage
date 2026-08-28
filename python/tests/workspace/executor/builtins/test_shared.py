@@ -23,10 +23,11 @@ from mirage.resource.ram import RAMResource
 from mirage.shell.errors import ArithError
 from mirage.types import MountMode, PathSpec
 from mirage.workspace import Workspace
+from mirage.workspace.executor.builtins.constants import IDENTIFIER_RE
 from mirage.workspace.executor.builtins.shared import (  # yapf: disable
-    IDENTIFIER_RE, abs_path, arith_refusal, expand_operands, fail, finish,
-    is_count_word, is_valid_name, ok, operand_text, readonly_refusal, refusal,
-    split_flags, split_value_flags, view_of)
+    abs_path, arith_refusal, expand_operands, fail, finish, is_count_word,
+    is_valid_name, ok, operand_text, readonly_refusal, refusal, split_flags,
+    split_value_flags, view_of)
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import session_view
 

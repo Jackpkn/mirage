@@ -18,7 +18,7 @@ import { isEnoent } from '../../../../utils/errors.ts'
 import { CycleError } from '../../../../utils/path.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
-import { expandOperands, fail, finish, splitValueFlags, type Result } from '../shared.ts'
+import { expandOperands, fail, finish, splitValueFlags } from '../shared.ts'
 import {
   isReadOnlyError,
   parseGroup,
@@ -27,6 +27,7 @@ import {
   setattrVia,
   walkOwned,
 } from './metadata.ts'
+import type { Result } from '../types.ts'
 
 // chgrp GROUP FILE...: set group ownership via setattr. The group half of
 // chown: writes gid and leaves uid untouched. Group is stored, not enforced

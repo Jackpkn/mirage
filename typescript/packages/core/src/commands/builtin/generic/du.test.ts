@@ -19,7 +19,7 @@ import {
   type DuFlags,
   duGeneric,
   parseDepth,
-  parseDuFlags,
+  parseFlags,
   rollup,
   runDu,
   separateTotal,
@@ -290,7 +290,7 @@ describe('duGeneric', () => {
 
   it('warns but succeeds for -s with --max-depth=0', async () => {
     const [size, entries] = backend({ '/dir/a.txt': 2 })
-    const parsed = parseDuFlags(opts({ s: true, max_depth: '0' }))
+    const parsed = parseFlags(opts({ s: true, max_depth: '0' }))
     const out = await duGeneric([spec('/dir', 'dir')], parsed, size, entries)
     expect(DEC.decode(out.stdout)).toBe('2\t/dir\n')
     expect(DEC.decode(out.stderr)).toBe(
@@ -300,7 +300,7 @@ describe('duGeneric', () => {
   })
 
   it('still rejects -s with a nonzero --max-depth', () => {
-    expect(() => parseDuFlags(opts({ s: true, max_depth: '1' }))).toThrow(
+    expect(() => parseFlags(opts({ s: true, max_depth: '1' }))).toThrow(
       /summarizing conflicts with --max-depth=1/,
     )
   })
@@ -509,16 +509,16 @@ describe('duGeneric descendant mounts', () => {
   })
 })
 
-describe('parseDuFlags', () => {
+describe('parseFlags', () => {
   it('rejects -s with -a', () => {
-    expect(() => parseDuFlags(opts({ s: true, a: true }))).toThrow(
+    expect(() => parseFlags(opts({ s: true, a: true }))).toThrow(
       /cannot both summarize and show all entries/,
     )
   })
 
   it('exits 1 on a usage error, like GNU du', () => {
     try {
-      parseDuFlags(opts({ s: true, a: true }))
+      parseFlags(opts({ s: true, a: true }))
       expect.unreachable()
     } catch (err) {
       expect((err as UsageError).exitCode).toBe(1)
@@ -526,27 +526,27 @@ describe('parseDuFlags', () => {
   })
 
   it('rejects -s with --max-depth', () => {
-    expect(() => parseDuFlags(opts({ s: true, max_depth: '1' }))).toThrow(
+    expect(() => parseFlags(opts({ s: true, max_depth: '1' }))).toThrow(
       /summarizing conflicts with --max-depth=1/,
     )
   })
 
   it('rejects a non-numeric depth', () => {
-    expect(() => parseDuFlags(opts({ max_depth: '1x' }))).toThrow(/invalid maximum depth '1x'/)
+    expect(() => parseFlags(opts({ max_depth: '1x' }))).toThrow(/invalid maximum depth '1x'/)
   })
 
   it('reports a bad depth before the conflict, like GNU', () => {
-    expect(() => parseDuFlags(opts({ s: true, a: true, max_depth: 'abc' }))).toThrow(
+    expect(() => parseFlags(opts({ s: true, a: true, max_depth: 'abc' }))).toThrow(
       /invalid maximum depth/,
     )
   })
 
   it('accepts a negative depth', () => {
-    expect(parseDuFlags(opts({ max_depth: '-1' })).maxDepth).toBe(-1)
+    expect(parseFlags(opts({ max_depth: '-1' })).maxDepth).toBe(-1)
   })
 
   it('reads -d as another spelling of --max-depth', () => {
-    expect(parseDuFlags(opts({ max_depth: '2' })).maxDepth).toBe(2)
+    expect(parseFlags(opts({ max_depth: '2' })).maxDepth).toBe(2)
   })
 })
 

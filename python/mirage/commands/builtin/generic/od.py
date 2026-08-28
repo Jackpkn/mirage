@@ -5,7 +5,7 @@ from mirage.commands.builtin.constants import (OD_OVERFLOW_UNITS,
                                                OD_SIZE_UNITS, UINTMAX,
                                                XSTRTOUMAX_PATTERN)
 from mirage.commands.builtin.utils.size_suffix import parse_base0
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.errors import UsageError
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
@@ -100,7 +100,7 @@ async def od(
         for p in paths:
             chunks.extend([chunk async for chunk in read_stream(p)])
     else:
-        chunks.extend([chunk async for chunk in _resolve_source(stdin)])
+        chunks.extend([chunk async for chunk in resolve_source(stdin)])
     raw = b"".join(chunks)
     data = raw[skip:skip + limit if limit is not None else None]
     type_specs = formats or ["o2"]

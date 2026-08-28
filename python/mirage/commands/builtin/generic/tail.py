@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from mirage.cache.read_through import cache_aware_read
-from mirage.commands.builtin.tail_helper import (TailCounts, number_flag_error,
+from mirage.commands.builtin.tail_counts import (TailCounts, number_flag_error,
                                                  parse_counts)
 from mirage.commands.builtin.utils.operands import operands_io, split_readable
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -226,7 +226,7 @@ async def tail_generic(
                           from_line=counts.from_line,
                           from_byte=counts.from_byte,
                           show_headers=show_headers), io
-    source = _resolve_source(opts.stdin, "tail: missing operand")
+    source = resolve_source(opts.stdin, "tail: missing operand")
     return tail(source,
                 n=counts.lines,
                 c=counts.byte_count,

@@ -26,7 +26,7 @@ from mirage.commands.builtin.generic_bind.adapter import (CommandIO,
                                                           with_dir_guard,
                                                           with_path_guards,
                                                           with_policy_guard)
-from mirage.commands.builtin.generic_bind.builders import _BUILDERS
+from mirage.commands.builtin.generic_bind.builders import BUILDERS
 from mirage.commands.builtin.generic_bind.provision import default_provision
 from mirage.commands.config import CommandOpts, command
 from mirage.commands.spec import SPECS
@@ -250,7 +250,7 @@ def make_generic_commands(
     prov_over = provision_overrides or {}
     ops_over = ops_overrides or {}
     commands: list[Callable[..., Any]] = []
-    for b in _BUILDERS:
+    for b in BUILDERS:
         if b.name in skip:
             continue
         raw = ops_over.get(b.name, ops)

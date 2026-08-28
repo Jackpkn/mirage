@@ -17,9 +17,8 @@ from functools import partial
 from mirage.accessor.base import Accessor
 from mirage.commands.builtin.generic.split import split as generic_split
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
-                                                          Operation, bound_op)
-from mirage.commands.builtin.generic_bind.builders.common import \
-    resolve_or_empty
+                                                          Operation, bound_op,
+                                                          resolve_or_empty)
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView

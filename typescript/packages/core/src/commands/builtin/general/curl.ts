@@ -17,13 +17,8 @@ import { IOResult } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
-import {
-  HttpConnectError,
-  type HttpResponse,
-  httpFormRequest,
-  httpRequest,
-  isHttpError,
-} from '../utils/http.ts'
+import { HttpConnectError } from '../errors.ts'
+import { type HttpResponse, httpFormRequest, httpRequest, isHttpError } from '../utils/http.ts'
 import { UsageError } from '../../errors.ts'
 import { gnuStrerror, isFsError } from '../../../utils/errors.ts'
 import { rstripSlash, stripSlash } from '../../../utils/slash.ts'

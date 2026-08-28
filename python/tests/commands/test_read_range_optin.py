@@ -13,16 +13,38 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import importlib
+import inspect
 import pkgutil
+from collections.abc import Callable
+from typing import Any
 
 import mirage.commands.builtin as builtin
 import mirage.resource as resources
 from mirage.commands.builtin.generic_bind import CommandIO
 from mirage.resource.base import BaseResource
-from mirage.utils.params import accepts_kwarg
 
 WINDOW = ("offset", "size")
 RESOURCE_RANGE = "range_read"
+
+
+def _takes_window(fn: Callable[..., Any]) -> bool:
+    """Whether ``fn`` declares both window parameters as its own.
+
+    The lookup is by parameter name, so a reader's ``**kwargs`` never
+    answers for one: backends use that as an opaque bag of command-line
+    flags and forward it wholesale, and treating it as consent would
+    call every reader ranged.
+
+    Args:
+        fn (Callable): the reader to inspect.
+    """
+    parameters = inspect.signature(fn).parameters
+    bag = inspect.Parameter.VAR_KEYWORD
+    for name in WINDOW:
+        parameter = parameters.get(name)
+        if parameter is None or parameter.kind is bag:
+            return False
+    return True
 
 
 def _backend(module_name: str) -> str:
@@ -96,8 +118,7 @@ def test_a_reader_that_takes_a_window_is_wired_as_the_native_range():
     assert not failed, f"backend io modules would not import: {failed}"
     assert tables, "no backend tables found: the derivation broke"
     missing = sorted(name for name, io in tables.items()
-                     if io.read_range is None and all(
-                         accepts_kwarg(io.read_bytes, p) for p in WINDOW))
+                     if io.read_range is None and _takes_window(io.read_bytes))
     assert not missing, (
         f"reader takes offset/size but read_range is unwired: {missing}")
 
@@ -111,9 +132,9 @@ def test_a_wired_range_reader_actually_takes_a_window():
     """
     tables, failed = _tables()
     assert not failed, f"backend io modules would not import: {failed}"
-    wrong = sorted(name for name, io in tables.items()
-                   if io.read_range is not None and not all(
-                       accepts_kwarg(io.read_range, p) for p in WINDOW))
+    wrong = sorted(
+        name for name, io in tables.items()
+        if io.read_range is not None and not _takes_window(io.read_range))
     assert not wrong, f"read_range does not take offset/size: {wrong}"
 
 

@@ -23,9 +23,7 @@ import { lastOf, scanOptions } from '../getopt.ts'
 import { classify, describe } from '../lookup/index.ts'
 import { NameKind } from '../lookup/types.ts'
 import { sessionEntry } from '../../../session/session.ts'
-import type { ExecuteStringFn } from '../scope.ts'
-import type { Result } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, ExecuteStringFn, Result } from '../types.ts'
 
 const USAGE = 'command: usage: command [-pVv] command [arg ...]\n'
 

@@ -54,8 +54,8 @@ def mock_http(monkeypatch):
     def _fake_get(url, headers=None, timeout=30, follow_redirects=True):
         return HttpResponse(status=200, reason="OK", body=payload, url=url)
 
-    monkeypatch.setattr(curl_mod, "_http_request", _fake_request)
-    monkeypatch.setattr(wget_mod, "_http_get", _fake_get)
+    monkeypatch.setattr(curl_mod, "http_request", _fake_request)
+    monkeypatch.setattr(wget_mod, "http_get", _fake_get)
     return payload
 
 

@@ -13,11 +13,11 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { USAGE_EXIT } from './constants.ts'
+import { CLAP_EXIT } from './constants.ts'
 import { operandSlot, optionMetavar } from '../spec/help.ts'
 import { type CommandSpec, UsageStyle } from '../spec/types.ts'
 
 export const ARGPARSE_EXIT = 2
-export const CLAP_EXIT = 2
 const LONG_PREFIX = '--'
 
 const ENC = new TextEncoder()

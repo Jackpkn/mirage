@@ -47,7 +47,7 @@ export {
 } from './fixture.ts'
 export { HEALTH_PATH, RESET_PATH, createKitServer, makeRuntime, parseBody } from './http.ts'
 export { Minter } from './mint.ts'
-export { parsePort } from './port.ts'
+export { checkArgv, parseFixture, parsePort } from './port.ts'
 export { parseRange, rangeHeaderOf, rangeReply } from './range.ts'
 export type { ByteRange } from './range.ts'
 export { Router, compilePath, route } from './route.ts'

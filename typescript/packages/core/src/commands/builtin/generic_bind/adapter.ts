@@ -19,6 +19,7 @@ import {
   getCurrentSession,
   getOpPolicies,
   hiddenPathsIntersect,
+  liveSessions,
   mountGateFor,
   pathAllowed,
   readonlyBelow,
@@ -204,11 +205,11 @@ function visibleChildren(entries: string[], parent: PathSpec): string[] {
   })
 }
 
-/** Whether the session's hides make this relocation a reveal. */
+/** Whether any live session's hides make this relocation a reveal. */
 function moveWouldReveal(src: PathSpec, dst: PathSpec): boolean {
-  const sess = getCurrentSession()
-  if (sess === null) return false
-  return moveReveals(sess.hiddenPaths, sess.shownPaths, src.virtual, dst.virtual)
+  return liveSessions().some((sess) =>
+    moveReveals(sess.hiddenPaths, sess.shownPaths, src.virtual, dst.virtual),
+  )
 }
 
 /** Refuse a relocation that would surface a hidden path.

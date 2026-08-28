@@ -83,7 +83,7 @@ def join_raw(path: str, cwd: str) -> str:
     only input ``-P`` has to work from: bash resolves a link before
     applying the ``..`` that follows it, so `/link/..` is the link's
     parent under ``-L`` and the *target's* parent under ``-P``. Collapsing
-    the ``..`` first makes the two modes identical. `_resolve_target`
+    the ``..`` first makes the two modes identical. `resolve_target`
     normalizes for both modes, so nothing downstream sees the raw form.
 
     Args:

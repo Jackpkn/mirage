@@ -23,8 +23,9 @@ from mirage.runtime.mixin import LineExecutorMixin
 from mirage.runtime.policy import DenyResult, RouteResult
 from mirage.runtime.python import LocalRuntime, MontyRuntime
 from mirage.runtime.python.base import PythonRuntime
+from mirage.runtime.resolver import MountResolver
 from mirage.runtime.table import VFSRuntime
-from mirage.runtime.types import RunArgs, RunResult, ScriptSource
+from mirage.runtime.types import DispatchFn, RunArgs, RunResult, ScriptSource
 
 
 @pytest_asyncio.fixture
@@ -546,3 +547,56 @@ async def test_vfs_entry_is_a_pure_routing_marker():
 def test_stage_engines_carry_no_line_door():
     assert not isinstance(MontyRuntime(), LineExecutorMixin)
     assert not hasattr(MontyRuntime(), "run_line")
+
+
+class ResolverProbe(PythonRuntime):
+    name = "resolver-probe"
+    captures = ("probe-run", )
+    resolver: MountResolver | None = None
+
+    def attach(self, dispatch: DispatchFn, resolver: MountResolver) -> None:
+        self.resolver = resolver
+
+    async def run(self, args: RunArgs) -> RunResult:
+        return RunResult(stdout=b"", stderr=None, exit_code=0)
+
+
+@pytest.mark.asyncio
+async def test_attach_withholds_the_history_view_from_runtimes():
+    # The history view is a shell surface, not a place to put files;
+    # announcing it would make a WASI guest preopen /.bash_history.
+    probe = ResolverProbe()
+    ws = Workspace({"/data": RAMResource()}, runtimes=[probe])
+    try:
+        assert probe.resolver is not None
+        prefixes = probe.resolver.prefixes()
+        assert "/data/" in prefixes
+        assert not any("bash_history" in p for p in prefixes)
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_attach_withholds_the_synthetic_root_anchor():
+    # Nobody mounted the anchor; forwarding it would make every
+    # runtime claim a resource the embedder never asked for.
+    probe = ResolverProbe()
+    ws = Workspace({"/data": RAMResource()}, runtimes=[probe])
+    try:
+        assert probe.resolver is not None
+        assert "/" not in probe.resolver.prefixes()
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_attach_forwards_an_explicit_root_mount():
+    # Withheld for being synthetic, never for being `/`: a runtime
+    # that cannot serve the root refuses on its own (pyodide does).
+    probe = ResolverProbe()
+    ws = Workspace({"/": RAMResource()}, runtimes=[probe])
+    try:
+        assert probe.resolver is not None
+        assert "/" in probe.resolver.prefixes()
+    finally:
+        await ws.close()

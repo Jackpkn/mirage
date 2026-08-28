@@ -15,7 +15,7 @@
 from typing import Callable
 
 from mirage.commands.builtin.generic.cp import cp as generic_cp
-from mirage.commands.builtin.generic.cp import parse_cp_flags
+from mirage.commands.builtin.generic.cp import parse_flags
 from mirage.commands.builtin.generic.crossmount.types import CrossResult
 from mirage.commands.builtin.generic.crossmount.utils import (
     flat_scopes, transfer_primitives)
@@ -52,5 +52,5 @@ async def run_cp(
                                 write=primitives["write"],
                                 mkdir=primitives["mkdir"],
                                 readdir=primitives["readdir"]),
-                            flags=parse_cp_flags(fl),
+                            flags=parse_flags(fl),
                             backend_key=storage_key)

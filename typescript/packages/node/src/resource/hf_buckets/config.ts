@@ -26,6 +26,27 @@ export function assertHfRepoId(value: string, field: string): string {
   return value
 }
 
+/**
+ * Either spelling the Hub itself accepts for a repository.
+ *
+ * A repo id is `namespace/name` or a bare `name`, and the second resolves
+ * against whoever the token belongs to. That is not a convenience:
+ * `hf repo create widget` followed by `hf download widget` is what the real
+ * CLI produces, and refusing the bare form made mirage reject an id the Hub
+ * had just minted. What is refused is a shape the Hub has no reading for: an
+ * empty segment, or more than one slash.
+ *
+ * A BUCKET keeps the stricter rule (`assertHfRepoId`): the Buckets API has no
+ * namespace-from-token step, so a bare bucket name addresses nothing.
+ */
+export function assertHfRepoRef(value: string, field: string): string {
+  const parts = value.split('/')
+  if (parts.length > 2 || parts.some((p) => p === '')) {
+    throw new Error(`${field} must be 'name' or 'namespace/name'; got ${JSON.stringify(value)}`)
+  }
+  return value
+}
+
 export interface HfBucketsConfig {
   bucket: string
   token?: string
@@ -76,6 +97,15 @@ export interface HfRepoConfig {
   timeoutMs?: number
   keyPrefix?: string
   revision?: string
+  // Whether the listing asks the Hub for each path's last commit, which
+  // is a Hub file's only source of an mtime and drops the tree page from
+  // 1000 rows to 50. Undefined is the default and means decide by size:
+  // ask for one expanded page, and keep it if the whole repository fit in
+  // it, otherwise re-walk bare. A small repo therefore gets mtimes for the
+  // same one request it would have cost without them, and a sharded
+  // dataset pays one wasted page rather than a twentyfold walk. true and
+  // false force it either way.
+  expandCommits?: boolean
 }
 
 const HfRepoConfigSchema = z.object({
@@ -85,6 +115,7 @@ const HfRepoConfigSchema = z.object({
   timeoutMs: z.number().optional(),
   keyPrefix: z.string().optional(),
   revision: z.string().optional(),
+  expandCommits: z.boolean().optional(),
 })
 
 // Only the redacted twin derives: the schema is the resolved shape, with
@@ -107,6 +138,6 @@ export function normalizeHfRepoConfig(input: Record<string, unknown>): HfRepoCon
       timeout: (v: unknown) => (typeof v === 'number' ? v * 1000 : v),
     },
   }) as unknown as HfRepoConfig
-  assertHfRepoId(config.repoId, 'repo_id')
+  assertHfRepoRef(config.repoId, 'repo_id')
   return config
 }

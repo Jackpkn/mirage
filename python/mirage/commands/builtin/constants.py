@@ -24,6 +24,39 @@ class PatternType(str, Enum):
     REGEX = "regex"
 
 
+# Extensions a recursive grep skips without reading. Two families, and
+# the second is load-bearing for any remote mount: the columnar formats
+# were here first, and the model-weight formats joined them because a
+# `grep -r` over a Hugging Face model repo otherwise downloads every
+# checkpoint in it to search bytes that cannot contain a text match --
+# 41 GB of transfer for one grep of openai/gpt-oss-20b. GNU has no such
+# list (it sniffs the bytes it has already read off local disk), so this
+# is a deliberate divergence that only costs a network fetch, and `-a`
+# turns it off exactly as GNU's own binary handling does.
+BINARY_EXTENSIONS = frozenset({
+    ".parquet",
+    ".orc",
+    ".feather",
+    ".arrow",
+    ".ipc",
+    ".hdf5",
+    ".h5",
+    ".safetensors",
+    ".gguf",
+    ".ggml",
+    ".bin",
+    ".pt",
+    ".pth",
+    ".ckpt",
+    ".onnx",
+    ".npy",
+    ".npz",
+    ".msgpack",
+    ".tflite",
+    ".pb",
+    ".model",
+})
+
 FILE_MIME_MAP: dict[str, str] = {
     "text": "text/plain; charset=us-ascii",
     "json": "application/json; charset=us-ascii",
@@ -72,6 +105,7 @@ CMP_SIZE_UNITS = size_suffixes("kKMGTPEZY")
 # k/m only (pinned against coreutils 9.7). Unlike od, split is base-10 only:
 # hex and octal spellings are invalid numbers.
 SPLIT_BYTE_UNITS = size_suffixes("bkKmMEGPQRTYZ")
+SPLIT_BYTE_SUFFIXES = sorted(SPLIT_BYTE_UNITS, key=len, reverse=True)
 SPLIT_COUNT_PATTERN = re.compile(r"[ \t\n\v\f\r]*\+?[0-9]+")
 # Suffix start values are the exception to the grammar above: coreutils 9.7
 # rejects both `--numeric-suffixes=+5` and `=" 5"`, so they keep the strict
@@ -79,3 +113,15 @@ SPLIT_COUNT_PATTERN = re.compile(r"[ \t\n\v\f\r]*\+?[0-9]+")
 SPLIT_DIGITS = re.compile(r"[0-9]+")
 SPLIT_HEX_DIGITS = re.compile(r"[0-9a-fA-F]+")
 SPLIT_TRY_HELP = "\nTry 'split --help' for more information."
+
+# GNU answers a missing script with its whole thirty-nine line usage block
+# and exit 1; mirage names the problem in one line instead, because the
+# block is GNU's own prose and reproducing it buys a mirage user nothing.
+# `no input files` and its exit 4 are GNU's exact spelling for `sed -i`
+# with no operands, and mirage reuses them when there is no stdin either --
+# it has no terminal for GNU's blocking read to reach. Both live here so
+# the generic and its builder cannot drift apart again; there used to be
+# four spellings across the two languages.
+SED_MISSING_SCRIPT = "sed: missing script"
+SED_NO_INPUT_FILES = "sed: no input files"
+SED_NO_INPUT_EXIT = 4

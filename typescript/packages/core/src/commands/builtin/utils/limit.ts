@@ -15,36 +15,11 @@
 import { yieldBytes } from '../../../io/stream.ts'
 import { type ByteSource, IOResult, materialize } from '../../../io/types.ts'
 import { type Limit, OnExceed } from '../../../types.ts'
+import { CommandTimeoutError, LimitExceededError } from '../../errors.ts'
 
 const NEWLINE = 0x0a
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
-
-export class CommandTimeoutError extends Error {
-  readonly command: string
-  readonly seconds: number
-  constructor(command: string, seconds: number) {
-    super(`${command}: timed out after ${String(seconds)}s`)
-    this.name = 'CommandTimeoutError'
-    this.command = command
-    this.seconds = seconds
-  }
-}
-
-/**
- * A hard cap refused output the producer had already made.
- *
- * The cap is applied to a result that exists: at an op door the
- * backend has already moved those bytes, and the door reports that
- * through the caller's `OpReport` before the cap runs, so this error
- * carries no accounting of its own.
- */
-export class LimitExceededError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'LimitExceededError'
-  }
-}
 
 const TIMED_OUT = Symbol('timed-out')
 

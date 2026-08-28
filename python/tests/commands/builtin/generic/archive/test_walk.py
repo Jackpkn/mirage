@@ -116,16 +116,16 @@ async def _scan(tree: _Tree, path: PathSpec, **kwargs):
 
 def test_child_spec_strips_the_mount_prefix_from_the_backend_key():
     root = _spec("/data/d", "/data")
-    child = aw.child_spec("/data/d/a.txt", root)
+    child = aw._child_spec("/data/d/a.txt", root)
     assert child.virtual == "/data/d/a.txt"
     assert child.resource_path == "d/a.txt"
 
 
 def test_same_mount_is_true_without_a_mount_view():
-    assert aw.same_mount(None, "/a", "/b")
+    assert aw._same_mount(None, "/a", "/b")
     mounts = _mounts(roots=("/", "/m"))
-    assert aw.same_mount(mounts, "/a", "/b")
-    assert not aw.same_mount(mounts, "/a", "/m/x")
+    assert aw._same_mount(mounts, "/a", "/b")
+    assert not aw._same_mount(mounts, "/a", "/m/x")
 
 
 @pytest.mark.asyncio
@@ -202,8 +202,8 @@ async def test_a_real_cycle_is_one_fatal_problem_per_member():
                        dereference=True,
                        recurse=True)
     assert [(p.path, p.reason, p.fatal) for p in scan.problems] == [
-        ("/d/a", aw.TOO_MANY_LEVELS, True),
-        ("/d/b", aw.TOO_MANY_LEVELS, True),
+        ("/d/a", aw._TOO_MANY_LEVELS, True),
+        ("/d/b", aw._TOO_MANY_LEVELS, True),
     ]
     # GNU keeps the directory entry and exits 2; it does not abort.
     assert [e.name_path for e in scan.entries] == ["/d"]
@@ -218,7 +218,8 @@ async def test_a_dangling_link_is_fatal_with_the_enoent_wording():
                        links=links,
                        dereference=True,
                        recurse=True)
-    assert [(p.reason, p.fatal) for p in scan.problems] == [(aw.NO_SUCH, True)]
+    assert [(p.reason, p.fatal)
+            for p in scan.problems] == [(aw._NO_SUCH, True)]
 
 
 @pytest.mark.asyncio

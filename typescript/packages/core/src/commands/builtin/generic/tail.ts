@@ -25,7 +25,7 @@ import {
   parseCounts,
   tailBytes,
   type TailCounts,
-} from '../tail_helper.ts'
+} from '../tail_counts.ts'
 import { fsErrorLine, isFsError } from '../../../utils/errors.ts'
 import { readStdinAsync } from '../utils/stream.ts'
 

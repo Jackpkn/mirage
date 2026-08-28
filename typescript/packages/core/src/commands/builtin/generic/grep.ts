@@ -23,22 +23,19 @@ import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { FileType, PathSpec, type FileStat } from '../../../types.ts'
 import { respellRaw } from '../../../utils/path.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
+import { compilePattern, resolvePattern } from '../grep_pattern.ts'
 import {
-  compilePattern,
   countExitStream,
   countRecordsHaveMatches,
   exitCodeFor,
-  fileAdmitted,
   grepFilesOnly,
-  type GrepFilesOnlyOptions,
   grepLines,
   grepRecursive,
-  type WalkFilters,
-  parseFileGlobs,
   grepStream,
   prefixLines,
-  resolvePatternFromFlags,
-} from '../grep_helper.ts'
+  type GrepFilesOnlyOptions,
+} from '../grep_scan.ts'
+import { fileAdmitted, parseFileGlobs, type WalkFilters } from '../grep_select.ts'
 import { resolveSource } from '../utils/stream.ts'
 
 const ENC = new TextEncoder()
@@ -138,14 +135,7 @@ export async function grepGeneric(
 ): Promise<CommandFnResult> {
   const fl = new FlagView(opts.flags, specOf('grep'))
   stream = cacheAwareStream(stream)
-  const resolution = await resolvePatternFromFlags(
-    name,
-    texts,
-    opts.flags,
-    paths,
-    opts.mountPrefix,
-    stream,
-  )
+  const resolution = await resolvePattern(name, texts, opts.flags, paths, opts.mountPrefix, stream)
   if (resolution.error !== null) {
     return [null, new IOResult({ exitCode: 2, stderr: ENC.encode(resolution.error) })]
   }

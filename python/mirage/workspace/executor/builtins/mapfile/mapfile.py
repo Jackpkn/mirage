@@ -25,8 +25,8 @@ from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.array import ShellArray, array_set
 from mirage.utils.quote import single_quote
-from mirage.workspace.executor.builtins.shared import Result, fail
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import fail
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (session_view, visible_arrays,
                                             visible_assocs)

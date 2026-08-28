@@ -18,7 +18,7 @@ import { ResourceName } from '../../../types.ts'
 import { command } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { makeSearch } from '../generic_bind/search.ts'
-import { pushdownOperand } from '../grep_helper.ts'
+import { pushdownOperand } from '../grep_pushdown.ts'
 import { MONGODB_IO } from './io.ts'
 
 export const MONGODB_RG = command({

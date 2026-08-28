@@ -22,9 +22,10 @@ import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { MountEntry } from '../../../mount/mount.ts'
 import type { MountRegistry } from '../../../mount/registry.ts'
 import type { Session } from '../../../session/session.ts'
-import { fail, ok, operandText, splitValueFlags, type Result } from '../shared.ts'
+import { fail, ok, operandText, splitValueFlags } from '../shared.ts'
 import { BLOCK_SUFFIX, SI_UNITS } from './constants.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
+import type { Result } from '../types.ts'
 
 const ENC = new TextEncoder()
 

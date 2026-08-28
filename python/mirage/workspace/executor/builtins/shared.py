@@ -12,28 +12,18 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import re
-
 from mirage.io import IOResult
-from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.errors import ArithError
 from mirage.types import PathSpec, word_text
 from mirage.utils.path import resolve_path
+from mirage.workspace.executor.builtins.constants import IDENTIFIER_RE
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import session_view
 from mirage.workspace.types import ExecutionNode
-
-Result = tuple[ByteSource | None, IOResult, ExecutionNode]
-
-IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-# An assignment target with an optional subscript (`name` or `name[sub]`).
-# A subscript must be non-empty: bash rejects `a[]` as an invalid
-# identifier, while `a[ ]` is a valid arithmetic 0.
-TARGET_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[(.+)\])?\Z")
 
 
 def result(

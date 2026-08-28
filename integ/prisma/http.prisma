@@ -1,0 +1,37 @@
+// Schema for the http fixture server (integ/server/http/, fixtures/http/v1.json).
+// curl and wget fetch from it by URL rather than through a mount, so what it
+// serves is a table of fixed responses: path, status, content type and body.
+// They were module constants in the python fake this replaces, and holding
+// them as rows is what makes adding a status code or a payload a fixture edit.
+//
+// Three routes are behaviour rather than data and stay in code: /redirect
+// answers a Location, /echo reports the request back, and /form parses one.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/http"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model HttpResponse {
+  tenant String
+  path   String
+  status Int
+  // Spelled exactly as the header goes out, charset included, because aiohttp
+  // appended one only where the handler passed text and the goldens were
+  // recorded against that.
+  contentType String
+  // "utf8" for a body a human should be able to read in the fixture, "base64"
+  // for one that is not text at all. One column and a spelling beats two
+  // nullable columns whose invariant nothing states.
+  encoding String @default("utf8")
+  body     String
+  seq      Int
+
+  @@id([tenant, path])
+}

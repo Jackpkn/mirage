@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { IOResult, type ByteSource } from '../../../io/types.ts'
+import { IOResult } from '../../../io/types.ts'
 import type { SessionView } from '../../../ops/types.ts'
 import type { PolicyDenied } from '../../../policy/errors.ts'
 import type { ArithError } from '../../../shell/errors.ts'
@@ -24,15 +24,8 @@ import type { Namespace } from '../../mount/namespace/namespace.ts'
 import type { Session } from '../../session/session.ts'
 import { sessionView } from '../../session/state.ts'
 import { ExecutionNode } from '../../types.ts'
-
-export type Result = [ByteSource | null, IOResult, ExecutionNode]
-
-export const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
-
-// An assignment target with an optional subscript (`name` or `name[sub]`).
-// A subscript must be non-empty: bash rejects `a[]` as an invalid
-// identifier, while `a[ ]` is a valid arithmetic 0.
-export const TARGET_RE = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[(.+)\])?$/
+import { IDENTIFIER_RE } from './constants.ts'
+import type { Result } from './types.ts'
 
 const ENC = new TextEncoder()
 

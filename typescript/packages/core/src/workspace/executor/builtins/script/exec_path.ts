@@ -17,10 +17,9 @@ import { fsStrerror } from '../../../../utils/errors.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
-import type { ExecuteStringFn } from '../scope.ts'
-import type { Result } from '../shared.ts'
 import { handleBash } from './bash.ts'
 import { readScriptText, scriptError } from './script.ts'
+import type { ExecuteStringFn, Result } from '../types.ts'
 
 /** The interpreter words a script's first line names, env resolved. */
 /**

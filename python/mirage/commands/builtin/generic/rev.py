@@ -4,7 +4,7 @@ from mirage.commands.builtin.utils.lines import split_lines
 from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec, PolymorphicReadFn, StatFn
@@ -25,7 +25,7 @@ async def rev(
         return (("\n".join(reversed_lines) +
                  "\n").encode() if all_lines else b""), IOResult()
 
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is None:
         raise ValueError("rev: missing operand")
     lines = split_lines(raw.decode(errors="replace"))

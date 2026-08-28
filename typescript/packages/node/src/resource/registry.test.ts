@@ -281,10 +281,13 @@ describe('hf resources in registry', () => {
     expect((await buildResource('hf_spaces', { repo_id: 'ns/s' })).kind).toBe('hf_spaces')
   })
 
-  it('rejects malformed hf repo ids', async () => {
-    await expect(buildResource('hf_models', { repo_id: 'plain' })).rejects.toThrow(
+  it('rejects an hf repo id the Hub cannot read, but not a bare one', async () => {
+    await expect(buildResource('hf_models', { repo_id: 'a/b/c' })).rejects.toThrow(
       /namespace\/name/,
     )
+    // A bare name resolves against the token's owner; refusing it rejected an
+    // id the Hub had just minted.
+    await expect(buildResource('hf_models', { repo_id: 'plain' })).resolves.toBeDefined()
   })
 })
 

@@ -1,0 +1,16 @@
+{
+  "repos": [
+    {
+      "fullName": "integ/repo-cli",
+      "owner": "integ",
+      "name": "repo-cli",
+      "defaultBranch": "main",
+      "sourceDir": "github/repo-v1"
+    }
+  ],
+  "settings": [
+    {
+      "createRepos": false
+    }
+  ]
+}

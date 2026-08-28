@@ -52,8 +52,15 @@ describe('normalizeHfRepoConfig', () => {
     expect(config.revision).toBe('v1.0')
   })
 
-  it('rejects malformed repo ids', () => {
-    expect(() => normalizeHfRepoConfig({ repo_id: 'plain' })).toThrow(/namespace\/name/)
+  it('accepts a bare repo id, which the Hub resolves against the token', () => {
+    // `hf repo create widget` then `hf download widget` is what the real CLI
+    // produces, so refusing the bare form rejected an id the Hub had just
+    // minted. Probed against the real binary.
+    expect(normalizeHfRepoConfig({ repo_id: 'widget' }).repoId).toBe('widget')
+  })
+
+  it.each(['a/b/c', 'ns/', '/name', ''])('rejects %s, which the Hub cannot read', (bad) => {
+    expect(() => normalizeHfRepoConfig({ repo_id: bad })).toThrow(/namespace\/name/)
   })
 })
 

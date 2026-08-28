@@ -23,15 +23,16 @@ if TYPE_CHECKING:
 def validate_cli(node: "CLISpec") -> None:
     """Validate one CLISpec node at construction time.
 
-    Called from CLISpec.__post_init__, so a structurally invalid node
-    raises ValueError at import time, never at dispatch. Children were
+    Called from CLISpec.__post_init__, so an invalid node raises ValueError
+    at import time, never at dispatch. Children were
     validated by their own construction (a nested literal builds bottom
     up), so each call checks one level: the name is a single word with no
     whitespace, a node takes exactly one of fn, subcommands, or script
-    (a script root stands alone: the program re-parses argv natively),
-    runtime only rides a script, a group declares no positional/rest
-    (its operand is the subcommand word), child names are unique, and
-    only a tree's root may declare config_model or script.
+    (a script root stands alone and takes opaque config: the program
+    re-parses argv natively), runtime only rides a script, every node's
+    inherited CommandSpec grammar compiles, a group declares no
+    positional/rest (its operand is the subcommand word), child names are
+    unique, and only a tree's root may declare config_model or script.
 
     Args:
         node (CLISpec): the freshly constructed node.
@@ -50,6 +51,9 @@ def validate_cli(node: "CLISpec") -> None:
         raise ValueError(
             f"cli {node.name!r}: a script serves the whole program; "
             f"subcommands belong to fn trees")
+    if node.script is not None and node.config_model is not None:
+        raise ValueError(f"cli {node.name!r}: script config is opaque; it "
+                         f"cannot declare config_model")
     if node.runtime is not None and node.script is None:
         raise ValueError(f"cli {node.name!r}: runtime names the entry that "
                          f"runs script; it takes script")
@@ -63,6 +67,7 @@ def validate_cli(node: "CLISpec") -> None:
         raise ValueError(
             f"cli {node.name!r}: a group's operand is its subcommand "
             f"word; positional/rest belong on leaves")
+    compiled = compile_spec(node)
     # Names and aliases share one sibling namespace (argparse refuses a
     # conflicting subparser alias the same way).
     seen: set[str] = set()
@@ -81,7 +86,7 @@ def validate_cli(node: "CLISpec") -> None:
                 f"cli {node.name!r}: subcommand {child.name!r} declares "
                 f"script; only the root of a tree may")
     if node.options and node.subcommands:
-        own = set(compile_spec(node).dest.values())
+        own = set(compiled.dest.values())
         for child in node.subcommands:
             _check_collisions(node.name, own, child, (child.name, ))
 

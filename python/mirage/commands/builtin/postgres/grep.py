@@ -14,7 +14,7 @@
 
 from mirage.accessor.postgres import PostgresAccessor
 from mirage.commands.builtin.generic_bind.search import make_search
-from mirage.commands.builtin.grep_helper import literal_pushdown_operand
+from mirage.commands.builtin.grep_pushdown import literal_pushdown_operand
 from mirage.commands.builtin.postgres.io import IO
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command

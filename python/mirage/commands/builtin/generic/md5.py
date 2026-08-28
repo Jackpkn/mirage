@@ -5,7 +5,7 @@ from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     split_readable)
 from mirage.commands.builtin.utils.output import format_records
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec, PolymorphicReadFn, StatFn
@@ -18,7 +18,7 @@ async def md5(
     stdin: ByteSource | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     if not paths:
-        data = await _read_stdin_async(stdin)
+        data = await read_stdin_async(stdin)
         if data is None:
             raise ValueError("md5: missing operand")
         digest = hashlib.md5(data).hexdigest()

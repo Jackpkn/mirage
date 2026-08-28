@@ -12,11 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import {
-  CommandTimeoutError,
-  guardOutput,
-  runWithTimeout,
-} from '../../commands/builtin/utils/limit.ts'
+import { guardOutput, runWithTimeout } from '../../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../../commands/errors.ts'
 import type { ByteSource } from '../../io/types.ts'
 import { materialize } from '../../io/types.ts'
 import type { Runtime } from '../../runtime/base.ts'

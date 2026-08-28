@@ -16,9 +16,8 @@ import { IOResult } from '../../../../io/types.ts'
 import type { Session } from '../../../session/session.ts'
 import { envSnapshot } from '../../../session/state.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result } from '../shared.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 export function handlePrintenv(name: string | null, session: Session): Result {
   // The process view, not the shell view: GNU printenv is a separate

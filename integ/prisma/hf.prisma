@@ -1,0 +1,81 @@
+// Schema for the Hugging Face buckets fake (integ/server/hf/). Three tables,
+// because the vendor's write path is two protocols stacked: content goes up
+// through Xet's content-addressed store (CAS) and only then is a NAME bound to
+// it, over the Hub's own API. A bucket entry therefore cannot be the only
+// row: the bytes exist, addressable by hash, before any path refers to them.
+//
+// `tenant` is one Hugging Face ACCOUNT. The client sends the user's token on
+// every Hub call, so `tenantFromBearer` reads the account off `Authorization`
+// with no mirage-only header, and each run takes its own. That replaces the old
+// fake's trick of naming the bucket `integ/<runid>-<mount>`, which isolated
+// runs only as far as a name collision and left one shared process holding
+// every run's objects.
+//
+// The CAS half is NOT tenanted, because a content address is global on the real
+// Hub and the client relies on it: it keeps a local shard cache and, for content
+// it has uploaded before, commits without re-uploading the blocks. Both hosts
+// run against one server on one machine and share that cache, so filing blocks
+// per account left whichever host went second committing a file whose bytes the
+// fake had filed under the other. Those two tables carry a constant `tenant`
+// instead of no column, because a model with no tenant blocks a scoped /reset
+// outright (see kit `untenanted`); a constant no run ever names means a reset
+// drops one run's names and leaves the content, which is the real behaviour.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/hf"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+// One named file in one bucket. `bucket` is the vendor's full `namespace/name`
+// and stays a plain column: buckets are not objects here, they spring into
+// existence on the first write exactly as the real ones do for a namespace the
+// token owns, so there is nothing for a bucket row to hold.
+model HfObject {
+  tenant   String
+  bucket   String
+  path     String
+  content  Bytes
+  // The vendor's opaque `ETag`, which moves on every content write. A watch
+  // case reads only this: `modified` is frozen so the clock cannot be what
+  // reports a change.
+  etag     String
+  modified String
+  seq      Int
+
+  @@id([tenant, bucket, path])
+}
+
+// One uploaded CAS block, already decompressed. The wire form is a sequence of
+// chunks each behind an 8-byte header naming its scheme (raw, lz4, or lz4 over
+// byte-grouped-4 input); a shard then addresses a file as a HALF-OPEN RANGE of
+// chunk indices into one of these, so the chunk boundaries have to survive
+// storage. `offsets` is that boundary list, JSON, `n + 1` entries, so chunk `i`
+// is `content[offsets[i] : offsets[i + 1]]` and a range is one slice.
+model HfXorb {
+  tenant  String
+  hash    String
+  content Bytes
+  offsets String
+
+  @@id([tenant, hash])
+}
+
+// Content addressed by hash, which is what every read path resolves through.
+// Two hashes reach the same bytes and both are stored: the MDB shard's own file
+// hash, which is what `batch addFile` names, and the sha256 the fake advertises
+// as `xetHash` on a tree entry and redirects to. Keying by hash rather than by
+// path is the point, because content is uploaded before any name refers to it,
+// and a name bound twice refers to one copy.
+model HfXetFile {
+  tenant  String
+  hash    String
+  content Bytes
+
+  @@id([tenant, hash])
+}

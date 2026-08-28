@@ -2,7 +2,7 @@ import base64 as b64lib
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import CommandName, FlagValue, FlagView
@@ -55,7 +55,7 @@ async def base64_cmd(
         source: AsyncIterator[bytes] = read_stream(paths[0])
         cache = [paths[0].mount_path]
     else:
-        source = _resolve_source(stdin)
+        source = resolve_source(stdin)
 
     if decode:
         return _base64_decode_stream(source,

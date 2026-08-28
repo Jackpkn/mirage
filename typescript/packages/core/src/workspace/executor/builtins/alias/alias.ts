@@ -13,17 +13,17 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { IOResult } from '../../../../io/types.ts'
-import { SHOPT_DEFAULTS } from '../../../../shell/types.ts'
+import { SHOPT_DEFAULTS } from '../../../../shell/constants.ts'
 import type { Session } from '../../../session/session.ts'
 import { ownRecord, sessionEntry, setSessionEntry } from '../../../session/session.ts'
 import { singleQuote } from '../../../../utils/quote.ts'
 import { scanOptions } from '../getopt.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { fail, type Result } from '../shared.ts'
+import { fail } from '../shared.ts'
 import { ALIAS_USAGE, BAD_NAME_CHARS, FIRST_WORD, UNALIAS_USAGE } from './constants.ts'
 import type { AliasMark } from './types.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 /** Whether a name holds a character bash refuses in an alias name. */
 function hasBadChar(name: string): boolean {

@@ -22,8 +22,8 @@ import { PolicyDenied } from '../../../policy/errors.ts'
 import { ArithError } from '../../../shell/errors.ts'
 import { Session } from '../../session/session.ts'
 import { sessionView } from '../../session/state.ts'
+import { IDENTIFIER_RE } from './constants.ts'
 import {
-  IDENTIFIER_RE,
   absPath,
   arithRefusal,
   expandOperands,

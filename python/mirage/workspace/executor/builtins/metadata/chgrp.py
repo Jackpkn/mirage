@@ -16,10 +16,10 @@ from mirage.runtime.types import DispatchFn
 from mirage.types import PathSpec
 from mirage.workspace.executor.builtins.metadata.metadata import (
     apply_attrs, apply_link_attrs, parse_group, resolve_operand, walk_owned)
-from mirage.workspace.executor.builtins.shared import (Result, expand_operands,
-                                                       fail, finish,
-                                                       operand_text,
+from mirage.workspace.executor.builtins.shared import (expand_operands, fail,
+                                                       finish, operand_text,
                                                        split_value_flags)
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
 
 

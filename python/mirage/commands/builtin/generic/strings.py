@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -41,7 +41,7 @@ async def strings(
             if matches:
                 parts.append(b"\n".join(matches) + b"\n")
         return b"".join(parts), IOResult()
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is None:
         raw = b""
     matches = re.findall(pattern, raw)

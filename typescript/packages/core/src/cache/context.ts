@@ -47,9 +47,41 @@ export function runWithCacheManager<T>(
   return Promise.resolve(storage.run({ manager }, fn))
 }
 
-/** Return the active cache manager for the current async context. */
+/**
+ * Return the active cache manager for the current async context.
+ *
+ * Serves the read-through paths, so a wrong manager is worse than
+ * none: a warm hit from another mount's cache is another mount's
+ * bytes, where a miss just reads the backend. On an isolating runtime
+ * one binding is live and answers as bound; on the fallback storage
+ * the manager answers only while every live frame agrees on it, and a
+ * disagreement (overlapping commands on different mounts) reads as no
+ * manager, failing toward the cold read.
+ */
 export function activeCacheManager(): CacheInvalidator | null {
-  return storage.getStore()?.manager ?? null
+  const states = storage.liveStores()
+  const first = states[0]
+  if (first === undefined) return null
+  for (const state of states) {
+    if (state.manager !== first.manager) return null
+  }
+  return first.manager
+}
+
+/**
+ * Every distinct manager bound by a live frame. Invalidation is the
+ * opposite trade from the read side: dropping a live frame's
+ * invalidation serves stale bytes later, while evicting from a mount
+ * the write never touched only costs a refetch, so writes broadcast
+ * where reads abstain.
+ */
+function liveManagers(): CacheInvalidator[] {
+  const managers: CacheInvalidator[] = []
+  for (const state of storage.liveStores()) {
+    const manager = state.manager
+    if (manager !== null && !managers.includes(manager)) managers.push(manager)
+  }
+  return managers
 }
 
 /**
@@ -57,8 +89,7 @@ export function activeCacheManager(): CacheInvalidator | null {
  * site. No-op if no cache manager is active.
  */
 export async function invalidateAfterWrite(path: string | PathSpec): Promise<void> {
-  const manager = storage.getStore()?.manager
-  if (manager !== null && manager !== undefined) {
+  for (const manager of liveManagers()) {
     await manager.invalidateAfterWrite(path)
   }
 }
@@ -68,8 +99,7 @@ export async function invalidateAfterWrite(path: string | PathSpec): Promise<voi
  * site. No-op if no cache manager is active.
  */
 export async function invalidateAfterUnlink(path: string | PathSpec): Promise<void> {
-  const manager = storage.getStore()?.manager
-  if (manager !== null && manager !== undefined) {
+  for (const manager of liveManagers()) {
     await manager.invalidateAfterUnlink(path)
   }
 }
@@ -90,8 +120,7 @@ export async function invalidateAfterUnlink(path: string | PathSpec): Promise<vo
  * is only known to the caches themselves.
  */
 export async function invalidateSubtree(path: string | PathSpec): Promise<void> {
-  const manager = storage.getStore()?.manager
-  if (manager !== null && manager !== undefined) {
+  for (const manager of liveManagers()) {
     await manager.invalidateSubtree(path)
   }
 }

@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.escapes import interpret_escapes
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
@@ -110,7 +110,7 @@ async def tr(
         source: AsyncIterator[bytes] = read_stream(paths[0])
         cache = [paths[0].mount_path]
     else:
-        source = _resolve_source(stdin)
+        source = resolve_source(stdin)
 
     return _tr_stream(source,
                       set1,

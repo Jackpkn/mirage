@@ -19,7 +19,8 @@ import { stat as boxStat } from '../../../core/box/stat.ts'
 import { FileType, type PathSpec } from '../../../types.ts'
 import { getExtension } from '../../resolve.ts'
 import { resolveGlobOf } from '../generic_bind/index.ts'
-import { BINARY_EXTENSIONS, isLiteralPattern, searchQuery } from '../grep_helper.ts'
+import { BINARY_EXTENSIONS } from '../constants.ts'
+import { isLiteralPattern, searchQuery } from '../grep_pushdown.ts'
 import { BOX_IO } from './io.ts'
 
 const resolveGlob = resolveGlobOf(BOX_IO)

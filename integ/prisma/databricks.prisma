@@ -1,0 +1,36 @@
+// Schema for the databricks fake (integ/server/databricks/). The volume was a
+// pair of python dicts -- path -> (bytes, mtime) for files, a set of paths for
+// directories -- and both collapse onto one node table, because a databricks
+// volume addresses a file and a directory through the same path space and the
+// fake has to answer "which is this?" on every request.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/databricks"
+}
+
+datasource db {
+  provider     = "sqlite"
+  url          = env("INTEG_DB_URL")
+  relationMode = "prisma"
+}
+
+model DatabricksNode {
+  tenant String
+  // Normalized: one leading slash, no trailing one, "/" for the volume root.
+  path        String
+  isDirectory Boolean
+  // Null on a directory. A zero-byte file is an empty buffer, not null, so the
+  // two stay distinguishable without reading isDirectory twice.
+  data Bytes?
+  // Milliseconds since the epoch, which is what a listing renders and what
+  // Last-Modified is formatted from. Float rather than Int because a
+  // millisecond timestamp passed 2^31 in 1970 and Prisma's Int is an i32.
+  lastModified Float
+  // Insertion order, so a listing reads back in the order the python dict
+  // iterated rather than in whatever order SQLite returns rows.
+  seq Int
+
+  @@id([tenant, path])
+  @@index([tenant, seq])
+}

@@ -21,8 +21,8 @@ from mirage.utils.quote import single_quote
 from mirage.workspace.executor.builtins.getopt import last_of, scan_options
 from mirage.workspace.executor.builtins.lookup import classify, describe
 from mirage.workspace.executor.builtins.lookup.types import NameKind
-from mirage.workspace.executor.builtins.shared import Result, ok, result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import ok, result
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode

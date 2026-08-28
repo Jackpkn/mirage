@@ -15,9 +15,8 @@
 from dataclasses import dataclass
 from typing import Callable
 
-from mirage.commands.builtin.utils.backup import (DEFAULT_BACKUP_SUFFIX,
-                                                  backup_control,
-                                                  backup_target)
+from mirage.commands.builtin.utils.backup import backup_control, backup_target
+from mirage.commands.builtin.utils.constants import DEFAULT_BACKUP_SUFFIX
 from mirage.commands.builtin.utils.copy import (backend_key_default,
                                                 copy_targets, is_directory,
                                                 path_exists)
@@ -131,6 +130,18 @@ def backup_raw(fl: FlagView) -> str | bool | None:
     return None
 
 
+def suffix_flag(fl: FlagView) -> str | None:
+    """The ``--suffix`` value, an empty one reading as absent.
+
+    GNU 9.7 ``cp --backup --suffix= f g`` writes the default ``g~``, not
+    a backup whose name is the original's.
+
+    Args:
+        fl (FlagView): Parsed flag view holding ``suffix``.
+    """
+    return fl.as_str("suffix") or None
+
+
 def target_flags(cmd_name: str,
                  fl: FlagView) -> tuple[PathSpec | str | None, bool]:
     """Resolve ``-t``/``--target-directory`` and ``-T``, rejecting both.
@@ -150,7 +161,7 @@ def target_flags(cmd_name: str,
     return target_dir, no_target
 
 
-def parse_cp_flags(fl: FlagView) -> CpFlags:
+def parse_flags(fl: FlagView) -> CpFlags:
     """Parse the cp flag bag once into a frozen struct.
 
     ``-f``/``-i`` are accepted no-ops (non-interactive control plane:
@@ -162,9 +173,7 @@ def parse_cp_flags(fl: FlagView) -> CpFlags:
         fl (FlagView): Flag view constructed with the cp spec.
     """
     update = update_mode("cp", fl)
-    # An empty --suffix reads as absent: GNU 9.7 `cp --backup --suffix= f g`
-    # writes the default `g~`, not a backup whose name is the original's.
-    suffix = fl.as_str("suffix") or None
+    suffix = suffix_flag(fl)
     control = backup_control("cp", backup_raw(fl), suffix)
     no_clobber = fl.as_bool("no_clobber")
     if control is not None and control != "none" and (no_clobber or update

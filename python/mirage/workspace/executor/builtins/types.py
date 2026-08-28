@@ -17,14 +17,17 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.runtime.types import DispatchFn
 from mirage.shell.call_stack import CallStack
-from mirage.workspace.executor.builtins.shared import Result
 from mirage.workspace.expand.argv import Argv
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
+from mirage.workspace.types import ExecutionNode
+
+Result = tuple[ByteSource | None, IOResult, ExecutionNode]
 
 
 @dataclass(frozen=True, slots=True)

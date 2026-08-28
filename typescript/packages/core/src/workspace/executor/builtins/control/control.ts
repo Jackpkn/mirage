@@ -18,8 +18,8 @@ import { ExitSignal } from '../../../../shell/errors.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
 import { ReturnSignal } from '../../control.ts'
-import { type Result, isCountWord } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import { isCountWord } from '../shared.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 import { BreakSignal, ContinueSignal } from '../../control.ts'
 
 // Parse the optional numeric level of `break`/`continue`.

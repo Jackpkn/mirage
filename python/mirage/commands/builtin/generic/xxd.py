@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import CommandName, FlagValue, FlagView
@@ -129,7 +129,7 @@ async def xxd(
         source: AsyncIterator[bytes] = read_stream(paths[0])
         cache = [paths[0].mount_path]
     else:
-        source = _resolve_source(stdin)
+        source = resolve_source(stdin)
 
     if skip or limit:
         if not limit:

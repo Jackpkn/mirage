@@ -105,6 +105,36 @@ async def test_execute_passes_runtime_through():
 
 
 @pytest.mark.asyncio
+async def test_execute_record_false_leaves_no_history_entry():
+    app = build_app(idle_grace_seconds=10.0)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as client:
+        wid = await _create_workspace(client)
+        r = await client.post(
+            f"/v1/workspaces/{wid}/execute",
+            json={"command": "echo recorded"},
+        )
+        assert r.status_code == 200, r.text
+        r = await client.post(
+            f"/v1/workspaces/{wid}/execute",
+            json={
+                "command": "echo hidden",
+                "record": False
+            },
+        )
+        assert r.status_code == 200, r.text
+        r = await client.post(
+            f"/v1/workspaces/{wid}/execute",
+            json={"command": "history"},
+        )
+        assert r.status_code == 200, r.text
+        out = r.json()["stdout"]
+        assert "echo recorded" in out
+        assert "echo hidden" not in out
+
+
+@pytest.mark.asyncio
 async def test_execute_sync_records_a_job_in_done_state():
     app = build_app(idle_grace_seconds=10.0)
     transport = ASGITransport(app=app)

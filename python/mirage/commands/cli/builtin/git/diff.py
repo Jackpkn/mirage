@@ -18,6 +18,7 @@ from io import BytesIO
 from dulwich.patch import write_tree_diff
 from dulwich.repo import BaseRepo
 
+from mirage.commands.cli.builtin.git.constants import HEAD
 from mirage.commands.cli.builtin.git.errors import (GitError,
                                                     InvalidOptionError,
                                                     NoWorkspaceError)
@@ -28,8 +29,6 @@ from mirage.commands.cli.types import CLIDoors, CLIInvocation
 from mirage.commands.spec.types import FlagView
 from mirage.io.stream import yield_bytes
 from mirage.io.types import ByteSource, IOResult
-
-HEAD = "HEAD"
 
 # Deliberate divergence, verified against git 2.47.3 on a real
 # repository. The patch is correct and applies cleanly, and file
@@ -83,7 +82,6 @@ async def diff(inv: CLIInvocation[None]) -> tuple[ByteSource | None, IOResult]:
     """
     doors = inv.doors or CLIDoors()
     dispatch = doors.dispatch
-    doors.stat_path
     texts = inv.texts
     flags = inv.flags
     fl = FlagView(flags)
