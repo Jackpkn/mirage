@@ -22,7 +22,7 @@ import { isMissingOp } from '@struktoai/mirage-core/utils/errors'
 import { rstripSlash } from '@struktoai/mirage-core/utils/slash'
 import { compareCodePoints } from '@struktoai/mirage-core/utils/sort'
 import type { Session } from '@struktoai/mirage-core/workspace/session/session'
-import { errnoError } from './errors.ts'
+import { ENOENT, classifyErrno, errnoError } from './errors.ts'
 import { PrefetchCache } from './prefetch.ts'
 import { applyStatAttrs, dirStat, fileStat, linkStat } from './stat.ts'
 import type { MountAttrs, MountEntry } from './types.ts'
@@ -171,7 +171,12 @@ export class MountCore {
     return this.prefetchCache.claim(path, async () => {
       try {
         return await this.ops.readFile(this.resolve(path))
-      } catch {
+      } catch (err) {
+        // Open stays permissive for a file that is not there; the read
+        // after it surfaces the real error. Anything else propagates,
+        // rather than a bare catch turning a policy denial into an
+        // unhydrated file that then reads as empty.
+        if (classifyErrno(err) !== ENOENT) throw err
         return null
       }
     })
@@ -201,8 +206,14 @@ export class MountCore {
     let existing: Uint8Array = new Uint8Array(0)
     try {
       existing = await this.ops.readFile(this.resolve(path), { raw: true })
-    } catch {
-      // missing file: start from empty; the write creates it
+    } catch (err) {
+      // Only a missing file, which the write then creates. A bare catch
+      // read every transient backend, auth or policy failure as "empty",
+      // and the whole-object write below then stored the pending ranges
+      // alone -- destroying content nobody touched. Same bug the nfs
+      // delegate's readBase had; python's twin catches FileNotFoundError
+      // and nothing else.
+      if (classifyErrno(err) !== ENOENT) throw err
     }
     await this.writeFile(path, mergeWrites(existing, writes))
   }

@@ -33,6 +33,24 @@ async function mkCore(): Promise<MountCore> {
 }
 
 describe('MountCore', () => {
+  it('does not destroy untouched content when the base read fails', async () => {
+    // applyWrites caught everything and started from empty, so a
+    // transient or policy read failure made the whole-object write
+    // store only the pending range -- erasing bytes nobody touched.
+    // Python's twin catches FileNotFoundError and nothing else.
+    const core = await mkCore()
+    const path = '/data/greeting.txt'
+    const ws = core as unknown as { ops: { readFile: unknown } }
+    const real = ws.ops.readFile
+    ws.ops.readFile = () => Promise.reject(new Error('permission denied'))
+
+    await expect(core.write(path, -1, new TextEncoder().encode('X'), 0)).rejects.toThrow(/denied/)
+
+    ws.ops.readFile = real
+    // (path, fd, pos, len) here; python spells it (path, size, offset, fh).
+    expect(await core.read(path, -1, 0, 64)).toEqual(new TextEncoder().encode('hello world\n'))
+  })
+
   it('drops a prefetched file from the cache on every mutation', async () => {
     // Size-unknown backends are read through the prefetch cache, and a
     // mutation that left the entry in place made the next read answer

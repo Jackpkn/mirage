@@ -696,3 +696,39 @@ def test_the_total_buffer_is_bounded_across_files():
         run(fs.write(fileid, 0, b"x" * 512))
 
     assert fs._writes.total_bytes() <= 2048
+
+
+def test_a_failed_truncate_keeps_the_writes_it_acknowledged():
+    # setattr clipped the buffer before the truncate landed, so a
+    # denied or transient failure discarded acknowledged bytes while
+    # the file kept its old length. Same shape as remove's drop.
+    fs, ops = make()
+    fileid = run(fs.lookup(fs.root_dir(), "a.txt"))
+    run(fs.write(fileid, 0, b"NEWDATA"))
+
+    async def denied(path: str, length: int) -> None:
+        raise PermissionError(path)
+
+    ops.truncate = denied
+    with pytest.raises(PermissionError):
+        run(fs.setattr(fileid, SetAttrs(size=2)))
+
+    assert fs._writes.has_pending(fileid)
+    ops.truncate = FakeOps.truncate.__get__(ops, FakeOps)
+    run(fs.flush(fileid))
+    assert ops.files["/a.txt"] == b"NEWDATA"
+
+
+def test_the_flush_lock_table_does_not_grow_with_files_written():
+    # Ids are never reused, so a lock left behind per written file is an
+    # unbounded map on a long-lived mount -- the same complaint as an
+    # unbounded write buffer, one level down.
+    fs, ops = make()
+    root = fs.root_dir()
+    for i in range(50):
+        ops.files[f"/g{i}"] = b""
+        fileid = run(fs.lookup(root, f"g{i}"))
+        run(fs.write(fileid, 0, b"x"))
+        run(fs.flush(fileid))
+
+    assert fs._flush_locks == {}

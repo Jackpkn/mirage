@@ -547,4 +547,20 @@ describe('readdir', () => {
 
     expect(bounded.bufferedBytes()).toBeLessThanOrEqual(2048)
   })
+
+  it('keeps acknowledged writes when the truncate fails', async () => {
+    // setattr clipped the buffer before the truncate landed, so a
+    // denied or transient failure discarded acknowledged bytes while
+    // the file kept its old length. Same shape as remove's drop.
+    const fileid = await fs.lookup(root, 'a.txt')
+    await fs.write(fileid, 0, Buffer.from('NEWDATA'))
+    const real = ws.fs.truncate.bind(ws.fs)
+    ws.fs.truncate = () => Promise.reject(new Error('permission denied'))
+
+    await expect(fs.setattr(fileid, { size: 2 })).rejects.toThrow(/denied/)
+
+    ws.fs.truncate = real
+    await fs.flush(fileid)
+    expect(await stored('/a.txt')).toBe('NEWDATA')
+  })
 })

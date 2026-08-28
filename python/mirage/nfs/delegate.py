@@ -17,6 +17,9 @@ import errno
 import os
 import posixpath
 import stat as stat_bits
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 from mirage.mount.core import MountCore
 from mirage.mount.types import MountAttrs, SetAttrs
@@ -30,6 +33,21 @@ from mirage.ops import Ops
 # The core slices to the end when asked for more than the file holds,
 # which is how a whole-file read is spelled through a sized API.
 _WHOLE_FILE = 1 << 62
+
+
+@dataclass(slots=True)
+class _FlushLock:
+    """One file's flush lock, with the count keeping it in the table.
+
+    Args:
+        lock (asyncio.Lock): serializes flushes of one file.
+        waiters (int): callers holding or waiting for it. The table
+            drops the entry at zero, so the map stays bounded by
+            files being flushed rather than files ever written.
+    """
+
+    lock: asyncio.Lock
+    waiters: int
 
 
 def _component(name: str) -> str:
@@ -90,7 +108,7 @@ class MirageNFS:
         # One lock per file that has been written; dropped with the
         # buffer it guards, so the table tracks live files rather than
         # every id ever minted.
-        self._flush_locks: dict[int, asyncio.Lock] = {}
+        self._flush_locks: dict[int, _FlushLock] = {}
         self._root = self._ids.alloc(ROOT_PATH)
 
     def root_dir(self) -> int:
@@ -329,8 +347,17 @@ class MirageNFS:
         path = self._ids.resolve(fileid)
         size = attrs.size
         if size is not None:
-            self._writes.clip(fileid, size)
-            await self._core.truncate(path, size)
+            # Truncate first, clip on success, both under the file's
+            # flush lock. Clipping first discarded the pending writes
+            # past `size` before knowing the truncate would land, so a
+            # denied or transient failure lost bytes the client had been
+            # told were durable while the file kept its old length --
+            # the same shape as the drop-before-remove bug. The lock is
+            # what stops a flush landing in between and re-extending the
+            # file with the buffer this is about to clip.
+            async with self._flush_lock(fileid):
+                await self._core.truncate(path, size)
+                self._writes.clip(fileid, size)
         return await self._entry_attrs(fileid, path)
 
     async def set_size(self, fileid: int, size: int | None) -> NFSAttrs:
@@ -499,25 +526,42 @@ class MirageNFS:
             return
         await self._flush_one(fileid, path)
 
-    def _flush_lock(self, fileid: int) -> asyncio.Lock:
-        """The lock serializing one file's flushes.
+    @asynccontextmanager
+    async def _flush_lock(self, fileid: int) -> AsyncIterator[None]:
+        """Hold the lock serializing one file's flushes.
 
         Kept here rather than on ``WriteBuffer``: the state holders are
         await-free by design, and a lock inside one would not help
         anyway -- what has to be atomic spans a read, a take and a
         write, which only the caller can bracket.
 
+        Reference-counted so the table cannot grow forever. Ids are
+        never reused, so a lock left behind per written file is an
+        unbounded map on a long-lived mount -- the same complaint as an
+        unbounded write buffer, one level down. The count is raised
+        before acquiring, so a coroutine merely *waiting* for the lock
+        keeps it alive: dropping it there would hand the next caller a
+        fresh lock and let two flushes of one file run at once, which is
+        the race this exists to prevent.
+
         Args:
             fileid (int): the file whose flushes to serialize.
 
-        Returns:
-            asyncio.Lock: the lock for that file.
+        Yields:
+            None: with the lock held.
         """
-        lock = self._flush_locks.get(fileid)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._flush_locks[fileid] = lock
-        return lock
+        entry = self._flush_locks.get(fileid)
+        if entry is None:
+            entry = _FlushLock(asyncio.Lock(), 0)
+            self._flush_locks[fileid] = entry
+        entry.waiters += 1
+        try:
+            async with entry.lock:
+                yield
+        finally:
+            entry.waiters -= 1
+            if entry.waiters == 0:
+                self._flush_locks.pop(fileid, None)
 
     async def _flush_one(self, fileid: int, path: str) -> None:
         """Store one file's buffered writes, one flush at a time.

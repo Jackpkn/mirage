@@ -312,8 +312,27 @@ export class MirageNFS {
     const path = this.ids.resolve(fileid)
     const size = attrs.size
     if (size !== null) {
-      this.writes.clip(fileid, size)
-      await this.core.truncate(path, size)
+      // Truncate first, clip on success, both chained behind any
+      // in-flight flush. Clipping first discarded the pending writes
+      // past `size` before knowing the truncate would land, so a denied
+      // or transient failure lost bytes the client had been told were
+      // durable while the file kept its old length -- the same shape as
+      // the drop-before-remove bug. The chain is what stops a flush
+      // landing in between and re-extending the file with the buffer
+      // this is about to clip.
+      const previous = this.flushChains.get(fileid) ?? Promise.resolve()
+      const mine = previous
+        .catch(() => undefined)
+        .then(async () => {
+          await this.core.truncate(path, size)
+          this.writes.clip(fileid, size)
+        })
+      this.flushChains.set(fileid, mine)
+      try {
+        await mine
+      } finally {
+        if (this.flushChains.get(fileid) === mine) this.flushChains.delete(fileid)
+      }
     }
     return this.entryAttrs(fileid, path)
   }
