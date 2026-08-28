@@ -89,6 +89,31 @@ function ids(rows: JsonValue): string[] {
     : []
 }
 
+// Create a repo and give it one README, which is how every card in the tests
+// after this point gets there: through the commit endpoint, not a fixture.
+async function repoWithCard(
+  endpoint: string,
+  kind: string,
+  name: string,
+  card: string,
+): Promise<void> {
+  const made = await fetch(`${endpoint}/api/repos/create`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, type: kind === 'models' ? 'model' : kind.slice(0, -1) }),
+  })
+  check(`${name} is created`, made.status === 200, String(made.status))
+  const pushed = await fetch(`${endpoint}/api/${kind}/${TENANT}/${name}/commit/main`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/x-ndjson' },
+    body: [
+      JSON.stringify({ key: 'header', value: { summary: 'add a card' } }),
+      JSON.stringify({ key: 'file', value: { path: 'README.md', content: card } }),
+    ].join('\n'),
+  })
+  check(`${name} gets its card`, pushed.status === 200, String(pushed.status))
+}
+
 async function main(): Promise<void> {
   const fake = await launch()
   try {
@@ -534,6 +559,65 @@ async function main(): Promise<void> {
       'task_categories:question-answering',
       'task_ids:extractive-qa',
     ])
+
+    // ---- a CRLF card is still a card
+    // A README uploaded from Windows has CRLF, which is legal YAML. The
+    // opening fence did not match it, so the whole card read as absent and
+    // cardData, sdk and every facet vanished without an error anywhere.
+    await repoWithCard(
+      fake.endpoint,
+      'models',
+      'crlf-model',
+      ['---', 'license: mit', '---', '', '# CRLF', ''].join('\r\n'),
+    )
+    const crlf = (await get(fake.endpoint, `/api/models/${TENANT}/crlf-model`)) as Record<
+      string,
+      JsonValue
+    >
+    eq(
+      'a CRLF card parses',
+      ((crlf.cardData ?? {}) as Record<string, JsonValue>).license ?? null,
+      'mit',
+    )
+    eq('a CRLF card yields its facets', crlf.tags ?? null, ['license:mit'])
+
+    // ---- base_model is card-derived, so it is a facet
+    // The Hub also emits a relationship form (`base_model:finetune:X`,
+    // `base_model:quantized:X`). That one is its own analysis of the model,
+    // not a card field, so it belongs with arxiv:/region:/format: among the
+    // facets a card-only fake cannot know.
+    await repoWithCard(
+      fake.endpoint,
+      'models',
+      'derived-model',
+      [
+        '---',
+        'license: apache-2.0',
+        'library_name: transformers',
+        'pipeline_tag: text-generation',
+        'base_model:',
+        '  - acme/base',
+        '---',
+        '',
+        '# Derived',
+        '',
+      ].join('\n'),
+    )
+    const derived = (await get(fake.endpoint, `/api/models/${TENANT}/derived-model`)) as Record<
+      string,
+      JsonValue
+    >
+    eq('base_model is spelled as the Hub spells it', derived.tags ?? null, [
+      'base_model:acme/base',
+      'license:apache-2.0',
+      'text-generation',
+      'transformers',
+    ])
+    eq(
+      'a model is reachable by its base_model facet',
+      ids(await get(fake.endpoint, '/api/models?filter=base_model:acme/base')),
+      [`${TENANT}/derived-model`],
+    )
 
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))

@@ -42,7 +42,12 @@ function scalar(raw: string): JsonValue {
  * Returns an empty object for a README with no frontmatter, which is a
  * legal card, and for one whose fence never closes.
  */
-export function parseCard(text: string): Record<string, JsonValue> {
+export function parseCard(raw: string): Record<string, JsonValue> {
+  // CRLF is a legal YAML line ending and a README uploaded from Windows has
+  // it, so the fences and every line are normalized before anything is
+  // scanned. Without this the opening fence did not match and the whole card
+  // read as absent: no cardData, no sdk, no facets, silently.
+  const text = raw.replace(/\r\n/g, '\n')
   if (!text.startsWith(`${FENCE}\n`)) return {}
   const end = text.indexOf(`\n${FENCE}`, FENCE.length)
   if (end === -1) return {}
@@ -130,6 +135,7 @@ const MODEL_FACETS = [
   ['pipeline_tag', ''],
   ['language', ''],
   ['datasets', 'dataset:'],
+  ['base_model', 'base_model:'],
 ] as const
 
 // Every one of these was read off rajpurkar/squad, whose card carries all of
