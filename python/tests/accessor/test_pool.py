@@ -27,23 +27,38 @@ class Stub:
     when the cache abandoned it, and hides exactly the bug these tests exist
     to catch.
 
+    `released` records every __aexit__ that gets past the failure check, so a
+    client closed twice appears twice.
+
     Args:
         opened (list): receives this client's id when it opens.
         released (list): receives this client's id when it is released.
         counter (list): single-item id source, so ids are stable.
         fail_release (bool): raise from __aexit__ once, to model a shutdown
             that is cancelled or errors.
+        always_fail (bool): raise from __aexit__ every time, to model a
+            client that will not close at all.
         slow_open (bool): suspend inside __aenter__, opening the window two
             concurrent callers race in.
+        slow_exit (bool): suspend inside __aexit__, opening the window two
+            concurrent releases of one client race in.
     """
 
-    def __init__(self, opened, released, counter, fail_release=False,
-                 slow_open=False) -> None:
+    def __init__(self,
+                 opened,
+                 released,
+                 counter,
+                 fail_release=False,
+                 slow_open=False,
+                 slow_exit=False,
+                 always_fail=False) -> None:
         self.opened = opened
         self.released = released
         self.counter = counter
         self.fail_release = fail_release
+        self.always_fail = always_fail
         self.slow_open = slow_open
+        self.slow_exit = slow_exit
         self.ident = -1
 
     async def __aenter__(self) -> str:
@@ -55,10 +70,24 @@ class Stub:
         return f"client-{self.ident}"
 
     async def __aexit__(self, *exc) -> bool:
+        if self.always_fail:
+            raise RuntimeError("release failed")
         if self.fail_release:
             self.fail_release = False
             raise RuntimeError("release failed")
         self.released.append(self.ident)
+        if self.slow_exit:
+            await asyncio.sleep(0.01)
+        return False
+
+
+class Boom:
+    """A client whose open fails, the way a credential lookup does."""
+
+    async def __aenter__(self) -> str:
+        raise RuntimeError("no credentials")
+
+    async def __aexit__(self, *exc) -> bool:
         return False
 
 
@@ -91,9 +120,10 @@ def test_concurrent_miss_opens_exactly_one():
     cache = LoopClientCache("test")
 
     async def go():
-        got = await asyncio.gather(
-            *[cache.get(_stub(opened, released, counter, slow_open=True))
-              for _ in range(5)])
+        got = await asyncio.gather(*[
+            cache.get(_stub(opened, released, counter, slow_open=True))
+            for _ in range(5)
+        ])
         assert len(set(got)) == 1
         await cache.close()
 
@@ -123,6 +153,30 @@ def test_client_from_a_closed_loop_is_released_not_forgotten():
     assert cache.open_count() == 0
 
 
+def test_a_dead_loop_is_released_once_under_concurrent_gets():
+    """Two callers sweeping the same dead loop must not both close it.
+
+    `release_dead` runs before the new loop's lock is taken, so concurrent
+    first operations all reach the same stale entry. A release that removed
+    the entry only after awaiting would run `__aexit__` twice on one client.
+    """
+    opened, released, counter = [], [], [0]
+    cache = LoopClientCache("test")
+
+    async def first():
+        await cache.get(_stub(opened, released, counter, slow_exit=True))
+
+    asyncio.run(first())
+
+    async def second():
+        await asyncio.gather(
+            *[cache.get(_stub(opened, released, counter)) for _ in range(4)])
+        await cache.close()
+
+    asyncio.run(second())
+    assert released == [0, 1], "a client was closed more than once"
+
+
 def test_a_failed_release_keeps_the_entry_retryable():
     """A release that raises must not lose the client.
 
@@ -134,7 +188,8 @@ def test_a_failed_release_keeps_the_entry_retryable():
 
     async def go():
         await cache.get(_stub(opened, released, counter, fail_release=True))
-        await cache.close()
+        with pytest.raises(RuntimeError, match="release failed"):
+            await cache.close()
         assert cache.open_count() == 1, "a failed release must keep the entry"
         assert released == []
         # The manager is held rather than wrapped in an AsyncExitStack, so the
@@ -144,6 +199,35 @@ def test_a_failed_release_keeps_the_entry_retryable():
         assert released == [0]
 
     asyncio.run(go())
+
+
+def test_close_reports_a_failed_release_instead_of_logging_it():
+    """A swallowed failure makes the caller record itself as closed.
+
+    `Resource.close` sets `_closed` once this returns and then returns early
+    forever after, so logging here would mean the retained entry is never
+    reachable again: retryable in this class and permanently leaked in the
+    resource above it.
+    """
+    opened, released, counter = [], [], [0]
+    cache = LoopClientCache("test")
+
+    async def bad():
+        await cache.get(_stub(opened, released, counter, always_fail=True))
+
+    async def good():
+        await cache.get(_stub(opened, released, counter))
+
+    asyncio.run(bad())
+    asyncio.run(good())
+
+    with pytest.raises(RuntimeError, match="release failed"):
+        asyncio.run(cache.close())
+
+    # The good one was still released: one failure must not skip the rest, it
+    # must only be reported. The failed one stays for a later attempt.
+    assert released == [1]
+    assert cache.open_count() == 1
 
 
 def test_a_failed_release_does_not_strand_the_other_loops():
@@ -169,6 +253,28 @@ def test_a_failed_release_does_not_strand_the_other_loops():
     assert opened == [0, 1, 2]
     assert sorted(released) == [0, 1, 2], "a failed release stranded a client"
     assert cache.open_count() == 0
+
+
+def test_a_loop_that_failed_to_open_leaves_no_lock_behind():
+    """A failed open registers a lock and nothing else.
+
+    Both sweeps used to visit only the entries, so a credential error across
+    repeated `asyncio.run` calls pinned every closed loop object forever. The
+    locks are swept by liveness instead, which covers a failure at any site
+    rather than only at the one this was found on.
+    """
+    cache = LoopClientCache("test")
+
+    async def step():
+        with pytest.raises(RuntimeError, match="no credentials"):
+            await cache.get(Boom)
+
+    for _ in range(3):
+        asyncio.run(step())
+    asyncio.run(cache.close())
+
+    assert cache.open_count() == 0
+    assert cache._locks == {}, "a closed loop kept its lock"
 
 
 def test_key_is_the_loop_object_not_its_id():

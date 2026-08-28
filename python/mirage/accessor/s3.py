@@ -12,13 +12,12 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from contextlib import AbstractAsyncContextManager
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
 
 from mirage.accessor.base import Accessor
-from mirage.accessor.pool import LoopClientCache
+from mirage.accessor.pool import ClientFactory, LoopClientCache
 from mirage.utils import key_prefix as kp
 
 
@@ -58,13 +57,11 @@ class S3Accessor(Accessor):
         # would be a cycle.
         self._clients = LoopClientCache("s3")
 
-    async def cached_client(
-            self, factory: Callable[[],
-                                    AbstractAsyncContextManager[Any]]) -> Any:
+    async def cached_client(self, factory: ClientFactory) -> Any:
         """Return this loop's open client, opening one when there is none.
 
         Args:
-            factory (Callable): builds the client context manager, called
+            factory (ClientFactory): builds the client manager, called
                 only when this loop has no client yet.
 
         Returns:

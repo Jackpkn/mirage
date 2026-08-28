@@ -20,6 +20,9 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+ClientManager = AbstractAsyncContextManager[Any]
+ClientFactory = Callable[[], ClientManager]
+
 
 @dataclass(slots=True)
 class _Entry:
@@ -34,10 +37,10 @@ class _Entry:
 
     Args:
         client (Any): the open client.
-        manager (AbstractAsyncContextManager): releases the client on exit.
+        manager (ClientManager): releases the client on exit.
     """
     client: Any
-    manager: AbstractAsyncContextManager[Any]
+    manager: ClientManager
 
 
 class LoopClientCache:
@@ -46,16 +49,18 @@ class LoopClientCache:
     A client that costs real time to build is worth keeping, but keeping it
     turns its lifetime into this object's problem: whatever used to close at
     the end of every operation no longer does. The whole point of this class
-    is that "opened" and "released" cannot drift apart, so the three ways they
-    did are structural here rather than left to each call site:
+    is that "opened" and "released" cannot drift apart, so every way they can
+    is answered structurally here rather than left to each call site:
 
     - opening is serialized per loop, so two callers that both miss cannot
       each open a client and have one of them go untracked;
-    - an entry is dropped only after its release has COMPLETED, so an exit
-      that raises or is cancelled leaves the entry retryable rather than
-      unreachable;
-    - a loop that closed still has its client released, from a later loop,
-      rather than forgotten.
+    - releasing takes ownership of its entry, so of two callers releasing the
+      same client exactly one runs `__aexit__`, and the entry is put back if
+      that exit does not complete;
+    - a loop that closed leaves nothing behind, whether or not it ever got as
+      far as an open client;
+    - `close` reports a failure rather than logging it, so a caller that
+      records "closed" only records it when everything really is.
 
     Clients bind to the loop that opened them, so the key is the loop OBJECT.
     Never `id(loop)`: CPython reuses the address of a collected loop, so a
@@ -73,13 +78,11 @@ class LoopClientCache:
         self._entries: dict[asyncio.AbstractEventLoop, _Entry] = {}
         self._locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
 
-    async def get(
-        self, factory: Callable[[], AbstractAsyncContextManager[Any]]
-    ) -> Any:
+    async def get(self, factory: ClientFactory) -> Any:
         """Return this loop's client, opening one when there is none.
 
         Args:
-            factory (Callable): builds the client context manager. Called
+            factory (ClientFactory): builds the client manager. Called
                 only on a miss, so a hit costs one dict lookup.
 
         Returns:
@@ -106,20 +109,35 @@ class LoopClientCache:
             return client
 
     async def _release(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Release one entry, forgetting it only once its exit has finished.
+        """Release one entry, keeping it if its exit does not finish.
 
         Args:
             loop (asyncio.AbstractEventLoop): the loop whose client to close.
         """
-        entry = self._entries.get(loop)
+        # Popping FIRST is what makes a release exclusive. Nothing awaits
+        # between the lookup and the pop, so of two callers sweeping the same
+        # dead loop one holds the entry and the other finds nothing, instead
+        # of both running `__aexit__` on one client. Putting it back on the
+        # way out is what keeps that safe: an exit that raises or is
+        # cancelled leaves the entry retryable rather than unreachable.
+        entry = self._entries.pop(loop, None)
         if entry is None:
             return
-        # The pops come AFTER the await on purpose. Clearing first meant a
-        # cancelled or failing shutdown dropped the entry while its client was
-        # still open, and nothing could retry it.
-        await entry.manager.__aexit__(None, None, None)
-        self._entries.pop(loop, None)
-        self._locks.pop(loop, None)
+        try:
+            await entry.manager.__aexit__(None, None, None)
+        except BaseException:
+            self._entries[loop] = entry
+            raise
+
+    def _drop_dead_locks(self) -> None:
+        """Forget the locks belonging to loops that have gone.
+
+        Swept by liveness rather than at each site that could strand one: a
+        loop whose `__aenter__` raised holds a lock and no entry, so a sweep
+        that only visited entries would pin every such loop object forever.
+        """
+        for loop in [one for one in self._locks if one.is_closed()]:
+            self._locks.pop(loop, None)
 
     async def release_dead(self) -> None:
         """Close the clients whose loop has gone.
@@ -129,31 +147,43 @@ class LoopClientCache:
         a later loop does work, so close it rather than forgetting it.
         """
         for loop in [one for one in self._entries if one.is_closed()]:
-            await self._release_logging(loop)
-
-    async def _release_logging(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Release one entry, reporting a failure instead of raising it.
-
-        Args:
-            loop (asyncio.AbstractEventLoop): the loop whose client to close.
-        """
-        try:
-            await self._release(loop)
-        except Exception as exc:
-            # Not fatal to the caller, and not silent either. The entry stays
-            # in the map, so the next `release_dead` or `close` retries it.
-            logger.debug("%s: releasing a client failed, will retry: %s",
-                         self.what, exc)
+            try:
+                await self._release(loop)
+            except Exception as exc:
+                # Logged rather than raised, and only here: this runs on the
+                # read path, where a stale client that will not close is no
+                # reason to fail the unrelated operation that noticed it. The
+                # entry stays, and `close` is where a failure is reported.
+                logger.debug(
+                    "%s: releasing a dead loop's client failed, "
+                    "will retry: %s", self.what, exc)
+        self._drop_dead_locks()
 
     async def close(self) -> None:
-        """Close every client this cache opened.
+        """Close every client this cache opened, reporting any failure.
 
-        One failure must not skip the rest, and must not lose the entry that
-        failed: every loop is attempted and anything still open stays in the
-        map for a later attempt.
+        Every loop is attempted before anything is raised, so one failure
+        cannot skip the rest, and the entry that failed stays for a later
+        attempt. The failure is then raised rather than logged, because a
+        caller that swallows it goes on to record itself as closed (see
+        `Resource.close`), and a closed resource returns early the next time,
+        so nothing could ever reach the retained entry again.
+
+        Raises:
+            Exception: the first release failure, once all were attempted.
         """
+        failures: list[Exception] = []
         for loop in list(self._entries):
-            await self._release_logging(loop)
+            try:
+                await self._release(loop)
+            except Exception as exc:
+                failures.append(exc)
+        self._drop_dead_locks()
+        for extra in failures[1:]:
+            logger.debug("%s: releasing a client also failed: %s", self.what,
+                         extra)
+        if failures:
+            raise failures[0]
 
     def open_count(self) -> int:
         """Return how many clients are currently held.
