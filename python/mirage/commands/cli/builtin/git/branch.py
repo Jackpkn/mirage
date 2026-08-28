@@ -19,6 +19,7 @@ from dulwich.refs import Ref
 from dulwich.repo import BaseRepo
 from dulwich.walk import Walker
 
+from mirage.commands.cli.builtin.git.constants import HEAD
 from mirage.commands.cli.builtin.git.errors import (  # yapf: disable
     BranchExistsError, BranchNameRequiredError, CheckedOutBranchError,
     GitError, NoBranchError, NoWorkspaceError, UnknownSwitchError,
@@ -30,7 +31,7 @@ from mirage.commands.cli.builtin.git.refs import (delete_ref, read_head,
 from mirage.commands.cli.builtin.git.revparse import resolve_commit
 from mirage.commands.cli.builtin.git.session import opened
 from mirage.commands.cli.builtin.git.types import HeadRef, RepoLocation
-from mirage.commands.cli.builtin.git.util import HEAD, check_operands, fatal
+from mirage.commands.cli.builtin.git.util import check_operands, fatal
 from mirage.commands.cli.types import CLIDoors, CLIInvocation
 from mirage.commands.spec.types import FlagView
 from mirage.io.stream import yield_bytes

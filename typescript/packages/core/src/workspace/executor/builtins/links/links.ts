@@ -15,12 +15,12 @@
 import { SPECS, parseCommand } from '../../../../commands/spec/index.ts'
 import type { FileStat } from '../../../../types.ts'
 import { FileType, PathSpec } from '../../../../types.ts'
-import { isEacces } from '../../../../utils/errors.ts'
+import { blamedPath, fsStrerror, isEacces, isEnoent, isErofs } from '../../../../utils/errors.ts'
 import { CycleError, gnuBasename } from '../../../../utils/path.ts'
 import { rstripSlash } from '../../../../utils/slash.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
-import { fail, ok, splitFlags } from '../shared.ts'
+import { fail, ok, readOnlyError, splitFlags } from '../shared.ts'
 import { statOrNull } from './probe.ts'
 import type { Result } from '../types.ts'
 
@@ -133,26 +133,75 @@ export function acceptsLine(
 
 // Unlink and drop `rm`/`unlink` operands that are symlinks. GNU rm removes
 // the link itself and never follows it; a dangling link removes fine.
+//
+// The removal is a dispatch op, never a direct table write: the door is
+// where session grants, the turf's mode, admission policies and the op
+// ledger fire, and writing the table from here let a session delete a
+// link its grant reads and a policy protecting one never fired (the same
+// hole the FUSE unlink had). A refused operand does not stop the rest,
+// which is also rm's rule for a backend operand; `-f` silences only the
+// absent (a hidden link answers ENOENT, the no-name-leak rule).
+//
+// The refusal is voiced the way the same refusal on a backend file is
+// voiced, so one grant does not describe itself two ways: a mount-mode
+// refusal renders readOnlyError (naming the mount, deduplicated because
+// two operands on one mount are one fact), everything else renders GNU's
+// per-operand line.
+//
 // An operand typed with a trailing slash is deliberately kept: the slash
 // asked for a directory, and GNU refuses rather than removing the link
 // (`rm dlink/` is "Is a directory", `unlink dlink/` is "Not a
 // directory"). Removing it here would delete exactly what the slash was
-// protecting, so the command reports it instead.
+// protecting, so the command reports it instead. Returns the surviving
+// parts, the number of link operands consumed (removed, refused or
+// force-silenced), and the refusal lines. Mirrors Python's
+// strip_link_operands.
 export async function stripLinkOperands(
+  name: string,
+  dispatch: DispatchFn,
   namespace: Namespace,
   items: (string | PathSpec)[],
-): Promise<[(string | PathSpec)[], number]> {
-  let removed = 0
+  args: readonly string[],
+  cwd: string,
+): Promise<[(string | PathSpec)[], number, string[]]> {
+  let force = false
+  if (name === 'rm') {
+    const spec = SPECS.rm
+    if (spec !== undefined) {
+      // Keyed by the dashed spelling the line used, not the dest.
+      force = parseCommand(spec, [...args], cwd).flags['-f'] === true
+    }
+  }
+  const verb = name === 'rm' ? 'remove' : 'unlink'
+  let handled = 0
+  const errors: string[] = []
   const kept: (string | PathSpec)[] = []
   for (const item of items) {
     if (item instanceof PathSpec && !item.rawPath.endsWith('/') && namespace.isLink(item.virtual)) {
-      await namespace.unlink(item.virtual)
-      removed += 1
+      handled += 1
+      try {
+        await dispatch('unlink', item)
+      } catch (err) {
+        const suffix = fsStrerror(err)
+        if (suffix === null) throw err
+        if (isEnoent(err) && force) continue
+        if (isErofs(err)) {
+          // The mount voice, because the mount is what refused: a
+          // backend file on this operand's turf is answered by
+          // Mount.executeCmd with this exact line, and one grant must
+          // not describe itself two ways depending on whether the name
+          // it stopped was a link.
+          const line = readOnlyError(name, namespace, item)
+          if (!errors.includes(line)) errors.push(line)
+          continue
+        }
+        errors.push(`${name}: cannot ${verb} '${item.rawPath}': ${suffix}\n`)
+      }
       continue
     }
     kept.push(item)
   }
-  return [kept, removed]
+  return [kept, handled, errors]
 }
 
 // GNU's refusal for an `mv` source that is a link typed with a slash.
@@ -241,11 +290,20 @@ export async function prepareMv(
     try {
       await dispatch('rename', src, [PathSpec.fromStrPath(targetDst)])
     } catch (err) {
-      // PolicyDenied and a read-only mount both stamp EACCES.
-      if (!isEacces(err)) throw err
+      const suffix = fsStrerror(err)
+      if (suffix === null || (!isEacces(err) && !isErofs(err))) throw err
+      // Voiced as the same refusal on a backend file is: the mount
+      // voice when the source's own turf is what refused (the case
+      // Mount.executeCmd answers, since the command runs on the source
+      // mount), GNU's per-operand line when it was the destination --
+      // which is what a cross-mount `mv f /ro/f` already answers for a
+      // regular file. A policy deny is always per operand.
+      const blame = isErofs(err) ? (blamedPath(err) ?? src.virtual) : ''
       const early: Result = fail(
         'mv',
-        `mv: cannot move '${src.rawPath}' to '${dst.rawPath}': Permission denied\n`,
+        blame === src.virtual
+          ? readOnlyError('mv', namespace, src)
+          : `mv: cannot move '${src.rawPath}' to '${dst.rawPath}': ${suffix}\n`,
       )
       return { items, postUnlink: null, postRename: null, early }
     }

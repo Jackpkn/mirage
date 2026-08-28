@@ -16,8 +16,10 @@ import posixpath
 
 from mirage.runtime.types import DispatchFn
 from mirage.types import PathSpec, word_text
+from mirage.utils.errors import ReadOnlyError, fs_strerror
 from mirage.utils.path import CycleError
 from mirage.workspace.executor.builtins.shared import (abs_path, fail, ok,
+                                                       read_only_error,
                                                        split_flags)
 from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
@@ -110,10 +112,16 @@ async def handle_ln(
         return fail(
             "ln", f"ln: failed to create symbolic link "
             f"'{word_text(operands[1])}': File exists\n")
-    except PermissionError:
+    except ReadOnlyError:
+        # The mount voice, as `touch` on the same read-only mount
+        # answers: the refusal is about the mount, and one grant must
+        # not describe itself two ways.
+        return fail("ln", read_only_error("ln", namespace, link_spec))
+    except PermissionError as exc:
+        # A policy deny, which ln voices as its own per-operand line.
         return fail(
             "ln", f"ln: failed to create symbolic link "
-            f"'{word_text(operands[1])}': Permission denied\n")
+            f"'{word_text(operands[1])}': {fs_strerror(exc)}\n")
     out = None
     if "v" in flags:
         out = (f"'{word_text(operands[1])}' -> '{target_typed}'\n").encode()

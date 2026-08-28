@@ -15,9 +15,8 @@
 from mirage.accessor.history import HistoryAccessor
 from mirage.commands.builtin.aggregators import wc_aggregate
 from mirage.commands.builtin.generic.wc import wc_generic
-from mirage.commands.builtin.generic_bind.adapter import dir_aware_stream
-from mirage.commands.builtin.generic_bind.builders.common import \
-    resolve_or_empty
+from mirage.commands.builtin.generic_bind.adapter import (dir_aware_stream,
+                                                          resolve_or_empty)
 from mirage.commands.builtin.history.io import IO
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command

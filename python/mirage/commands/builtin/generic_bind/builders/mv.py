@@ -16,7 +16,7 @@ from functools import partial
 
 from mirage.accessor.base import Accessor
 from mirage.commands.builtin.generic.mv import mv as generic_mv
-from mirage.commands.builtin.generic.mv import parse_mv_flags
+from mirage.commands.builtin.generic.mv import parse_flags
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation, bound_op,
                                                           refuse_reveal)
@@ -34,7 +34,7 @@ async def mv(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     if not ops.is_mounted(accessor):
         raise ValueError("mv: no resource")
     fl = FlagView(opts.flags, spec=SPECS["mv"])
-    parsed = parse_mv_flags(fl)
+    parsed = parse_flags(fl)
     paths = await ops.resolve_glob(accessor, paths, opts.index)
     overlay = opts.ns.stat_overlay if opts.ns is not None else None
     return await generic_mv(

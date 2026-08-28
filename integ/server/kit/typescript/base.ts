@@ -19,7 +19,7 @@ import type { ClientCtor, MinimalClient } from './db.ts'
 import type { KitConfig } from './config.ts'
 import type { Dmmf } from './seed.ts'
 import type { KitRoute } from './route.ts'
-import type { JsonValue, MintSharing, ResetResponse } from './types.ts'
+import type { JsonValue, MintSharing, Reply, ResetResponse } from './types.ts'
 
 // What a service implements. Everything else in the kit is machinery around
 // these five members: there is no base class to extend and no lifecycle to
@@ -42,6 +42,15 @@ export interface Fake<C extends MinimalClient> {
     extras: Record<string, JsonValue>,
   ) => Promise<void>
   defaultTenants?: string[]
+  // How this fake refuses a tenant it was never seeded with, and by being
+  // present, THAT it refuses one at all. Declaring it is opt-in for the same
+  // reason tenantFromBearer is: what an unseeded tenant means is the vendor's
+  // question, not the kit's. Notion hands an integration one workspace that
+  // has to exist, so an unknown one is a bad token. Dropbox mints an account
+  // per mount and never resets it, so an unseeded tenant there is an ordinary
+  // EMPTY account and refusing it broke every dropbox case. A fake that says
+  // nothing keeps serving unseeded tenants, which is what it did before.
+  unknownTenant?: (tenant: string) => Reply
 }
 
 // Per-TENANT mutable state. These were per-run until /reset learned to scope
@@ -60,6 +69,11 @@ export interface TenantState {
 // other's ids; this is now that guarantee one level finer.
 export class RunState {
   private readonly tenants = new Map<string, TenantState>()
+  // The tenants this run has actually been seeded with, which `tenants` alone
+  // cannot answer: `of` mints state for ANY legal name on first sight, so a
+  // tenant nobody seeded is indistinguishable from a seeded one until the
+  // fake's first query comes back empty. Only `reset` records here.
+  private readonly seeded = new Set<string>()
   private readonly sharing: MintSharing
   private readonly format: string
 
@@ -79,10 +93,24 @@ export class RunState {
     return made
   }
 
+  // Starting a reset UNMARKS the tenant, and only markSeeded re-marks it. The
+  // two are separate because a reset that throws half way through leaves a
+  // world that is partly the old fixture and partly nothing: marking here
+  // would serve that as valid, and never unmarking would serve a failed
+  // RESEED of an already-good tenant the same way.
   reset(tenant: string, epoch?: string): void {
     const st = this.of(tenant)
     st.clock.setEpoch(epoch)
     st.minter.reset()
+    this.seeded.delete(tenant)
+  }
+
+  markSeeded(tenant: string): void {
+    this.seeded.add(tenant)
+  }
+
+  isSeeded(tenant: string): boolean {
+    return this.seeded.has(tenant)
   }
 }
 

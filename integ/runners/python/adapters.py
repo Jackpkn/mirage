@@ -1660,44 +1660,60 @@ class NotionService:
     across both hosts. The token doubles as the workspace id, the way a real
     Notion integration token scopes you to one workspace.
 
-    It is NOT minted per run, and notion is the only kit fake that cannot be:
-    the token is observable. `ntn auth token` prints the CLI's configured value
-    without contacting the server, integ/cli/ntn.json pins that literal, and
-    integ/ntn_conformance.ts asserts the same line against the real ntn binary,
-    which it configures with this same fixed token. A per-run token would make
-    those two runs print different things with one golden between them. So the
-    hosts share this workspace and must not reset it concurrently; the scoped
-    reset still buys the sequential case, where a reset no longer destroys the
-    whole run file out from under the other host.
+    The token is NOT minted per run, and notion is the only kit fake whose
+    token cannot be: it is observable. `ntn auth token` prints the CLI's
+    configured value without contacting the server, integ/cli/ntn.json pins
+    that literal, and integ/ntn_conformance.ts asserts the same line against
+    the real ntn binary, which it configures with this same fixed token. A
+    per-run token would make those two runs print different things with one
+    golden between them.
+
+    So the RUN is the axis that separates the hosts, and it rides the base URL
+    as a leading `/_run/<id>` segment. A header or a query parameter cannot do
+    this job: the mount hands its base URL to the resource and never sees the
+    request again. With the run in the URL the two hosts keep the one shared
+    token, get a SQLite file each, and can reset concurrently.
 
     Args:
         url (str): NOTION_URL origin (the REST surface lives under /v1).
         token (str): the shared workspace token.
+        run_id (str): this run's id, which names its own server-side file.
     """
 
-    def __init__(self, url: str, token: str) -> None:
+    def __init__(self, url: str, token: str, run_id: str) -> None:
         self.url = url
         self.token = token
+        self.run_id = run_id
+
+    @property
+    def base(self) -> str:
+        """Return the run-scoped origin every mount and CLI is pointed at.
+
+        Returns:
+            str: the origin with this run's `/_run/<id>` prefix.
+        """
+        return f"{self.url}/_run/{self.run_id}"
 
     @classmethod
-    async def create(cls) -> "NotionService":
+    async def create(cls, run_id: str) -> "NotionService":
         url = os.environ["NOTION_URL"].rstrip("/")
         token = NOTION_TOKEN
+        made = cls(url, token, run_id)
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{url}/reset", json={"tenants":
-                                                          [token]}) as resp:
+            async with session.post(f"{made.base}/reset",
+                                    json={"tenants": [token]}) as resp:
                 resp.raise_for_status()
-        return cls(url, token)
+        return made
 
     def resource(self, mount: dict) -> NotionResource:
-        return NotionResource(
-            config=NotionConfig(api_key=self.token, base_url=f"{self.url}/v1"))
+        return NotionResource(config=NotionConfig(api_key=self.token,
+                                                  base_url=f"{self.base}/v1"))
 
     def cli_installs(self) -> dict[str, tuple[CLISpec, dict[str, object]]]:
         return {
             "ntn": (cli_spec_for("ntn"), {
                 "api_key": self.token,
-                "base_url": f"{self.url}/v1",
+                "base_url": f"{self.base}/v1",
             }),
         }
 
@@ -2533,7 +2549,7 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
     if target.get("service") == "lancedb":
         return await LanceDBService.create(target)
     if target.get("service") == "notion":
-        return await NotionService.create()
+        return await NotionService.create(run_id)
     if target.get("service") == "ssh":
         return await SSHService.create(run_id, target)
     if target.get("service") == "nextcloud":

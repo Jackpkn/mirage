@@ -491,7 +491,13 @@ export class MountEntry {
               for (const cmd of handlers) {
                 // strongestModeUnder, not effectiveMode: a mount whose
                 // only writable region is a show entry still runs the
-                // command, and the op door refuses per path.
+                // command, and the op door refuses per path. The
+                // trailing newline is load-bearing: stderr accumulates
+                // across a line, so two refusals in one list ran
+                // together as `...at /ro/rm: read-only mount at /ro/`,
+                // and the node table's twin of this refusal (a symlink
+                // `rm`, rendered by shared.readOnlyError) concatenates
+                // with it.
                 if (
                   cmd.write &&
                   !infoOnly &&
@@ -502,7 +508,7 @@ export class MountEntry {
                     new IOResult({
                       exitCode: 1,
                       stderr: new TextEncoder().encode(
-                        `${cmdName}: read-only mount at ${this.prefix}`,
+                        `${cmdName}: read-only mount at ${this.prefix}\n`,
                       ),
                     }),
                   ]

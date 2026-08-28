@@ -28,7 +28,7 @@ from mirage.types import Limit, PathSpec, ResourceName
 
 # The group-level flag bag the walk accumulates, keyed by canonical
 # dashed spelling like ParsedArgs.flags.
-FlagBag = dict[str, ParsedFlagValue]
+WalkFlagBag = dict[str, ParsedFlagValue]
 
 ConfigT = TypeVar("ConfigT")
 
@@ -243,7 +243,7 @@ class WalkResult:
     """
     leaf: "CLISpec | None" = None
     path: tuple[str, ...] = ()
-    group_flags: FlagBag = field(default_factory=dict)
+    group_flags: WalkFlagBag = field(default_factory=dict)
     argv: tuple[str, ...] = ()
     output: bytes = b""
     stream: Literal["stdout", "stderr"] = "stdout"

@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.commands.cli.builtin.git.constants import HEAD
 from mirage.commands.cli.builtin.git.errors import (GitError,
                                                     UnrecognizedArgumentError)
 from mirage.commands.cli.types import CLIDoors
@@ -21,7 +22,6 @@ from mirage.io.types import ByteSource, IOResult
 from mirage.ops.types import LinkView
 
 ROOT = "/"
-HEAD = "HEAD"
 STDOUT = "stdout"
 
 

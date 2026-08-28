@@ -140,6 +140,50 @@ async def test_getattr_of_a_link_reports_the_nodes_own_row():
 
 
 @pytest.mark.asyncio
+async def test_scoped_mount_may_not_touch_a_link_on_hidden_turf():
+    # Both halves of one hole: a session-scoped kernel mount could
+    # write the namespace table directly, at a layer no session view
+    # covers. Creation was closed by routing through the op door;
+    # removal stayed open until unlink stopped calling the table too.
+    # The two refusals differ by design: symlink is a create, which
+    # answers EACCES because "does not exist" is nonsense as the answer
+    # to a name the caller spelled out, while every other op on a
+    # hidden path answers ENOENT under the no-name-leak rule.
+    ws = Workspace({
+        "/data/": RAMResource(),
+        "/extra/": RAMResource()
+    },
+                   mode=MountMode.WRITE)
+    await ws.execute("tee /data/greeting.txt", stdin=b"hello")
+    await ws.execute("tee /extra/secret.txt", stdin=b"classified")
+    await ws.execute("ln -s secret.txt /extra/lk")
+    sess = ws.create_session("agent", profile={"paths": {"hide": ["/extra"]}})
+    core = MountCore(ws.ops, session=sess)
+
+    with pytest.raises(OSError) as created:
+        core.symlink("/extra/lk2", "/data/greeting.txt")
+    assert created.value.errno == errno.EACCES
+    with pytest.raises(OSError) as removed:
+        core.unlink("/extra/lk")
+    assert removed.value.errno == errno.ENOENT
+    assert ws.namespace.is_link("/extra/lk")
+
+
+@pytest.mark.asyncio
+async def test_unlink_removes_a_link_and_keeps_its_target():
+    # The other side of routing removal through the door: an unscoped
+    # mount still drops the link entry, and only that, the way
+    # unlink(2) on a symlink leaves the pointee alone.
+    ws = Workspace({"/": RAMResource()}, mode=MountMode.WRITE)
+    await ws.execute("tee /f.txt", stdin=b"body")
+    await ws.execute("ln -s f.txt /lk")
+    core = MountCore(ws.ops)
+    core.unlink("/lk")
+    assert not ws.namespace.is_link("/lk")
+    assert (await ws.execute("cat /f.txt")).stdout == b"body"
+
+
+@pytest.mark.asyncio
 async def test_xattrs_round_trip(seeded):
     seeded.setxattr("/a.txt", "user.tag", b"v1")
     assert seeded.getxattr("/a.txt", "user.tag") == b"v1"

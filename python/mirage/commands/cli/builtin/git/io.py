@@ -15,7 +15,7 @@
 import logging
 import posixpath
 
-from mirage.commands.cli.builtin.git.types import SYMLINK
+from mirage.commands.cli.builtin.git.constants import SYMLINK
 from mirage.ops.types import LinkView
 from mirage.runtime.types import DispatchFn
 from mirage.types import LINK_TARGET_KEY, FileStat, FileType, PathSpec

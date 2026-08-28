@@ -26,6 +26,33 @@
         "stdout": "",
         "stderr": "find: invalid argument 'abc' to '-maxdepth'\n"
       }
+    },
+    {
+      "id": "find_arg_maxdepth_trailing",
+      "seq": 320004,
+      "targets": [
+        "argerr-databricks",
+        "argerr-discord",
+        "argerr-email",
+        "argerr-gdocs",
+        "argerr-gdrive",
+        "argerr-gmail",
+        "argerr-gsheets",
+        "argerr-gslides",
+        "argerr-langfuse",
+        "argerr-linear",
+        "argerr-mem0",
+        "argerr-onedrive",
+        "argerr-sharepoint",
+        "argerr-slack",
+        "argerr-trello"
+      ],
+      "command": "find {mount} -maxdepth 12abc",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "find: invalid argument '12abc' to '-maxdepth'\n"
+      }
     }
   ]
 }

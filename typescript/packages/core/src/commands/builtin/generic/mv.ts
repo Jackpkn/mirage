@@ -88,7 +88,7 @@ function isPrimitiveMove(strategy: MoveStrategy): strategy is PrimitiveMove {
 // no-ops (non-interactive control plane: overwrite always proceeds unless
 // -n/--update say otherwise), and --strip-trailing-slashes is a no-op
 // because PathSpec already normalizes trailing slashes.
-export function parseMvFlags(fl: FlagView): MvFlags {
+export function parseFlags(fl: FlagView): MvFlags {
   const update = updateMode('mv', fl)
   const suffix = suffixFlag(fl)
   const control = backupControl('mv', backupRaw(fl), suffix)

@@ -80,6 +80,9 @@ interface CallOpts {
   body?: JsonValue
   run?: string
   tenant?: string
+  // Address the run through the URL instead of the header, which is the only
+  // spelling a mount handing its base URL to an SDK can actually use.
+  runInPath?: string
 }
 
 async function call(
@@ -90,7 +93,8 @@ async function call(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (opts.run !== undefined) headers['x-mirage-run'] = opts.run
   if (opts.tenant !== undefined) headers['x-mirage-tenant'] = opts.tenant
-  const res = await fetch(`${fake.endpoint}${path}`, {
+  const prefix = opts.runInPath === undefined ? '' : `/_run/${opts.runInPath}`
+  const res = await fetch(`${fake.endpoint}${prefix}${path}`, {
     method: opts.method ?? 'GET',
     headers,
     ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
@@ -534,6 +538,137 @@ async function main(): Promise<void> {
       'a stray positional fails the launch too',
       refusedWord.includes('exited 1'),
       refusedWord === '' ? 'launched ANYWAY' : (refusedWord.split('\n')[0] ?? ''),
+    )
+
+    process.stdout.write('\n16. a tenant nobody seeded is refused, not crashed\n')
+    // The failure this covers reached the caller as a 500 carrying whatever
+    // the fake's own query threw, which reads as a crashed service: a
+    // container healthcheck that probes with a credential marked the fake
+    // permanently unhealthy. Both routes to an unseeded tenant are checked,
+    // because they were two separate 500s with one cause.
+    const ghost = await call(fake, '/boards', { run: 'p', tenant: 'never-seeded' })
+    check('an unseeded tenant is 401, not 500', ghost.status === 401, JSON.stringify(ghost.json))
+    check(
+      'and the refusal names the tenant it did not find',
+      JSON.stringify(ghost.json).includes('never-seeded'),
+      JSON.stringify(ghost.json),
+    )
+    // Reading a tenant must not bring it into being. `of()` mints per-tenant
+    // state for any legal name on first sight, so a check written against that
+    // map would answer 401 once and then serve an empty world forever after.
+    const again = await call(fake, '/boards', { run: 'p', tenant: 'never-seeded' })
+    check('and asking twice is still 401', again.status === 401, JSON.stringify(again.json))
+    const born = await call(fake, '/reset', {
+      method: 'POST',
+      body: { run: 'p', tenants: ['never-seeded'] },
+    })
+    check('seeding it is 200', born.status === 200, JSON.stringify(born.json))
+    check(
+      'and now the same request is served',
+      (await call(fake, '/boards', { run: 'p', tenant: 'never-seeded' })).status === 200,
+      JSON.stringify((await call(fake, '/boards', { run: 'p', tenant: 'never-seeded' })).json),
+    )
+    // A run is its own file, so seeding a tenant in one run says nothing about
+    // the same name in another.
+    const elsewhere = await call(fake, '/boards', { run: 'q', tenant: 'never-seeded' })
+    check(
+      'the same name in another run is still unseeded',
+      elsewhere.status === 401,
+      JSON.stringify(elsewhere.json),
+    )
+
+    process.stdout.write('\n17. a run can be addressed by URL, not just by header\n')
+    // The header and the query parameter are only reachable by a caller that
+    // builds its own requests. Every mount here hands a base URL to a vendor
+    // SDK and never sees the request again, which is why the run axis went
+    // unused and the tenant column was made to carry host isolation instead.
+    // A path prefix is just part of the base URL, so it survives the trip.
+    const seedU = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'u1',
+      body: { tenants: ['shared'] },
+    })
+    check(
+      'a reset under /_run/<id> resets THAT run',
+      (seedU.json as { run: string }).run === 'u1',
+      JSON.stringify(seedU.json),
+    )
+    await call(fake, '/reset', { method: 'POST', runInPath: 'u2', body: { tenants: ['shared'] } })
+    // The same tenant name in both, which is the point: notion's bearer token
+    // is echoed by `ntn auth token` and pinned by a golden, so it CANNOT be
+    // minted per run. The run has to be the axis that separates two hosts.
+    const wroteU1 = await call(fake, '/boards/brd_1/cards', {
+      method: 'POST',
+      runInPath: 'u1',
+      tenant: 'shared',
+      body: { title: 'only-in-u1' },
+    })
+    check('a write into run u1 is 201', wroteU1.status === 201, JSON.stringify(wroteU1.json))
+    check(
+      'u1 sees it',
+      titles(
+        (await call(fake, '/boards/brd_1/cards', { runInPath: 'u1', tenant: 'shared' })).json,
+      ).includes('only-in-u1'),
+      JSON.stringify(
+        titles(
+          (await call(fake, '/boards/brd_1/cards', { runInPath: 'u1', tenant: 'shared' })).json,
+        ),
+      ),
+    )
+    check(
+      'and u2 does NOT, under the very same tenant name',
+      !titles(
+        (await call(fake, '/boards/brd_1/cards', { runInPath: 'u2', tenant: 'shared' })).json,
+      ).includes('only-in-u1'),
+      JSON.stringify(
+        titles(
+          (await call(fake, '/boards/brd_1/cards', { runInPath: 'u2', tenant: 'shared' })).json,
+        ),
+      ),
+    )
+    const noPrefix = await call(fake, '/boards')
+    check(
+      'an unprefixed URL still means the default run',
+      noPrefix.status === 200,
+      JSON.stringify(noPrefix.json),
+    )
+    const badRun = await call(fake, '/boards', { runInPath: 'bad%2Fname' })
+    check(
+      'an illegal run in the path is 400, not 500',
+      badRun.status === 400,
+      JSON.stringify(badRun.json),
+    )
+    // decodeURIComponent throws a URIError on this, which is not a TenantError
+    // and so reached the 500 envelope: a typed URL reported as a fake bug.
+    const badEscape = await call(fake, '/boards', { runInPath: '%ZZ' })
+    check(
+      'a malformed percent escape in the run is 400, not 500',
+      badEscape.status === 400,
+      JSON.stringify(badEscape.json),
+    )
+    // The prefix fills in an ABSENT run only. Overwriting a malformed one
+    // turned a request that owes a 400 into a successful reset.
+    for (const bad of [12, '']) {
+      const malformed = await call(fake, '/reset', {
+        method: 'POST',
+        runInPath: 'u1',
+        body: { run: bad, tenants: ['shared'] },
+      })
+      check(
+        `a malformed body run ${JSON.stringify(bad)} is still refused`,
+        malformed.status === 400,
+        JSON.stringify(malformed.json),
+      )
+    }
+    const clash = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'u1',
+      body: { run: 'u2', tenants: ['shared'] },
+    })
+    check(
+      'a body naming a different run than the prefix is refused',
+      clash.status === 400,
+      JSON.stringify(clash.json),
     )
 
     process.stdout.write(`\nselftest: ${String(checks)} checks passed\n`)

@@ -17,6 +17,7 @@ import type { Dmmf, Fake } from '../kit/typescript/index.ts'
 import { config } from './config.ts'
 import type { C } from './config.ts'
 import { notionRoutes } from './routes.ts'
+import { apiError } from './wire.ts'
 
 export const notionFake: Fake<C> = {
   config,
@@ -37,5 +38,9 @@ export const notionFake: Fake<C> = {
   // fake this replaces seeded at startup; the battery resets to a per-run
   // tenant on top of it.
   defaultTenants: ['integ-test'],
+  // Notion cannot tell an unknown token from a malformed one, and says the
+  // same thing about both, so this is word for word what `unauthorized`
+  // answers a request carrying no token at all.
+  unknownTenant: () => apiError(401, 'unauthorized', 'API token is invalid.'),
   routes: notionRoutes,
 }

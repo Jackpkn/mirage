@@ -20,6 +20,7 @@ export const RUN_HEADER = 'x-mirage-run'
 export const TENANT_HEADER = 'x-mirage-tenant'
 export const RUN_QUERY = '_run'
 export const TENANT_QUERY = '_tenant'
+export const RUN_PREFIX = '_run'
 export const DEFAULT_RUN = 'default'
 export const DEFAULT_TENANT = 'default'
 export const TENANT_FIELD = 'tenant'
@@ -55,9 +56,39 @@ export function checkName(kind: string, value: string): string {
   return value
 }
 
+// decodeURIComponent throws a URIError on a malformed escape (`/_run/%ZZ`),
+// which is caller-controlled input and so must arrive as the same 400 an
+// illegal NAME gets. Left as a URIError it reached the internal 500 envelope,
+// which reports a fake bug for a typed URL.
+function decodeRun(raw: string): string {
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    throw new TenantError(`invalid run name: ${JSON.stringify(raw)}`)
+  }
+}
+
+// The run also rides the URL, as a LEADING PATH SEGMENT, and that is the
+// spelling a harness can actually use. The header and the query parameter are
+// only reachable by a caller that builds its own requests; every mount here
+// hands its base URL to a vendor SDK and never sees the request again, so
+// neither survives the trip. A path prefix does, because it is just part of
+// the base URL: `http://host/_run/<id>/v1` needs nothing of the client.
+// Returns the run it stripped, if any, and the path the router should match.
+export function splitRunPath(pathname: string): { run?: string; path: string } {
+  const parts = pathname.split('/')
+  if (parts.length < 3 || parts[1] !== RUN_PREFIX) return { path: pathname }
+  const run = checkName('run', decodeRun(parts[2] ?? ''))
+  const rest = parts.slice(3).join('/')
+  return { run, path: rest === '' ? '/' : `/${rest}` }
+}
+
 // A run is its own SQLite file, so it is resolved before any query runs
-// and never reaches a WHERE clause.
-export function resolveRun(headers: Headers, url: URL): string {
+// and never reaches a WHERE clause. The path segment wins over the header and
+// the query because it is the one a mount can carry, so a base URL naming a
+// run cannot be overridden by an ambient header the caller forgot to drop.
+export function resolveRun(headers: Headers, url: URL, fromPath?: string): string {
+  if (fromPath !== undefined) return fromPath
   const raw = headerValue(headers, RUN_HEADER) ?? url.searchParams.get(RUN_QUERY) ?? undefined
   return raw === undefined || raw === '' ? DEFAULT_RUN : checkName('run', raw)
 }

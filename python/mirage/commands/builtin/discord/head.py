@@ -19,9 +19,8 @@ from mirage.commands.builtin.discord._provision import file_read_provision
 from mirage.commands.builtin.discord.io import IO
 from mirage.commands.builtin.generic.head import head as generic_head
 from mirage.commands.builtin.generic.head import head_generic, parse_flags
-from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.generic_bind.builders.common import \
-    resolve_or_empty
+from mirage.commands.builtin.generic_bind.adapter import (bound_op,
+                                                          resolve_or_empty)
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS

@@ -194,6 +194,16 @@ export const selftestFake: Fake<C> = {
   client: PrismaClient,
   dmmf: Prisma.dmmf as unknown as Dmmf,
   defaultTenants: ['default'],
+  // Opted in, because the refusal is opt-in and this is where it is covered.
+  // A fake that says nothing here keeps serving unseeded tenants, which is
+  // what dropbox and the other lazily-created accounts need.
+  unknownTenant: (tenant: string) => ({
+    status: 401,
+    body: {
+      error: 'unknown_tenant',
+      message: `selftest fake: no tenant ${tenant}; seed it with /reset`,
+    },
+  }),
   routes: (): KitRoute<C>[] => [
     route('GET', '/boards', listBoards),
     route('GET', '/boards/:board/cards', listCards),

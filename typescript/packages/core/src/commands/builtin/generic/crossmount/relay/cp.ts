@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PathSpec } from '../../../../../types.ts'
-import { cpGeneric, parseCpFlags } from '../../cp.ts'
+import { cpGeneric, parseFlags } from '../../cp.ts'
 import type { CrossResult, DispatchFn } from '../types.ts'
 import { flatten, readBytesOp, readdirOp, statOp } from '../utils.ts'
 import type { FlagValue } from '../../../../spec/types.ts'
@@ -46,7 +46,7 @@ export async function runCp(
     flat,
     stat,
     { readBytes, write, mkdir, readdir },
-    parseCpFlags(new FlagView(flagKwargs, specOf('cp'))),
+    parseFlags(new FlagView(flagKwargs, specOf('cp'))),
     undefined,
     storageKey,
   )

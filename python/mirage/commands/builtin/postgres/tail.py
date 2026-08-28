@@ -18,9 +18,8 @@ from mirage.accessor.postgres import PostgresAccessor
 from mirage.commands.builtin.generic.tail import parse_flags
 from mirage.commands.builtin.generic.tail import tail as generic_tail
 from mirage.commands.builtin.generic.tail import tail_generic
-from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.generic_bind.builders.common import \
-    resolve_or_empty
+from mirage.commands.builtin.generic_bind.adapter import (bound_op,
+                                                          resolve_or_empty)
 from mirage.commands.builtin.postgres.io import IO
 from mirage.commands.builtin.utils.paths import has_unresolved_glob
 from mirage.commands.config import CommandOpts

@@ -20,6 +20,7 @@ from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat, FileType, PathSpec
 from mirage.utils.errors import format_fs_error
 from mirage.utils.path import CycleError
+from mirage.workspace.executor.builtins.shared import read_only_error
 from mirage.workspace.mount.namespace import Namespace
 
 _TOUCH_STAMP_RE = re.compile(r"(\d{8}|\d{10}|\d{12})(\.\d{2})?")
@@ -118,18 +119,6 @@ def parse_touch_stamp(t: str | None, d: str | None) -> str | None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def read_only_error(cmd: str, namespace: Namespace, path: PathSpec) -> str:
-    """Render the mirage read-only refusal for a metadata write.
-
-    Args:
-        cmd (str): command name.
-        namespace (Namespace): addressing authority (mount lookup).
-        path (PathSpec): the refused path.
-    """
-    prefix = namespace.mount_for(path.virtual).prefix
-    return f"{cmd}: read-only mount at {prefix}\n"
 
 
 def permission_error(cmd: str, namespace: Namespace, path: PathSpec,

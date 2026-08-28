@@ -24,6 +24,7 @@ from dulwich.refs import Ref
 from dulwich.repo import BaseRepo
 
 from mirage.commands.cli.builtin.git.changes import head_entries, work_changes
+from mirage.commands.cli.builtin.git.constants import HEAD
 from mirage.commands.cli.builtin.git.errors import (  # yapf: disable
     BadStartPointError, BranchExistsError, CheckoutConflictError, GitError,
     NoWorkspaceError, UnknownPathspecError, UnknownSwitchError)
@@ -39,7 +40,7 @@ from mirage.commands.cli.builtin.git.reset import restored
 from mirage.commands.cli.builtin.git.revparse import resolve_commit
 from mirage.commands.cli.builtin.git.session import opened
 from mirage.commands.cli.builtin.git.types import RepoLocation
-from mirage.commands.cli.builtin.git.util import (HEAD, check_operands, fatal,
+from mirage.commands.cli.builtin.git.util import (check_operands, fatal,
                                                   links_of)
 from mirage.commands.cli.builtin.git.worktree import UNTRACKED_ALL, scan
 from mirage.commands.cli.types import CLIDoors, CLIInvocation

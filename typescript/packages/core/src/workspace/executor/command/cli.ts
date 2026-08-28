@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { CLI_CONFIG_ENV } from '../../../commands/cli/constants.ts'
-import { CLAP_EXIT, clapMissingOperands, leafRefusal } from '../../../commands/cli/refusal.ts'
+import { CLAP_EXIT, CLI_CONFIG_ENV } from '../../../commands/cli/constants.ts'
+import { clapMissingOperands, leafRefusal } from '../../../commands/cli/refusal.ts'
 import { CLISpec, type CLIInvocation, type CLIDoors } from '../../../commands/cli/types.ts'
 import { ownsArgv, walk } from '../../../commands/cli/walk.ts'
 import type { DispatchFn } from '../../../runtime/types.ts'

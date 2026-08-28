@@ -55,7 +55,7 @@ interface RgFlags {
   hidden: boolean
 }
 
-function parseRgFlags(fl: FlagView): RgFlags {
+function parseFlags(fl: FlagView): RgFlags {
   const a = fl.asInt('A')
   const b = fl.asInt('B')
   const c = fl.asInt('C')
@@ -108,7 +108,7 @@ export async function rgGeneric(
       new IOResult({ exitCode: 2, stderr: ENC.encode('rg: usage: rg [flags] pattern [path]\n') }),
     ]
   }
-  const flags = parseRgFlags(new FlagView(opts.flags, specOf('rg')))
+  const flags = parseFlags(new FlagView(opts.flags, specOf('rg')))
   if (resolution.neverMatch) flags.fixedString = false
   // ripgrep labels when searching multiple files; -H forces the label for a
   // single file and -I suppresses it (cross-mount fanout forces -H so

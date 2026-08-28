@@ -22,12 +22,12 @@ import { FlagView, type FlagValue } from '../../spec/types.ts'
 
 const ENC = new TextEncoder()
 
-export interface TeeOptions {
+export interface TeeFlags {
   append: boolean
   stopOnError: boolean
 }
 
-export function parseTeeFlags(flags: Record<string, FlagValue>): TeeOptions {
+export function parseFlags(flags: Record<string, FlagValue>): TeeFlags {
   // --output-error values are validated declaratively: the spec's
   // choices= makes the parser report any other value and the executor
   // refuse with GNU's ARGMATCH shape before tee runs. Only the exit/warn
@@ -53,7 +53,7 @@ export async function teeGeneric(
   if (paths.length === 0) {
     return [null, new IOResult({ exitCode: 1, stderr: ENC.encode('tee: missing operand\n') })]
   }
-  const parsed = parseTeeFlags(opts.flags)
+  const parsed = parseFlags(opts.flags)
   const stdinData = await readStdinAsync(opts.stdin)
   const raw: Uint8Array = stdinData ?? ENC.encode(texts.join(' '))
   return writeOutput(paths, raw, parsed, stream, write, append)
@@ -71,7 +71,7 @@ export async function teeGeneric(
 async function writeOne(
   path: PathSpec,
   raw: Uint8Array,
-  parsed: TeeOptions,
+  parsed: TeeFlags,
   stream: (p: PathSpec) => AsyncIterable<Uint8Array>,
   write: (p: PathSpec, data: Uint8Array) => Promise<void>,
   append: ((p: PathSpec, data: Uint8Array) => Promise<void>) | undefined,
@@ -120,7 +120,7 @@ async function writeOne(
 export async function writeOutput(
   paths: PathSpec[],
   raw: Uint8Array,
-  parsed: TeeOptions,
+  parsed: TeeFlags,
   stream: (p: PathSpec) => AsyncIterable<Uint8Array>,
   write: (p: PathSpec, data: Uint8Array) => Promise<void>,
   append?: (p: PathSpec, data: Uint8Array) => Promise<void>,

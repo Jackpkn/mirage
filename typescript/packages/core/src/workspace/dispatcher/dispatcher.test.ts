@@ -281,3 +281,85 @@ describe('the fenced remnant cascade rides the mount revisions', () => {
     }
   }, 30_000)
 })
+
+describe('the turf mode gates the node table', () => {
+  it('a read grant refuses link writes like file writes', async () => {
+    // The mode gate on the table ops. A read grant refused a file's
+    // unlink with EROFS while the same session deleted, created and
+    // renamed its sibling link: the table verbs ran no mode check at
+    // all, so `mounts: {"/extra": "read"}` protected everything on the
+    // mount except its names.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/extra': new RAMResource() },
+      { mode: MountMode.WRITE, shellParserFactory: () => Promise.resolve(parser) },
+    )
+    try {
+      await ws.execute('echo b > /extra/plain.txt')
+      await ws.execute('ln -s plain.txt /extra/lk')
+      const sess = ws.createSession('agent', { mounts: { '/extra/': 'read' } })
+      await runWithSession(sess, async () => {
+        await expect(ws.dispatch('unlink', '/extra/lk')).rejects.toMatchObject({
+          code: 'EROFS',
+        })
+        await expect(
+          ws.dispatch('symlink', '/extra/lk2', [], { target: 'plain.txt' }),
+        ).rejects.toMatchObject({ code: 'EROFS' })
+        await expect(
+          ws.dispatch('rename', '/extra/lk', [PathSpec.fromStrPath('/extra/mv')]),
+        ).rejects.toMatchObject({ code: 'EROFS' })
+      })
+      expect(DEC.decode((await ws.execute('readlink /extra/lk')).stdout)).toBe('plain.txt\n')
+      expect((await ws.execute('readlink /extra/lk2')).exitCode).toBe(1)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a read mount still takes a link sessionless', async () => {
+    // The mount's own mode is NOT this gate. `mode: read` says the
+    // backend cannot write, and a symlink is namespace state needing no
+    // write capability from it -- which is why a link above postgres,
+    // mongodb, chroma and qdrant (all mounted read) is pinned working in
+    // integ/resources/<svc>/sym.json. Only a session grant binds here.
+    const ws = new Workspace({ '/ro': [new RAMResource(), MountMode.READ] })
+    try {
+      await ws.dispatch('symlink', '/ro/lk', [], { target: 't' })
+      expect(ws.namespace.isLink('/ro/lk')).toBe(true)
+      // And the backend write on that same mount is still refused, so
+      // the two planes are told apart rather than both waved through.
+      await expect(
+        ws.dispatch('write', '/ro/f.txt', [], { data: ENC.encode('x') }),
+      ).rejects.toMatchObject({ code: 'EROFS' })
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a rename destination is judged on its own turf', async () => {
+    // The endpoints need not share a turf, and each is scored against
+    // its own prefix: a grant writing /rw but only reading /ro refuses,
+    // blaming the destination, the way the backend gate checks both ends
+    // of a rename. The grant is what binds, so both mounts are writable
+    // and the session is the only thing narrowing either.
+    const parser = await getTestParser()
+    const ws = new Workspace(
+      { '/rw': new RAMResource(), '/ro': new RAMResource() },
+      { mode: MountMode.WRITE, shellParserFactory: () => Promise.resolve(parser) },
+    )
+    try {
+      await ws.execute('ln -s t /rw/lk')
+      const sess = ws.createSession('agent', {
+        mounts: { '/rw/': 'write', '/ro/': 'read' },
+      })
+      await runWithSession(sess, async () => {
+        await expect(
+          ws.dispatch('rename', '/rw/lk', [PathSpec.fromStrPath('/ro/lk')]),
+        ).rejects.toMatchObject({ code: 'EROFS', virtualPath: '/ro/lk' })
+      })
+      expect(ws.namespace.isLink('/rw/lk')).toBe(true)
+    } finally {
+      await ws.close()
+    }
+  })
+})

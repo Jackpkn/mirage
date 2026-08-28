@@ -26,6 +26,33 @@
         "stdout": "",
         "stderr": "find: invalid argument 'abc' to '-size'\n"
       }
+    },
+    {
+      "id": "find_arg_size_trailing",
+      "seq": 320006,
+      "targets": [
+        "argerr-databricks",
+        "argerr-discord",
+        "argerr-email",
+        "argerr-gdocs",
+        "argerr-gdrive",
+        "argerr-gmail",
+        "argerr-gsheets",
+        "argerr-gslides",
+        "argerr-langfuse",
+        "argerr-linear",
+        "argerr-mem0",
+        "argerr-onedrive",
+        "argerr-sharepoint",
+        "argerr-slack",
+        "argerr-trello"
+      ],
+      "command": "find {mount} -size 12ab",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "find: invalid argument '12ab' to '-size'\n"
+      }
     }
   ]
 }
