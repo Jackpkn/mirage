@@ -59,6 +59,7 @@ class S3Accessor(Accessor):
         # so constructing one here would be a cycle.
         self._stacks: dict[int, AsyncExitStack] = {}
         self._clients: dict[int, Any] = {}
+        self._locks: dict[int, asyncio.Lock] = {}
 
     async def cached_client(
             self, factory: Callable[[],
@@ -76,16 +77,30 @@ class S3Accessor(Accessor):
         live = self._clients.get(key)
         if live is not None:
             return live
-        stack = AsyncExitStack()
-        client = await stack.enter_async_context(factory())
-        self._stacks[key] = stack
-        self._clients[key] = client
-        return client
+        # Opening is serialized per loop. `factory()` may suspend (resolving
+        # credentials can reach IMDS or SSO), and two callers that both miss
+        # would then each open a client and each store it under this one key,
+        # so the loser's AsyncExitStack becomes unreachable and `close` can
+        # never close its connection pool. setdefault is atomic here because
+        # nothing awaits between the read and the write, so both callers take
+        # the same lock. TypeScript's SSH accessor guards the same way with a
+        # cached connectPromise.
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            live = self._clients.get(key)
+            if live is not None:
+                return live
+            stack = AsyncExitStack()
+            client = await stack.enter_async_context(factory())
+            self._stacks[key] = stack
+            self._clients[key] = client
+            return client
 
     async def close(self) -> None:
         """Close every client this accessor opened."""
         stacks = list(self._stacks.values())
         self._stacks.clear()
         self._clients.clear()
+        self._locks.clear()
         for stack in stacks:
             await stack.aclose()
