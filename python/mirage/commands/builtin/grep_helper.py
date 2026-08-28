@@ -34,6 +34,15 @@ from mirage.utils.bre import bre_to_python
 from mirage.utils.errors import WALK_ERRORS, fs_strerror
 from mirage.utils.key_prefix import mount_prefix_of
 
+# Extensions a recursive grep skips without reading. Two families, and
+# the second is load-bearing for any remote mount: the columnar formats
+# were here first, and the model-weight formats joined them because a
+# `grep -r` over a Hugging Face model repo otherwise downloads every
+# checkpoint in it to search bytes that cannot contain a text match --
+# 41 GB of transfer for one grep of openai/gpt-oss-20b. GNU has no such
+# list (it sniffs the bytes it has already read off local disk), so this
+# is a deliberate divergence that only costs a network fetch, and `-a`
+# turns it off exactly as GNU's own binary handling does.
 BINARY_EXTENSIONS = frozenset({
     ".parquet",
     ".orc",
@@ -42,6 +51,20 @@ BINARY_EXTENSIONS = frozenset({
     ".ipc",
     ".hdf5",
     ".h5",
+    ".safetensors",
+    ".gguf",
+    ".ggml",
+    ".bin",
+    ".pt",
+    ".pth",
+    ".ckpt",
+    ".onnx",
+    ".npy",
+    ".npz",
+    ".msgpack",
+    ".tflite",
+    ".pb",
+    ".model",
 })
 
 NEVER_MATCH = r"(?!)"

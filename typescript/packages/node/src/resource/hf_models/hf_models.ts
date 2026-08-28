@@ -14,14 +14,14 @@
 
 import { normalizeKeyPrefix } from '@struktoai/mirage-core/resource/s3/config'
 import { ResourceName } from '@struktoai/mirage-core/types'
-import { HfModelsAccessor } from '../../accessor/hf.ts'
-import { HfResource } from '../hf_buckets/base.ts'
+import { HfModelsHubAccessor } from '../../accessor/hf_hub.ts'
 import {
-  assertHfRepoId,
+  assertHfRepoRef,
   type HfRepoConfig,
   type HfRepoConfigRedacted,
   redactHfRepoConfig,
 } from '../hf_buckets/config.ts'
+import { HfHubResource } from '../hf_hub/base.ts'
 import { HF_MODELS_PROMPT } from './prompt.ts'
 
 export interface HfModelsResourceState {
@@ -29,15 +29,15 @@ export interface HfModelsResourceState {
   config: HfRepoConfigRedacted
 }
 
-export class HfModelsResource extends HfResource {
+export class HfModelsResource extends HfHubResource {
   readonly kind: string = ResourceName.HF_MODELS
   readonly prompt: string = HF_MODELS_PROMPT
   readonly config: HfRepoConfig
-  readonly accessor: HfModelsAccessor
+  readonly accessor: HfModelsHubAccessor
 
   constructor(config: HfRepoConfig) {
     super()
-    assertHfRepoId(config.repoId, 'repo_id')
+    assertHfRepoRef(config.repoId, 'repo_id')
     const normalized = normalizeKeyPrefix(config.keyPrefix)
     const cfg: HfRepoConfig = { ...config }
     if (normalized !== undefined) {
@@ -46,7 +46,7 @@ export class HfModelsResource extends HfResource {
       delete cfg.keyPrefix
     }
     this.config = cfg
-    this.accessor = new HfModelsAccessor(this.config)
+    this.accessor = new HfModelsHubAccessor(this.config)
   }
 
   getState(): Promise<HfModelsResourceState> {

@@ -51,7 +51,19 @@ export const NO_RETRY: RetryPolicy = {
  * when the server ignored the Range; 'text' returns it as a string;
  * 'location' returns the Location header.
  */
-export type ReadMode = 'json' | 'none' | 'bytes' | 'text' | 'location'
+export type ReadMode = 'json' | 'none' | 'bytes' | 'text' | 'location' | 'response'
+
+/** Decoded body plus the wire metadata cursor pagination reads. Mirrors
+ * python's `ApiResponse`; a caller asking for `read: 'response'` gets this
+ * rather than the bare body, because a `Link` header is the only thing that
+ * says whether another page exists. */
+export interface ApiResponse {
+  data: unknown
+  status: number
+  /** Lower-cased, the way python's dump spells them, so one header is read
+   * by one name in both languages. */
+  headers: Record<string, string>
+}
 
 // Optional fields admit an explicit undefined (exactOptionalPropertyTypes)
 // because every consumer checks `!== undefined`: missing and undefined mean
@@ -179,6 +191,21 @@ export async function apiRequest(
     }
     const text = await response.text()
     if (read === 'text') return text
+    if (read === 'response') {
+      const headers: Record<string, string> = {}
+      response.headers.forEach((value, name) => {
+        headers[name.toLowerCase()] = value
+      })
+      let data: unknown = null
+      if (text !== '') {
+        try {
+          data = JSON.parse(text) as unknown
+        } catch {
+          data = text
+        }
+      }
+      return { data, status: response.status, headers } satisfies ApiResponse
+    }
     return text === '' ? null : (JSON.parse(text) as unknown)
   }
 }

@@ -13,26 +13,39 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PathSpec } from '@struktoai/mirage-core/types'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fakeHfOperator, installFakeOperator } from '../../core/hf/mock.ts'
 import { HfBucketsResource } from '../hf_buckets/hf_buckets.ts'
 import { HfModelsResource } from './hf_models.ts'
 
+// find_flat, du_size and du_entries are deliberately absent: the Hub's
+// listing is recursive, so one paged fetch is the whole tree and the generic
+// walk over it costs no requests. A native op would buy a constant factor and
+// cost a second implementation of the same traversal.
 const PY_OPS = [
   'read_bytes',
   'readdir',
   'stat',
   'read_stream',
   'range_read',
-  'du_size',
-  'du_entries',
   'exists',
-  'find_flat',
   'write',
   'create',
   'unlink',
+  'rm_r',
   'mkdir',
 ]
+
+function treePage(rows: unknown[]): Response {
+  return new Response(JSON.stringify(rows), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('HfModelsResource', () => {
   it('exposes the python-parity ops map and flags', () => {
@@ -56,16 +69,60 @@ describe('HfModelsResource', () => {
     expect(state.config.repoId).toBe('ns/model')
   })
 
-  it('rejects malformed repo ids', () => {
-    expect(() => new HfModelsResource({ repoId: 'nope' })).toThrow(/namespace\/name/)
+  it('rejects a repo id the Hub cannot read, and only that', () => {
+    // A BARE name is legal: the Hub resolves it against whoever the token
+    // belongs to, and `hf repo create widget` then `hf download widget` is what
+    // the real CLI produces. What is refused is a shape with no reading at all.
+    for (const bad of ['a/b/c', 'ns/', '/name', '']) {
+      expect(() => new HfModelsResource({ repoId: bad })).toThrow(/namespace\/name/)
+    }
+    expect(new HfModelsResource({ repoId: 'widget' }).config.repoId).toBe('widget')
   })
 
-  it('reads through the resource facade', async () => {
+  it('addresses a model at the bare repo id, not under a plural segment', async () => {
     const resource = new HfModelsResource({ repoId: 'ns/model' })
-    installFakeOperator(resource.accessor, fakeHfOperator({ 'config.json': '{}' }))
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        urls.push(url)
+        if (url.includes('/api/models/')) {
+          return Promise.resolve(
+            treePage([{ type: 'file', oid: 'abc', size: 2, path: 'config.json' }]),
+          )
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }))
+      }),
+    )
     const data = await resource.readFile(PathSpec.fromStrPath('/config.json'))
     expect(new TextDecoder().decode(data)).toBe('{}')
-    expect(await resource.exists(PathSpec.fromStrPath('/config.json'))).toBe(true)
+    expect(urls.some((u) => u.includes('/api/models/ns/model/tree/main'))).toBe(true)
+    // A model's content hangs off the bare repo id; datasets and spaces sit
+    // under their own segment, and reusing the API's plural here 404s.
+    expect(urls.some((u) => u.includes('/ns/model/resolve/main/config.json'))).toBe(true)
+  })
+
+  it('reports the LFS object size, never the pointer size', async () => {
+    const resource = new HfModelsResource({ repoId: 'ns/model' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          treePage([
+            {
+              type: 'file',
+              oid: 'abc',
+              size: 4798702184,
+              path: 'model.safetensors',
+              lfs: { oid: 'sha', size: 4798702184, pointerSize: 135 },
+            },
+          ]),
+        ),
+      ),
+    )
+    const stat = await resource.stat(PathSpec.fromStrPath('/model.safetensors'))
+    expect(stat.size).toBe(4798702184)
+    expect(stat.extra.lfs_oid).toBe('sha')
   })
 })
 
@@ -75,5 +132,6 @@ describe('HfBucketsResource', () => {
     expect(resource.kind).toBe('hf_buckets')
     expect(resource.config.keyPrefix).toBe('lead/')
     expect(resource.accessor.bucketUri).toBe('hf://buckets/ns/store')
+    installFakeOperator(resource.accessor, fakeHfOperator({ 'config.json': '{}' }))
   })
 })
