@@ -74,7 +74,10 @@ export interface ExecuteEnv {
   registerCloser(fn: () => Promise<void>): void
   ensureOpen(resource: Resource): Promise<void>
   invalidateAllAfterRemote(): Promise<void>
-  provision(command: string): Promise<ProvisionResult>
+  provision(
+    command: string,
+    options?: Pick<ExecuteOptions, 'sessionId' | 'agentId' | 'cwd' | 'env'>,
+  ): Promise<ProvisionResult>
   execute(cmd: string, options: ExecuteOptions): Promise<ExecuteResult>
 }
 
@@ -191,7 +194,18 @@ async function runLine(
     // instead of walking the ERROR tree.
     return syntaxErrorResult(offending)
   }
-  if (options.provision === true) return env.provision(command)
+  if (options.provision === true) {
+    // The plan is judged as this line's caller: the effective session
+    // and agent ride into the walk's admission gate, so a command
+    // denied to the actual caller cannot have its backend costs
+    // exposed under the default session's identity.
+    return env.provision(command, {
+      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      ...(options.agentId !== undefined ? { agentId: options.agentId } : {}),
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(options.env !== undefined ? { env: options.env } : {}),
+    })
+  }
   const rootNode = root as unknown as TSNodeLike
   // A re-entrant execute (the evaluator's $(), eval, source, xargs, or
   // an embedder callback fired mid-line) continues in the live ambient

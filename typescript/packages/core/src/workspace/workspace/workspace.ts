@@ -68,6 +68,7 @@ import { Namespace } from '../mount/namespace/namespace.ts'
 import { explainLine } from '../node/explain.ts'
 import { provisionNode } from '../node/provision_node.ts'
 import { buildFilePrompt } from '../file_prompt.ts'
+import { getCurrentSessionFor } from '../../context/session_context.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
@@ -85,7 +86,7 @@ import { PolicyRouter } from './policy.ts'
 import { Runtimes } from './runtimes.ts'
 import type { ExecuteResult } from './types.ts'
 import { type ExecuteOptions, type MountSpec, type WorkspaceOptions } from './types.ts'
-import { commandName } from './utils.ts'
+import { commandName, forkForCall } from './utils.ts'
 import { WatchManager } from './watch.ts'
 
 export { ExecuteResult } from './types.ts'
@@ -917,11 +918,27 @@ export class Workspace {
     await this.dispatcher.invalidateAfterWriteByPath(path)
   }
 
-  async provision(command: string): Promise<ProvisionResult> {
+  async provision(
+    command: string,
+    options: Pick<ExecuteOptions, 'sessionId' | 'agentId' | 'cwd' | 'env'> = {},
+  ): Promise<ProvisionResult> {
     const parser = await this.getShellParser()
     const root = parser.parse(command)
     const rootNode = root as unknown as TSNodeLike
-    const session = this.sessionManager.get(this.sessionManager.defaultId)
+    // The plan is judged as its caller: the same ambient-or-named
+    // session resolution as runLine, the per-call cwd/env overlay, and
+    // the line's agent — the gate inside the walk answers visibility
+    // and policy for that identity, never the default session's
+    // (mirrors Python's execute_line, which provisions on the
+    // effective session with the line's agent).
+    const ambient = getCurrentSessionFor(this.sessionManager)
+    const base =
+      ambient !== null &&
+      (options.sessionId === undefined || options.sessionId === ambient.sessionId)
+        ? ambient
+        : this.sessionManager.get(options.sessionId ?? this.sessionManager.defaultId)
+    const session = forkForCall(base, options.cwd, options.env)
+    const agentId = options.agentId ?? this.agentId ?? ''
     // A dry run must never execute: a command substitution with side
     // effects ($(tee ...)) would otherwise run while "estimating".
     // Substitutions expand to empty, so affected words degrade the
@@ -932,7 +949,7 @@ export class Workspace {
     const provTimeout = provResolved !== null ? provResolved.timeoutSeconds : null
     return runWithTimeout(
       provisionNode(
-        { registry: this.registry, executeFn, namespace: this.namespace },
+        { registry: this.registry, executeFn, namespace: this.namespace, agentId },
         rootNode,
         session,
       ),
@@ -964,7 +981,7 @@ export class Workspace {
       },
       ensureOpen: (resource) => this.ensureOpen(resource),
       invalidateAllAfterRemote: () => this.invalidateAllAfterRemote(),
-      provision: (cmd) => this.provision(cmd),
+      provision: (cmd, opts) => this.provision(cmd, opts),
       execute: (cmd, opts) =>
         this.executeInternal(cmd, opts as ExecuteOptions & { provision?: false | undefined }),
     }

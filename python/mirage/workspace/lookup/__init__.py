@@ -13,11 +13,12 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.workspace.lookup.constants import (  # isort: skip
-    JOB_BUILTINS, NAMESPACE_COMMANDS, NO_FOLLOW_COMMANDS, SLASH_KEEPS_LAST,
-    UNSUPPORTED_BUILTINS, dereferences, end_options_after_program,
-    follows_last_component, reads_subtrees, reports_link, walks_mounts)
-from mirage.workspace.lookup.lookup import (command_visible, is_tool, lookup,
-                                            lookup_all, verb_visible)
+    JOB_BUILTINS, NAMESPACE_COMMANDS, NO_FOLLOW_COMMANDS, SHELL_NAMES,
+    SLASH_KEEPS_LAST, UNSUPPORTED_BUILTINS, dereferences,
+    end_options_after_program, follows_last_component, reads_subtrees,
+    reports_link, walks_mounts)
+from mirage.workspace.lookup.lookup import (command_visible, is_tool, listed,
+                                            lookup, lookup_all, verb_visible)
 from mirage.workspace.lookup.types import (SHELL_CONSUMERS, Consumer,
                                            WordPolicy, word_policy)
 
@@ -38,6 +39,8 @@ __all__ = [
     "WordPolicy",
     "lookup",
     "command_visible",
+    "listed",
+    "SHELL_NAMES",
     "is_tool",
     "lookup_all",
     "verb_visible",

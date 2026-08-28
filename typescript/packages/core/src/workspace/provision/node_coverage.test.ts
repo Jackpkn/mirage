@@ -245,6 +245,27 @@ class AskCat implements Policy {
   }
 }
 
+class NoRead implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'read') return null
+    return { kind: 'deny', reason: 'no reads', scope: 'command' }
+  }
+}
+
+class NoF implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'f') return null
+    return { kind: 'deny', reason: 'no f', scope: 'command' }
+  }
+}
+
+class NoInternCat implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'cat' || ctx.agentId !== 'intern') return null
+    return { kind: 'deny', reason: 'interns read nothing', scope: 'command' }
+  }
+}
+
 describe('provision clears the command gate first', () => {
   it('a denied command is not priced', async () => {
     // A dry run reads the backend to price the line (stats, listings),
@@ -274,6 +295,80 @@ describe('provision clears the command gate first', () => {
       const result = await ws.execute('cat /data/a.txt', { provision: true })
       expect(result.precision).toBe(Precision.UNKNOWN)
       expect(result.networkRead).toBe('0')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a denied builtin is refused before its redirect source is priced', async () => {
+    // The executor admits every command class at one chokepoint, with
+    // the statement's redirect targets judged on the same call. A
+    // denied `read < file` must plan the same way: no exact-looking
+    // builtin plan, and the redirect source never stat'd or priced.
+    const ws = buildWorkspace([new NoRead()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const result = await ws.execute('read x < /data/a.txt', { provision: true })
+      expect(result.precision).toBe(Precision.UNKNOWN)
+      expect(result.networkRead).toBe('0')
+    } finally {
+      await ws.close()
+    }
+    const control = buildWorkspace()
+    try {
+      await control.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const priced = await control.execute('read x < /data/a.txt', { provision: true })
+      expect(priced.networkRead).toBe('24')
+    } finally {
+      await control.close()
+    }
+  })
+
+  it('a denied shell function does not have its body walked', async () => {
+    // The body's own reads are byte counts the refusal is protecting.
+    const ws = buildWorkspace([new NoF()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const result = await ws.execute('f() { cat /data/a.txt; }; f', { provision: true })
+      expect(result.precision).toBe(Precision.UNKNOWN)
+      expect(result.networkRead).toBe('0')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('the walk vouches for a function the script itself defines', async () => {
+    // The run stores a function in the session before the call; a dry
+    // run keeps it in plan state, where the allow list cannot see it.
+    // The walk vouches for its own definitions, so a script that
+    // defines and calls a function still plans its body under a
+    // commands.allow profile that lists only the real tools it uses.
+    const ws = buildWorkspace()
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const session = ws.sessionManager.get(ws.sessionManager.defaultId)
+      session.commands = { allow: ['cat', 'tee'], ask: [], deny: [] }
+      const result = await ws.execute('f() { cat /data/a.txt; }; f', { provision: true })
+      expect(result.networkRead).toBe('24')
+      expect(result.precision).toBe(Precision.EXACT)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('the plan is judged as the requesting agent and session', async () => {
+    // Provisioning through execute({provision: true, agentId}) reaches
+    // the gate as that agent, not as the workspace default: a command
+    // denied to the actual caller must not have its backend costs
+    // exposed under another identity.
+    const ws = buildWorkspace([new NoInternCat()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const denied = await ws.execute('cat /data/a.txt', { provision: true, agentId: 'intern' })
+      expect(denied.precision).toBe(Precision.UNKNOWN)
+      expect(denied.networkRead).toBe('0')
+      const priced = await ws.execute('cat /data/a.txt', { provision: true })
+      expect(priced.networkRead).toBe('24')
     } finally {
       await ws.close()
     }

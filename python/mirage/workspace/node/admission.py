@@ -48,10 +48,10 @@ from mirage.workspace.expand.classify.path import classify_bare_path
 from mirage.workspace.expand.spec_hints import (spec_for_command,
                                                 spec_word_bases,
                                                 spec_word_kinds)
-from mirage.workspace.lookup import (SLASH_KEEPS_LAST, WordPolicy,
-                                     command_visible, follows_last_component,
-                                     is_tool, lookup, reads_subtrees,
-                                     walks_mounts, word_policy)
+from mirage.workspace.lookup import (SHELL_NAMES, SLASH_KEEPS_LAST, WordPolicy,
+                                     follows_last_component, is_tool, listed,
+                                     lookup, reads_subtrees, walks_mounts,
+                                     word_policy)
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.node.inner_lines import Word, inner_lines
@@ -239,6 +239,7 @@ async def gate(
     agent_id: str = "",
     stdin: ByteSource | None = None,
     redirects: Sequence[PathSpec] = (),
+    defined_fn: bool = False,
 ) -> Refusal | tuple[CommandContext, Deny | Ask | None]:
     """Everything the gate decides about one command before anything is
     spent on it: visibility, the classified context, and the policy
@@ -262,12 +263,22 @@ async def gate(
             whether a bare ``rg`` reads the working directory.
         redirects (Sequence[PathSpec]): the statement's expanded
             redirect targets, empty when it has none.
+        defined_fn (bool): the caller vouches the head word is a shell
+            function defined by run time. The provision walk vouches
+            for a function its own script defines: the run stores that
+            definition in the session before the call, a dry run keeps
+            it in plan state, where neither ``command_visible`` nor
+            ``is_tool`` can see it. The word is then judged exactly as
+            the run would judge it — exempt from the allow lists unless
+            a builtin shadows it (``SHELL_NAMES``), and ``ctx.tool``
+            False accordingly.
 
     Returns:
         A Refusal when the session cannot see the head word, else the
         context and whatever the policy chain answered.
     """
-    if not command_visible(name, session):
+    tool = (name in SHELL_NAMES) if defined_fn else is_tool(name, session)
+    if tool and not listed(name, session):
         return Refusal(f"{name}: command not found\n".encode(), 127)
     tokens, program = program_tokens(registry, name, args, session.cwd)
     implied = (default_cwd_operand([name, *operands], name, registry,
@@ -289,7 +300,7 @@ async def gate(
                          agent_id=agent_id,
                          tokens=tokens,
                          program=program,
-                         tool=is_tool(name, session),
+                         tool=tool,
                          walks=walks_mounts(name, [name, *args]))
     return ctx, await registry.policies.pre_command(ctx)
 
