@@ -75,7 +75,8 @@ function acknowledge(inv: CLIInvocation): CommandFnResult {
   const by = inv.flags.by
   if (incidentId === undefined) throw new Error('INCIDENT_ID is required')
   if (typeof by !== 'string') throw new Error('--by must be a string')
-  const incident = accountIncidents(account)[incidentId]
+  const incidents = accountIncidents(account)
+  const incident = Object.hasOwn(incidents, incidentId) ? incidents[incidentId] : undefined
   if (incident === undefined) {
     return [
       null,
@@ -137,6 +138,7 @@ async function main(): Promise<void> {
     await show(ws, 'pager-eng --help')
     await show(ws, 'pager-eng list')
     await show(ws, 'pager-support list')
+    await show(ws, 'pager-eng ack __proto__ --by Mina')
     await show(ws, 'pager-eng ack INC-101 --by Mina')
     await show(ws, 'pager-eng list')
     await show(ws, 'pager-support list')

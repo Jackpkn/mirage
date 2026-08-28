@@ -131,6 +131,7 @@ async def main() -> None:
         await show(ws, "pager-eng --help")
         await show(ws, "pager-eng list")
         await show(ws, "pager-support list")
+        await show(ws, "pager-eng ack __proto__ --by Mina")
         await show(ws, "pager-eng ack INC-101 --by Mina")
         await show(ws, "pager-eng list")
         await show(ws, "pager-support list")
