@@ -361,6 +361,7 @@
             "group": "CLIs",
             "pages": [
               "python/cli/index",
+              "python/cli/custom",
               "python/cli/himalaya",
               "python/cli/gws",
               "python/cli/slack",
@@ -548,6 +549,7 @@
             "group": "CLIs",
             "pages": [
               "typescript/cli/index",
+              "typescript/cli/custom",
               "typescript/cli/himalaya",
               "typescript/cli/gws",
               "typescript/cli/slack",

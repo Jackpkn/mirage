@@ -18,8 +18,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from mirage import CLIInvocation, CLISpec, RAMResource, Workspace
-from mirage.commands.spec import Operand, Option
+from mirage import (CLIInvocation, CLISpec, Operand, Option, RAMResource,
+                    Workspace)
 from mirage.io import IOResult
 
 
