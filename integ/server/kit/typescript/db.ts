@@ -14,7 +14,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { KitError } from './errors.ts'
@@ -71,6 +71,7 @@ export class ClientPool<C extends MinimalClient> {
   readonly service: string
   readonly schema: string
   readonly root: string
+  private readonly internal: string
   private readonly ctor: ClientCtor<C>
   private readonly clients = new Map<string, C>()
   private readonly seeded = new Map<string, Promise<SeededTemplate>>()
@@ -82,6 +83,16 @@ export class ClientPool<C extends MinimalClient> {
     this.schema = opts.schema
     this.ctor = opts.ctor
     this.root = mkdtempSync(join(tmpdir(), `mirage-kit-${opts.service}-${runId()}-`))
+    // Templates live BESIDE the run files, not among them. A run is named by
+    // the caller and its file is `<root>/<run>.db`, so a template sharing that
+    // directory is only safe while no legal run name can spell one. That is
+    // true today (checkName refuses a leading underscore, which is why these
+    // names have one) but it is an invariant enforced in another module, and a
+    // template quietly overwritten by a reset would hand later runs the wrong
+    // database while still reporting the original seed. A directory the run
+    // namespace cannot reach at all costs one mkdir.
+    this.internal = join(this.root, '.templates')
+    mkdirSync(this.internal, { recursive: true })
   }
 
   fileFor(run: string): string {
@@ -94,7 +105,7 @@ export class ClientPool<C extends MinimalClient> {
 
   private ensureTemplate(): string {
     if (this.template === null) {
-      const path = join(this.root, '_template.db')
+      const path = join(this.internal, 'schema.db')
       pushTemplate(this.schema, path)
       this.template = path
     }
@@ -156,7 +167,7 @@ export class ClientPool<C extends MinimalClient> {
     try {
       const rows = await seed(this.client(build))
       await this.close(build)
-      const file = join(this.root, `_seeded-${n}.db`)
+      const file = join(this.internal, `seeded-${n}.db`)
       copyFileSync(this.fileFor(build), file)
       return { file, rows }
     } finally {

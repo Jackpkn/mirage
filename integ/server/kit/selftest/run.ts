@@ -640,6 +640,21 @@ async function main(): Promise<void> {
     )
     // decodeURIComponent throws a URIError on this, which is not a TenantError
     // and so reached the 500 envelope: a typed URL reported as a fake bug.
+    // The kit keeps internal files under names a run cannot spell, and the
+    // seeded templates now live in their own directory as well. Both rest on
+    // checkName refusing a leading underscore, so that refusal is pinned here:
+    // loosening the name rule would otherwise let a reset overwrite a cached
+    // template and hand later runs the wrong database.
+    for (const reserved of ['_seeded-0', '_build-0', '_template']) {
+      const viaPath = await call(fake, '/boards', { runInPath: reserved })
+      check(
+        `a run named ${reserved} is refused in the path`,
+        viaPath.status === 400,
+        JSON.stringify(viaPath.json),
+      )
+      const viaBody = await call(fake, '/reset', { method: 'POST', body: { run: reserved } })
+      check(`and refused in the /reset body`, viaBody.status === 400, JSON.stringify(viaBody.json))
+    }
     const badEscape = await call(fake, '/boards', { runInPath: '%ZZ' })
     check(
       'a malformed percent escape in the run is 400, not 500',
