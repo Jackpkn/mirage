@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { pathToFileURL } from 'node:url'
+
 import {
   CLISpec,
   type CLIInvocation,
@@ -147,4 +149,5 @@ async function main(): Promise<void> {
   }
 }
 
-await main()
+const entrypoint = process.argv[1]
+if (entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href) await main()
