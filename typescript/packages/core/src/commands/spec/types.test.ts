@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
+import { compileSpec } from './compile.ts'
 import { CommandSpec, Operand, Option, ParsedArgs } from './types.ts'
 
 describe('ValueType', () => {
@@ -37,11 +38,33 @@ describe('Option', () => {
     const o = new Option()
     expect(Object.isFrozen(o)).toBe(true)
   })
+
+  it('copies and freezes choices', () => {
+    const choices = ['a']
+    const o = new Option({ long: '--mode', type: 'str', choices })
+    choices.push('b')
+
+    expect(o.choices).toEqual(['a'])
+    expect(Object.isFrozen(o.choices)).toBe(true)
+  })
 })
 
 describe('Operand', () => {
   it('defaults type to path', () => {
     expect(new Operand().type).toBe('path')
+  })
+
+  it('copies and freezes conditional flag lists', () => {
+    const providedBy = ['--pattern']
+    const textWhen = ['--args']
+    const operand = new Operand({ providedBy, textWhen })
+    providedBy.push('--file')
+    textWhen.push('--raw-input')
+
+    expect(operand.providedBy).toEqual(['--pattern'])
+    expect(operand.textWhen).toEqual(['--args'])
+    expect(Object.isFrozen(operand.providedBy)).toBe(true)
+    expect(Object.isFrozen(operand.textWhen)).toBe(true)
   })
 })
 
@@ -51,6 +74,23 @@ describe('CommandSpec', () => {
     expect(s.options).toEqual([])
     expect(s.positional).toEqual([])
     expect(s.rest).toBeNull()
+  })
+
+  it('copies and freezes grammar arrays before compilation caches them', () => {
+    const option = new Option({ long: '--mode', type: 'str' })
+    const operand = new Operand({ type: 'str' })
+    const options = [option]
+    const positional = [operand]
+    const spec = new CommandSpec({ options, positional })
+    const compiled = compileSpec(spec)
+    options.push(new Option({ long: '--later' }))
+    positional.push(new Operand({ type: 'path' }))
+
+    expect(spec.options).toEqual([option])
+    expect(spec.positional).toEqual([operand])
+    expect(Object.isFrozen(spec.options)).toBe(true)
+    expect(Object.isFrozen(spec.positional)).toBe(true)
+    expect(compileSpec(spec)).toBe(compiled)
   })
 })
 

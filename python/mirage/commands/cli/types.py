@@ -197,7 +197,10 @@ class CLISpec(CommandSpec):
     """
     name: str = ""
     aliases: tuple[str, ...] = ()
-    fn: Callable[..., Any] | None = None
+    # Any callable is valid, including stateful callable objects whose
+    # class deliberately has no hash. The handler does not affect the
+    # inherited CommandSpec grammar cached by compile_spec.
+    fn: Callable[..., Any] | None = field(default=None, hash=False)
     subcommands: tuple["CLISpec", ...] = ()
     write: bool = False
     usage_style: UsageStyle = UsageStyle.ARGPARSE

@@ -158,6 +158,7 @@ export function compileSpec(spec: CommandSpec): CompiledSpec {
   const cached = CACHE.get(spec)
   if (cached !== undefined) return cached
 
+  const seenSpellings = new Set<string>()
   const boolSpellings = new Set<string>()
   const valueSpellings: string[] = []
   const attachSpellings: string[] = []
@@ -182,7 +183,16 @@ export function compileSpec(spec: CommandSpec): CompiledSpec {
 
   for (const opt of spec.options) {
     const canonical = opt.long ?? opt.short
-    if (canonical === null) continue
+    if (canonical === null) {
+      throw new Error('option requires a short or long spelling')
+    }
+    for (const spelling of [opt.short, opt.long]) {
+      if (spelling === null) continue
+      if (seenSpellings.has(spelling)) {
+        throw new Error(`duplicate option spelling '${spelling}'`)
+      }
+      seenSpellings.add(spelling)
+    }
     if (opt.count && opt.type !== 'bool') {
       throw new Error(`option '${canonical}': count requires a boolean flag (valueKind NONE)`)
     }

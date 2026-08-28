@@ -160,6 +160,7 @@ def compile_spec(spec: CommandSpec) -> CompiledSpec:
     Args:
         spec (CommandSpec): the declarative spec to compile.
     """
+    seen_spellings: set[str] = set()
     bool_spellings: set[str] = set()
     value_spellings: list[str] = []
     attach_spellings: list[str] = []
@@ -185,7 +186,13 @@ def compile_spec(spec: CommandSpec) -> CompiledSpec:
     for opt in spec.options:
         canonical = opt.long if opt.long else opt.short
         if canonical is None:
-            continue
+            raise ValueError("option requires a short or long spelling")
+        for spelling in (opt.short, opt.long):
+            if spelling is None:
+                continue
+            if spelling in seen_spellings:
+                raise ValueError(f"duplicate option spelling {spelling!r}")
+            seen_spellings.add(spelling)
         if opt.count and opt.type != "bool":
             raise ValueError(f"option {canonical!r}: count requires a "
                              "boolean flag (type 'bool')")

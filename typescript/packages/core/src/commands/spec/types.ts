@@ -199,7 +199,7 @@ export class Option {
     this.pair = init.pair ?? false
     this.valueOptional = init.valueOptional ?? false
     this.shortValue = init.shortValue ?? true
-    this.choices = init.choices ?? []
+    this.choices = Object.freeze([...(init.choices ?? [])])
     this.required = init.required ?? false
     this.default = init.default ?? null
     this.metavar = init.metavar ?? null
@@ -267,8 +267,8 @@ export class Operand {
 
   constructor(init: OperandInit = {}) {
     this.type = init.type ?? 'path'
-    this.providedBy = init.providedBy ?? []
-    this.textWhen = init.textWhen ?? []
+    this.providedBy = Object.freeze([...(init.providedBy ?? [])])
+    this.textWhen = Object.freeze([...(init.textWhen ?? [])])
     this.name = init.name ?? ''
     this.required = init.required ?? false
     this.remainder = init.remainder ?? false
@@ -321,8 +321,8 @@ export class CommandSpec {
   // express the second.
 
   constructor(init: CommandSpecInit = {}) {
-    this.options = init.options ?? []
-    this.positional = init.positional ?? []
+    this.options = Object.freeze([...(init.options ?? [])])
+    this.positional = Object.freeze([...(init.positional ?? [])])
     this.rest = init.rest ?? null
     this.ignoreTokens = new Set(init.ignoreTokens ?? [])
     this.description = init.description ?? null
