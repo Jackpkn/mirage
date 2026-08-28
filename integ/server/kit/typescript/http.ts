@@ -20,6 +20,7 @@ import type { MinimalClient } from './db.ts'
 import { FixtureError, KitError, ResetBodyError, TenantError } from './errors.ts'
 import { Router } from './route.ts'
 import type { Ctx } from './route.ts'
+import { DEFAULT_FIXTURE } from './fixture.ts'
 import { applyReset, defaultTenantsOf, parseResetBody } from './reset.ts'
 import { DEFAULT_RUN, resolveRun, resolveTenant } from './tenant.ts'
 import type { Headers } from './tenant.ts'
@@ -39,12 +40,27 @@ export function makeRuntime<C extends MinimalClient>(fake: Fake<C>): Runtime<C> 
     states.set(run, made)
     return made
   }
+  // The fixture a bare /reset replays. `--fixture` sets it at startup and a
+  // reset that names one replaces it, so a harness seeds once when the
+  // scenario changes and then resets freely within it. Defaulting every bare
+  // reset back to `v1` would put a server started on another fixture back on
+  // the wrong scenario the first time a host reset it.
+  let current = DEFAULT_FIXTURE
   return {
     fake,
     pool,
     state,
-    reset: (body: JsonValue) =>
-      applyReset(fake, pool, state, parseResetBody(body, defaultTenantsOf(fake))),
+    reset: async (body: JsonValue) => {
+      const req = parseResetBody(body, defaultTenantsOf(fake), current)
+      // Remembered only once the reset SUCCEEDS. Recording it up front let a
+      // rejected reset poison the fixture every later bare reset replays: a
+      // 400 for an unknown name left `current` pointing at that name, so the
+      // next reset that named nothing failed too, and the fake was wedged by a
+      // request it had already refused.
+      const out = await applyReset(fake, pool, state, req)
+      current = req.fixture
+      return out
+    },
     dispose: async () => {
       states.clear()
       await pool.dispose()

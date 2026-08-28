@@ -32,6 +32,16 @@ export function bytesOf(row: NodeRow): Buffer {
   return row.data === null ? Buffer.alloc(0) : Buffer.from(row.data)
 }
 
+// Prisma types a Bytes column as Uint8Array<ArrayBuffer>, and a Buffer is a
+// Uint8Array<ArrayBufferLike>, which is wider: the two are interchangeable at
+// runtime and not assignable at compile time. Narrow once here rather than at
+// each write.
+function toBytes(data: Buffer): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(new ArrayBuffer(data.length))
+  out.set(data)
+  return out
+}
+
 // posixpath.normpath("/" + path.strip("/")), which collapses "//" and resolves
 // "." and ".." without touching a filesystem. Written out because node's
 // path.posix.normalize keeps a trailing slash and answers "." for the empty
@@ -113,8 +123,15 @@ export async function putFile(
   const seq = existing === null ? await nextSeq(db, tenant) : existing.seq
   await db.databricksNode.upsert({
     where: where(tenant, at),
-    update: { isDirectory: false, data, lastModified: mtimeMs },
-    create: { tenant, path: at, isDirectory: false, data, lastModified: mtimeMs, seq },
+    update: { isDirectory: false, data: toBytes(data), lastModified: mtimeMs },
+    create: {
+      tenant,
+      path: at,
+      isDirectory: false,
+      data: toBytes(data),
+      lastModified: mtimeMs,
+      seq,
+    },
   })
   await addAncestors(db, tenant, at)
 }

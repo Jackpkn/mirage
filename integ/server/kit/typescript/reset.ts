@@ -29,7 +29,11 @@ const KNOWN = new Set(['run', 'epoch', 'tenants', 'fixture', 'extras'])
 // is refused rather than ignored: a host that sends `workspace` where the kit
 // wants `tenants` must fail loudly at the door, not silently reset the wrong
 // thing and then disagree with the other host.
-export function parseResetBody(raw: JsonValue, fallbackTenants: string[]): ResetRequest {
+export function parseResetBody(
+  raw: JsonValue,
+  fallbackTenants: string[],
+  fallbackFixture: string = DEFAULT_FIXTURE,
+): ResetRequest {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new ResetBodyError('reset body must be a JSON object')
   }
@@ -53,7 +57,7 @@ export function parseResetBody(raw: JsonValue, fallbackTenants: string[]): Reset
     throw new ResetBodyError('/reset tenants must be a list of strings')
   }
   if (tenants.length === 0) throw new ResetBodyError('/reset tenants must not be empty')
-  const fixture = raw.fixture === undefined ? DEFAULT_FIXTURE : raw.fixture
+  const fixture = raw.fixture === undefined ? fallbackFixture : raw.fixture
   if (typeof fixture !== 'string') throw new ResetBodyError('/reset fixture must be a name')
   const extras = raw.extras
   if (

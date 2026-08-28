@@ -48,10 +48,10 @@ interface Fake {
   stderr: () => string
 }
 
-async function launch(env: Record<string, string> = {}): Promise<Fake> {
+async function launch(env: Record<string, string> = {}, argv: string[] = []): Promise<Fake> {
   const child = spawn(
     join(INTEG, 'node_modules', '.bin', 'tsx'),
-    [join(HERE, 'main.ts'), '--port', '0'],
+    [join(HERE, 'main.ts'), '--port', '0', ...argv],
     { cwd: INTEG, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } },
   )
   let err = ''
@@ -444,6 +444,96 @@ async function main(): Promise<void> {
       'and clearTenants refuses that schema by name',
       refused.includes('Global') && refused.includes('tenant'),
       refused === '' ? 'did NOT throw' : refused,
+    )
+
+    // One binary, several scenarios. github is served three ways from one
+    // server (three repos, one repo and no creation, and empty for the watch
+    // battery), which only works if a bare reset replays what the process was
+    // started on rather than defaulting back to v1.
+    process.stdout.write(
+      '\n14. --fixture picks the startup scenario, and a bare reset replays it\n',
+    )
+    const alt = await launch({}, ['--fixture', 'alt'])
+    try {
+      const seeded = await call(alt, '/boards')
+      eq(
+        'startup seeded the named fixture',
+        (seeded.json as { boards: { name: JsonValue }[] }).boards.map((b) => b.name),
+        ['Alternate'],
+      )
+      const bare = await call(alt, '/reset', { method: 'POST', body: {} })
+      eq('bare reset succeeds', (bare.json as { ok: JsonValue }).ok, true)
+      const again = await call(alt, '/boards')
+      eq(
+        'and it replayed alt, NOT the default v1',
+        (again.json as { boards: { name: JsonValue }[] }).boards.map((b) => b.name),
+        ['Alternate'],
+      )
+      // A refused reset must not change what a later bare one replays. Recording
+      // the name before applying it wedged the fake: the 400 left the bad name
+      // remembered, so the next bare reset failed on a request already refused.
+      const refusedFixture = await call(alt, '/reset', {
+        method: 'POST',
+        body: { fixture: 'nope' },
+      })
+      check(
+        'a reset naming an unknown fixture is still 400',
+        refusedFixture.status === 400,
+        JSON.stringify(refusedFixture.json),
+      )
+      const after = await call(alt, '/reset', { method: 'POST', body: {} })
+      eq(
+        'and the refusal did NOT poison the remembered fixture',
+        (after.json as { ok: JsonValue }).ok,
+        true,
+      )
+      const kept2 = await call(alt, '/boards')
+      eq(
+        'so a bare reset still replays alt',
+        (kept2.json as { boards: { name: JsonValue }[] }).boards.map((b) => b.name),
+        ['Alternate'],
+      )
+    } finally {
+      alt.child.kill('SIGTERM')
+    }
+
+    // A flag the kit does not implement must stop the process, not be skipped.
+    // Every fake here parses argv by scanning for its own flags, so an ignored
+    // one meant a caller asked for one world and silently got the default: the
+    // github fake replaced one that took --repo/--metadata/--commits, and a
+    // launch line carrying those announced a healthy server seeded with v1.
+    process.stdout.write('\n15. an argument the kit does not implement is refused\n')
+    let refusedArgv = ''
+    try {
+      const bad = await launch({}, ['--repo', 'integ/x=dir', '--no-create-repos'])
+      bad.child.kill('SIGTERM')
+    } catch (err: unknown) {
+      refusedArgv = (err as Error).message
+    }
+    check(
+      'an unknown flag fails the launch',
+      refusedArgv.includes('--repo') && refusedArgv.includes('--no-create-repos'),
+      refusedArgv === '' ? 'launched ANYWAY' : (refusedArgv.split('\n')[0] ?? ''),
+    )
+    check(
+      'and it names the flags the kit does take',
+      refusedArgv.includes('--fixture') && refusedArgv.includes('--port'),
+      refusedArgv.split('\n')[0] ?? '',
+    )
+    // The likelier slip than an unknown flag: `--port N alt` is `--fixture alt`
+    // with the flag dropped, and skipping the bare word served the DEFAULT
+    // fixture under a line that reads as asking for another one.
+    let refusedWord = ''
+    try {
+      const stray = await launch({}, ['alt'])
+      stray.child.kill('SIGTERM')
+    } catch (err: unknown) {
+      refusedWord = (err as Error).message
+    }
+    check(
+      'a stray positional fails the launch too',
+      refusedWord.includes('exited 1'),
+      refusedWord === '' ? 'launched ANYWAY' : (refusedWord.split('\n')[0] ?? ''),
     )
 
     process.stdout.write(`\nselftest: ${String(checks)} checks passed\n`)

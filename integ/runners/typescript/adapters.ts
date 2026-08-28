@@ -1744,7 +1744,7 @@ async function openSlack(target: Target): Promise<Open> {
 // git remote real gh reads. Seeded by the fake alongside the mounted one.
 const GH_CLI_REPO = 'integ/repo-cli'
 
-// The fake api.github.com server (integ/server/github_server.py) is external
+// The fake api.github.com server (integ/server/github) is a kit fake, external
 // and shared across both hosts, mirroring the fake Slack server. It used to
 // have to be out of process for the python host, whose GitHubResource
 // fetched the repo tree with a blocking urlopen from its constructor; that
