@@ -13,10 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
+import { runWithSession } from '../../context/session_context.ts'
+import { revisionFor } from '../../observe/context.ts'
 import { OpsRegistry } from '../../ops/registry.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { Limit, MountMode, PathSpec } from '../../types.ts'
 import { getTestParser } from '../fixtures/workspace_fixture.ts'
+import { Session } from '../session/session.ts'
 import { Workspace } from '../workspace/workspace.ts'
 
 const ENC = new TextEncoder()
@@ -229,4 +232,52 @@ describe('the node table answers every verb that names a link', () => {
       await ws.close()
     }
   })
+})
+
+describe('the fenced remnant cascade rides the mount revisions', () => {
+  it('a fenced backend op reads the pinned revision', async () => {
+    // fencedCall reruns backend ops outside `dispatch`, and Python's
+    // twin routes them through `Mount.execute_op`, which binds the
+    // mount prefix AND the revision pins. A fenced readdir/stat that
+    // reads unpinned answers from the wrong version of a
+    // revision-pinned mount, so the binding is pinned here through the
+    // one public trigger: an rmdir whose only remnants the session
+    // cannot see.
+    const parser = await getTestParser()
+    const ram = new RAMResource()
+    const registry = new OpsRegistry()
+    registry.registerResource(ram)
+    const ws = new Workspace(
+      { '/ram': ram },
+      { mode: MountMode.WRITE, ops: registry, shellParserFactory: () => Promise.resolve(parser) },
+    )
+    try {
+      await ws.execute('mkdir /ram/d && echo x > /ram/d/h.txt')
+      // Mounting re-registers the resource's ops (workspace.ts), so the
+      // probe wraps readdir only after construction, or it is clobbered.
+      const original = registry.find('readdir', 'ram')
+      if (original === null) throw new Error('ram readdir op missing')
+      const originalFn = original.fn
+      let seen: string | null | undefined
+      registry.register({
+        ...original,
+        fn: (...args: Parameters<typeof originalFn>) => {
+          seen = revisionFor('/ram/d/h.txt')
+          return originalFn(...args)
+        },
+      })
+      const internals = ws as unknown as {
+        registry: { mountFor(path: string): { revisions: Map<string, string> } }
+      }
+      internals.registry.mountFor('/ram/d').revisions.set('/ram/d/h.txt', 'r1')
+      const sess = new Session({
+        sessionId: 'agent',
+        hiddenPaths: { paths: ['/ram/d/h.txt'] },
+      })
+      await runWithSession(sess, () => ws.dispatch('rmdir', '/ram/d'))
+      expect(seen).toBe('r1')
+    } finally {
+      await ws.close()
+    }
+  }, 30_000)
 })

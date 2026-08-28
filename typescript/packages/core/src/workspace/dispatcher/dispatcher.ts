@@ -68,6 +68,7 @@ import {
   effectivePathMode,
   getCurrentSession,
   hiddenPathsIntersect,
+  liveSessions,
   pathAllowed,
 } from '../../context/session_context.ts'
 import { moveReveals } from '../../utils/hidden.ts'
@@ -204,13 +205,13 @@ export class Dispatcher {
       // (rmR, the remnant rmdir below); relocating it into view is
       // refused. Only a directory has anything below it to re-anchor,
       // so a file source passes.
-      const sess = getCurrentSession()
-      if (
-        sess !== null &&
-        moveReveals(sess.hiddenPaths, sess.shownPaths, path.virtual, dstArg.virtual) &&
-        (await this.movedSourceIsDir(path))
-      ) {
-        throw eacces(path.virtual)
+      for (const sess of liveSessions()) {
+        if (
+          moveReveals(sess.hiddenPaths, sess.shownPaths, path.virtual, dstArg.virtual) &&
+          (await this.movedSourceIsDir(path))
+        ) {
+          throw eacces(path.virtual)
+        }
       }
     }
     if (this.tableAnswers(opName, path.virtual, kwargs)) {
@@ -509,15 +510,22 @@ export class Dispatcher {
         throw erofsReadOnly(`mount at '${spec.virtual}' is read-only`, spec)
       }
     }
+    // The fence reruns backend ops outside `dispatch`, so the revision
+    // pins have to ride here as on the main path above, or a cascade
+    // read answers from the wrong version of a revision-pinned mount.
+    // Python's twin gets both bindings from `Mount.execute_op`.
+    const mount = this.namespace.mountFor(spec.virtual)
     try {
       return await runWithMountPrefix(rstripSlash(mountPrefix), () =>
-        this.opsRegistry.call(
-          opName,
-          resource.kind,
-          resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
-          spec,
-          [],
-          this.indexKwargs(resource),
+        runWithRevisions(mount.revisions.size > 0 ? mount.revisions : null, () =>
+          this.opsRegistry.call(
+            opName,
+            resource.kind,
+            resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
+            spec,
+            [],
+            this.indexKwargs(resource),
+          ),
         ),
       )
     } finally {

@@ -136,12 +136,15 @@ export async function handleBackground(
     //
     // A job runs concurrently with the rest of the line, so the bind is
     // only safe where the async context isolates tasks. On the fallback
-    // storage (a browser with no AsyncLocalStorage) it is one global
-    // slot that would stay set while the foreground continues, showing
-    // the job's fork to the rest of the line. There the job's inner
-    // evals resolve by id instead, which is what they did before
-    // ambient sessions existed: a job that leaks into its own nested
-    // eval is narrower than a job that leaks into the whole line.
+    // storage (a browser with no AsyncLocalStorage) the fork's frame
+    // would stay live beside the foreground's under the same owner and
+    // manager, with nothing to say whose read is whose: newest-wins
+    // reads would hand the fork to the rest of the line, and the
+    // restrictive folds would hold the line to the fork's view. There
+    // the job's inner evals resolve by id instead, which is what they
+    // did before ambient sessions existed: a job that leaks into its
+    // own nested eval is narrower than a job that leaks into the whole
+    // line.
     return asyncContextIsolatesTasks ? runWithSession(bgSession, body) : body()
   }
 
