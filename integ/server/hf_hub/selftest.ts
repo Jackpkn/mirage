@@ -205,6 +205,70 @@ async function main(): Promise<void> {
       { id: 'integ/card-model', likes: 42, downloads: 5000 },
     ])
 
+    // ---- the trimmed row, and the one parameter that un-trims it
+    const bare = (await get(fake.endpoint, '/api/models')) as Record<string, JsonValue>[]
+    const first = bare[0] ?? {}
+    check('a bare listing is trimmed', first.cardData === undefined, JSON.stringify(first))
+    check('a trimmed row carries no siblings', first.siblings === undefined, '')
+    check('a trimmed row still carries its id', typeof first.id === 'string', String(first.id))
+    const fullRows = (await get(fake.endpoint, '/api/models?full=1')) as Record<string, JsonValue>[]
+    check('full=1 restores cardData', (fullRows[0] ?? {}).cardData !== undefined, '')
+    check('full=1 restores siblings', (fullRows[0] ?? {}).siblings !== undefined, '')
+    // Upstream's own rule, stated on `list_models`: full "is set to `True` by
+    // default when using a filter".
+    const filtered = (await get(fake.endpoint, '/api/datasets?filter=license:mit')) as Record<
+      string,
+      JsonValue
+    >[]
+    check('a filter defaults to the full row', (filtered[0] ?? {}).cardData !== undefined, '')
+    const searched = (await get(fake.endpoint, '/api/datasets?search=card')) as Record<
+      string,
+      JsonValue
+    >[]
+    check('search alone stays trimmed', (searched[0] ?? {}).cardData === undefined, '')
+
+    // ---- lastModified is the HEAD commit's, not the first blob's
+    const before = (await get(fake.endpoint, '/api/datasets/other/card-data-b')) as Record<
+      string,
+      JsonValue
+    >
+    // The added path sorts AFTER README.md, so the first blob keeps the old
+    // timestamp and only the commit knows the repository moved.
+    const pushed = await fetch(`${fake.endpoint}/api/datasets/other/card-data-b/commit/main`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/x-ndjson' },
+      body: [
+        JSON.stringify({ key: 'header', value: { summary: 'add a late-sorting file' } }),
+        JSON.stringify({ key: 'file', value: { path: 'zz-late.txt', content: 'later\n' } }),
+      ].join('\n'),
+    })
+    check('a second commit lands', pushed.status === 200, String(pushed.status))
+    const after2 = (await get(fake.endpoint, '/api/datasets/other/card-data-b')) as Record<
+      string,
+      JsonValue
+    >
+    check(
+      'lastModified follows the new commit, not the first blob',
+      String(after2.lastModified) > String(before.lastModified),
+      `${String(before.lastModified)} -> ${String(after2.lastModified)}`,
+    )
+    // The info endpoint and the listing derive it the same way, so a fix to
+    // one that misses the other fails here.
+    const listed = (await get(fake.endpoint, '/api/datasets?author=other')) as Record<
+      string,
+      JsonValue
+    >[]
+    eq(
+      'the listing agrees with the info endpoint',
+      (listed[0] ?? {}).lastModified ?? null,
+      after2.lastModified ?? null,
+    )
+    eq(
+      'sort=last_modified puts the just-committed repo first',
+      ids(await get(fake.endpoint, '/api/datasets?sort=last_modified'))[0] ?? '',
+      'other/card-data-b',
+    )
+
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))
 

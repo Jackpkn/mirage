@@ -26,6 +26,7 @@ import {
   blobAt,
   blobsAt,
   commitChanges,
+  commitTime,
   createRepo,
   headSha,
   refsOf,
@@ -129,9 +130,9 @@ interface Ranked {
  * `sort`, `direction`, `limit`, `full`), the five legal sort keys, and the
  * shape of each row.
  *
- * `full=false` is the Hub's default and returns a trimmed row; `expand`
- * names individual properties instead. A row always carries its id, which is
- * the one field no `expand` can remove.
+ * A row is trimmed unless `full` says otherwise, and `expand` names
+ * individual properties instead. A row always carries its id, which is the
+ * one field no `expand` can remove.
  */
 async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
   if (!authed(ctx)) return unauthorized()
@@ -141,18 +142,21 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
   const sort = ctx.query.get('sort') ?? ''
   const direction = ctx.query.get('direction') ?? ''
   const rawLimit = ctx.query.get('limit')
-  const full = truthy(ctx.query.get('full'))
   const expand = ctx.query.getAll('expand')
+  // `full` is not simply off by default. Upstream states the rule on
+  // `list_models` itself: it "is set to `True` by default when using a
+  // filter", so a bare listing is trimmed and `filter` is the one parameter
+  // that flips it. `search` and `sort` do not.
+  const rawFull = ctx.query.get('full')
+  const full = rawFull === null ? filters.length > 0 : truthy(rawFull)
 
   const ranked: Ranked[] = []
   for (const repo of await reposOfKind(ctx.db, ctx.tenant, kind)) {
     if (author !== '' && repo.namespace !== author) continue
     if (search !== '' && !repoId(repo).toLowerCase().includes(search)) continue
-    const sha = await headSha(ctx.db, ctx.tenant, repoKey(repo.kind, repo.namespace, repo.name))
-    const blobs =
-      sha === ''
-        ? []
-        : await blobsAt(ctx.db, ctx.tenant, repoKey(repo.kind, repo.namespace, repo.name), sha)
+    const key = repoKey(repo.kind, repo.namespace, repo.name)
+    const sha = await headSha(ctx.db, ctx.tenant, key)
+    const blobs = sha === '' ? [] : await blobsAt(ctx.db, ctx.tenant, key, sha)
     const readme = blobs.find((b) => b.path === 'README.md')
     const tags = cardTags(
       readme === undefined ? {} : parseCard(Buffer.from(readme.content).toString('utf8')),
@@ -160,7 +164,8 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
     // Every filter must match, which is the Hub's rule: `?filter=a&filter=b`
     // narrows rather than widens.
     if (!filters.every((f) => tags.includes(f))) continue
-    ranked.push({ repo, sha, blobs, lastModified: blobs[0]?.lastModified ?? repo.createdAt, tags })
+    const when = await commitTime(ctx.db, ctx.tenant, key, sha)
+    ranked.push({ repo, sha, blobs, lastModified: when === '' ? repo.createdAt : when, tags })
   }
 
   const key = SORT_KEYS[sort]
@@ -176,14 +181,15 @@ async function listRepos(kind: string, ctx: Ctx<C>): Promise<Reply> {
 
   const limit = rawLimit === null ? ranked.length : Math.max(0, Number(rawLimit) || 0)
   const rows = ranked.slice(0, limit).map((r) => {
-    const body = obj(repoBody(r.repo, r.sha, r.blobs))
-    if (full || (expand.length === 0 && sort === '' && search === '' && filters.length === 0)) {
-      return body
+    const body = obj(repoBody(r.repo, r.sha, r.blobs, r.lastModified))
+    // `expand` wins outright rather than combining with `full`: upstream
+    // refuses a call carrying both, so the two never arrive together.
+    if (expand.length > 0) {
+      const out: Record<string, JsonValue> = { id: body.id ?? '' }
+      for (const name of expand) if (body[name] !== undefined) out[name] = body[name]
+      return out
     }
-    if (expand.length === 0) return trimmed(body)
-    const out: Record<string, JsonValue> = { id: body.id ?? '' }
-    for (const name of expand) if (body[name] !== undefined) out[name] = body[name]
-    return out
+    return full ? body : trimmed(body)
   })
   return { status: 200, body: rows }
 }
@@ -224,7 +230,8 @@ async function repoInfo(ctx: Ctx<C>): Promise<Reply> {
   const sha = await resolveRevision(ctx.db, ctx.tenant, key, revision)
   if (sha === null) return revisionNotFound(revision)
   const blobs = await blobsAt(ctx.db, ctx.tenant, key, sha)
-  return { status: 200, body: repoBody(repo, sha, blobs) }
+  const when = await commitTime(ctx.db, ctx.tenant, key, sha)
+  return { status: 200, body: repoBody(repo, sha, blobs, when === '' ? repo.createdAt : when) }
 }
 
 /**
@@ -236,7 +243,7 @@ async function repoInfo(ctx: Ctx<C>): Promise<Reply> {
  * git tags, which live at /refs; the two were conflated here, so
  * `hf repo tag create v1` used to surface as a facet on the model object.
  */
-function repoBody(repo: Repo, sha: string, blobs: HfBlobRow[]): JsonValue {
+function repoBody(repo: Repo, sha: string, blobs: HfBlobRow[], lastModified: string): JsonValue {
   const readme = blobs.find((b) => b.path === 'README.md')
   const card = readme === undefined ? {} : parseCard(Buffer.from(readme.content).toString('utf8'))
   const models = repo.kind === 'models'
@@ -253,7 +260,7 @@ function repoBody(repo: Repo, sha: string, blobs: HfBlobRow[]): JsonValue {
     gated: repo.gated === '' ? false : repo.gated,
     disabled: false,
     createdAt: repo.createdAt,
-    lastModified: blobs[0]?.lastModified ?? repo.createdAt,
+    lastModified,
     downloads: repo.downloads,
     likes: repo.likes,
     tags: cardTags(card),

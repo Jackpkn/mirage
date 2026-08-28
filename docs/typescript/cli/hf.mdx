@@ -52,8 +52,9 @@ ws.registerCli('hf', HF, { token })
 await ws.execute('hf auth whoami')
 ```
 
-The Hub resources need no extra: they speak the Hub API over `fetch`. `@struktoai/mirage-node` is a different product, the
-Xet object store behind [HF Buckets](/typescript/setup/hf_buckets).
+The Hub resources need no extra dependency: they speak the Hub API over the
+runtime's own `fetch`. `HfBucketsResource` is a different product, the Xet
+object store behind [HF Buckets](/typescript/setup/hf_buckets).
 
 ## Commands
 
