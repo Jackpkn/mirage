@@ -37,6 +37,18 @@ class NamespaceLinks(Protocol):
     The workspace Namespace satisfies this structurally; ops and FUSE
     consume it through this seam so the dependency points downward
     (workspace injects, lower layers never import workspace modules).
+
+    Read-only, and the TypeScript twin declares the same five members
+    in the same order. A link is created and removed through the op
+    door (``Ops.symlink``, ``Ops.unlink``), never here: the door is the
+    only layer that sees both planes, so it is where symlink(2)'s
+    refusal to overwrite an occupied name is decided, and where session
+    grants, admission policies and the op ledger fire. A mutator on
+    this seam is a write at a layer no session view covers, which is
+    how a session-scoped kernel mount came to delete a link on a mount
+    its profile hides. Routing through the door costs a caller nothing:
+    the dispatcher already answers ``unlink`` on a link path, because
+    ``unlink`` is in ``LINK_ENTRY_OPS``.
     """
 
     def follow(self, path: str) -> str:
@@ -63,34 +75,19 @@ class NamespaceLinks(Protocol):
         """
         ...
 
+    def link_stat_at(self, path: str) -> FileStat | None:
+        """The link's own stat row (lstat), None when not a link.
+
+        A link has no backend inode, so this table is the only
+        authority for one.
+
+        Args:
+            path (str): absolute virtual path.
+        """
+        ...
+
     def symlink_targets(self) -> dict[str, str]:
         """Every link path to its stored target, the whole table."""
-        ...
-
-    def link_stat_at(self, path: str) -> FileStat | None:
-        """The link's own stat (lstat), None when ``path`` is not a link.
-
-        Args:
-            path (str): absolute virtual path.
-        """
-        ...
-
-    async def symlink(self, link: str, target: str, mtime: float) -> None:
-        """Create or overwrite a symlink entry.
-
-        Args:
-            link (str): absolute virtual link path.
-            target (str): target as typed (kept verbatim).
-            mtime (float): link creation time (epoch seconds).
-        """
-        ...
-
-    async def unlink(self, path: str) -> bool:
-        """Drop a node entry; True when one existed.
-
-        Args:
-            path (str): absolute virtual path.
-        """
         ...
 
 

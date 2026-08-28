@@ -99,13 +99,6 @@ export function nowIso(): string {
   return isoNoMs(new Date())
 }
 
-// Render the mirage read-only refusal for a metadata write. The path
-// was already routed to a mount, so the lookup cannot miss.
-export function readOnlyError(cmd: string, namespace: Namespace, path: PathSpec): string {
-  const prefix = namespace.mountFor(path.virtual).prefix
-  return `${cmd}: read-only mount at ${prefix}\n`
-}
-
 export function isReadOnlyError(err: unknown): boolean {
   // A policy deny is EACCES too but must render GNU's "Permission
   // denied", not the mount read-only wording, even when its reason

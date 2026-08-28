@@ -13,13 +13,20 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { PathSpec, wordText } from '../../../../types.ts'
-import { isEexist, isEisdir, isEnoent } from '../../../../utils/errors.ts'
+import {
+  fsStrerror,
+  isEacces,
+  isEexist,
+  isEisdir,
+  isEnoent,
+  isErofs,
+} from '../../../../utils/errors.ts'
 import { CycleError, gnuDirname } from '../../../../utils/path.ts'
 import { PolicyDenied } from '../../../../policy/index.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
 import type { Session } from '../../../session/session.ts'
-import { absPath, fail, ok, splitFlags } from '../shared.ts'
+import { absPath, fail, ok, readOnlyError, splitFlags } from '../shared.ts'
 import { posixRelative } from './links.ts'
 import type { Result } from '../types.ts'
 
@@ -100,10 +107,19 @@ export async function handleLn(
     if (isEexist(err)) {
       return fail('ln', `ln: failed to create symbolic link '${wordText(linkArg)}': File exists\n`)
     }
-    if (err instanceof PolicyDenied) {
+    if (isErofs(err)) {
+      // The mount voice, as `touch` on the same read-only mount
+      // answers: the refusal is about the mount, and one grant must not
+      // describe itself two ways.
+      return fail('ln', readOnlyError('ln', namespace, linkSpec))
+    }
+    if (err instanceof PolicyDenied || isEacces(err)) {
+      // A policy deny, which ln voices as its own per-operand line.
       return fail(
         'ln',
-        `ln: failed to create symbolic link '${wordText(linkArg)}': Permission denied\n`,
+        `ln: failed to create symbolic link '${wordText(linkArg)}': ${
+          fsStrerror(err) ?? 'Permission denied'
+        }\n`,
       )
     }
     throw err

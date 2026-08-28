@@ -192,6 +192,28 @@ describe('Mount.executeCmd', () => {
     expect(new TextDecoder().decode(io.stderr as Uint8Array)).toMatch(/read-only/)
   })
 
+  it('terminates the read-only refusal with a newline', async () => {
+    // stderr accumulates across a line, so an unterminated refusal ran
+    // into the next one: `{ rm /ro/a; rm /ro/b; }` printed the single
+    // line `rm: read-only mount at /ro/rm: read-only mount at /ro/`.
+    // It is also the line the node table renders for a refused symlink
+    // (shared.readOnlyError), which concatenates with this one.
+    const m = makeMount(MountMode.READ)
+    const [wcmd] = command({
+      name: 'rm',
+      resource: 'ram',
+      spec: BASIC_SPEC,
+      fn: OK_CMD,
+      write: true,
+    })
+    if (wcmd === undefined) throw new Error('missing')
+    m.register(wcmd)
+    const [, io] = await m.executeCmd('rm', [PathSpec.fromStrPath('/x')], [], {})
+    expect(new TextDecoder().decode(io.stderr as Uint8Array)).toBe(
+      `rm: read-only mount at ${m.prefix}\n`,
+    )
+  })
+
   it('passes the mount prefix through PathSpecs given to the command', async () => {
     const m = makeMount()
     let seenPrefix: string | null = null

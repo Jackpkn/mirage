@@ -515,11 +515,18 @@ class MountCore:
         self._run(self._ops.symlink(self.resolve(target), stored))
 
     def unlink(self, path: str) -> None:
-        links = self._ops.links
-        if links is not None and links.is_link(self.resolve(path)):
-            self._run(links.unlink(self.resolve(path)))
-            self._forget(path)
-            return
+        """Remove the entry at ``path``, a link entry like any other.
+
+        A link routes through the op door rather than straight to the
+        node table: ``unlink`` is a LINK_ENTRY_OPS member, so the door
+        answers a link path itself, gated by session grants and
+        admission policies and recorded on the ledger. Writing the
+        table here instead let a session-scoped kernel mount delete a
+        link on a mount its profile hides.
+
+        Args:
+            path (str): mount path of the entry to remove.
+        """
         self._run(self._ops.unlink(self.resolve(path)))
         self._forget(path)
 

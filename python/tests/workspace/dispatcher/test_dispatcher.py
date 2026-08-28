@@ -24,6 +24,7 @@ from mirage.policy.rule import RulePolicy
 from mirage.resource.ram import RAMResource
 from mirage.types import (ConsistencyPolicy, FileType, HiddenPaths, MountMode,
                           PathSpec)
+from mirage.utils.errors import ReadOnlyError
 from mirage.workspace import Workspace
 from mirage.workspace.dispatcher import Dispatcher
 from mirage.workspace.dispatcher.dispatcher import _MountChannel
@@ -325,6 +326,87 @@ async def test_a_rename_replaces_a_link_at_the_destination():
                           dst=PathSpec.from_str_path("/ram/link"))
         assert not ws._namespace.is_link("/ram/link")
         assert (await ws.execute("cat /ram/link")).stdout == b"hi\n"
+
+
+@pytest.mark.asyncio
+async def test_a_read_grant_refuses_link_writes_like_file_writes():
+    # The mode gate on the table ops. A read grant refused a file's
+    # unlink with EROFS while the same session deleted, created and
+    # renamed its sibling link: the table verbs ran no mode check at
+    # all, so `mounts: {"/extra": "read"}` protected everything on the
+    # mount except its names.
+    with Workspace({"/extra/": RAMResource()}, mode=MountMode.WRITE) as ws:
+        await ws.execute("echo b > /extra/plain.txt")
+        await ws.execute("ln -s plain.txt /extra/lk")
+        sess = ws.create_session("agent", mounts={"/extra/": "read"})
+        token = set_current_session(sess)
+        try:
+            for coro in (
+                    ws.dispatch("unlink", PathSpec.from_str_path("/extra/lk")),
+                    ws.dispatch("symlink",
+                                PathSpec.from_str_path("/extra/lk2"),
+                                target="plain.txt"),
+                    ws.dispatch("rename",
+                                PathSpec.from_str_path("/extra/lk"),
+                                dst=PathSpec.from_str_path("/extra/mv")),
+            ):
+                with pytest.raises(ReadOnlyError) as exc:
+                    await coro
+                assert exc.value.errno == errno.EROFS
+        finally:
+            reset_current_session(token)
+        assert ws._namespace.readlink("/extra/lk") == "plain.txt"
+        assert not ws._namespace.is_link("/extra/lk2")
+
+
+@pytest.mark.asyncio
+async def test_a_read_mount_still_takes_a_link_sessionless():
+    # The mount's own mode is NOT this gate. `mode: read` says the
+    # backend cannot write, and a symlink is namespace state needing no
+    # write capability from it -- which is why a link above postgres,
+    # mongodb, chroma and qdrant (all mounted read) is pinned working in
+    # integ/resources/<svc>/sym.json. Only a session grant binds here.
+    with Workspace({"/ro/": (RAMResource(), MountMode.READ)}) as ws:
+        await ws.dispatch("symlink",
+                          PathSpec.from_str_path("/ro/lk"),
+                          target="t")
+        assert ws._namespace.is_link("/ro/lk")
+        # And the backend write on that same mount is still refused, so
+        # the two planes are told apart rather than both waved through.
+        with pytest.raises(ReadOnlyError):
+            await ws.dispatch("write",
+                              PathSpec.from_str_path("/ro/f.txt"),
+                              data=b"x")
+
+
+@pytest.mark.asyncio
+async def test_a_rename_destination_is_judged_on_its_own_turf():
+    # The endpoints need not share a turf, and each is scored against
+    # its own prefix: a grant writing /rw but only reading /ro refuses,
+    # blaming the destination, the way the backend gate checks both ends
+    # of a rename. The grant is what binds, so both mounts are writable
+    # and the session is the only thing narrowing either.
+    with Workspace({
+            "/rw/": RAMResource(),
+            "/ro/": RAMResource()
+    },
+                   mode=MountMode.WRITE) as ws:
+        await ws.execute("ln -s t /rw/lk")
+        sess = ws.create_session("agent",
+                                 mounts={
+                                     "/rw/": "write",
+                                     "/ro/": "read"
+                                 })
+        token = set_current_session(sess)
+        try:
+            with pytest.raises(ReadOnlyError) as exc:
+                await ws.dispatch("rename",
+                                  PathSpec.from_str_path("/rw/lk"),
+                                  dst=PathSpec.from_str_path("/ro/lk"))
+            assert exc.value.filename == "/ro/lk"
+        finally:
+            reset_current_session(token)
+        assert ws._namespace.is_link("/rw/lk")
 
 
 @pytest.mark.asyncio
