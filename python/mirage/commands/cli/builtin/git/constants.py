@@ -1,0 +1,35 @@
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+from dulwich.refs import Ref
+
+# The modes git records in a tree. It reads only the owner execute bit
+# to choose between the two regular ones, and a mount that reports no
+# mode at all stages the ordinary one. A symlink is its own object
+# type, and its blob is the target string rather than anything the
+# target holds; symlinks are namespace state in mirage, so that mode is
+# only ever reached through the name plane.
+REGULAR = 0o100644
+EXECUTABLE = 0o100755
+SYMLINK = 0o120000
+OWNER_EXECUTE = 0o100
+
+# The symbolic ref every verb resolves first, and the ref-space spelling
+# dulwich takes for it.
+HEAD = "HEAD"
+HEAD_REF = Ref(b"HEAD")
+
+# The directory (or, in a linked worktree, the file) a checkout keeps
+# its repository under.
+GIT_DIR = ".git"

@@ -7,11 +7,11 @@ from mirage.commands.builtin.generic.archive.extract import (ensure_dir,
                                                              extract_dest)
 from mirage.commands.builtin.generic.archive.walk import (DirProbe, StatFn,
                                                           WalkFn)
-from mirage.commands.builtin.generic.tar.constants import (READ_MODES,
+from mirage.commands.builtin.generic.tar.constants import (CREATE_ERROR_EXIT,
+                                                           ERROR_TRAILER,
+                                                           READ_MODES,
                                                            WRITE_MODES)
-from mirage.commands.builtin.generic.tar.create import (CREATE_ERROR_EXIT,
-                                                        ERROR_TRAILER,
-                                                        plan_create)
+from mirage.commands.builtin.generic.tar.create import plan_create
 from mirage.commands.builtin.generic.tar.types import (CompressionSuffix,
                                                        CreateResult, Member,
                                                        ReadMode, WriteMode)
@@ -46,7 +46,6 @@ def _stderr(lines: list[str]) -> bytes:
     return ("\n".join(lines) + "\n").encode() if lines else b""
 
 
-MISS_TRAILER = "tar: Exiting with failure status due to previous errors"
 DOTDOT_NOTICE = "tar: Removing leading `../' from member names"
 
 
@@ -197,7 +196,7 @@ async def _list_archive(
     stdout = ("\n".join(shown) + "\n").encode() if shown else None
     if misses:
         return stdout, IOResult(exit_code=2,
-                                stderr=_stderr(misses + [MISS_TRAILER]))
+                                stderr=_stderr(misses + [ERROR_TRAILER]))
     return stdout, IOResult()
 
 
@@ -283,7 +282,7 @@ async def _extract_archive(
         stdout = listing
         stderr_lines = list(notices)
     if misses:
-        stderr_lines = stderr_lines + misses + [MISS_TRAILER]
+        stderr_lines = stderr_lines + misses + [ERROR_TRAILER]
     return stdout, IOResult(exit_code=2 if misses else 0,
                             stderr=_stderr(stderr_lines),
                             writes=writes)

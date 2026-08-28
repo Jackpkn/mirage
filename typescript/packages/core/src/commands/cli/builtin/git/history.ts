@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import git from 'isomorphic-git'
+import { HEAD } from './constants.ts'
 
 import type { FlagView } from '../../../spec/types.ts'
 import { isoTimestamp } from '../../../../utils/dates.ts'
@@ -23,7 +24,6 @@ import { loadRefs, SYMREF_PREFIX } from './refs.ts'
 import { commitFacts, repoArgs, type Repo } from './repo.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
 
-const HEAD_REF = 'HEAD'
 const BRANCH_PREFIX = 'refs/heads/'
 const TAG_PREFIX = 'refs/tags/'
 const REMOTE_PREFIX = 'refs/remotes/'
@@ -181,7 +181,7 @@ export async function decorations(repo: Repo): Promise<Map<string, string[]>> {
   const resolved = await resolvedRefs(repo)
   const labels = new Map<string, string[]>()
   for (const name of [...resolved.keys()].sort(compareCodePoints)) {
-    if (name === HEAD_REF) continue
+    if (name === HEAD) continue
     const oid = resolved.get(name)
     if (oid === undefined) continue
     const commit = await peelToCommit(repo, oid)
@@ -209,19 +209,19 @@ async function decorateHead(
   resolved: ReadonlyMap<string, string>,
   labels: Map<string, string[]>,
 ): Promise<void> {
-  const oid = resolved.get(HEAD_REF)
+  const oid = resolved.get(HEAD)
   if (oid === undefined) return
   const commit = await peelToCommit(repo, oid)
   if (commit === null) return
   const list = labels.get(commit.oid) ?? []
-  const raw = refs.get(HEAD_REF) ?? ''
+  const raw = refs.get(HEAD) ?? ''
   if (raw.startsWith(SYMREF_PREFIX)) {
     const branch = refLabel(raw.slice(SYMREF_PREFIX.length).trim())
     const at = list.indexOf(branch)
     if (at !== -1) list.splice(at, 1)
     list.unshift(`HEAD -> ${branch}`)
   } else {
-    list.unshift(HEAD_REF)
+    list.unshift(HEAD)
   }
   labels.set(commit.oid, list)
 }

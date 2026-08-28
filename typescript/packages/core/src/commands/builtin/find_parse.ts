@@ -51,6 +51,14 @@ export interface FindExpr {
   printf: string | null
 }
 
+// Number.parseInt accepts trailing garbage ('12abc' -> 12), which silently
+// mis-read find's numeric arguments where python's int() and GNU both
+// refuse them; only fully-consumed digits (one optional sign) parse.
+function strictInt(value: string): number {
+  const trimmed = value.trim()
+  return /^[+-]?[0-9]+$/.test(trimmed) ? Number.parseInt(trimmed, 10) : Number.NaN
+}
+
 // GNU rounds the file size up to whole units before comparing, and
 // +N / -N are strict: +N keeps ceil(size/unit) > N, -N keeps
 // ceil(size/unit) < N, N alone keeps ceil(size/unit) === N. Expressed
@@ -61,7 +69,7 @@ export function parseSize(spec: string): [number | null, number | null] {
   const raw = spec.startsWith('+') || spec.startsWith('-') ? spec.slice(1) : spec
   const last = raw[raw.length - 1] ?? ''
   const mult = suffixes[last] ?? 1
-  const n = Number.parseInt(raw.replace(/[ckMG]$/, ''), 10)
+  const n = strictInt(raw.replace(/[ckMG]+$/, ''))
   if (Number.isNaN(n)) throw new FindParseError(`find: invalid argument '${spec}' to '-size'`)
   if (spec.startsWith('+')) return [n * mult + 1, null]
   if (spec.startsWith('-')) return [null, (n - 1) * mult]
@@ -71,7 +79,7 @@ export function parseSize(spec: string): [number | null, number | null] {
 export function parseMtime(spec: string): [number | null, number | null] {
   const day = 86400
   const now = Date.now() / 1000
-  const n = Number.parseInt(spec.replace(/^[+-]/, ''), 10)
+  const n = strictInt(spec.replace(/^[+-]+/, ''))
   if (Number.isNaN(n)) throw new FindParseError(`find: invalid argument '${spec}' to '-mtime'`)
   if (spec.startsWith('+')) return [null, now - n * day]
   if (spec.startsWith('-')) return [now - n * day, null]
@@ -86,7 +94,7 @@ function typeNode(value: string): PredNode {
 }
 
 export function parseDepth(value: string, flag: string): number {
-  const n = Number.parseInt(value, 10)
+  const n = strictInt(value)
   if (Number.isNaN(n)) throw new FindParseError(`find: invalid argument '${value}' to '${flag}'`)
   return n
 }

@@ -17,7 +17,8 @@ import type { FileStat } from '../../../../types.ts'
 import { parent, posixNormpath } from '../../../../utils/path.ts'
 import { isMissingPath } from '../../../../utils/errors.ts'
 import type { LinkView } from '../../../../ops/types.ts'
-import { SYMLINK_MODE, type Dispatch } from './types.ts'
+import { SYMLINK_MODE } from './constants.ts'
+import type { Dispatch } from './types.ts'
 
 /** Read one virtual path through the workspace dispatcher. */
 export async function readFile(dispatch: Dispatch, path: string): Promise<Uint8Array> {

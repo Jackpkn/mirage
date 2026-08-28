@@ -901,3 +901,43 @@ async def test_hidden_guard_rmdir_reads_the_stamped_children(monkeypatch):
         await ops.rmdir(NOOPAccessor(), spec)
     assert exc.value.errno == errno.ENOTEMPTY
     assert removed == []
+
+
+def _glob_ops(mounted: bool) -> CommandIO:
+
+    async def readdir(_accessor, path, _index):
+        return ["/a.txt", "/b.txt"]
+
+    async def unused(*_args):
+        raise AssertionError("not used")
+
+    return CommandIO(readdir=readdir,
+                     read_bytes=unused,
+                     read_stream=unused,
+                     stat=unused,
+                     is_mounted=lambda _a: mounted)
+
+
+@pytest.mark.asyncio
+async def test_resolve_or_empty_expands_globs():
+    spec = PathSpec(virtual="/*.txt",
+                    directory="/",
+                    resource_path="*.txt",
+                    pattern="*.txt",
+                    resolved=False)
+    resolved = await adapter.resolve_or_empty(_glob_ops(True), None, [spec],
+                                              None)
+    assert [p.virtual for p in resolved] == ["/a.txt", "/b.txt"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_or_empty_unmounted_means_stdin_mode():
+    resolved = await adapter.resolve_or_empty(
+        _glob_ops(False), None, [PathSpec.from_str_path("/a.txt")], None)
+    assert resolved == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_or_empty_no_paths():
+    assert await adapter.resolve_or_empty(_glob_ops(True), None, [],
+                                          None) == []

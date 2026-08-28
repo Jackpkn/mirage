@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import git from 'isomorphic-git'
+import { HEAD } from './constants.ts'
 
 import { IOResult } from '../../../../io/types.ts'
 import type { CommandFnResult } from '../../../config.ts'
@@ -25,7 +26,6 @@ import { resolveCommit } from './revparse.ts'
 import { checkOperands, fatal } from './util.ts'
 
 const ENC = new TextEncoder()
-const HEAD = 'HEAD'
 
 /** The tree one revision names. */
 async function treeOf(repo: Repo, revision: string): Promise<string> {

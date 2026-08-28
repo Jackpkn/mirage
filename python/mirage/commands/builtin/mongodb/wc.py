@@ -15,9 +15,8 @@
 from mirage.accessor.mongodb import MongoDBAccessor
 from mirage.commands.builtin.generic.wc import (WCCounts, format_count_rows,
                                                 parse_flags, wc_generic)
-from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.generic_bind.builders.common import \
-    resolve_or_empty
+from mirage.commands.builtin.generic_bind.adapter import (bound_op,
+                                                          resolve_or_empty)
 from mirage.commands.builtin.mongodb.cat import stream_any
 from mirage.commands.builtin.mongodb.io import IO
 from mirage.commands.config import CommandOpts

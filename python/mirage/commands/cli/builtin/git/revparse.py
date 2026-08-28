@@ -16,10 +16,10 @@ from dulwich.objects import Commit, ObjectID
 from dulwich.objectspec import parse_commit
 from dulwich.repo import BaseRepo
 
+from mirage.commands.cli.builtin.git.constants import HEAD
 from mirage.commands.cli.builtin.git.errors import AmbiguousArgumentError
 from mirage.commands.cli.builtin.git.types import AncestryStep
 
-HEAD = "HEAD"
 ANCESTOR = "~"
 PARENT = "^"
 SUFFIXES = (ANCESTOR, PARENT)

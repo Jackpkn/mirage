@@ -13,12 +13,12 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import git from 'isomorphic-git'
+import { HEAD } from './constants.ts'
 
 import { AmbiguousArgumentError } from './errors.ts'
 import { repoArgs, type Repo } from './repo.ts'
 import type { AncestryStep } from './types.ts'
 
-const HEAD = 'HEAD'
 const ANCESTOR = '~'
 const PARENT = '^'
 const SUFFIXES = [ANCESTOR, PARENT]
