@@ -105,6 +105,7 @@ export async function applyReset<C extends MinimalClient>(
   const st = state(req.run)
   for (const tenant of req.tenants) st.reset(tenant, req.epoch)
   const seeded: SeedReport[] = []
+
   for (const tenant of req.tenants) {
     const rows = await seedFixture(db, fixture, {
       dmmf: fake.dmmf,
@@ -114,6 +115,9 @@ export async function applyReset<C extends MinimalClient>(
     })
     if (fake.afterSeed !== undefined) await fake.afterSeed(db, tenant, rows, req.extras)
     seeded.push({ tenant, rows })
+    // After this tenant's own seed and afterSeed, not after the loop: a later
+    // tenant throwing must not unmark the ones already finished.
+    st.markSeeded(tenant)
   }
   return {
     ok: true,

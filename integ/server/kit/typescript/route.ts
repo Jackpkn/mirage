@@ -157,6 +157,13 @@ export class Router<C> {
     return pending.then(() => spec.handler(ctx))
   }
 
+  // The pending work on ONE run, for a caller that has to see the effect of an
+  // already-accepted write before deciding. `drain` is every run at once,
+  // which would make one run's slow reset block every other run's requests.
+  async settled(run: string): Promise<void> {
+    await this.queues.get(run)
+  }
+
   async drain(): Promise<void> {
     await Promise.all([...this.queues.values()])
   }

@@ -22,7 +22,7 @@ import { Router } from './route.ts'
 import type { Ctx } from './route.ts'
 import { DEFAULT_FIXTURE } from './fixture.ts'
 import { applyReset, defaultTenantsOf, parseResetBody } from './reset.ts'
-import { DEFAULT_RUN, resolveRun, resolveTenant } from './tenant.ts'
+import { DEFAULT_RUN, resolveRun, resolveTenant, splitRunPath } from './tenant.ts'
 import type { Headers } from './tenant.ts'
 import { unrouted } from './unrouted.ts'
 import type { JsonValue, Reply } from './types.ts'
@@ -71,6 +71,30 @@ export function makeRuntime<C extends MinimalClient>(fake: Fake<C>): Runtime<C> 
 // The reset's target run is read before validation so the queue key exists even
 // for a body that parseResetBody will reject; an invalid body is a 400 that
 // still must not jump the queue.
+// The prefix and the body must not disagree, and the prefix is the one the
+// caller cannot have set by accident. Only an ABSENT run is filled in: a body
+// carrying `{"run": 12}` or `{"run": ""}` is malformed and has to reach
+// parseResetBody to be refused, and overwriting it turned a request that owes
+// a 400 into a successful reset of somebody else's run.
+function withPathRun(body: JsonValue, pathRun: string | undefined): JsonValue {
+  if (pathRun === undefined) return body
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return body
+  const named = (body as Record<string, JsonValue>).run
+  if (named !== undefined) {
+    // A non-empty string that differs is a caller contradicting itself. Every
+    // other present value (a number, an empty string) is malformed, and is
+    // handed on unchanged so parseResetBody refuses it in its own words
+    // rather than being reported as a contradiction it is not.
+    if (typeof named === 'string' && named !== '' && named !== pathRun) {
+      throw new ResetBodyError(
+        `/reset run ${named} contradicts the /_run/${pathRun} it was sent to`,
+      )
+    }
+    return body
+  }
+  return { ...(body as Record<string, JsonValue>), run: pathRun }
+}
+
 function runOfReset(body: JsonValue): string {
   if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
     const named = (body as Record<string, JsonValue>).run
@@ -130,6 +154,10 @@ function envelope(service: string, err: unknown): Reply {
   return { status: 500, body: { error: 'internal_error', kind, message } }
 }
 
+// The kit knows a tenant is unknown; only the fake knows how its vendor says
+// so, so the body is the fake's whenever it declares one. The fallback is a
+// 401 rather than a 404 because the tenant is reached through a credential in
+// every fake that has one, and refusing the credential is what the vendor does.
 async function answer<C extends MinimalClient>(
   rt: Runtime<C>,
   router: Router<C>,
@@ -139,17 +167,40 @@ async function answer<C extends MinimalClient>(
   raw: Buffer,
 ): Promise<Reply> {
   const { service, tenantKind, tenantFromBearer, tenantTokenPattern } = rt.fake.config
-  if (url.pathname === HEALTH_PATH && (method === 'GET' || method === 'HEAD')) {
+  // Stripped FIRST, so every path below is the one the fake declares. A run
+  // prefix is transport, not routing: `/_run/h1/v1/users/me` is the same route
+  // as `/v1/users/me`, and health and /reset answer under it too, which is
+  // what lets a harness point one base URL at everything it needs.
+  let pathRun: string | undefined
+  let path: string
+  try {
+    const split = splitRunPath(url.pathname)
+    pathRun = split.run
+    path = split.path
+  } catch (err: unknown) {
+    if (err instanceof TenantError) {
+      return {
+        status: 400,
+        body: { error: 'bad_run', kind: err.constructor.name, message: err.message },
+      }
+    }
+    throw err
+  }
+  if (path === HEALTH_PATH && (method === 'GET' || method === 'HEAD')) {
     return { status: 200, body: { ok: true, service, runs: rt.pool.runs() } }
   }
-  if (url.pathname === RESET_PATH && method === 'POST') {
+  if (path === RESET_PATH && method === 'POST') {
     try {
       // Enqueued on the run's own write queue. A reset deletes and reseeds
       // rows, and for a fake with no tenant column recreates the SQLite file
       // outright, so running it beside an in-flight write unlinked the
       // database under that write: the request 500'd and every later request
       // on the run failed forever. It is a write and queues like one.
-      const body = parseResetRequest(raw)
+      // A reset reached through `/_run/<id>/reset` is about THAT run, so the
+      // prefix fills the body's `run` in. Naming a different one in the body
+      // under a prefix is a caller contradicting itself, and is refused rather
+      // than silently resolved in favour of either.
+      const body = withPathRun(parseResetRequest(raw), pathRun)
       const done = await router.enqueue(runOfReset(body), () => rt.reset(body))
       return { status: 200, body: JSON.parse(JSON.stringify(done)) as JsonValue }
     } catch (err: unknown) {
@@ -172,7 +223,7 @@ async function answer<C extends MinimalClient>(
   let run: string
   let tenant: string
   try {
-    run = resolveRun(headers, url)
+    run = resolveRun(headers, url, pathRun)
     tenant = resolveTenant(headers, url, tenantKind, tenantFromBearer, tenantTokenPattern)
   } catch (err: unknown) {
     // Same shape /reset already used, just reached from the request path. An
@@ -186,9 +237,30 @@ async function answer<C extends MinimalClient>(
     }
     throw err
   }
-  const hit = router.match(method, url.pathname)
-  if (hit === null) return unrouted(service, method, url.pathname)
-  const st = rt.state(run).of(tenant)
+  // A tenant nobody seeded has no state to serve, and until now the fake found
+  // that out one layer down, where its own first query came back empty and it
+  // threw into the 500 envelope. 500 is the wrong answer twice over: it reads
+  // as a crashed fake to anything watching (a container healthcheck marks the
+  // service permanently unhealthy), and every real vendor here refuses an
+  // unknown credential with a 401. Refused CENTRALLY rather than in each fake
+  // because the condition is the kit's own: the kit is what resolved the name.
+  // Both ways of reaching an unseeded tenant land here, which is the point --
+  // a legal name that was never seeded, and the DEFAULT_TENANT that an illegal
+  // one falls back to, were two separate 500s with one cause.
+  const runState = rt.state(run)
+  const refuse = rt.fake.unknownTenant
+  if (refuse !== undefined && tenantKind !== 'none' && !runState.isSeeded(tenant)) {
+    // The tenant may be BEING seeded right now: /reset is queued on the run
+    // and a read only waits for that queue inside Router.run, which is after
+    // this point. Checked first and awaited only on a miss, so the ordinary
+    // request pays nothing and a request racing its own reset is not told the
+    // tenant does not exist when an accepted reset is about to create it.
+    await router.settled(run)
+    if (!runState.isSeeded(tenant)) return refuse(tenant)
+  }
+  const hit = router.match(method, path)
+  if (hit === null) return unrouted(service, method, path)
+  const st = runState.of(tenant)
   const ctx: Ctx<C> = {
     params: hit.params,
     query: url.searchParams,

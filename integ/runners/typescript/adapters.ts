@@ -970,17 +970,23 @@ async function openNotion(target: Target): Promise<Open> {
   let base = process.env.NOTION_URL ?? ''
   while (base.endsWith('/')) base = base.slice(0, -1)
   if (base === '') throw new Error('notion target requires NOTION_URL')
-  // NOT minted per run, and notion is the only kit fake that cannot be. Its
-  // tenant channel is the bearer token, and the token is OBSERVABLE: `ntn auth
-  // token` prints the CLI's configured value without contacting the server at
-  // all, and integ/cli/ntn.json pins that literal, asserted a second time
-  // against the real ntn binary by integ/ntn_conformance.ts. A per-run token
-  // makes the battery print one value and the conformance run another, with
-  // one golden between them. So the two hosts share this workspace and must
-  // not reset it concurrently; the scoped reset still buys the sequential
-  // case, where a reset no longer destroys the whole run file.
+  // The TOKEN is not minted per run, and notion is the only kit fake whose
+  // token cannot be. It is OBSERVABLE: `ntn auth token` prints the CLI's
+  // configured value without contacting the server at all, integ/cli/ntn.json
+  // pins that literal, and integ/ntn_conformance.ts asserts the same line
+  // against the real ntn binary configured with the same fixed token. A
+  // per-run token makes the battery print one value and the conformance run
+  // another, with one golden between them.
+  //
+  // So the RUN separates the two hosts instead, riding the base URL as a
+  // leading `/_run/<id>` segment. That is the only channel available here: the
+  // mount hands this URL to NotionResource and never sees the request, so a
+  // header or a `?_run=` query would have to be threaded through the resource.
+  // Each host now gets its own SQLite file under the one shared token, and the
+  // two can reset concurrently instead of taking turns.
   const token = NOTION_TOKEN
-  const reset = await fetch(`${base}/reset`, {
+  const scoped = `${base}/_run/${runId()}`
+  const reset = await fetch(`${scoped}/reset`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tenants: [token] }),
@@ -994,15 +1000,18 @@ async function openNotion(target: Target): Promise<Open> {
     }
     const resource = new NotionResource({
       apiKey: token,
-      baseUrl: `${base}/v1`,
+      baseUrl: `${scoped}/v1`,
     })
     mounts[mount.path] = mount.mode === 'read' ? [resource, MountMode.READ] : resource
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
   if (target.clis?.includes('ntn') === true) {
+    // The same run as the mounts above. The CLI and the mount are two views of
+    // one workspace, so pointing them at different runs would give a case that
+    // writes with `ntn` and reads through /notion two different worlds.
     ws.registerCli('ntn', NTN, {
       api_key: token,
-      base_url: `${base}/v1`,
+      base_url: `${scoped}/v1`,
     })
   }
   const cleanup = async (): Promise<void> => {
