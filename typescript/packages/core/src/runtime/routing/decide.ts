@@ -25,11 +25,11 @@ import {
   DenyResult,
   RouteResult,
   ScriptSource,
-  policyContextPayload,
-  type PolicyDecision,
-  type PolicyContext,
-  type PolicyFn,
-  type PolicyScript,
+  routeContextPayload,
+  type RouteDecision,
+  type RouteContext,
+  type RoutePolicy,
+  type RouteScript,
 } from './types.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
@@ -134,7 +134,7 @@ async function evalSource(
  * captured stage on the line (including the catch-all vfs) keeps the
  * line's first stage.
  */
-function ctxForRuntime(ctx: PolicyContext, runtime: Runtime): PolicyContext {
+function ctxForRuntime(ctx: RouteContext, runtime: Runtime): RouteContext {
   for (const parsed of ctx.commands) {
     if (runtime.captures.includes(parsed.command)) {
       return { ...ctx, command: parsed.command, builtin: parsed.builtin }
@@ -147,12 +147,12 @@ function ctxForRuntime(ctx: PolicyContext, runtime: Runtime): PolicyContext {
  * Ask one runtime's script whether it wants the line.
  *
  * A script answering with a policy verdict shape (an object, Map, or a
- * PolicyResult arm) fails loud: a deny-dict is truthy, so coercing it
+ * RouteOutcome arm) fails loud: a deny-dict is truthy, so coercing it
  * would mean "willing", the opposite of intent.
  */
 async function evaluateScript(
-  script: PolicyScript,
-  ctx: PolicyContext,
+  script: RouteScript,
+  ctx: RouteContext,
   runtime: Runtime,
   entries: readonly Runtime[],
 ): Promise<boolean> {
@@ -161,7 +161,7 @@ async function evaluateScript(
     script instanceof ScriptSource
       ? await evalSource(
           script.source,
-          policyContextPayload(view, runtime),
+          routeContextPayload(view, runtime),
           evaluatorOf(entries, script.language),
         )
       : await script(view)
@@ -221,8 +221,8 @@ export function parseVerdict(verdict: unknown): string | null {
 
 /** Run the global policy, returning a runtime name or null to pass. */
 async function evaluatePolicy(
-  policy: PolicyFn,
-  ctx: PolicyContext,
+  policy: RoutePolicy,
+  ctx: RouteContext,
   entries: readonly Runtime[],
 ): Promise<string | null> {
   // An untyped JS policy can return undefined for "pass"; `?? null`
@@ -231,7 +231,7 @@ async function evaluatePolicy(
     policy instanceof ScriptSource
       ? await evalSource(
           policy.source,
-          policyContextPayload(ctx),
+          routeContextPayload(ctx),
           evaluatorOf(entries, policy.language),
         )
       : ((await policy(ctx)) ?? null)
@@ -252,10 +252,10 @@ async function evaluatePolicy(
  */
 export async function decideLine(
   entries: readonly Runtime[],
-  policy: PolicyFn | null,
-  ctx: PolicyContext,
+  policy: RoutePolicy | null,
+  ctx: RouteContext,
   staticBindings: Record<string, Runtime>,
-): Promise<PolicyDecision> {
+): Promise<RouteDecision> {
   if (policy !== null) {
     const name = await evaluatePolicy(policy, ctx, entries)
     if (name !== null) {

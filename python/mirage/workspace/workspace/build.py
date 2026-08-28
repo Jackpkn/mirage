@@ -23,7 +23,7 @@ from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.session import SessionStore
 from mirage.workspace.store import RAMWorkspaceStateStore, WorkspaceStateStore
-from mirage.workspace.workspace.policy import PolicyRouter
+from mirage.workspace.workspace.routing import Router
 from mirage.workspace.workspace.runtimes import Runtimes
 
 
@@ -78,8 +78,8 @@ def resolve_control_stores(
 
 def wire_runtime_world(
         registry: MountRegistry, dispatch: DispatchFn, resolver: MountResolver,
-        entries: list[Runtime | str] | None) -> tuple[Runtimes, PolicyRouter]:
-    """Build the ordered runtime world and its policy router.
+        entries: list[Runtime | str] | None) -> tuple[Runtimes, Router]:
+    """Build the ordered runtime world and its route-policy router.
 
     Instances and the vfs marker; the first capturer binds each
     command. An explicit list fails loud per entry; the default world
@@ -96,7 +96,7 @@ def wire_runtime_world(
     """
     runtimes = Runtimes(registry, dispatch, resolver)
     runtimes.resolve(entries)
-    router = PolicyRouter(registry, runtimes, resolver)
+    router = Router(registry, runtimes, resolver)
     registry.runtime_bindings = bind_commands(runtimes.entries)
     registry.runtime_entries = runtimes.entries
     registry.vfs_runtime = next(

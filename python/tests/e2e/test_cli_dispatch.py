@@ -276,7 +276,7 @@ async def test_policy_sees_the_cli_fact():
 
     workspace = Workspace({"/data": (RAMResource(), MountMode.WRITE)},
                           mode=MountMode.WRITE,
-                          policy=policy)
+                          route_policy=policy)
     workspace.register_cli("slack-eng", make_tree(), config={"token": "tok"})
     io = await workspace.execute("slack-eng message send -t x hi")
     assert io.exit_code == 126

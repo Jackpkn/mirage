@@ -22,4 +22,4 @@ export {
 export { RouteDeny, RouteError } from './errors.ts'
 export { commandNodes, parsedCommands } from './facts.ts'
 export { DenyResult, RouteResult, ScriptSource } from './types.ts'
-export type { PolicyDecision, PolicyContext, PolicyFn } from './types.ts'
+export type { RouteDecision, RouteContext, RoutePolicy } from './types.ts'

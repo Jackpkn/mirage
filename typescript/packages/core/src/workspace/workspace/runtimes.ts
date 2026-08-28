@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { parsedCommands, type PolicyDecision } from '../../runtime/routing/index.ts'
+import { parsedCommands, type RouteDecision } from '../../runtime/routing/index.ts'
 import type { Runtime, RuntimeEntry } from '../../runtime/base.ts'
 import { rejectConfigScript } from './guard.ts'
 import { LanguageRuntime } from '../../runtime/language.ts'
@@ -120,7 +120,7 @@ export class Runtimes {
    */
   wholeLineFor(
     rootNode: TSNodeLike,
-    decision: PolicyDecision | null,
+    decision: RouteDecision | null,
   ): (Runtime & LineExecutor) | null {
     const candidates = this.entries.some((entry) => isLineExecutor(entry))
     if (!candidates) return null

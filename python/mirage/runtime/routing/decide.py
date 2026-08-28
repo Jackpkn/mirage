@@ -22,10 +22,10 @@ from mirage.runtime.errors import EvalError
 from mirage.runtime.language import LanguageRuntime
 from mirage.runtime.mixin import EvaluatorMixin
 from mirage.runtime.routing.errors import RouteDeny, RouteError
-from mirage.runtime.routing.types import (DenyResult, PolicyContext,
-                                          PolicyDecision, PolicyFn,
-                                          PolicyResult, PolicyScript,
-                                          RouteResult, ScriptSource)
+from mirage.runtime.routing.types import (DenyResult, RouteContext,
+                                          RouteDecision, RouteOutcome,
+                                          RoutePolicy, RouteResult,
+                                          RouteScript, ScriptSource)
 from mirage.runtime.script import eval_with_ctx
 from mirage.runtime.table import bind_commands, catch_all, runtime_bindings_for
 from mirage.runtime.types import EvalValue, Language
@@ -92,7 +92,7 @@ async def _eval_source(source: str, ctx_payload: dict[str, EvalValue],
 
     Args:
         source (str): the script program.
-        ctx_payload (dict[str, EvalValue]): the PolicyContext payload.
+        ctx_payload (dict[str, EvalValue]): the RouteContext payload.
         evaluator (EvaluatorMixin | None): the world's policy engine.
 
     Raises:
@@ -116,25 +116,25 @@ async def _eval_source(source: str, ctx_payload: dict[str, EvalValue],
         raise ValueError(prefix + str(exc))
 
 
-async def evaluate_script(script: PolicyScript, ctx: PolicyContext,
+async def evaluate_script(script: RouteScript, ctx: RouteContext,
                           runtime: Runtime, entries: list[Runtime]) -> bool:
     """Ask one runtime's script whether it wants the line.
 
     The script sees the runtime's own view of the context
-    (PolicyContext.for_runtime): ``command`` is its first captured
+    (RouteContext.for_runtime): ``command`` is its first captured
     stage, plus ``runtime`` identity in the script payload.
 
     Args:
-        script (PolicyScript): a callable taking the PolicyContext, or
+        script (RouteScript): a callable taking the RouteContext, or
             a config-borne ScriptSource.
-        ctx (PolicyContext): the parse context for the line.
+        ctx (RouteContext): the parse context for the line.
         runtime (Runtime): the runtime being asked (ctx.runtime).
         entries (list[Runtime]): the workspace's ordered world; a
             ScriptSource selects its evaluator from it by language.
 
     Raises:
         RouteError: the script answered with a policy verdict shape
-            (a dict or a PolicyResult arm) instead of a boolean; a
+            (a dict or a RouteOutcome arm) instead of a boolean; a
             deny-dict is truthy, so coercing it would mean "willing",
             the opposite of intent.
     """
@@ -147,7 +147,7 @@ async def evaluate_script(script: PolicyScript, ctx: PolicyContext,
         verdict = script(view)
         if inspect.isawaitable(verdict):
             verdict = await verdict
-    if isinstance(verdict, (Mapping, PolicyResult)):
+    if isinstance(verdict, (Mapping, RouteOutcome)):
         raise RouteError(
             f"entry scripts answer a boolean (deny and placement belong "
             f"to the global policy), got {verdict!r} from {runtime.name!r}")
@@ -167,7 +167,7 @@ def parse_verdict(verdict: Any) -> str | None:
 
     Raises:
         RouteDeny: the verdict is DenyResult or {"deny": reason}.
-        RouteError: the verdict is not a PolicyResult arm, a name,
+        RouteError: the verdict is not a RouteOutcome arm, a name,
             None, or a verdict dict (mirrors the TS parseVerdict).
     """
     if verdict is None or isinstance(verdict, str):
@@ -193,21 +193,21 @@ def parse_verdict(verdict: Any) -> str | None:
                      f"dict, or None, got {verdict!r}")
 
 
-async def evaluate_policy(policy: PolicyFn, ctx: PolicyContext,
+async def evaluate_policy(policy: RoutePolicy, ctx: RouteContext,
                           entries: list[Runtime]) -> str | None:
     """Run the global policy, returning a runtime name or None to pass.
 
     Args:
-        policy (PolicyFn): a callable taking the PolicyContext, or a
+        policy (RoutePolicy): a callable taking the RouteContext, or a
             config-borne ScriptSource (last expression = the verdict).
-        ctx (PolicyContext): the parse context for the line.
+        ctx (RouteContext): the parse context for the line.
         entries (list[Runtime]): the workspace's ordered world; a
             ScriptSource selects its evaluator from it by language.
 
     Raises:
         RouteDeny: the policy refused the line.
         ValueError: the policy returned something other than a
-            PolicyVerdict.
+            RouteVerdict.
     """
     verdict: Any
     if isinstance(policy, ScriptSource):
@@ -220,9 +220,9 @@ async def evaluate_policy(policy: PolicyFn, ctx: PolicyContext,
     return parse_verdict(verdict)
 
 
-async def decide_line(entries: list[Runtime], policy: PolicyFn | None,
-                      ctx: PolicyContext,
-                      static_bindings: dict[str, Runtime]) -> PolicyDecision:
+async def decide_line(entries: list[Runtime], policy: RoutePolicy | None,
+                      ctx: RouteContext,
+                      static_bindings: dict[str, Runtime]) -> RouteDecision:
     """Resolve the policy ladder for one line: policy, then scripts.
 
     A policy verdict overlays the named runtime's captures on the
@@ -236,8 +236,8 @@ async def decide_line(entries: list[Runtime], policy: PolicyFn | None,
 
     Args:
         entries (list[Runtime]): the workspace's ordered world.
-        policy (PolicyFn | None): the global policy, if configured.
-        ctx (PolicyContext): the parse context for the line.
+        policy (RoutePolicy | None): the global policy, if configured.
+        ctx (RouteContext): the parse context for the line.
         static_bindings (dict[str, Runtime]): the workspace's static
             command bindings.
     """
@@ -245,11 +245,11 @@ async def decide_line(entries: list[Runtime], policy: PolicyFn | None,
         name = await evaluate_policy(policy, ctx, entries)
         if name is not None:
             overlay = runtime_bindings_for(entries, name)
-            return PolicyDecision(bindings={
+            return RouteDecision(bindings={
                 **static_bindings,
                 **overlay
             },
-                                  fallback=catch_all(entries))
+                                 fallback=catch_all(entries))
     willing: list[Runtime] = []
     for entry in entries:
         wants = (True if entry.script is None else await evaluate_script(
@@ -264,4 +264,4 @@ async def decide_line(entries: list[Runtime], policy: PolicyFn | None,
         for command in entry.captures
     }
     bindings.update(bind_commands(willing))
-    return PolicyDecision(bindings=bindings, fallback=catch_all(willing))
+    return RouteDecision(bindings=bindings, fallback=catch_all(willing))

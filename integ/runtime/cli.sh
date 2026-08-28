@@ -72,10 +72,10 @@ write_world_yaml() {
       world_json=$(jq --arg p "$work/script_$i.py" ".runtimes[$i].script = \$p" <<<"$world_json")
     fi
   done
-  policy=$(jq -r '.policy // empty' <<<"$world_json")
+  policy=$(jq -r '.route_policy // empty' <<<"$world_json")
   if [ -n "$policy" ]; then
     printf '%s' "$policy" > "$work/policy.py"
-    world_json=$(jq --arg p "$work/policy.py" '.policy = $p' <<<"$world_json")
+    world_json=$(jq --arg p "$work/policy.py" '.route_policy = $p' <<<"$world_json")
   fi
   # A script CLI's program becomes a file the yaml `clis:` block points
   # at, the same build-context shape a deployment writes by hand; the
@@ -95,7 +95,7 @@ write_world_yaml() {
          | map_values({resource: .resource}
              + (if .limits then {command_limits: .limits} else {} end)))}
       + (if .runtimes then {runtimes: .runtimes} else {} end)
-      + (if .policy then {policy: .policy} else {} end)
+      + (if .route_policy then {route_policy: .route_policy} else {} end)
       + (if .clis then {clis: .clis} else {} end)' \
     <<<"$world_json" > "$work/ws.yaml"
 }

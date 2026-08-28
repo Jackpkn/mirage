@@ -22,7 +22,7 @@ import {
   runWithOpPolicies,
 } from '../../context/session_context.ts'
 import type { Runtime } from '../../runtime/base.ts'
-import type { PolicyDecision } from '../../runtime/routing/index.ts'
+import type { RouteDecision } from '../../runtime/routing/index.ts'
 import { mergeSignals } from '../abort.ts'
 import { type ByteSource, IOResult, materialize } from '../../io/types.ts'
 import type { Resource } from '../../resource/base.ts'
@@ -97,7 +97,7 @@ export async function executeCommand(
   jobTable: JobTable | null,
   ensureOpen?: (resource: Resource) => Promise<void>,
   runtimeBindings?: Record<string, Runtime>,
-  routingDecision?: PolicyDecision,
+  routingDecision?: RouteDecision,
   signal?: AbortSignal,
   // Parse one line into a tree; only alias expansion needs it. Absent
   // means an alias is stored and printed but never expanded.
@@ -292,7 +292,7 @@ async function runCommandBody(
   jobTable: JobTable | null,
   ensureOpen?: (resource: Resource) => Promise<void>,
   runtimeBindings?: Record<string, Runtime>,
-  routingDecision?: PolicyDecision,
+  routingDecision?: RouteDecision,
   signalIn?: AbortSignal,
   agentId = '',
 ): Promise<Result> {
@@ -447,7 +447,7 @@ async function runArgv(
   jobTable: JobTable | null,
   ensureOpen?: (resource: Resource) => Promise<void>,
   runtimeBindings?: Record<string, Runtime>,
-  routingDecision?: PolicyDecision,
+  routingDecision?: RouteDecision,
   signal?: AbortSignal,
   // The command's line within its parse, which only `alias` reads: a
   // definition remembers where it was made so a use on the same line
@@ -569,7 +569,7 @@ async function routeArgv(
   jobTable: JobTable | null,
   ensureOpen: ((resource: Resource) => Promise<void>) | undefined,
   runtimeBindings: Record<string, Runtime> | undefined,
-  routingDecision: PolicyDecision | undefined,
+  routingDecision: RouteDecision | undefined,
   signal: AbortSignal | undefined,
   row: number,
 ): Promise<Result> {

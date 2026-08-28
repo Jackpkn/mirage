@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { TSNodeLike } from '../../shell/types.ts'
 import { commandNodes, parsedCommands } from './facts.ts'
-import { policyContextFromPayload, policyContextPayload, type PolicyContext } from './types.ts'
+import { routeContextFromPayload, routeContextPayload, type RouteContext } from './types.ts'
 
 // Mirrors python/tests/runtime/routing/test_facts.py.
 
@@ -53,7 +53,7 @@ describe('parsedCommands', () => {
 
 describe('policy context wire schema', () => {
   it('round-trips the cli fact through the payload', () => {
-    const ctx: PolicyContext = {
+    const ctx: RouteContext = {
       line: 'slack send /data/x',
       commands: [
         {
@@ -72,8 +72,8 @@ describe('policy context wire schema', () => {
       agentId: 'a1',
       mounts: ['/data'],
     }
-    const replayed = policyContextFromPayload(
-      JSON.parse(JSON.stringify(policyContextPayload(ctx))) as Record<string, unknown>,
+    const replayed = routeContextFromPayload(
+      JSON.parse(JSON.stringify(routeContextPayload(ctx))) as Record<string, unknown>,
     )
     expect(replayed).toEqual(ctx)
   })

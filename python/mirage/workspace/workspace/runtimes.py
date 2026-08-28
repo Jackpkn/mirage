@@ -19,7 +19,7 @@ from mirage.runtime.base import Runtime
 from mirage.runtime.language import LanguageRuntime
 from mirage.runtime.mixin import LineExecutorMixin
 from mirage.runtime.resolver import MountResolver
-from mirage.runtime.routing import PolicyDecision, parsed_commands
+from mirage.runtime.routing import RouteDecision, parsed_commands
 from mirage.runtime.table import (DEFAULT_ENTRIES, NAMED, VFSRuntime,
                                   bind_commands, build_runtime,
                                   whole_line_runtime)
@@ -127,9 +127,8 @@ class Runtimes:
         self._registry.runtime_entries = candidate
         return entry
 
-    def whole_line(
-            self, ast: Any,
-            decision: PolicyDecision | None) -> LineExecutorMixin | None:
+    def whole_line(self, ast: Any,
+                   decision: RouteDecision | None) -> LineExecutorMixin | None:
         """The entry taking this whole line, None for the executor.
 
         An entry inheriting LineExecutorMixin takes the raw line when
@@ -139,7 +138,7 @@ class Runtimes:
 
         Args:
             ast: the parsed tree-sitter root node.
-            decision (PolicyDecision | None): the line's decision,
+            decision (RouteDecision | None): the line's decision,
                 None when only static bindings apply.
         """
         if not any(

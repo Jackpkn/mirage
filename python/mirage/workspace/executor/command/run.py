@@ -27,7 +27,7 @@ from mirage.ops.config import NamespaceLinks
 from mirage.ops.namespace_view import namespace_names
 from mirage.ops.types import LinkView, MountView, NamespaceView
 from mirage.runtime.base import Runtime
-from mirage.runtime.routing import PolicyDecision
+from mirage.runtime.routing import RouteDecision
 from mirage.runtime.table import VFSRuntime
 from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat, PathSpec, ResourceName
@@ -74,7 +74,7 @@ def admission_denial(cmd_name: str) -> IOResult:
 
 
 def line_runtime_for(
-        cmd_name: str, registry: MountRegistry, routing: PolicyDecision | None
+        cmd_name: str, registry: MountRegistry, routing: RouteDecision | None
 ) -> tuple[Runtime | None, IOResult | None]:
     """Resolve a command against the line's routing decision.
 
@@ -89,7 +89,7 @@ def line_runtime_for(
         cmd_name (str): the command being dispatched.
         registry (MountRegistry): registry holding static bindings and
             the world's vfs runtime.
-        routing (PolicyDecision | None): the typed line's decision.
+        routing (RouteDecision | None): the typed line's decision.
     """
     if routing is None:
         vfs = registry.vfs_runtime
@@ -339,7 +339,7 @@ async def run_on_mount(
     stdin: ByteSource | None = None,
     resolve_hint: PathSpec | None = None,
     mount: MountEntry | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     """Run one already-parsed command on the mount that owns its paths.
 

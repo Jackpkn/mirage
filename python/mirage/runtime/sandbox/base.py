@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 
 from mirage.runtime.base import Runtime
 from mirage.runtime.mixin import LineExecutorMixin
-from mirage.runtime.routing.types import PolicyScript
+from mirage.runtime.routing.types import RouteScript
 from mirage.runtime.sandbox.config import SandboxConfig
 from mirage.runtime.types import RunResult, RuntimeReach
 
@@ -54,7 +54,7 @@ class RemoteSandbox(Runtime, LineExecutorMixin):
     def __init__(self,
                  captures: Sequence[str] | None = None,
                  config: SandboxConfig | dict[str, Any] | None = None,
-                 script: PolicyScript | None = None) -> None:
+                 script: RouteScript | None = None) -> None:
         super().__init__(captures, config, script)
         # Connect-once latch: the first captured line connects; later
         # lines just execute. A failed connect leaves it unset so the

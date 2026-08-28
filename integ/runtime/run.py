@@ -352,8 +352,8 @@ async def _build_workspace(world: dict[str, Any], run_id: str) -> Workspace:
     kwargs: dict[str, Any] = {}
     if "runtimes" in world:
         kwargs["runtimes"] = [_build_entry(e) for e in world["runtimes"]]
-    if "policy" in world:
-        kwargs["policy"] = ScriptSource(world["policy"])
+    if "route_policy" in world:
+        kwargs["route_policy"] = ScriptSource(world["route_policy"])
     if "policies" in world:
         kwargs["policies"] = [_build_policy(s) for s in world["policies"]]
     if "profiles" in world:

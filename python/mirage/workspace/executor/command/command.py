@@ -29,7 +29,7 @@ from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
 from mirage.policy import resolve_limit, resolve_producer
-from mirage.runtime.routing import PolicyDecision
+from mirage.runtime.routing import RouteDecision
 from mirage.runtime.types import DispatchFn
 from mirage.shell.call_stack import CallStack
 from mirage.shell.job_table import JobTable
@@ -82,7 +82,7 @@ async def handle_command(
     call_stack: CallStack | None = None,
     job_table: JobTable | None = None,
     namespace: Namespace | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Execute a simple command.
 

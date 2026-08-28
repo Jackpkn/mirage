@@ -1,6 +1,6 @@
 ---
-title: Policy Engine
-description: Script which runtime serves each command line; policy scripts run on the workspace's evaluator runtime.
+title: Route Policy
+description: Script which runtime serves each command line; route-policy scripts run on the workspace's evaluator runtime.
 icon: route
 ---
 
@@ -8,7 +8,7 @@ A workspace can hold several runtimes for the same command, with different
 trade-offs. `monty` runs `python3` in-process, sandboxed, stdlib-only:
 perfect for quick one-liners and pipe transforms, useless for a script that
 imports `pandas`. A `docker` entry is the opposite: your container, your
-installed packages, but every line pays the exec round-trip. The **policy**
+installed packages, but every line pays the exec round-trip. The **route policy**
 decides per line which one serves it:
 
 ```yaml
@@ -20,7 +20,7 @@ runtimes:
     config:
       container: my-box
   - vfs
-policy: ./policy.py
+route_policy: ./policy.py
 ```
 
 ```python policy.py
@@ -74,7 +74,7 @@ This payload is captured from a live run of the config above, routing
 - `mounts`: the workspace's mount prefixes, including built-ins like
   `/dev/`.
 
-The payload round-trips through JSON (`PolicyContext.from_dict`), so you
+The payload round-trips through JSON (`RouteContext.from_dict`), so you
 can store one and replay a decision in tests.
 
 ## Output: the verdict
@@ -96,16 +96,16 @@ In code, the same two arms have a typed spelling, `RouteResult` and
 return from inside the evaluator sandbox:
 
 ```python
-from mirage.runtime.routing import (DenyResult, PolicyContext, PolicyResult,
+from mirage.runtime.routing import (DenyResult, RouteContext, RouteOutcome,
                                    RouteResult)
 
-def policy(ctx: PolicyContext) -> PolicyResult | None:
+def policy(ctx: RouteContext) -> RouteOutcome | None:
     if any(p.startswith("/prod/") for p in ctx.commands[0].paths):
         return DenyResult("writes under /prod are blocked")
     return RouteResult("docker") if "/jobs/" in ctx.line else None
 ```
 
-Besides the global `policy`, each runtime entry can carry its own `script:`
+Besides the global `route_policy`, each runtime entry can carry its own `script:`
 with the same `ctx` input but a boolean verdict: am I willing to serve this
 line? Unwilling entries step aside and the first willing capturer wins.
 
@@ -113,9 +113,9 @@ line? Unwilling entries step aside and the first willing capturer wins.
 
 `policy.py` is never imported: the workspace evaluates its source on the
 **policy engine**, an entry in the `runtimes` list with the evaluator
-capability. The script's file extension picks the engine: `policy:
+capability. The script's file extension picks the engine: `route_policy:
 ./policy.py` runs on the first python evaluator (monty, or pyodide in
-TypeScript) and `policy: ./policy.js` on the first JS evaluator
+TypeScript) and `route_policy: ./policy.js` on the first JS evaluator
 (quickjs), even when an evaluator of the other language sits earlier in
 the list; with no language match the first evaluator serves. A config
 with policy scripts but no evaluator entry fails at the first decision.
@@ -124,18 +124,18 @@ Evaluation is bounded: a policy script that hangs fails the line with a
 policy error after 10 seconds instead of freezing the workspace.
 
 When you build the workspace in code rather than from a config file,
-`policy=` also accepts a plain function with the same decision contract,
+`route_policy=` also accepts a plain function with the same decision contract,
 sync or async. It is called directly, so no evaluator is involved:
 
 ```python
-from mirage.runtime.routing import PolicyContext
+from mirage.runtime.routing import RouteContext
 
-def policy(ctx: PolicyContext) -> str | None:
+def policy(ctx: RouteContext) -> str | None:
     stage = ctx.commands[0]
     in_jobs = any(p.startswith("/jobs/") for p in stage.paths)
     return "docker" if in_jobs else "monty"
 
-ws = Workspace(mounts, runtimes=runtimes, policy=policy)
+ws = Workspace(mounts, runtimes=runtimes, route_policy=policy)
 ```
 
 A per-entry `script=` likewise accepts `(ctx) -> bool` in code.

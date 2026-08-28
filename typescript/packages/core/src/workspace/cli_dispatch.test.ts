@@ -377,7 +377,7 @@ describe('policy cli fact', () => {
         mode: MountMode.WRITE,
         ops,
         shellParser: parser,
-        policy: (ctx) => {
+        routePolicy: (ctx) => {
           seen.push(ctx.commands[0]?.cli ?? null)
           if (ctx.commands[0]?.cli === 'slack-eng') return { deny: 'cli lines are frozen' }
           return null

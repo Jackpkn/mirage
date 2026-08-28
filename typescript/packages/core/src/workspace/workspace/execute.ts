@@ -28,7 +28,7 @@ import { errorVirtualPath, gnuStrerror } from '../../utils/errors.ts'
 import { makeAbortError, mergeSignals } from '../abort.ts'
 import type { Dispatcher } from '../dispatcher/index.ts'
 import type { DispatchFn } from '../../runtime/types.ts'
-import { RouteDeny, type PolicyDecision } from '../../runtime/routing/index.ts'
+import { RouteDeny, type RouteDecision } from '../../runtime/routing/index.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import type { ExecuteFn } from '../expand/node.ts'
 import type { MountRegistry } from '../mount/registry.ts'
@@ -44,7 +44,7 @@ import { failureResult, isControlFlowError } from './failure.ts'
 import { admitLine } from '../node/admission.ts'
 import { runWholeLine } from './line.ts'
 import type { WorkspaceMeta } from './meta.ts'
-import type { PolicyRouter } from './policy.ts'
+import type { Router } from './routing.ts'
 import type { Runtimes } from './runtimes.ts'
 import { ExecuteResult, type ExecuteOptions } from './types.ts'
 import { commandName, forkForCall } from './utils.ts'
@@ -70,7 +70,7 @@ export interface ExecuteEnv {
   agentId: string | null
   workspaceId: string
   runtimes: Runtimes
-  policyRouter: PolicyRouter
+  router: Router
   registerCloser(fn: () => Promise<void>): void
   ensureOpen(resource: Resource): Promise<void>
   invalidateAllAfterRemote(): Promise<void>
@@ -221,9 +221,9 @@ async function runLine(
     ambient !== null && (options.sessionId === undefined || options.sessionId === ambient.sessionId)
       ? ambient
       : env.sessions.get(options.sessionId ?? env.sessions.defaultId)
-  let routingDecision: PolicyDecision | null
+  let routingDecision: RouteDecision | null
   try {
-    routingDecision = await env.policyRouter.decide(rootNode, command, options, targetSession)
+    routingDecision = await env.router.decide(rootNode, command, options, targetSession)
   } catch (caught) {
     if (caught instanceof RouteDeny) {
       return deniedResult(env, command, options, targetSession, caught.reason)

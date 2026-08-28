@@ -22,7 +22,7 @@ SOURCE = Path(__file__).resolve().parents[2] / "mirage"
 # methods, whose parameters the language types as object so that a
 # membership or attribute test on an unrelated value stays legal. The
 # fifth is the guard whose entire job is to catch a value the annotations
-# already claim cannot arrive (a plain string where a PolicyFn belongs),
+# already claim cannot arrive (a plain string where a RoutePolicy belongs),
 # so narrowing it would make its own call sites type errors.
 ALLOWED = {
     # Overrides an external base class that declares `dict[str, object]`;

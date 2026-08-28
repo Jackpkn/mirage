@@ -34,7 +34,7 @@ import { mergeOverlayStat } from '../../mount/namespace/overlay.ts'
 import { MountCommandUnsupported, type MountRegistry } from '../../mount/registry.ts'
 import type { Runtime } from '../../../runtime/base.ts'
 import { VFSRuntime } from '../../../runtime/table.ts'
-import type { PolicyDecision } from '../../../runtime/routing/index.ts'
+import type { RouteDecision } from '../../../runtime/routing/index.ts'
 import type { Session } from '../../session/session.ts'
 import type { DispatchFn } from '../../../runtime/types.ts'
 import { applyFindActions } from '../find_action_dispatch.ts'
@@ -54,7 +54,7 @@ export interface RunOnMountCtx {
   namespace?: Namespace
   ensureOpen?: (resource: Resource) => Promise<void>
   runtimeBindings?: Record<string, Runtime>
-  routingDecision?: PolicyDecision
+  routingDecision?: RouteDecision
 }
 
 interface RunOnMountOpts {
@@ -82,7 +82,7 @@ function lineRuntimeFor(
   cmdName: string,
   runtimeBindings: Record<string, Runtime> | undefined,
   vfs: Runtime | null,
-  routingDecision: PolicyDecision | undefined,
+  routingDecision: RouteDecision | undefined,
 ): [Runtime | undefined, IOResult | null] {
   if (routingDecision === undefined) {
     const restricted = vfs instanceof VFSRuntime && vfs.restricted

@@ -22,7 +22,7 @@ from mirage.runtime.js.base import JsRuntime
 from mirage.runtime.mixin import EvaluatorMixin
 from mirage.runtime.python.local import LocalRuntime
 from mirage.runtime.python.monty import MontyRuntime
-from mirage.runtime.routing import (DenyResult, PolicyContext, RouteDeny,
+from mirage.runtime.routing import (DenyResult, RouteContext, RouteDeny,
                                     RouteError, RouteResult, ScriptSource,
                                     decide_line, evaluate_policy,
                                     evaluate_script, evaluator_of,
@@ -49,24 +49,24 @@ class BetaRuntime(Runtime):
         return RunResult(stdout=b"beta\n", stderr=None, exit_code=0)
 
 
-def ctx_for(line: str) -> PolicyContext:
+def ctx_for(line: str) -> RouteContext:
     commands = parsed_commands(parse(line))
-    return PolicyContext(line=line,
-                         commands=commands,
-                         command=commands[0].command if commands else "",
-                         builtin=commands[0].builtin if commands else False,
-                         cwd="/",
-                         env={},
-                         session_id="s",
-                         agent_id="a",
-                         mounts=("/data", ))
+    return RouteContext(line=line,
+                        commands=commands,
+                        command=commands[0].command if commands else "",
+                        builtin=commands[0].builtin if commands else False,
+                        cwd="/",
+                        env={},
+                        session_id="s",
+                        agent_id="a",
+                        mounts=("/data", ))
 
 
 @pytest.mark.asyncio
 async def test_script_callable_and_awaitable():
     runtime = AlphaRuntime()
 
-    async def wants(ctx: PolicyContext) -> bool:
+    async def wants(ctx: RouteContext) -> bool:
         return "yes" in ctx.line
 
     assert await evaluate_script(wants, ctx_for("echo yes"), runtime, [])

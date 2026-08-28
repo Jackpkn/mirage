@@ -15,15 +15,15 @@
 from typing import Any
 
 from mirage.runtime.resolver import MountResolver
-from mirage.runtime.routing import (PolicyContext, PolicyDecision, PolicyFn,
-                                    RouteError, decide_line, parsed_commands)
+from mirage.runtime.routing import (RouteContext, RouteDecision, RouteError,
+                                    RoutePolicy, decide_line, parsed_commands)
 from mirage.runtime.table import catch_all, runtime_bindings_for
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.session import Session, env_snapshot
 from mirage.workspace.workspace.runtimes import Runtimes
 
 
-class PolicyRouter:
+class Router:
     """Decides which runtime a typed line routes to.
 
     The order is: an inherited decision, then the ``execute()`` runtime
@@ -54,9 +54,9 @@ class PolicyRouter:
         session: Session,
         session_id: str,
         agent_id: str,
-        policy: PolicyFn | None,
-        inherited: PolicyDecision | None,
-    ) -> PolicyDecision | None:
+        route_policy: RoutePolicy | None,
+        inherited: RouteDecision | None,
+    ) -> RouteDecision | None:
         """Resolve the routing decision for one typed line.
 
         Returns None when nothing decides (no runtime argument, no
@@ -74,8 +74,9 @@ class PolicyRouter:
             session (Session): the effective session (cwd, env).
             session_id (str): session hosting the line.
             agent_id (str): agent the line runs as.
-            policy (PolicyFn | None): the workspace policy, if any.
-            inherited (PolicyDecision | None): the calling line's
+            route_policy (RoutePolicy | None): the workspace route
+                policy, if any.
+            inherited (RouteDecision | None): the calling line's
                 decision, for nested evals.
 
         Raises:
@@ -89,18 +90,18 @@ class PolicyRouter:
                 overlay = runtime_bindings_for(entries, runtime)
             except ValueError as exc:
                 raise RouteError(str(exc)) from exc
-            return PolicyDecision(bindings={
+            return RouteDecision(bindings={
                 **self._registry.runtime_bindings,
                 **overlay
             },
-                                  fallback=catch_all(entries))
+                                 fallback=catch_all(entries))
         if provision:
             return None
         has_scripts = any(entry.script is not None for entry in entries)
-        if policy is None and not has_scripts:
+        if route_policy is None and not has_scripts:
             return None
         commands = parsed_commands(ast, self._registry.clis.names())
-        ctx = PolicyContext(
+        ctx = RouteContext(
             line=command,
             commands=commands,
             command=commands[0].command if commands else "",
@@ -112,7 +113,7 @@ class PolicyRouter:
             mounts=tuple(self._resolver.prefixes()),
         )
         try:
-            return await decide_line(entries, policy, ctx,
+            return await decide_line(entries, route_policy, ctx,
                                      self._registry.runtime_bindings)
         except RouteError:
             raise

@@ -31,7 +31,7 @@ const JS_POLICY = new ScriptSource(
 async function main(): Promise<void> {
   const ws = new Workspace(
     { '/data': new RAMResource(), '/prod': new RAMResource() },
-    { mode: MountMode.EXEC, runtimes: ['quickjs', 'vfs'], policy: JS_POLICY },
+    { mode: MountMode.EXEC, runtimes: ['quickjs', 'vfs'], routePolicy: JS_POLICY },
   )
   try {
     const ok = await ws.execute('echo hello > /data/notes.txt')

@@ -120,7 +120,7 @@
             "resource": "ram"
           }
         },
-        "policy": "'local' if 'go-local' in ctx['line'] else None"
+        "route_policy": "'local' if 'go-local' in ctx['line'] else None"
       },
       "steps": [
         {
@@ -317,7 +317,7 @@
             "resource": "ram"
           }
         },
-        "policy": "'nope'"
+        "route_policy": "'nope'"
       },
       "steps": [
         {
@@ -426,7 +426,7 @@
             "resource": "ram"
           }
         },
-        "policy": "{'deny': 'python3 is blocked here'} if ctx['command'] == 'python3' else None"
+        "route_policy": "{'deny': 'python3 is blocked here'} if ctx['command'] == 'python3' else None"
       },
       "steps": [
         {
@@ -457,7 +457,7 @@
             "resource": "ram"
           }
         },
-        "policy": "{'runtime': 'monty'}"
+        "route_policy": "{'runtime': 'monty'}"
       },
       "steps": [
         {
@@ -481,7 +481,7 @@
             "resource": "ram"
           }
         },
-        "policy": "{'runtme': 'monty'}"
+        "route_policy": "{'runtme': 'monty'}"
       },
       "steps": [
         {

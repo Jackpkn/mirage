@@ -24,7 +24,7 @@ import type { ConsoleFactory } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse.ts'
 import type { Limit, ConsistencyPolicy, DriftPolicy, MountMode } from '../../types.ts'
 import type { AskHandler, Policy } from '../../policy/index.ts'
-import type { PolicyDecision, PolicyFn } from '../../runtime/routing/index.ts'
+import type { RouteDecision, RoutePolicy } from '../../runtime/routing/index.ts'
 import type { RuntimeEntry } from '../../runtime/base.ts'
 import type { NamespaceStore } from '../mount/namespace/store.ts'
 import type { SessionProfile } from '../../policy/profile.ts'
@@ -107,13 +107,13 @@ export interface WorkspaceOptions {
    */
   runtimes?: RuntimeEntry[]
   /**
-   * Global policy script for the policy ladder: a function taking the
-   * PolicyContext (or a config-borne ScriptSource) naming the runtime
-   * for a line, or null to fall to the entries' own scripts. Ladder:
-   * the runtime argument > policy > scripts by list order > admission
-   * failure (exit 126).
+   * The global route policy: a function taking the RouteContext (or a
+   * config-borne ScriptSource) naming the runtime for a line, or null
+   * to fall to the entries' own scripts. Ladder: the runtime argument
+   * > route policy > scripts by list order > admission failure
+   * (exit 126).
    */
-  policy?: PolicyFn
+  routePolicy?: RoutePolicy
   /**
    * The profiles (`profiles:` in YAML). A profile is the whole permission
    * document a session runs under, so there is no workspace-wide block
@@ -239,5 +239,5 @@ export interface ExecuteOptions {
    * @internal The typed line's routing decision, forwarded to nested
    * evals so inner lines never re-route.
    */
-  routingDecision?: PolicyDecision
+  routingDecision?: RouteDecision
 }

@@ -247,7 +247,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), new NamedFakeRuntime('beta'), 'vfs'],
-        policy: (ctx) => (ctx.line.includes('heavy') ? 'beta' : null),
+        routePolicy: (ctx) => (ctx.line.includes('heavy') ? 'beta' : null),
       },
     )
     try {
@@ -270,7 +270,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new HangingEvaluator(), 'vfs'],
-        policy: new ScriptSource('1'),
+        routePolicy: new ScriptSource('1'),
       },
     )
     try {
@@ -289,7 +289,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new MontyRuntime(), new QuickJsRuntime(), 'vfs'],
-        policy: new ScriptSource(
+        routePolicy: new ScriptSource(
           "ctx.command === 'node' ? {deny: 'js-engine-picked'} : null",
           'js',
         ),
@@ -355,7 +355,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new QuickJsRuntime(), 'vfs'],
-        policy: new ScriptSource(
+        routePolicy: new ScriptSource(
           "const f = std.open('/deny.txt', 'r'); " +
             'const blocked = f !== null && f.readAsString().includes(ctx.command); ' +
             'if (f !== null) f.close(); ' +
@@ -384,7 +384,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), 'vfs'],
-        policy: (ctx) => (ctx.command === 'python3' ? { deny: 'python3 is blocked' } : null),
+        routePolicy: (ctx) => (ctx.command === 'python3' ? { deny: 'python3 is blocked' } : null),
       },
     )
     try {
@@ -412,7 +412,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), new NamedFakeRuntime('beta'), 'vfs'],
-        policy: () => ({ runtime: 'beta' }),
+        routePolicy: () => ({ runtime: 'beta' }),
       },
     )
     try {
@@ -432,7 +432,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), 'vfs'],
-        policy: (ctx) => {
+        routePolicy: (ctx) => {
           calls.push(ctx.line)
           return { deny: 'nothing runs' }
         },
@@ -458,7 +458,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), new NamedFakeRuntime('beta'), 'vfs'],
-        policy: (ctx) =>
+        routePolicy: (ctx) =>
           ctx.line.includes('secret')
             ? new DenyResult('secrets stay put')
             : new RouteResult('beta'),
