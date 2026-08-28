@@ -20,9 +20,9 @@ from mirage.types import CapacityResult, CapacityState, PathSpec
 from mirage.utils.path import resolve_path
 from mirage.workspace.executor.builtins.df.constants import (BLOCK_SUFFIX,
                                                              SI_UNITS)
-from mirage.workspace.executor.builtins.shared import (Result, fail, ok,
-                                                       operand_text,
+from mirage.workspace.executor.builtins.shared import (fail, ok, operand_text,
                                                        split_value_flags)
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.mount import MountEntry
 from mirage.workspace.mount.registry import MountRegistry
 from mirage.workspace.session import Session

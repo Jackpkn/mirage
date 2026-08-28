@@ -15,10 +15,9 @@
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.shell.call_stack import CallStack
+from mirage.shell.constants import SET_OPTION_DEFAULTS, SET_OPTION_NAMES
 from mirage.shell.options import parse_option_word
-from mirage.shell.types import SET_OPTION_DEFAULTS, SET_OPTION_NAMES
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import visible_env
 from mirage.workspace.types import ExecutionNode

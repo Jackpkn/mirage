@@ -20,10 +20,8 @@ import type { ShellVar } from '../../../../shell/variable.ts'
 import type { Session } from '../../../session/session.ts'
 import { envSnapshot } from '../../../session/state.ts'
 import { ExecutionNode } from '../../../types.ts'
-import type { ExecuteStringFn } from '../scope.ts'
-import { type Result } from '../shared.ts'
 import { ENV_HELP_HINT } from './constants.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, ExecuteStringFn, Result } from '../types.ts'
 
 function envError(message: string): Result {
   const err = new TextEncoder().encode(`${message}\n${ENV_HELP_HINT}`)

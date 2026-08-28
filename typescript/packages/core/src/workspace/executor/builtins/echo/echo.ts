@@ -16,9 +16,8 @@ import { ECHO_OPTION } from '../../../../commands/spec/shell.ts'
 import { IOResult } from '../../../../io/types.ts'
 import { encodeText } from '../../../../shell/bytes.ts'
 import { ExecutionNode } from '../../../types.ts'
-import type { Result } from '../shared.ts'
 import { interpretEscapes } from './escapes.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 /**
  * Print arguments, honoring GNU echo's option rules.

@@ -21,10 +21,10 @@ import tree_sitter
 from mirage.ops.types import SessionView
 from mirage.shell.call_stack import CallStack
 from mirage.shell.errors import ExitSignal
-from mirage.shell.helpers import (ProcessSubDirection, get_process_sub_body,
+from mirage.shell.helpers import (get_process_sub_body,
                                   get_process_sub_direction, get_text)
 from mirage.shell.types import NodeType as NT
-from mirage.shell.types import Redirect, RedirectKind
+from mirage.shell.types import ProcessSubDirection, Redirect, RedirectKind
 from mirage.workspace.expand.classify import classify_bare_path
 from mirage.workspace.expand.node import expand_node, unescape_heredoc
 from mirage.workspace.expand.variable import _lookup_var

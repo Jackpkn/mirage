@@ -23,9 +23,10 @@ from mirage.utils.path import resolve_path
 from mirage.workspace.executor.builtins.metadata.metadata import (
     apply_link_attrs, follow_operand, now_iso, parse_touch_stamp,
     permission_error, setattr_via)
-from mirage.workspace.executor.builtins.shared import (Result, expand_operands,
-                                                       fail, finish,
+from mirage.workspace.executor.builtins.shared import (expand_operands, fail,
+                                                       finish,
                                                        split_value_flags)
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.session import Session
 

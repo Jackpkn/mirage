@@ -12,15 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { stripSlash } from '../../../utils/slash.ts'
-import { PathSpec } from '../../../types.ts'
+export const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
-export function toScope(path: string): PathSpec {
-  const lastSlash = path.lastIndexOf('/')
-  const directory = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : '/'
-  return new PathSpec({ resourcePath: stripSlash(path), virtual: path, directory, resolved: true })
-}
-
-export function scopePath(val: string | PathSpec): string {
-  return val instanceof PathSpec ? val.virtual : val
-}
+// An assignment target with an optional subscript (`name` or `name[sub]`).
+// A subscript must be non-empty: bash rejects `a[]` as an invalid
+// identifier, while `a[ ]` is a valid arithmetic 0.
+export const TARGET_RE = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[(.+)\])?$/

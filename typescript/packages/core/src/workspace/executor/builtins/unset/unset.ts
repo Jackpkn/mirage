@@ -23,10 +23,11 @@ import type { Session } from '../../../session/session.ts'
 import { envGet, visibleArrays, visibleAssocs, visibleEnv } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { TARGET_RE, type Result, refusal, viewOf } from '../shared.ts'
+import { refusal, viewOf } from '../shared.ts'
 import { readonlyFunctionUnset } from '../declare/declare.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 import { sessionView } from '../../../session/state.ts'
+import { TARGET_RE } from '../constants.ts'
 
 /**
  * Clear what the env door does not own after a whole-variable unset.

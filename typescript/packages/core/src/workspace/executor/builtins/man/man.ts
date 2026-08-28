@@ -23,10 +23,9 @@ import type { MountRegistry } from '../../../mount/registry.ts'
 import { commandVisible, verbVisible } from '../../../lookup/lookup.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
-import type { Result } from '../shared.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
 import type { ManEntry } from './types.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 // Shell builtins the manual documents through a spec of another name.
 const SHELL_BUILTIN_MAN: Readonly<Record<string, string>> = Object.freeze({

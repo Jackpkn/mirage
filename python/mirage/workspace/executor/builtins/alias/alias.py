@@ -14,7 +14,7 @@
 
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
-from mirage.shell.types import SHOPT_DEFAULTS
+from mirage.shell.constants import SHOPT_DEFAULTS
 from mirage.utils.quote import single_quote
 from mirage.workspace.executor.builtins.alias.constants import (ALIAS_USAGE,
                                                                 BAD_NAME_CHARS,
@@ -22,8 +22,8 @@ from mirage.workspace.executor.builtins.alias.constants import (ALIAS_USAGE,
                                                                 UNALIAS_USAGE)
 from mirage.workspace.executor.builtins.alias.types import AliasMark
 from mirage.workspace.executor.builtins.getopt import scan_options
-from mirage.workspace.executor.builtins.shared import Result, fail
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import fail
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 

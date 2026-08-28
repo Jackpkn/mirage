@@ -20,7 +20,7 @@ import type { Session } from '../../../session/session.ts'
 import { exportedNames } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result, readonlyRefusal, refusal, viewOf } from '../shared.ts'
+import { readonlyRefusal, refusal, viewOf } from '../shared.ts'
 import { EXPORT_FLAGS, EXPORT_USAGE } from './constants.ts'
 import {
   declareLine,
@@ -29,7 +29,7 @@ import {
   splitDeclFlags,
   storeStagedArrays,
 } from './declare.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 import { sessionView } from '../../../session/state.ts'
 
 function exportLines(session: Session, flags: Set<string>): string[] {

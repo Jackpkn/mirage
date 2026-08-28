@@ -31,7 +31,7 @@ import { CycleError } from '../../utils/path.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 import { ExitSignal } from '../../shell/errors.ts'
-import { SHOPT_DEFAULTS } from '../../shell/types.ts'
+import { SHOPT_DEFAULTS } from '../../shell/constants.ts'
 import type { Session } from '../session/session.ts'
 
 // How deep a `**` descends. bash has no cap, but every level here is

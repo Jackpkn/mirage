@@ -22,9 +22,8 @@ import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
 import { createFile } from '../../create.ts'
 import { toScope } from '../scope.ts'
-import type { Result } from '../shared.ts'
 import { CLOSED } from './constants.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 /** The `exec` builtin without redirects: bare `exec` is a no-op that
  * succeeds; `exec CMD` has no OS-process referent and is refused. */

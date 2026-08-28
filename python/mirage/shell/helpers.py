@@ -13,7 +13,6 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import shlex
-from enum import StrEnum
 
 import tree_sitter
 
@@ -21,13 +20,8 @@ from mirage.shell.escapes import (decode_ansi_c, unescape_dquoted,
                                   unescape_unquoted)
 from mirage.shell.types import FunctionBody
 from mirage.shell.types import NodeType as NT
-from mirage.shell.types import Redirect, RedirectKind
+from mirage.shell.types import ProcessSubDirection, Redirect, RedirectKind
 from mirage.utils.path import expand_tilde
-
-
-class ProcessSubDirection(StrEnum):
-    INPUT = "input"
-    OUTPUT = "output"
 
 
 def get_text(node: tree_sitter.Node) -> str:

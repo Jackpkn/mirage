@@ -26,10 +26,10 @@ from mirage.shell.arith import evaluate_arith
 from mirage.shell.barrier import BarrierPolicy, apply_barrier
 from mirage.shell.call_stack import CallStack
 from mirage.shell.console import Channel, JobConsole
+from mirage.shell.constants import ERREXIT_EXEMPT_TYPES
 from mirage.shell.errors import ArithError, ReadonlyError
 from mirage.shell.job_table import JobTable
 from mirage.shell.node_kind import NodeKind, node_kind
-from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
 from mirage.shell.types import Redirect, RedirectKind
 from mirage.workspace.abort import MirageAbortError

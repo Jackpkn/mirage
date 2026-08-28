@@ -20,9 +20,9 @@ import tree_sitter
 
 from mirage.ops.types import SessionView
 from mirage.shell.call_stack import CallStack
+from mirage.shell.constants import SET_OPTION_DEFAULTS
 from mirage.shell.escapes import unescape_unquoted
 from mirage.shell.helpers import get_text
-from mirage.shell.types import SET_OPTION_DEFAULTS
 from mirage.shell.types import NodeType as NT
 from mirage.types import PathSpec
 from mirage.utils.glob_walk import mark_escaped_globs, mark_globs, unmark_globs
