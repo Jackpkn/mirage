@@ -13,6 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
+import logging
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Any, Callable
 
@@ -20,6 +21,8 @@ from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
 
 from mirage.accessor.base import Accessor
 from mirage.utils import key_prefix as kp
+
+logger = logging.getLogger(__name__)
 
 
 class S3Config(BaseModel):
@@ -78,7 +81,7 @@ class S3Accessor(Accessor):
         # address of a collected loop, so a second asyncio.run() could hash to
         # a client bound to the first run's closed loop. Holding the key also
         # keeps that reuse impossible.
-        self._drop_closed()
+        await self._release_closed()
         live = self._clients.get(loop)
         if live is not None:
             return live
@@ -101,21 +104,33 @@ class S3Accessor(Accessor):
             self._clients[loop] = client
             return client
 
-    def _drop_closed(self) -> None:
-        """Forget clients whose loop is gone.
+    async def _release_closed(self) -> None:
+        """Close the clients whose loop has gone.
 
-        Their connections went with the loop, so there is nothing left to
-        close; keeping the entries would only grow the map and hand `close`
-        a stack it cannot await.
+        A closing loop does not run the client's context manager, so dropping
+        the AsyncExitStack without executing it abandons the aiohttp session
+        and its connector and the connection is never released. Running the
+        stack from a LATER loop does work, so close it rather than forgetting
+        it.
         """
         for dead in [one for one in self._clients if one.is_closed()]:
+            stack = self._stacks.pop(dead, None)
             self._clients.pop(dead, None)
-            self._stacks.pop(dead, None)
             self._locks.pop(dead, None)
+            if stack is None:
+                continue
+            try:
+                await stack.aclose()
+            except Exception as exc:
+                # Not fatal to the caller's operation, and not silent either:
+                # the transports belonged to a loop that is gone, so the
+                # sockets are reclaimed when the objects are collected.
+                logger.debug(
+                    "s3: closing a client from a closed loop failed: %s", exc)
 
     async def close(self) -> None:
         """Close every client this accessor opened."""
-        self._drop_closed()
+        await self._release_closed()
         stacks = list(self._stacks.values())
         self._stacks.clear()
         self._clients.clear()
