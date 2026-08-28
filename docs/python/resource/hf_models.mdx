@@ -94,7 +94,10 @@ if __name__ == "__main__":
 
 ## Shell Commands
 
-Same set as [HF Buckets](/python/resource/hf_buckets#shell-commands).
+Every read command in [HF Buckets'](/python/resource/hf_buckets#read-commands) set works here, as
+do the text processing and path utilities, which only read. What does not is
+the [File Operations](/python/resource/hf_buckets#file-operations) group: this mount is read-only,
+so `rm` and `touch` are refused, as is any command asked to write into it.
 
 ## Use Cases
 

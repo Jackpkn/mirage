@@ -619,6 +619,46 @@ async function main(): Promise<void> {
       [`${TENANT}/derived-model`],
     )
 
+    // ---- an inline comment is a comment, and a bare # is not
+    // `license: mit # SPDX` kept its tail, so the facet read
+    // `license:mit # SPDX` and an ordinary ?filter=license:mit missed it.
+    // The two literal cases have to survive: YAML starts a comment only at a
+    // `#` preceded by whitespace, and never inside quotes.
+    await repoWithCard(
+      fake.endpoint,
+      'models',
+      'commented',
+      [
+        '---',
+        'license: bsd-3-clause # SPDX identifier',
+        'library_name: transformers # the library',
+        'pipeline_tag: text-generation',
+        'tags:',
+        '  - some#tag',
+        '  - conversational # a real comment',
+        '---',
+        '',
+        '# Commented',
+        '',
+      ].join('\n'),
+    )
+    const commented = (await get(fake.endpoint, `/api/models/${TENANT}/commented`)) as Record<
+      string,
+      JsonValue
+    >
+    eq('an inline comment is stripped, a bare # is kept', commented.tags ?? null, [
+      'conversational',
+      'license:bsd-3-clause',
+      'some#tag',
+      'text-generation',
+      'transformers',
+    ])
+    eq(
+      'the commented card is reachable by the plain facet',
+      ids(await get(fake.endpoint, '/api/models?filter=license:bsd-3-clause')),
+      [`${TENANT}/commented`],
+    )
+
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))
 

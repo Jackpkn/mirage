@@ -23,8 +23,30 @@ const FENCE = '---'
 // to acquire one; anything richer than this belongs in a fixture that states
 // the field directly. A nested mapping is skipped rather than guessed at, so
 // an unsupported card loses one key instead of parsing to something wrong.
+// A YAML comment starts at a `#` that is outside quotes AND preceded by
+// whitespace or nothing. Both halves matter: `license: mit # SPDX` has to
+// lose its tail, while `- some#tag` and `- "a # b"` are literal values.
+function stripComment(raw: string): string {
+  let quote = ''
+  for (let i = 0; i < raw.length; i += 1) {
+    const c = raw[i]
+    if (quote !== '') {
+      if (c === quote) quote = ''
+      continue
+    }
+    if (c === '"' || c === "'") {
+      quote = c
+      continue
+    }
+    if (c === '#' && (i === 0 || /\s/.test(raw[i - 1] ?? ''))) return raw.slice(0, i)
+  }
+  return raw
+}
+
 function scalar(raw: string): JsonValue {
-  const v = raw.trim().replace(/^["']|["']$/g, '')
+  const v = stripComment(raw)
+    .trim()
+    .replace(/^["']|["']$/g, '')
   if (v === 'true') return true
   if (v === 'false') return false
   if (v !== '' && /^-?\d+$/.test(v)) return Number(v)
@@ -89,7 +111,7 @@ export function parseCard(raw: string): Record<string, JsonValue> {
     if (pair === null) continue
     if (list !== null && key !== '') out[key] = list
     key = pair[1] ?? ''
-    const rest = (pair[2] ?? '').trim()
+    const rest = stripComment(pair[2] ?? '').trim()
     if (rest === '') {
       list = []
       continue
