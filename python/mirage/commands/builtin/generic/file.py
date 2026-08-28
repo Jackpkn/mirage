@@ -3,7 +3,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from mirage.commands.builtin.constants import MIME_SYMLINK
-from mirage.commands.builtin.file_helper import _detect, format_file_result
+from mirage.commands.builtin.file_sniff import (detect_file_type,
+                                                format_file_result)
 from mirage.commands.builtin.utils.operands import operand_stat
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
@@ -106,7 +107,7 @@ async def file_cmd(
             _logger.debug("file: failed to read header for %s: %s", p.virtual,
                           exc)
             header = b""
-        result = _detect(p.virtual, header, s)
+        result = detect_file_type(p.virtual, header, s)
         lines.append(format_file_result(p.raw_path, result, b, i))
     return format_records(lines), IOResult()
 

@@ -24,11 +24,8 @@ import { applyFindActions } from './find_action_dispatch.ts'
 import { respellOne } from '../../utils/path.ts'
 import { rstripSlash, stripSlash } from '../../utils/slash.ts'
 import { keep } from '../../commands/builtin/find_eval.ts'
-import {
-  FindParseError,
-  parseFindExpression,
-  type FindExpr,
-} from '../../commands/builtin/find_parse.ts'
+import { parseFindExpression, type FindExpr } from '../../commands/builtin/find_parse.ts'
+import { FindParseError } from '../../commands/errors.ts'
 import type { FlagValue } from '../../commands/spec/types.ts'
 import type { RunSingle } from '../../commands/builtin/generic/crossmount/types.ts'
 import type { NamespaceView, StatPath } from '../../ops/types.ts'

@@ -2,7 +2,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import CommandName, FlagValue, FlagView
 from mirage.commands.spec.usage import extra_operand_error
@@ -204,7 +204,7 @@ async def uniq(
         source = read_stream(paths[0])
         cache = [paths[0].mount_path]
     else:
-        source = _resolve_source(stdin)
+        source = resolve_source(stdin)
     output: ByteSource = _uniq_stream(source, parsed)
     if len(paths) == 2:
         if write_bytes is None:

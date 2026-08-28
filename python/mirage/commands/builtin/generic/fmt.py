@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -109,7 +109,7 @@ async def fmt(
         return _fmt_text("".join(all_text), width, goal, prefix, split_only,
                          tagged, crown).encode(), IOResult()
 
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is None:
         raise ValueError("fmt: missing operand")
     text = raw.decode(errors="replace")

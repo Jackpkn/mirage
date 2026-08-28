@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -24,7 +24,7 @@ async def iconv(
     if paths:
         raw = await read_bytes(paths[0])
     else:
-        stdin_raw = await _read_stdin_async(stdin)
+        stdin_raw = await read_stdin_async(stdin)
         raw = stdin_raw if stdin_raw is not None else b""
     decoded = raw.decode(from_enc, errors=err_mode)
     encoded = decoded.encode(to_enc, errors=err_mode)

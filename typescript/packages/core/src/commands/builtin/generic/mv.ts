@@ -24,7 +24,8 @@ import {
   type StatFn,
 } from '../../../types.ts'
 import { UsageError } from '../../errors.ts'
-import { DEFAULT_BACKUP_SUFFIX, backupControl, siblingPath } from '../utils/backup.ts'
+import { backupControl, siblingPath } from '../utils/backup.ts'
+import { DEFAULT_BACKUP_SUFFIX } from '../utils/constants.ts'
 import { backendKeyDefault, copyTargets, pathExists, type BackendKeyFn } from '../utils/copy.ts'
 import { fsStrerror, isFsError } from '../../../utils/errors.ts'
 import { rstripSlash } from '../../../utils/slash.ts'

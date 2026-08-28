@@ -15,7 +15,7 @@
 import pytest
 
 from mirage import MountMode, Workspace
-from mirage.commands.builtin.utils.limit import LimitExceededError
+from mirage.commands.errors import LimitExceededError
 from mirage.resource.ram import RAMResource
 from mirage.types import Limit, OnExceed, PathSpec
 

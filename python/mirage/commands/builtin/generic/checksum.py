@@ -8,7 +8,7 @@ from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     normalized_read,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -307,7 +307,7 @@ async def hashsum(
     if paths:
         return _hash_multi(paths, read_stream, factory, algorithm, binary, tag,
                            zero), IOResult(cache=[p.mount_path for p in paths])
-    source = _resolve_source(stdin)
+    source = resolve_source(stdin)
     return _hash_stream(source, "-", factory, algorithm, binary, tag,
                         zero), IOResult()
 

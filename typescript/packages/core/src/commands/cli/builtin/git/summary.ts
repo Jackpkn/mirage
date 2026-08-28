@@ -14,7 +14,7 @@
 
 import git from 'isomorphic-git'
 
-import { getOpcodes } from '../../../builtin/diff_helper.ts'
+import { getOpcodes } from '../../../builtin/diff_format.ts'
 import { DiffOpTag } from '../../../builtin/diff_types.ts'
 import { short } from './format.ts'
 import { repoArgs, type Repo } from './repo.ts'

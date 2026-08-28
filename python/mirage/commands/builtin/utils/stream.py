@@ -24,7 +24,7 @@ ConfigT = TypeVar("ConfigT")
 PathT = TypeVar("PathT")
 
 
-async def _read_stdin_async(stdin: ByteSource | None) -> bytes | None:
+async def read_stdin_async(stdin: ByteSource | None) -> bytes | None:
     if stdin is None:
         return None
     if isinstance(stdin, bytes):
@@ -39,7 +39,7 @@ async def _wrap_bytes(data: bytes) -> AsyncIterator[bytes]:
     yield data
 
 
-def _resolve_source(
+def resolve_source(
     stdin: ByteSource | None,
     error_msg: str | None = None,
     error_cls: type[Exception] = ValueError,
@@ -81,7 +81,7 @@ async def resolve_text_input(
         return inline_text
     if file_path is not None:
         return (await read_bytes(config, file_path)).decode(errors="replace")
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is not None:
         return raw.decode(errors="replace")
     raise ValueError(error_message)

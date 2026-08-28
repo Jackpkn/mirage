@@ -1,4 +1,4 @@
-import { detectFileType } from '@struktoai/mirage-core/commands/builtin/file_helper'
+import { detectFileType } from '@struktoai/mirage-core/commands/builtin/file_sniff'
 import { FileType } from '@struktoai/mirage-core/types'
 import type { FileStat } from '@struktoai/mirage-core/types'
 import type { Workspace } from '@struktoai/mirage-core/workspace/workspace/workspace'

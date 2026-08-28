@@ -1,10 +1,11 @@
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
-from mirage.commands.builtin.sort_helper import (SortKeyError, build_config,
-                                                 compare_lines, sort_lines)
+from mirage.commands.builtin.errors import SortKeyError
+from mirage.commands.builtin.sort_keys import (build_config, compare_lines,
+                                               sort_lines)
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
 from mirage.io.types import ByteSource, IOResult
@@ -137,7 +138,7 @@ async def sort(
         for path in paths:
             raw += await read_bytes(path)
     else:
-        raw = await _read_stdin_async(stdin) or b""
+        raw = await read_stdin_async(stdin) or b""
     records = _split_records(raw, parsed.zero_terminated)
 
     if parsed.check:

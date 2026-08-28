@@ -15,7 +15,7 @@
 import type { ByteSource } from '../../io/types.ts'
 import { IOResult } from '../../io/types.ts'
 import { concat } from '../../io/cachable_iterator.ts'
-import { CommandTimeoutError } from '../../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../../commands/errors.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import { ExitSignal } from '../../shell/errors.ts'
 import { type Job, JobStatus, type JobTable } from '../../shell/job_table/index.ts'

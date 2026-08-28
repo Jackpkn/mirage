@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 
-from mirage.commands.builtin.utils.formatting import _human_size
+from mirage.commands.builtin.utils.formatting import human_size
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
@@ -306,7 +306,7 @@ async def du_has_content(compute_entries: ComputeEntries,
 
 
 def _format_size(size: int, human: bool) -> str:
-    return _human_size(size) if human else str(size)
+    return human_size(size) if human else str(size)
 
 
 def _line(size: int, human: bool, label: str) -> str:

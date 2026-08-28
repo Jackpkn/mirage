@@ -29,8 +29,6 @@ const BACKUP_CONTROLS: Readonly<Record<string, string>> = Object.freeze({
   t: 'numbered',
 })
 
-export const DEFAULT_BACKUP_SUFFIX = '~'
-
 const NUMBERED_SUFFIX = /^\.~(\d+)~$/
 
 // Resolve -b/--backup[=CONTROL]/-S into a backup control. Deliberate

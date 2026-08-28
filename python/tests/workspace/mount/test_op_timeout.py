@@ -17,7 +17,7 @@ import asyncio
 import pytest
 
 from mirage import MountMode, Workspace
-from mirage.commands.builtin.utils.limit import CommandTimeoutError
+from mirage.commands.errors import CommandTimeoutError
 from mirage.resource.ram import RAMResource
 from mirage.types import Limit
 

@@ -1,11 +1,12 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import partial
 
-from mirage.commands.builtin.constants import (SPLIT_BYTE_UNITS,
+from mirage.commands.builtin.constants import (SPLIT_BYTE_SUFFIXES,
+                                               SPLIT_BYTE_UNITS,
                                                SPLIT_COUNT_PATTERN,
                                                SPLIT_DIGITS, SPLIT_HEX_DIGITS,
                                                SPLIT_TRY_HELP, UINTMAX)
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.errors import UsageError
 from mirage.commands.spec.types import CommandName
 from mirage.commands.spec.usage import extra_operand_error
@@ -20,8 +21,7 @@ def parse_bytes_value(value: str) -> int:
     Args:
         value (str): the raw flag value, e.g. ``4``, ``1K``, ``2GiB``.
     """
-    suffix = next((u for u in sorted(SPLIT_BYTE_UNITS, key=len, reverse=True)
-                   if value.endswith(u)), "")
+    suffix = next((u for u in SPLIT_BYTE_SUFFIXES if value.endswith(u)), "")
     digits = value[:-len(suffix)] if suffix else value
     if SPLIT_COUNT_PATTERN.fullmatch(digits) is None or int(digits) == 0:
         raise UsageError(f"split: invalid number of bytes: '{value}'", 1)
@@ -214,7 +214,7 @@ async def split(
     if paths:
         source: AsyncIterator[bytes] = read_stream(paths[0])
     else:
-        source = _resolve_source(stdin)
+        source = resolve_source(stdin)
 
     writes: dict[str, ByteSource] = {}
     file_idx = 0

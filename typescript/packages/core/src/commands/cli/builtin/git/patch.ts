@@ -14,7 +14,7 @@
 
 import git from 'isomorphic-git'
 
-import { unifiedDiff } from '../../../builtin/diff_helper.ts'
+import { unifiedDiff } from '../../../builtin/diff_format.ts'
 import { short } from './format.ts'
 import { repoArgs, type Repo } from './repo.ts'
 import { treeEntries, type TreeEntry } from './tree.ts'

@@ -21,8 +21,9 @@ import asyncio
 import pytest
 
 from mirage.accessor.base import NOOPAccessor
+from mirage.commands.builtin.errors import HttpConnectError
 from mirage.commands.builtin.general.wget import wget
-from mirage.commands.builtin.utils.http import HttpConnectError, HttpResponse
+from mirage.commands.builtin.utils.http import HttpResponse
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 
@@ -45,7 +46,7 @@ def _stub(monkeypatch, resp=None, exc=None) -> list[str]:
             raise exc
         return resp if resp is not None else _ok()
 
-    monkeypatch.setitem(wget.__wrapped__.__globals__, "_http_get", fake)
+    monkeypatch.setitem(wget.__wrapped__.__globals__, "http_get", fake)
     return calls
 
 

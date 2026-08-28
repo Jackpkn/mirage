@@ -4,14 +4,17 @@ from functools import partial
 
 from mirage.cache.read_through import (cache_aware_bound_bytes,
                                        cache_aware_bound_stream)
-from mirage.commands.builtin.grep_helper import (  # yapf: disable
-    compile_pattern, exit_code_for, grep_count_has_matches, grep_lines,
-    grep_stream, nonzero_count_stream, resolve_pattern)
-from mirage.commands.builtin.rg_helper import rg_full
+from mirage.commands.builtin.grep_pattern import (  # yapf: disable
+    compile_pattern, resolve_pattern)
+from mirage.commands.builtin.grep_scan import (exit_code_for,
+                                               grep_count_has_matches,
+                                               grep_lines, grep_stream,
+                                               nonzero_count_stream)
+from mirage.commands.builtin.rg_scan import rg_full
 from mirage.commands.builtin.utils.lines import split_lines
 from mirage.commands.builtin.utils.output import (format_optional_records,
                                                   format_records)
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.builtin.utils.wrap import (call_read_bytes, call_readdir,
                                                 call_stat,
                                                 mount_parent_readdir,
@@ -258,9 +261,9 @@ async def rg(
         io = IOResult()
         return exit_on_empty(stream, io), io
 
-    source = _resolve_source(stdin,
-                             "rg: usage: rg [flags] pattern [path]",
-                             error_cls=UsageError)
+    source = resolve_source(stdin,
+                            "rg: usage: rg [flags] pattern [path]",
+                            error_cls=UsageError)
     pat = compile_pattern(pattern, f.ignore_case, f.fixed_string, f.whole_word)
     stream = grep_stream(
         source,

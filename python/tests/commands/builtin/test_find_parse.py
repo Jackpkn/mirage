@@ -2,8 +2,8 @@ import pytest
 
 from mirage.commands.builtin.find_eval import (And, Empty, Name, Not, Or, Path,
                                                TrueNode, Type, eval_predicate)
-from mirage.commands.builtin.find_parse import (FindParseError,
-                                                parse_find_expression)
+from mirage.commands.builtin.find_parse import parse_find_expression
+from mirage.commands.errors import FindParseError
 
 
 def test_parse_not_name():

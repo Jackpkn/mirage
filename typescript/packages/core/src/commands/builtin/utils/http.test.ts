@@ -13,13 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  HttpConnectError,
-  httpFormRequest,
-  httpRequest,
-  isHttpError,
-  setHttpProxyBase,
-} from './http.ts'
+import { HttpConnectError } from '../errors.ts'
+import { httpFormRequest, httpRequest, isHttpError, setHttpProxyBase } from './http.ts'
 
 const ENC = new TextEncoder()
 

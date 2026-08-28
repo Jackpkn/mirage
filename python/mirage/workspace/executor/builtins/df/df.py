@@ -14,7 +14,7 @@
 
 import math
 
-from mirage.commands.builtin.utils.formatting import _human_size, human_scaled
+from mirage.commands.builtin.utils.formatting import human_scaled, human_size
 from mirage.runtime.types import DispatchFn
 from mirage.types import CapacityResult, CapacityState, PathSpec
 from mirage.utils.path import resolve_path
@@ -148,7 +148,7 @@ def _num_cells(cap: CapacityResult, human: bool, si: bool, block: int,
         used = cap.used or 0
         avail = cap.available or 0
         if human:
-            fmt = _human_si if si else _human_size
+            fmt = _human_si if si else human_size
             return [fmt(cap.total), fmt(used), fmt(avail)]
         return [
             _scale(cap.total, block),

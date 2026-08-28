@@ -25,3 +25,36 @@ export class UsageError extends Error {
     this.exitCode = exitCode
   }
 }
+
+// Invalid numeric argument to a find predicate (GNU find: exit 1).
+// Mirrors Python's mirage.commands.errors.FindParseError.
+export class FindParseError extends Error {}
+
+// A command or op overran its timeout budget (exit 124).
+// Mirrors Python's mirage.commands.errors.CommandTimeoutError.
+export class CommandTimeoutError extends Error {
+  readonly command: string
+  readonly seconds: number
+  constructor(command: string, seconds: number) {
+    super(`${command}: timed out after ${String(seconds)}s`)
+    this.name = 'CommandTimeoutError'
+    this.command = command
+    this.seconds = seconds
+  }
+}
+
+/**
+ * A hard cap refused output the producer had already made.
+ *
+ * The cap is applied to a result that exists: at an op door the
+ * backend has already moved those bytes, and the door reports that
+ * through the caller's `OpReport` before the cap runs, so this error
+ * carries no accounting of its own.
+ * Mirrors Python's mirage.commands.errors.LimitExceededError.
+ */
+export class LimitExceededError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LimitExceededError'
+  }
+}

@@ -14,11 +14,11 @@
 
 from mirage.accessor.dropbox import DropboxAccessor
 from mirage.cache.index import IndexCacheStore
+from mirage.commands.builtin.constants import BINARY_EXTENSIONS
 from mirage.commands.builtin.dropbox.io import resolve_glob
-from mirage.commands.builtin.grep_helper import (BINARY_EXTENSIONS,
-                                                 get_extension,
-                                                 is_literal_pattern,
-                                                 search_query)
+from mirage.commands.builtin.grep_pushdown import (is_literal_pattern,
+                                                   search_query)
+from mirage.commands.resolve import get_extension
 from mirage.core.dropbox.search import narrow_paths
 from mirage.core.dropbox.stat import stat as dropbox_stat
 from mirage.types import FileType, PathSpec

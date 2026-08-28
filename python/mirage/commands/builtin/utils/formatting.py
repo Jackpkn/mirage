@@ -57,7 +57,7 @@ def human_scaled(n: int, base: int, units: tuple[str, ...]) -> str:
         divisor *= base
 
 
-def _human_size(n: int) -> str:
+def human_size(n: int) -> str:
     return human_scaled(n, 1024, ("", "K", "M", "G", "T", "P", "E"))
 
 
@@ -69,7 +69,7 @@ def _perm_triplet(bits: int, special: str | None = None) -> str:
     return ("r" if bits & 4 else "-") + ("w" if bits & 2 else "-") + execbit
 
 
-def _ls_mode_string(s: FileStat) -> str:
+def ls_mode_string(s: FileStat) -> str:
     type_char = TYPE_CHARS.get(s.type, "-") if s.type is not None else "-"
     default = DEFAULT_MODES.get(s.type, 0o644) if s.type is not None else 0o644
     mode = s.mode if s.mode is not None else default
@@ -113,13 +113,13 @@ def format_ls_long(
     size_width: int | None = None,
 ) -> list[str]:
     sizes = [
-        _human_size(s.size or 0) if human else str(s.size or 0) for s in stats
+        human_size(s.size or 0) if human else str(s.size or 0) for s in stats
     ]
     width = size_width if size_width is not None else max(
         (len(x) for x in sizes), default=1)
     out: list[str] = []
     for s, raw_size in zip(stats, sizes):
-        mode = _ls_mode_string(s)
+        mode = ls_mode_string(s)
         dev = s.extra.get(DEVICE_NUMBERS_KEY) if s.extra else None
         if dev:
             out.append(f"{mode}\t{dev[0]}, {dev[1]}\t-\t{_ls_name(s)}")

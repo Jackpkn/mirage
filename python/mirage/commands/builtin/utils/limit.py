@@ -17,29 +17,12 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
+from mirage.commands.errors import CommandTimeoutError, LimitExceededError
 from mirage.io.types import ByteSource, IOResult, materialize
 from mirage.types import Limit, OnExceed
 from mirage.utils.stream import ensure_stream
 
 logger = logging.getLogger(__name__)
-
-
-class CommandTimeoutError(Exception):
-
-    def __init__(self, command: str, seconds: float) -> None:
-        super().__init__(f"{command}: timed out after {seconds}s")
-        self.command = command
-        self.seconds = seconds
-
-
-class LimitExceededError(Exception):
-    """A hard cap refused output the producer had already made.
-
-    The cap is applied to a result that exists: at an op door the
-    backend has already moved those bytes, and the door reports that
-    through the caller's ``OpReport`` before the cap runs, so this
-    error carries no accounting of its own.
-    """
 
 
 async def with_timeout(
