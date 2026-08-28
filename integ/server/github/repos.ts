@@ -307,6 +307,18 @@ const deleteRepo: Handler = authed(
 
 async function dropRepo(db: C, tenant: string, fullName: string): Promise<void> {
   const where = { tenant, repo: fullName }
+  // A staged entry REQUIRES its tree, and the relation carries no cascade, so
+  // Prisma refuses to delete the tree while an entry still points at it: this
+  // 500'd on any repository that had received a POST /git/trees. Entries are
+  // keyed by tree sha rather than by repository, so the shas have to be read
+  // before their trees go. Deleting the tree first would also have been unsafe
+  // even where the delete succeeded, because the staged sha is derived from the
+  // repository name and a per-repository counter: recreating the repository
+  // reuses sha #0 and would have adopted the orphaned entries.
+  const staged = await db.githubStagedTree.findMany({ where, select: { sha: true } })
+  await db.githubStagedEntry.deleteMany({
+    where: { tenant, treeSha: { in: staged.map((t) => t.sha) } },
+  })
   await db.githubStagedTree.deleteMany({ where })
   await db.githubStatus.deleteMany({ where })
   await db.githubCheck.deleteMany({ where })

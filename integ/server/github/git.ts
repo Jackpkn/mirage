@@ -46,12 +46,20 @@ async function stagedTree(db: C, tenant: string, sha: string): Promise<Tree | nu
   return out
 }
 
-// Build a tree from the default branch plus the caller's entries. A null sha is
-// git's delete, `content` is the inline form, and a bare sha names a blob the
-// caller wrote earlier.
+// Build a tree from a base plus the caller's entries. A null sha is git's
+// delete, `content` is the inline form, and a bare sha names a blob the caller
+// wrote earlier.
+//
+// The base is `base_tree` when the caller named one, which is how a client
+// composes several staged trees into one commit: without it the second tree
+// starts from the branch again and silently drops everything the first one
+// added. A name that matches no staged tree falls back to the branch rather
+// than failing, which is what the fake this replaces did.
 const createTree = withRepo(async (ctx, repo) => {
   const body = jsonBodyOf(ctx)
-  const files = await treeOfBranch(ctx.db, ctx.tenant, repo, repo.defaultBranch)
+  const base = str(body, 'base_tree')
+  const staged = base === '' ? null : await stagedTree(ctx.db, ctx.tenant, base)
+  const files = staged ?? (await treeOfBranch(ctx.db, ctx.tenant, repo, repo.defaultBranch))
   const entries = Array.isArray(body.tree) ? body.tree : []
   for (const raw of entries) {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue

@@ -50,10 +50,16 @@ export function makeRuntime<C extends MinimalClient>(fake: Fake<C>): Runtime<C> 
     fake,
     pool,
     state,
-    reset: (body: JsonValue) => {
+    reset: async (body: JsonValue) => {
       const req = parseResetBody(body, defaultTenantsOf(fake), current)
+      // Remembered only once the reset SUCCEEDS. Recording it up front let a
+      // rejected reset poison the fixture every later bare reset replays: a
+      // 400 for an unknown name left `current` pointing at that name, so the
+      // next reset that named nothing failed too, and the fake was wedged by a
+      // request it had already refused.
+      const out = await applyReset(fake, pool, state, req)
       current = req.fixture
-      return applyReset(fake, pool, state, req)
+      return out
     },
     dispose: async () => {
       states.clear()
