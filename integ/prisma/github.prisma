@@ -49,6 +49,7 @@ model GithubRepo {
   sourceBranch  String  @default("")
   seq           Int
 
+  branches    GithubBranch[]
   files       GithubFile[]
   submodules  GithubSubmodule[]
   commits     GithubCommit[]
@@ -63,6 +64,24 @@ model GithubRepo {
   stagedTrees GithubStagedTree[]
 
   @@id([tenant, fullName])
+}
+
+// Branch existence, stored rather than derived from the files on a branch. A
+// branch with no files is a real branch: creating a ref on a repository that
+// has no content, or deleting the last file from one, leaves the branch behind
+// and every ref route still has to answer for it. Deriving the set from
+// GithubFile made those branches vanish.
+model GithubBranch {
+  pk     Int    @id @default(autoincrement())
+  tenant String
+  repo   String
+  name   String
+  seq    Int
+
+  repository GithubRepo @relation(fields: [tenant, repo], references: [tenant, fullName])
+
+  @@unique([tenant, repo, name])
+  @@index([tenant, repo])
 }
 
 model GithubFile {

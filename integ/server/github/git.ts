@@ -16,7 +16,7 @@ import type { Ctx, JsonValue, KitRoute } from '../kit/typescript/index.ts'
 import { API_PREFIXES } from './config.ts'
 import type { C } from './config.ts'
 import { blobSha, treeSha } from './wire.ts'
-import { branchFor, branchNames, commitList, treeOfBranch } from './store.ts'
+import { addBranch, branchFor, branchNames, commitList, treeOfBranch } from './store.ts'
 import type { RepoRow, Tree } from './store.ts'
 import { authedRoute, everywhere, fail, jsonBodyOf, param, route, str, withRepo } from './http.ts'
 import { recordCommit, writeFile } from './contents.ts'
@@ -34,8 +34,15 @@ async function blobBySha(
   return null
 }
 
-async function stagedTree(db: C, tenant: string, sha: string): Promise<Tree | null> {
-  const tree = await db.githubStagedTree.findUnique({ where: { tenant_sha: { tenant, sha } } })
+// Scoped to the repository, not just the tenant. A staged sha is unique per
+// tenant, so a bare lookup accepted a tree staged in repository A while the
+// caller was operating on repository B, and committing it copied A's files
+// into B. The fake this replaces held `repo.trees` per repository, so a foreign
+// sha was simply not found there.
+async function stagedTree(db: C, tenant: string, repo: RepoRow, sha: string): Promise<Tree | null> {
+  const tree = await db.githubStagedTree.findFirst({
+    where: { tenant, repo: repo.fullName, sha },
+  })
   if (tree === null) return null
   const rows = await db.githubStagedEntry.findMany({
     where: { tenant, treeSha: sha },
@@ -58,7 +65,7 @@ async function stagedTree(db: C, tenant: string, sha: string): Promise<Tree | nu
 const createTree = withRepo(async (ctx, repo) => {
   const body = jsonBodyOf(ctx)
   const base = str(body, 'base_tree')
-  const staged = base === '' ? null : await stagedTree(ctx.db, ctx.tenant, base)
+  const staged = base === '' ? null : await stagedTree(ctx.db, ctx.tenant, repo, base)
   const files = staged ?? (await treeOfBranch(ctx.db, ctx.tenant, repo, repo.defaultBranch))
   const entries = Array.isArray(body.tree) ? body.tree : []
   for (const raw of entries) {
@@ -99,7 +106,7 @@ const createTree = withRepo(async (ctx, repo) => {
 const createCommit = withRepo(async (ctx, repo) => {
   const body = jsonBodyOf(ctx)
   const tree = str(body, 'tree')
-  const staged = await stagedTree(ctx.db, ctx.tenant, tree)
+  const staged = await stagedTree(ctx.db, ctx.tenant, repo, tree)
   if (staged === null) return fail(422, 'Invalid request.\n\n"tree" is invalid.')
   const current = await treeOfBranch(ctx.db, ctx.tenant, repo, repo.defaultBranch)
   const touched = new Set<string>()
@@ -135,6 +142,9 @@ const createRef = withRepo(async (ctx, repo) => {
   if (names.includes(name)) return fail(422, 'Reference already exists')
   const base = await branchFor(ctx.db, ctx.tenant, repo, str(body, 'sha'))
   if (base === null) return fail(422, 'Object does not exist')
+  // Recorded before the files are copied, because a branch off an empty
+  // repository copies none and would otherwise not exist at all.
+  await addBranch(ctx.db, ctx.tenant, repo.fullName, name)
   const files = await treeOfBranch(ctx.db, ctx.tenant, repo, base)
   let seq = 0
   for (const [path, data] of files) {
@@ -171,7 +181,7 @@ const updateRef = withRepo(async (ctx, repo) => {
   if (commit === null || commit.treeSha === '') {
     return fail(422, 'Invalid request.\n\n"sha" is invalid.')
   }
-  const staged = await stagedTree(ctx.db, ctx.tenant, commit.treeSha)
+  const staged = await stagedTree(ctx.db, ctx.tenant, repo, commit.treeSha)
   if (staged === null) return fail(422, 'Invalid request.\n\n"sha" is invalid.')
   await ctx.db.githubFile.deleteMany({
     where: { tenant: ctx.tenant, repo: repo.fullName, branch: name },

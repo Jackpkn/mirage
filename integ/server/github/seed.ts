@@ -17,7 +17,7 @@ import { join, relative, sep } from 'node:path'
 import { FIXTURE_ROOT } from '../kit/typescript/index.ts'
 import type { C } from './config.ts'
 import { commitSha } from './wire.ts'
-import { allRepos } from './store.ts'
+import { addBranch, allRepos } from './store.ts'
 import type { RepoRow } from './store.ts'
 
 // A fixture root file naming submodule gitlink paths, one per line. It is a
@@ -150,9 +150,13 @@ function defaultRun(repo: RepoRow): RunSeed {
 }
 
 async function loadTree(db: C, tenant: string, repo: RepoRow): Promise<number> {
+  // Recorded even for a repository with no fixture directory: a repository
+  // always has its default branch, and nothing else would create the row.
+  await addBranch(db, tenant, repo.fullName, repo.defaultBranch)
   if (repo.sourceDir === '') return 0
   const root = join(FIXTURE_ROOT, ...repo.sourceDir.split('/'))
   const branch = repo.sourceBranch === '' ? repo.defaultBranch : repo.sourceBranch
+  await addBranch(db, tenant, repo.fullName, branch)
   let seq = 0
   let subs = 0
   for (const full of walkFiles(root)) {

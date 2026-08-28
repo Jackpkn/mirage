@@ -66,15 +66,35 @@ export function metaOf(repo: RepoRow): Record<string, JsonValue> {
 
 // Branches, the default one first and the rest in name order.
 export async function branchNames(db: C, tenant: string, repo: RepoRow): Promise<string[]> {
-  const rows = await db.githubFile.findMany({
+  const rows = await db.githubBranch.findMany({
     where: { ...scope(tenant), repo: repo.fullName },
-    select: { branch: true },
-    distinct: ['branch'],
+    select: { name: true },
   })
-  const seen = new Set(rows.map((r) => r.branch))
+  const seen = new Set(rows.map((r) => r.name))
+  // The default branch is prepended whether or not a row exists for it, which
+  // is what the fake this replaces did: renaming a repository's default branch
+  // set the name without creating the branch, and the listing still led with
+  // it.
   seen.add(repo.defaultBranch)
   const rest = [...seen].filter((b) => b !== repo.defaultBranch).sort()
   return [repo.defaultBranch, ...rest]
+}
+
+// A branch exists once it is recorded, independently of whether anything is on
+// it. Idempotent, because every path that can reach a branch (seeding, repo
+// creation, a fork, a new ref) may be reached twice for the same name.
+export async function addBranch(
+  db: C,
+  tenant: string,
+  fullName: string,
+  name: string,
+): Promise<void> {
+  const count = await db.githubBranch.count({ where: { ...scope(tenant), repo: fullName } })
+  await db.githubBranch.upsert({
+    where: { tenant_repo_name: { tenant, repo: fullName, name } },
+    update: {},
+    create: { tenant, repo: fullName, name, seq: count },
+  })
 }
 
 export async function treeOfBranch(

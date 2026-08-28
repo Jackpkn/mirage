@@ -18,6 +18,7 @@ import type { C } from './config.ts'
 import { commitJson } from './wire.ts'
 import { createReposAllowed } from './seed.ts'
 import {
+  addBranch,
   allRepos,
   branchFor,
   branchNames,
@@ -222,6 +223,7 @@ const createRepo: Handler = async (ctx) => {
       seq: await nextRepoSeq(ctx.db, ctx.tenant),
     },
   })) as RepoRow
+  await addBranch(ctx.db, ctx.tenant, fullName, created.defaultBranch)
   if (body.auto_init === true) {
     await ctx.db.githubFile.create({
       data: {
@@ -281,7 +283,11 @@ async function renameRepo(db: C, tenant: string, repo: RepoRow, name: string): P
       seq: repo.seq,
     },
   })) as RepoRow
+  // Every child table moves before the old row goes. A table missed here is
+  // not a silent orphan, it is a 500: each relation is required, so Prisma
+  // refuses to delete a repository anything still points at.
   const where = { tenant, repo: from }
+  await db.githubBranch.updateMany({ where, data: { repo: to } })
   await db.githubFile.updateMany({ where, data: { repo: to } })
   await db.githubSubmodule.updateMany({ where, data: { repo: to } })
   await db.githubCommit.updateMany({ where, data: { repo: to } })
@@ -320,6 +326,7 @@ async function dropRepo(db: C, tenant: string, fullName: string): Promise<void> 
     where: { tenant, treeSha: { in: staged.map((t) => t.sha) } },
   })
   await db.githubStagedTree.deleteMany({ where })
+  await db.githubBranch.deleteMany({ where })
   await db.githubStatus.deleteMany({ where })
   await db.githubCheck.deleteMany({ where })
   await db.githubRun.deleteMany({ where })
@@ -356,6 +363,7 @@ const forkRepo: Handler = authed(
       },
     })) as RepoRow
     for (const branch of await branchNames(ctx.db, ctx.tenant, source)) {
+      await addBranch(ctx.db, ctx.tenant, fullName, branch)
       const tree = await treeOfBranch(ctx.db, ctx.tenant, source, branch)
       let seq = 0
       for (const [path, data] of tree) {
