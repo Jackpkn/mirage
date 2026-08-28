@@ -21,7 +21,7 @@ import { FixtureError, KitError, ResetBodyError, TenantError } from './errors.ts
 import { Router } from './route.ts'
 import type { Ctx } from './route.ts'
 import { DEFAULT_FIXTURE } from './fixture.ts'
-import { applyReset, defaultTenantsOf, parseResetBody } from './reset.ts'
+import { applyReset, defaultTenantsOf, parseResetBody, withPathRun } from './reset.ts'
 import { DEFAULT_RUN, resolveRun, resolveTenant, splitRunPath } from './tenant.ts'
 import type { Headers } from './tenant.ts'
 import { unrouted } from './unrouted.ts'
@@ -71,30 +71,6 @@ export function makeRuntime<C extends MinimalClient>(fake: Fake<C>): Runtime<C> 
 // The reset's target run is read before validation so the queue key exists even
 // for a body that parseResetBody will reject; an invalid body is a 400 that
 // still must not jump the queue.
-// The prefix and the body must not disagree, and the prefix is the one the
-// caller cannot have set by accident. Only an ABSENT run is filled in: a body
-// carrying `{"run": 12}` or `{"run": ""}` is malformed and has to reach
-// parseResetBody to be refused, and overwriting it turned a request that owes
-// a 400 into a successful reset of somebody else's run.
-function withPathRun(body: JsonValue, pathRun: string | undefined): JsonValue {
-  if (pathRun === undefined) return body
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) return body
-  const named = (body as Record<string, JsonValue>).run
-  if (named !== undefined) {
-    // A non-empty string that differs is a caller contradicting itself. Every
-    // other present value (a number, an empty string) is malformed, and is
-    // handed on unchanged so parseResetBody refuses it in its own words
-    // rather than being reported as a contradiction it is not.
-    if (typeof named === 'string' && named !== '' && named !== pathRun) {
-      throw new ResetBodyError(
-        `/reset run ${named} contradicts the /_run/${pathRun} it was sent to`,
-      )
-    }
-    return body
-  }
-  return { ...(body as Record<string, JsonValue>), run: pathRun }
-}
-
 function runOfReset(body: JsonValue): string {
   if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
     const named = (body as Record<string, JsonValue>).run

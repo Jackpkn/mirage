@@ -534,7 +534,12 @@ class GwsService:
 
     @classmethod
     async def create(cls, run_id: str, target: dict) -> "GwsService":
-        url = os.environ["GWS_URL"].rstrip("/")
+        # Every call below goes to this run's own world. gws keeps per-run
+        # state already; what it lacked was a way for a mount to ask for one,
+        # since a mount hands its base URL to a client and never sees the
+        # request. Scoping the base once covers the reset, the drives and
+        # folders, the seeds and every mount.
+        url = f'{os.environ["GWS_URL"].rstrip("/")}/_run/{run_id}'
         folder_ids: dict[str, str] = {}
         drive_ids: dict[str, str] = {}
         # Native mounts (gdocs/gsheets/gslides) render the modified date

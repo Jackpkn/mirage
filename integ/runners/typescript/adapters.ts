@@ -1626,6 +1626,12 @@ async function openGws(target: Target): Promise<Open> {
   let base = process.env.GWS_URL ?? ''
   while (base.endsWith('/')) base = base.slice(0, -1)
   if (base === '') throw new Error('gdrive target requires GWS_URL')
+  // Every call below goes to this run's own world. gws keeps per-run state
+  // already; what it lacked was a way for a mount to ask for one, since a
+  // mount hands its base URL to a client and never sees the request. Scoping
+  // the base once covers the reset, the drive and folder creation, the seeds
+  // and every mount, which is what makes this one line rather than sixteen.
+  base = `${base}/_run/${runId()}`
   // Native mounts (gdocs/gsheets/gslides) render the modified date into
   // filenames, so those targets pin the server clock. Secondary calendars
   // and seeded form responses ride the same call rather than being

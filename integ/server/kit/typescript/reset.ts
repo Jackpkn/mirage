@@ -180,6 +180,31 @@ function templateKey(req: ResetRequest): string {
   return JSON.stringify([req.fixture, req.tenants, req.extras])
 }
 
+// A /reset reached through `/_run/<id>/reset` is about THAT run, so the prefix
+// fills the body's `run` in. A body naming a DIFFERENT one is a caller
+// contradicting itself, and is refused rather than silently resolved in favour
+// of either. Lives here beside the rest of the body handling so gws, which
+// keeps its own copy of the request flow, reaches the same rule.
+export function withPathRun(body: JsonValue, pathRun: string | undefined): JsonValue {
+  if (pathRun === undefined) return body
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return body
+  const named = (body as Record<string, JsonValue>).run
+  if (named !== undefined) {
+    // A non-empty string that differs is a caller contradicting itself. Every
+    // other present value (a number, an empty string) is malformed, and is
+    // handed on unchanged so parseResetBody refuses it in its own words
+    // rather than being reported as a contradiction it is not. Overwriting it
+    // turned a request that owes a 400 into a reset of somebody else's run.
+    if (typeof named === 'string' && named !== '' && named !== pathRun) {
+      throw new ResetBodyError(
+        `/reset run ${named} contradicts the /_run/${pathRun} it was sent to`,
+      )
+    }
+    return body
+  }
+  return { ...(body as Record<string, JsonValue>), run: pathRun }
+}
+
 export function defaultTenantsOf<C extends MinimalClient>(fake: Fake<C>): string[] {
   return fake.defaultTenants ?? [DEFAULT_TENANT]
 }
