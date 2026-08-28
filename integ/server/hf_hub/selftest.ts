@@ -227,6 +227,20 @@ async function main(): Promise<void> {
     >[]
     check('search alone stays trimmed', (searched[0] ?? {}).cardData === undefined, '')
 
+    // A repository cannot have been modified before it existed. The fixture
+    // states a repo's createdAt and its initial commit's separately, so the
+    // two can drift apart silently now that lastModified comes from the
+    // commit; this is the guard that says so.
+    for (const kind of ['models', 'datasets', 'spaces']) {
+      const rows = (await get(fake.endpoint, `/api/${kind}?full=1`)) as Record<string, JsonValue>[]
+      const bad = rows.filter((r) => String(r.lastModified) < String(r.createdAt))
+      check(
+        `every ${kind} row is modified at or after it was created`,
+        bad.length === 0,
+        JSON.stringify(bad.map((r) => [r.id, r.createdAt, r.lastModified])),
+      )
+    }
+
     // ---- lastModified is the HEAD commit's, not the first blob's
     const before = (await get(fake.endpoint, '/api/datasets/other/card-data-b')) as Record<
       string,
