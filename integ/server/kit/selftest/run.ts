@@ -761,6 +761,53 @@ async function main(): Promise<void> {
       JSON.stringify(boomAgain.json),
     )
 
+    process.stdout.write('\n20. a request cannot preempt a run being installed\n')
+    // The fake that opts OUT of the unknown-tenant refusal is the one at risk,
+    // because nothing holds its requests while a reset runs. Building a ctx
+    // calls pool.client(run), which CREATES the run from the schema-only
+    // template; the reset then found that client already there and never
+    // copied its seeded one, so the run stayed empty and the reset still
+    // answered 200. Probed on github before the fix: 0 rows where 357 were
+    // expected.
+    const lazy = await launch({ SELFTEST_LAZY_TENANTS: '1' })
+    try {
+      const resetting = call(lazy, '/reset', {
+        method: 'POST',
+        runInPath: 'z1',
+        body: { tenants: ['slow'] },
+      })
+      // Into the middle of the seed, which tenant `slow` holds open for 300ms.
+      await new Promise((ok) => setTimeout(ok, 100))
+      const raced = await call(lazy, '/boards', { runInPath: 'z1', tenant: 'slow' })
+      const done = await resetting
+      check('the reset succeeds', done.status === 200, JSON.stringify(done.json))
+      check(
+        'the raced request waited for it rather than creating an empty run',
+        raced.status === 200 && (raced.json as { boards: unknown[] }).boards.length === 2,
+        JSON.stringify(raced.json),
+      )
+      check(
+        'and the run really holds its data afterwards',
+        titles((await call(lazy, '/boards/brd_1/cards', { runInPath: 'z1', tenant: 'slow' })).json)
+          .length === 3,
+        JSON.stringify(
+          titles(
+            (await call(lazy, '/boards/brd_1/cards', { runInPath: 'z1', tenant: 'slow' })).json,
+          ),
+        ),
+      )
+      // Opting out is still opting out: an unseeded tenant is served, not
+      // refused, which is what dropbox needs and what a blanket refusal broke.
+      const lazyMiss = await call(lazy, '/boards', { runInPath: 'z2', tenant: 'never' })
+      check(
+        'a fake that declares no unknownTenant still serves an unseeded tenant',
+        lazyMiss.status === 200,
+        JSON.stringify(lazyMiss.json),
+      )
+    } finally {
+      lazy.child.kill('SIGTERM')
+    }
+
     process.stdout.write(`\nselftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

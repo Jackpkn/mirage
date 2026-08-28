@@ -230,16 +230,24 @@ async function answer<C extends MinimalClient>(
   // Both ways of reaching an unseeded tenant land here, which is the point --
   // a legal name that was never seeded, and the DEFAULT_TENANT that an illegal
   // one falls back to, were two separate 500s with one cause.
+  // Everything below observes the run, so nothing below may start while a
+  // reset is still installing it. Router.run waits for this queue too, but too
+  // late: it runs AFTER the ctx is built, and building the ctx calls
+  // pool.client(run), which CREATES the run from the schema-only template. A
+  // read arriving during a reset's template build therefore installed an empty
+  // client, the reset's own clientFromSeeded then found that client already
+  // there and never copied the seeded file, and the run stayed empty while the
+  // reset reported 200. Probed on github: 0 rows where 357 were expected.
+  //
+  // Waiting here rather than only on the unknown-tenant path, because the
+  // failure does not need a tenant to be unknown and hit exactly the fakes
+  // that opt out of that refusal. This is not a new wait for a read, which
+  // already waited on this queue one step later.
+  await router.settled(run)
   const runState = rt.state(run)
   const refuse = rt.fake.unknownTenant
   if (refuse !== undefined && tenantKind !== 'none' && !runState.isSeeded(tenant)) {
-    // The tenant may be BEING seeded right now: /reset is queued on the run
-    // and a read only waits for that queue inside Router.run, which is after
-    // this point. Checked first and awaited only on a miss, so the ordinary
-    // request pays nothing and a request racing its own reset is not told the
-    // tenant does not exist when an accepted reset is about to create it.
-    await router.settled(run)
-    if (!runState.isSeeded(tenant)) return refuse(tenant)
+    return refuse(tenant)
   }
   const hit = router.match(method, path)
   if (hit === null) return unrouted(service, method, path)
