@@ -44,8 +44,16 @@ async function isDir(dispatch: DispatchFn, path: string): Promise<boolean> {
  * Read through the op dispatcher rather than any filesystem of its own: an
  * account CLI has no mount, and the path the line named is an unrelated
  * workspace file, which is exactly what the dispatcher door is for.
+ *
+ * Reports whether `local` was a directory, because the caller needs it:
+ * upstream reads `path_in_repo` as the destination FILE for a file source and
+ * as the destination FOLDER for a directory one, so a file uploaded to
+ * `u.txt` must land at `u.txt` and not at `u.txt/u.txt`.
  */
-async function collect(dispatch: DispatchFn, local: string): Promise<Row[]> {
+async function collect(
+  dispatch: DispatchFn,
+  local: string,
+): Promise<{ rows: Row[]; fromDir: boolean }> {
   const base = local.replace(/\/+$/, '')
   let directory: boolean
   try {
@@ -56,7 +64,10 @@ async function collect(dispatch: DispatchFn, local: string): Promise<Row[]> {
   }
   if (!directory) {
     const [data] = await dispatch('read', PathSpec.fromStrPath(base))
-    return [{ name: base.slice(base.lastIndexOf('/') + 1), data: data as Uint8Array }]
+    return {
+      rows: [{ name: base.slice(base.lastIndexOf('/') + 1), data: data as Uint8Array }],
+      fromDir: false,
+    }
   }
   const rows: Row[] = []
   const pending = [base]
@@ -73,7 +84,10 @@ async function collect(dispatch: DispatchFn, local: string): Promise<Row[]> {
       rows.push({ name: child.slice(base.length + 1), data: data as Uint8Array })
     }
   }
-  return rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  return {
+    rows: rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+    fromDir: true,
+  }
 }
 
 /** Apply the line's --include and --exclude globs. */
@@ -136,13 +150,22 @@ export async function uploadCmd(inv: CLIInvocation): Promise<CommandFnResult> {
   }
   const local = operands[0] ?? '.'
   const inRepo = operands[1] ?? ''
-  const rows = keep(await collect(dispatch, local), include, exclude)
+  const collected = await collect(dispatch, local)
+  const rows = keep(collected.rows, include, exclude)
   if (rows.length === 0) throw new UsageError(`no files matched under ${local}`)
   const base = inRepoBase(inRepo)
-  const additions: Addition[] = rows.map((row) => ({
-    path: base === '' ? row.name : `${base}/${row.name}`,
-    data: row.data,
-  }))
+  // A directory source spreads under `path_in_repo`; a file source lands AT
+  // it. Appending the basename either way stored `hf upload r f.txt f.txt` at
+  // `f.txt/f.txt`, which the tree then reported as a directory and
+  // `hf download` could not find at all.
+  const additions: Addition[] = collected.fromDir
+    ? rows.map((row) => ({ path: base === '' ? row.name : `${base}/${row.name}`, data: row.data }))
+    : [
+        {
+          path: base === '' ? (rows[0]?.name ?? '') : base,
+          data: rows[0]?.data ?? new Uint8Array(),
+        },
+      ]
   const repoType = repoTypeOf(fl)
   // Upstream creates the repository if it is missing and ignores --private
   // when it already exists, so the flag picks the visibility of one this line
