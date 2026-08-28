@@ -507,8 +507,12 @@ export class MountCore {
   async flush(path: string, fd: number): Promise<void> {
     const ctx = this.handles.get(fd)
     if (ctx?.writeBuf === undefined || ctx.writeBuf.length === 0) return
-    const writes = ctx.writeBuf
+    // Store first, clear only on success. Clearing up front lost the
+    // whole batch whenever the store failed -- and under fskit, where
+    // RELEASE arrives with no FLUSH before it, that batch is the only
+    // copy the file has. Python's twin has always been in this order;
+    // the failure differential is what caught the divergence.
+    await this.applyWrites(path, ctx.writeBuf)
     ctx.writeBuf = []
-    await this.applyWrites(path, writes)
   }
 }

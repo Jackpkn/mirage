@@ -250,14 +250,15 @@ class Workspace:
                             else cli_spec_for(spec_or_key))
                 self._registry.clis.install(cli_name, cli_spec, cli_config)
 
-        for prefix, target_backend, target_point in kernel_targets(specs):
+        for prefix, target_backend, target_point, nfs_config in kernel_targets(
+                specs):
             if route_of(target_backend) is KernelRoute.LOOP:
                 # Served by the caller's loop, which this constructor is
                 # not running on; the first ``execute`` mounts it. Asked
                 # of the route table rather than tested against nfs, so
                 # the next loop-served backend cannot silently take the
                 # thread route and deadlock here.
-                self._kernel_mounts.defer_nfs(prefix, target_point)
+                self._kernel_mounts.defer_nfs(prefix, target_point, nfs_config)
             else:
                 self.add_fuse_mount(prefix,
                                     target_point,

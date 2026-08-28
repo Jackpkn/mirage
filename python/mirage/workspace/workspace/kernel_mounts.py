@@ -55,7 +55,7 @@ class KernelMounts:
         # unscoped one). A server serves one delegate, so a scoped mount
         # cannot narrow an existing server -- it needs its own.
         self._nfs: dict[str | None, NFSManager] = {}
-        self._deferred: list[tuple[str, str | None]] = []
+        self._deferred: list[tuple[str, str | None, NFSConfig | None]] = []
 
     def add(self,
             prefix: str,
@@ -113,7 +113,10 @@ class KernelMounts:
         self._backends[key] = resolved_backend
         return resolved
 
-    def defer_nfs(self, prefix: str, mountpoint: str | None = None) -> None:
+    def defer_nfs(self,
+                  prefix: str,
+                  mountpoint: str | None = None,
+                  config: NFSConfig | None = None) -> None:
         """Record a declared nfs mount for the next ``ready``.
 
         The constructor that reads a mount spec is synchronous and the
@@ -123,8 +126,11 @@ class KernelMounts:
         Args:
             prefix (str): the virtual prefix to expose.
             mountpoint (str | None): where to mount; None picks a path.
+            config (NFSConfig | None): server knobs from the
+                declaration. One server serves every nfs prefix, so the
+                first declaration to carry one fixes them.
         """
-        self._deferred.append((prefix, mountpoint))
+        self._deferred.append((prefix, mountpoint, config))
 
     async def ready(self) -> None:
         """Mount every deferred nfs declaration, once.
@@ -135,9 +141,9 @@ class KernelMounts:
         explicit ``add_nfs`` route raises instead.
         """
         while self._deferred:
-            prefix, mountpoint = self._deferred.pop(0)
+            prefix, mountpoint, config = self._deferred.pop(0)
             try:
-                await self.add_nfs(prefix, mountpoint)
+                await self.add_nfs(prefix, mountpoint, config=config)
             except Exception as exc:
                 logger.warning("nfs auto-mount failed for %s: %s", prefix, exc)
                 print(

@@ -69,9 +69,10 @@ export class KernelMounts {
     mountpoint?: string,
     sessionId?: string,
     backend?: MountBackend,
+    nfsConfig?: NFSConfig,
   ): Promise<string> {
     if (routeOf(backend ?? MountBackend.FUSE) === KernelRoute.LOOP) {
-      return this.addNfs(prefix, mountpoint, sessionId)
+      return this.addNfs(prefix, mountpoint, sessionId, nfsConfig)
     }
     const session = sessionId !== undefined ? this.workspace.getSession(sessionId) : undefined
     const key = sessionId === undefined ? prefix : `${prefix}@${sessionId}`

@@ -43,6 +43,29 @@ async function seeded(sizeless: boolean): Promise<Workspace> {
 }
 
 /**
+ * Make one op refuse, until the returned handle heals it.
+ *
+ * The three bugs these failure cases exist for are all on paths where
+ * the backend refuses *after* the client was told the write succeeded,
+ * so a battery built only on happy paths could not see them -- which is
+ * how all three lived in python after Codex found them here.
+ */
+function failing(ws: Workspace, op: 'writeFile' | 'unlink'): { heal: () => void } {
+  const real = ws.fs[op].bind(ws.fs) as (...args: never[]) => Promise<unknown>
+  ws.fs[op] = (() => Promise.reject(new Error('permission denied'))) as never
+  return {
+    heal: () => {
+      ws.fs[op] = real as never
+    },
+  }
+}
+
+/** The bytes a workspace actually stored, as text. */
+async function stored(ws: Workspace, path: string): Promise<string> {
+  return Buffer.from(await ws.fs.readFile(path, { raw: true })).toString()
+}
+
+/**
  * The two adapters over identical, independent workspaces.
  *
  * One tree cannot serve both: every case mutates it, and the point is to
@@ -52,12 +75,14 @@ class Pair {
   constructor(
     readonly core: MountCore,
     readonly nfs: MirageNFS,
+    readonly fuseWs: Workspace,
+    readonly nfsWs: Workspace,
   ) {}
 
   static async make(sizeless = false): Promise<Pair> {
     const fuseWs = await seeded(sizeless)
     const nfsWs = await seeded(sizeless)
-    return new Pair(new MountCore(fuseWs.fs), new MirageNFS(nfsWs.fs))
+    return new Pair(new MountCore(fuseWs.fs), new MirageNFS(nfsWs.fs), fuseWs, nfsWs)
   }
 
   /** Resolve a path to a fileid the way a client walks it. */
@@ -249,5 +274,72 @@ describe('fuse/nfs adapter parity', () => {
     const fd = await pair.core.open('/a.txt')
     expect((await pair.core.fgetattr('/a.txt', fd)).size).toBe(HELLO.length)
     expect((await pair.nfsAttrs('a.txt'))[2]).toBe(0)
+  })
+
+  // --- failure cases ----------------------------------------------
+  //
+  // The happy-path cases above cannot see a bug on a path where the
+  // backend refuses AFTER the client was told the write succeeded,
+  // which is precisely where both adapters were wrong. Three were
+  // found here and all three were in python too, and nothing in this
+  // file would have said so.
+
+  it('loses no write the store refused, on either adapter', async () => {
+    const pair = await Pair.make()
+    const fuseFail = failing(pair.fuseWs, 'writeFile')
+    const nfsFail = failing(pair.nfsWs, 'writeFile')
+
+    const fh = await pair.core.open('/a.txt')
+    await pair.core.write('/a.txt', fh, Buffer.from('NEW'), 0)
+    await expect(pair.core.flush('/a.txt', fh)).rejects.toThrow(/denied/)
+
+    const nfsId = await pair.nfsId('a.txt')
+    await pair.nfs.write(nfsId, 0, Buffer.from('NEW'))
+    await expect(pair.nfs.flush(nfsId)).rejects.toThrow(/denied/)
+
+    // Both still hold the bytes, so a retry against a healthy backend
+    // stores them. Losing them is the failure: every one was answered
+    // as durable, and the client will not send them again.
+    fuseFail.heal()
+    nfsFail.heal()
+    await pair.core.flush('/a.txt', fh)
+    await pair.nfs.flush(nfsId)
+
+    expect(await stored(pair.fuseWs, '/a.txt')).toBe('NEWlo world')
+    expect(await stored(pair.nfsWs, '/a.txt')).toBe('NEWlo world')
+  })
+
+  it('loses no write a refused remove rolled back', async () => {
+    const pair = await Pair.make()
+    const nfsFail = failing(pair.nfsWs, 'unlink')
+    failing(pair.fuseWs, 'unlink')
+
+    const nfsId = await pair.nfsId('a.txt')
+    await pair.nfs.write(nfsId, 0, Buffer.from('NEW'))
+    await expect(pair.nfs.remove(pair.nfs.rootDir(), 'a.txt')).rejects.toThrow(/denied/)
+    await expect(pair.core.unlink('/a.txt')).rejects.toThrow(/denied/)
+
+    // The file survived on both sides, so the writes acknowledged
+    // against it must survive too; dropping them turned a failed
+    // delete into a silent rollback of a successful write.
+    nfsFail.heal()
+    await pair.nfs.flush(nfsId)
+
+    expect(await stored(pair.nfsWs, '/a.txt')).toBe('NEWlo world')
+    expect(await stored(pair.fuseWs, '/a.txt')).toBe(HELLO)
+  })
+
+  it('refuses an exclusive create on the tier that has to enforce it', async () => {
+    // No fuse twin, and that asymmetry is the point: the kernel
+    // resolves O_EXCL above a FUSE filesystem, so MountCore is never
+    // asked. NFSv3 carries the mode on the wire, so the server is the
+    // only thing that can refuse -- and routing it to the plain
+    // create, which truncates, is what emptied the file the caller was
+    // told it had not touched.
+    const pair = await Pair.make()
+
+    await expect(pair.nfs.createExclusive(pair.nfs.rootDir(), 'a.txt')).rejects.toThrow(/exists/i)
+
+    expect(await stored(pair.nfsWs, '/a.txt')).toBe(HELLO)
   })
 })

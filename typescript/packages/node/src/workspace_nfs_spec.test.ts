@@ -15,6 +15,7 @@
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountBackend, MountMode } from '@struktoai/mirage-core/types'
 import { Mount } from '@struktoai/mirage-core/workspace/mount/spec'
+import { NFSConfig } from './nfs/config.ts'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Workspace } from './workspace.ts'
 
@@ -180,6 +181,32 @@ describe('Workspace nfs backend (without a real kernel mount)', () => {
     await ws.nfsReady()
 
     await expect(ws.addNfsMount('/data/sub', '/tmp/shared')).rejects.toThrow(/already used/)
+
+    await ws.close()
+  })
+
+  it('honors an NFSConfig declared on the mount', async () => {
+    // A declared mount is the only place a user can express these, so
+    // without this `backend: nfs` in a spec could not choose a port, an
+    // idle window or a soft mount -- only addNfsMount could be tuned.
+    const ws = new Workspace(
+      {
+        '/data': new Mount(new RAMResource(), {
+          backend: MountBackend.NFS,
+          mountpoint: '/tmp/pinned-data',
+          nfsConfig: new NFSConfig({ port: 12345, soft: false }),
+        }),
+      },
+      { mode: MountMode.WRITE },
+    )
+    await ws.nfsReady()
+
+    // Read the argument rather than deep-matching the call: the first
+    // two are the workspace and its prefix, and a deep compare walks
+    // that whole object graph.
+    const passed = mocks.startServer.mock.calls[0]?.[1] as NFSConfig | undefined
+    expect(passed?.port).toBe(12345)
+    expect(passed?.soft).toBe(false)
 
     await ws.close()
   })

@@ -58,7 +58,7 @@ export class Workspace extends CoreWorkspace {
     const commandLimits: Record<string, Record<string, Limit>> = {
       ...(options.commandLimits ?? {}),
     }
-    const mountTargets: [string, MountBackend, string | undefined][] = []
+    const mountTargets: [string, MountBackend, string | undefined, NFSConfig | undefined][] = []
     for (const [prefix, value] of Object.entries(resources)) {
       if (value instanceof Mount) {
         specs[prefix] =
@@ -67,7 +67,12 @@ export class Workspace extends CoreWorkspace {
           commandLimits[prefix] = value.options.commandLimits
         const backend = value.options.backend ?? MountBackend.VFS
         if (KERNEL_BACKENDS.includes(backend))
-          mountTargets.push([prefix, backend, value.options.mountpoint])
+          mountTargets.push([
+            prefix,
+            backend,
+            value.options.mountpoint,
+            value.options.nfsConfig as NFSConfig | undefined,
+          ])
       } else {
         specs[prefix] = value
       }
@@ -86,8 +91,8 @@ export class Workspace extends CoreWorkspace {
       // runs on a daemon thread so its failure never reaches the main process.
       // On Node's single event loop we swallow it here, otherwise the unhandled
       // rejection would terminate the process under Node's default policy.
-      const setups = mountTargets.map(([prefix, backend, mountpoint]) =>
-        this.addFuseMount(prefix, mountpoint, undefined, backend).then(
+      const setups = mountTargets.map(([prefix, backend, mountpoint, nfsConfig]) =>
+        this.addFuseMount(prefix, mountpoint, undefined, backend, nfsConfig).then(
           () => undefined,
           (err: unknown) => {
             process.stderr.write(
@@ -118,8 +123,9 @@ export class Workspace extends CoreWorkspace {
     mountpoint?: string,
     sessionId?: string,
     backend?: MountBackend,
+    nfsConfig?: NFSConfig,
   ): Promise<string> {
-    return this.kernelMounts.add(prefix, mountpoint, sessionId, backend)
+    return this.kernelMounts.add(prefix, mountpoint, sessionId, backend, nfsConfig)
   }
 
   removeFuseMount(prefix: string, sessionId?: string): Promise<void> {
