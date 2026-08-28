@@ -20,7 +20,8 @@ from typing import Any
 from mirage.accessor.s3 import S3Accessor, S3Config
 from mirage.core.object_store.driver import (ChildEntry, ObjectMeta,
                                              ObjectStoreDriver, TreeEntry)
-from mirage.core.s3.client import _client_kwargs, async_session, is_not_found
+from mirage.core.s3.client import (_client_kwargs, async_session, closing_body,
+                                   is_not_found)
 from mirage.core.s3.constants import SCOPE_ERROR
 from mirage.core.timeutil import to_iso_z
 
@@ -127,7 +128,8 @@ async def _get(conn: S3Conn, key: str) -> bytes | None:
         if is_not_found(exc):
             return None
         raise
-    data: bytes = await resp["Body"].read()
+    async with closing_body(resp["Body"]) as body:
+        data: bytes = await body.read()
     return data
 
 

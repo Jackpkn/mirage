@@ -57,9 +57,9 @@ class S3Accessor(Accessor):
         # CONSTRUCTION: building a client needs the kwargs helpers in
         # mirage.core.s3.client, and that module imports S3Config from here,
         # so constructing one here would be a cycle.
-        self._stacks: dict[int, AsyncExitStack] = {}
-        self._clients: dict[int, Any] = {}
-        self._locks: dict[int, asyncio.Lock] = {}
+        self._stacks: dict[asyncio.AbstractEventLoop, AsyncExitStack] = {}
+        self._clients: dict[asyncio.AbstractEventLoop, Any] = {}
+        self._locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
 
     async def cached_client(
             self, factory: Callable[[],
@@ -73,8 +73,13 @@ class S3Accessor(Accessor):
         Returns:
             Any: the open aioboto3 client for the running loop.
         """
-        key = id(asyncio.get_running_loop())
-        live = self._clients.get(key)
+        loop = asyncio.get_running_loop()
+        # Keyed by the loop OBJECT, never by id(loop): CPython reuses the
+        # address of a collected loop, so a second asyncio.run() could hash to
+        # a client bound to the first run's closed loop. Holding the key also
+        # keeps that reuse impossible.
+        self._drop_closed()
+        live = self._clients.get(loop)
         if live is not None:
             return live
         # Opening is serialized per loop. `factory()` may suspend (resolving
@@ -85,19 +90,32 @@ class S3Accessor(Accessor):
         # nothing awaits between the read and the write, so both callers take
         # the same lock. TypeScript's SSH accessor guards the same way with a
         # cached connectPromise.
-        lock = self._locks.setdefault(key, asyncio.Lock())
+        lock = self._locks.setdefault(loop, asyncio.Lock())
         async with lock:
-            live = self._clients.get(key)
+            live = self._clients.get(loop)
             if live is not None:
                 return live
             stack = AsyncExitStack()
             client = await stack.enter_async_context(factory())
-            self._stacks[key] = stack
-            self._clients[key] = client
+            self._stacks[loop] = stack
+            self._clients[loop] = client
             return client
+
+    def _drop_closed(self) -> None:
+        """Forget clients whose loop is gone.
+
+        Their connections went with the loop, so there is nothing left to
+        close; keeping the entries would only grow the map and hand `close`
+        a stack it cannot await.
+        """
+        for dead in [one for one in self._clients if one.is_closed()]:
+            self._clients.pop(dead, None)
+            self._stacks.pop(dead, None)
+            self._locks.pop(dead, None)
 
     async def close(self) -> None:
         """Close every client this accessor opened."""
+        self._drop_closed()
         stacks = list(self._stacks.values())
         self._stacks.clear()
         self._clients.clear()
