@@ -19,7 +19,7 @@ import type { ClientCtor, MinimalClient } from './db.ts'
 import type { KitConfig } from './config.ts'
 import type { Dmmf } from './seed.ts'
 import type { KitRoute } from './route.ts'
-import type { JsonValue, MintSharing, ResetResponse } from './types.ts'
+import type { JsonValue, MintSharing, Reply, ResetResponse } from './types.ts'
 
 // What a service implements. Everything else in the kit is machinery around
 // these five members: there is no base class to extend and no lifecycle to
@@ -42,6 +42,10 @@ export interface Fake<C extends MinimalClient> {
     extras: Record<string, JsonValue>,
   ) => Promise<void>
   defaultTenants?: string[]
+  // How this fake refuses a tenant it was never seeded with. The kit knows
+  // WHICH tenant is unknown and nothing about how the vendor says so, so the
+  // status and body come from here; the default below is a generic 401.
+  unknownTenant?: (tenant: string) => Reply
 }
 
 // Per-TENANT mutable state. These were per-run until /reset learned to scope
@@ -60,6 +64,11 @@ export interface TenantState {
 // other's ids; this is now that guarantee one level finer.
 export class RunState {
   private readonly tenants = new Map<string, TenantState>()
+  // The tenants this run has actually been seeded with, which `tenants` alone
+  // cannot answer: `of` mints state for ANY legal name on first sight, so a
+  // tenant nobody seeded is indistinguishable from a seeded one until the
+  // fake's first query comes back empty. Only `reset` records here.
+  private readonly seeded = new Set<string>()
   private readonly sharing: MintSharing
   private readonly format: string
 
@@ -83,6 +92,11 @@ export class RunState {
     const st = this.of(tenant)
     st.clock.setEpoch(epoch)
     st.minter.reset()
+    this.seeded.add(tenant)
+  }
+
+  isSeeded(tenant: string): boolean {
+    return this.seeded.has(tenant)
   }
 }
 
