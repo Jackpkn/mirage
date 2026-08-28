@@ -61,6 +61,10 @@ async def list_incidents(
 
 async def acknowledge(
         inv: CLIInvocation[PagerConfig]) -> tuple[bytes | None, IOResult]:
+    # Operand.required is enforced by the executor only under the CLAP
+    # dialect; an argparse-style leaf words its own missing-operand refusal.
+    if not inv.texts:
+        raise ValueError("INCIDENT_ID is required")
     incident_id = inv.texts[0]
     by = inv.flags["by"]
     if not isinstance(by, str):
@@ -131,6 +135,7 @@ async def main() -> None:
         await show(ws, "pager-eng --help")
         await show(ws, "pager-eng list")
         await show(ws, "pager-support list")
+        await show(ws, "pager-eng ack --by Mina")
         await show(ws, "pager-eng ack __proto__ --by Mina")
         await show(ws, "pager-eng ack INC-101 --by Mina")
         await show(ws, "pager-eng list")

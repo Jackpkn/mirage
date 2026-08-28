@@ -76,6 +76,8 @@ function acknowledge(inv: CLIInvocation): CommandFnResult {
   const { account } = configOf(inv)
   const incidentId = inv.texts[0]
   const by = inv.flags.by
+  // Operand.required is enforced by the executor only under the CLAP
+  // dialect; an argparse-style leaf words its own missing-operand refusal.
   if (incidentId === undefined) throw new Error('INCIDENT_ID is required')
   if (typeof by !== 'string') throw new Error('--by must be a string')
   const incidents = accountIncidents(account)
@@ -141,6 +143,7 @@ async function main(): Promise<void> {
     await show(ws, 'pager-eng --help')
     await show(ws, 'pager-eng list')
     await show(ws, 'pager-support list')
+    await show(ws, 'pager-eng ack --by Mina')
     await show(ws, 'pager-eng ack __proto__ --by Mina')
     await show(ws, 'pager-eng ack INC-101 --by Mina')
     await show(ws, 'pager-eng list')
