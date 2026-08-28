@@ -520,6 +520,21 @@ async function main(): Promise<void> {
       refusedArgv.includes('--fixture') && refusedArgv.includes('--port'),
       refusedArgv.split('\n')[0] ?? '',
     )
+    // The likelier slip than an unknown flag: `--port N alt` is `--fixture alt`
+    // with the flag dropped, and skipping the bare word served the DEFAULT
+    // fixture under a line that reads as asking for another one.
+    let refusedWord = ''
+    try {
+      const stray = await launch({}, ['alt'])
+      stray.child.kill('SIGTERM')
+    } catch (err: unknown) {
+      refusedWord = (err as Error).message
+    }
+    check(
+      'a stray positional fails the launch too',
+      refusedWord.includes('exited 1'),
+      refusedWord === '' ? 'launched ANYWAY' : (refusedWord.split('\n')[0] ?? ''),
+    )
 
     process.stdout.write(`\nselftest: ${String(checks)} checks passed\n`)
   } finally {

@@ -45,27 +45,33 @@ export function parseFixture(argv: string[] = process.argv.slice(2)): string | u
 // caller asking for something the fake will not do.
 const KNOWN_FLAGS = new Set(['--port', '--fixture'])
 
-// Refused, not ignored. `parsePort` and `parseFixture` each scan argv for their
-// own flag and skip everything else, so a fake launched with a flag it does not
-// implement announced a healthy server seeded with the DEFAULT fixture: the
-// caller asked for one world and silently got another, which is the failure a
-// fake exists to make impossible. github is the worked example, since the fake
-// it replaced took a repeatable `--repo owner/name=<dir>` plus `--metadata`,
-// `--commits` and `--no-create-repos`, and none of those survive here.
+// Refused, not ignored, and that covers a bare word as well as a flag.
+// `parsePort` and `parseFixture` each scan argv for their own flag and skip
+// everything else, so a fake launched with anything they do not recognize
+// announced a healthy server seeded with the DEFAULT fixture: the caller asked
+// for one world and silently got another, which is the failure a fake exists to
+// make impossible. github is the worked example, since the fake it replaced
+// took a repeatable `--repo owner/name=<dir>` plus `--metadata`, `--commits`
+// and `--no-create-repos`, and none of those survive here.
+//
+// A POSITIONAL is refused for the same reason and is the likelier slip:
+// `main.ts --port 5098 cli` is `--fixture cli` with the flag dropped, and
+// skipping it served v1 under a launch line that reads as asking for cli. So
+// the scan consumes a known flag's value by POSITION and treats everything
+// else as unexpected, whatever it looks like.
 export function checkArgv(argv: string[] = process.argv.slice(2)): void {
-  const unknown: string[] = []
+  const unexpected: string[] = []
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i] ?? ''
-    if (!arg.startsWith('-')) continue
     if (KNOWN_FLAGS.has(arg)) {
       i += 1
       continue
     }
-    unknown.push(arg)
+    unexpected.push(arg)
   }
-  if (unknown.length > 0) {
+  if (unexpected.length > 0) {
     throw new KitError(
-      `unknown argument${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. ` +
+      `unexpected argument${unexpected.length > 1 ? 's' : ''}: ${unexpected.join(', ')}. ` +
         `This fake takes only ${[...KNOWN_FLAGS].sort().join(' and ')}; ` +
         `seed a scenario by naming a fixture under integ/fixtures/<service>/.`,
     )

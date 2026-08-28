@@ -149,8 +149,16 @@ function defaultRun(repo: RepoRow): RunSeed {
   }
 }
 
-async function loadTree(db: C, tenant: string, repo: RepoRow): Promise<number> {
-  if (repo.sourceDir === '') return 0
+// Two models, so two counts. Returning one total made /reset publish the sum
+// as GithubFile and never mention GithubSubmodule, which is exactly the drift
+// the per-model row report exists to catch.
+interface TreeCounts {
+  files: number
+  submodules: number
+}
+
+async function loadTree(db: C, tenant: string, repo: RepoRow): Promise<TreeCounts> {
+  if (repo.sourceDir === '') return { files: 0, submodules: 0 }
   const root = join(FIXTURE_ROOT, ...repo.sourceDir.split('/'))
   const branch = repo.sourceBranch === '' ? repo.defaultBranch : repo.sourceBranch
   await addBranch(db, tenant, repo.fullName, branch)
@@ -173,7 +181,7 @@ async function loadTree(db: C, tenant: string, repo: RepoRow): Promise<number> {
     })
     seq += 1
   }
-  return seq + subs
+  return { files: seq, submodules: subs }
 }
 
 // Everything a repository has the moment it exists, in ONE place. The python
@@ -225,11 +233,15 @@ export async function seedRepos(
   counts: Record<string, number>,
 ): Promise<void> {
   let files = 0
+  let submodules = 0
   for (const repo of await allRepos(db, tenant)) {
     await initRepo(db, tenant, repo, counts)
-    files += await loadTree(db, tenant, repo)
+    const loaded = await loadTree(db, tenant, repo)
+    files += loaded.files
+    submodules += loaded.submodules
   }
   if (files > 0) counts.GithubFile = files
+  if (submodules > 0) counts.GithubSubmodule = submodules
   const sorted = Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : 1))
   for (const key of Object.keys(counts)) delete counts[key]
   for (const [key, value] of sorted) counts[key] = value
