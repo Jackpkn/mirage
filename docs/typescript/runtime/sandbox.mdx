@@ -186,10 +186,10 @@ waiting rather than on execution, and set a lifecycle limit (idle-stop,
 auto-delete) on the sandbox itself.
 </Warning>
 
-## Serving as the policy engine
+## Evaluating route-policy scripts
 
 A sandbox runs whole lines; it does not evaluate expressions, so it cannot
-run [policy scripts](/home/policy-engine). To make one eligible, subclass it
+run [route-policy scripts](/home/route-policy). To make one eligible, subclass it
 and implement `eval` with your own transport. The
 [docker eval examples](https://github.com/strukto-ai/mirage/tree/main/examples)
 do exactly that by piping a small harness to the container's `python3 -`.

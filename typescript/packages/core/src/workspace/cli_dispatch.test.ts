@@ -26,7 +26,7 @@ import { OpsRegistry } from '../ops/registry.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
 import { createShellParser, type ShellParser } from '../shell/parse.ts'
 import { MountMode } from '../types.ts'
-import { ScriptSource } from '../runtime/policy/types.ts'
+import { ScriptSource } from '../runtime/routing/types.ts'
 import type { RuntimeLanguage } from '../runtime/types.ts'
 import { Workspace } from './workspace/workspace.ts'
 
@@ -377,7 +377,7 @@ describe('policy cli fact', () => {
         mode: MountMode.WRITE,
         ops,
         shellParser: parser,
-        policy: (ctx) => {
+        routePolicy: (ctx) => {
           seen.push(ctx.commands[0]?.cli ?? null)
           if (ctx.commands[0]?.cli === 'slack-eng') return { deny: 'cli lines are frozen' }
           return null

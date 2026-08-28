@@ -24,7 +24,7 @@ import type { SessionView } from '../../../../ops/types.ts'
 import type { Session } from '../../../session/session.ts'
 import { sessionView, visibleArrays, visibleAssocs } from '../../../session/state.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { fail } from '../shared.ts'
+import { fail, requireView } from '../shared.ts'
 import type { BuiltinCall, ExecuteStringFn, Result } from '../types.ts'
 
 const USAGE =
@@ -93,7 +93,7 @@ export async function handleMapfile(
   const name = parse.operands.length > 0 ? (parse.operands[0] ?? '') : 'MAPFILE'
   if (!IDENTIFIER.test(name))
     return fail(cmd, `bash: ${cmd}: \`${name}': not a valid identifier\n`, 1)
-  const view = state ?? sessionView(session)
+  const view = requireView(state)
   if (view.isReadonly(name)) return fail(cmd, `bash: ${name}: readonly variable\n`, 1)
   if (name in visibleAssocs(session))
     return fail(cmd, `bash: ${cmd}: ${name}: not an indexed array\n`, 1)

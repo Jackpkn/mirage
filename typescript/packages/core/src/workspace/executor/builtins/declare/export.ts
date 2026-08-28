@@ -20,7 +20,7 @@ import type { Session } from '../../../session/session.ts'
 import { exportedNames } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { readonlyRefusal, refusal, viewOf } from '../shared.ts'
+import { readonlyRefusal, refusal, requireView } from '../shared.ts'
 import { EXPORT_FLAGS, EXPORT_USAGE } from './constants.ts'
 import {
   declareLine,
@@ -73,7 +73,7 @@ export async function handleExport(
   // -f is accepted and marks nothing: mirage carries no export attribute
   // on functions. -n is the off direction, and applies to both spellings,
   // since `export -n K=v` assigns and unexports.
-  const view = viewOf(session, state)
+  const view = requireView(state)
   const on = !flags.has('n')
   if (arrays !== null && arrays.length > 0) {
     // `export ARR=(a b)` marks the array as surely as it marks a scalar:

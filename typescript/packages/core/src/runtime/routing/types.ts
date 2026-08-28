@@ -57,7 +57,7 @@ export interface ParsedCommand {
  * `agent_id`, matching Python), with `ctx['runtime']` naming the
  * runtime being asked.
  */
-export interface PolicyContext {
+export interface RouteContext {
   line: string
   commands: readonly ParsedCommand[]
   command: string
@@ -79,11 +79,11 @@ export interface PolicyContext {
  * same structure. Keys: line, commands (command/words/builtin/paths/
  * cli per stage), command, builtin, cwd, env, session_id, agent_id,
  * mounts, plus runtime (name/captures) for per-runtime scripts.
- * policyContextFromPayload is the inverse, so a payload can be stored
+ * routeContextFromPayload is the inverse, so a payload can be stored
  * as JSON and replayed.
  */
-export function policyContextPayload(
-  ctx: PolicyContext,
+export function routeContextPayload(
+  ctx: RouteContext,
   runtime?: Runtime,
 ): Record<string, EvalValue> {
   const payload: Record<string, EvalValue> = {
@@ -111,12 +111,12 @@ export function policyContextPayload(
 
 /**
  * Rebuild a context from its wire-schema payload: the inverse of
- * policyContextPayload for the context's own fields (the payload's
+ * routeContextPayload for the context's own fields (the payload's
  * `runtime` block is per-consultation decoration and is ignored), so
  * a stored JSON payload replays through scripts and routes in tests
  * or debugging.
  */
-export function policyContextFromPayload(payload: Record<string, unknown>): PolicyContext {
+export function routeContextFromPayload(payload: Record<string, unknown>): RouteContext {
   const commands = (payload.commands as Record<string, unknown>[]).map((c) => ({
     command: String(c.command),
     words: (c.words as string[]).slice(),
@@ -168,7 +168,7 @@ export class ScriptSource {
 
 /**
  * A per-runtime willingness script, answering "do I want this line?".
- * In code: a function (sync or async) on the PolicyContext returning a
+ * In code: a function (sync or async) on the RouteContext returning a
  * truthy verdict. From config: a `.py` file reference, loaded as
  * ScriptSource (its last expression is the verdict).
  *
@@ -181,7 +181,7 @@ export class ScriptSource {
  * //     script: guard.py
  * ```
  */
-export type PolicyScript = ((ctx: PolicyContext) => boolean | Promise<boolean>) | ScriptSource
+export type RouteScript = ((ctx: RouteContext) => boolean | Promise<boolean>) | ScriptSource
 
 /** The affirmative arm: this runtime serves the line. Wire form: `{runtime: name}`. */
 export class RouteResult {
@@ -201,28 +201,28 @@ export class DenyResult {
  * The typed spelling of a policy verdict, one class per arm.
  *
  * Code policies return an arm instance (or the plain-shape sugar in
- * PolicyVerdict); config scripts return the wire dict, since class
+ * RouteVerdict); config scripts return the wire dict, since class
  * instances cannot cross the evaluator sandbox. Each arm serializes
  * to one wire key, and future powers grow as fields on the arm they
  * ride (attachments on RouteResult, kubernetes-admission style).
- * Mirrors the python PolicyResult base class.
+ * Mirrors the python RouteOutcome base class.
  */
-type PolicyResult = RouteResult | DenyResult
+type RouteOutcome = RouteResult | DenyResult
 
 /**
- * What the global policy may answer: a PolicyResult arm, a runtime
+ * What the global policy may answer: a RouteOutcome arm, a runtime
  * name, null to pass, or the verdict object (the wire spelling of the
  * arms, the only form a config script can return). Object keys are
  * mutually exclusive: `{runtime: name}` places the line, `{deny:
  * reason}` refuses it. New powers grow as arm fields and wire keys,
- * never as new return types. Mirrors the python PolicyVerdict.
+ * never as new return types. Mirrors the python RouteVerdict.
  */
-type PolicyVerdict = PolicyResult | string | null | { runtime?: string; deny?: string }
+type RouteVerdict = RouteOutcome | string | null | { runtime?: string; deny?: string }
 
 /**
  * The global policy, answering "who takes this line?". In code: a
- * function (sync or async) on the PolicyContext returning a
- * PolicyVerdict. From config: a `.py` file reference, loaded as
+ * function (sync or async) on the RouteContext returning a
+ * RouteVerdict. From config: a `.py` file reference, loaded as
  * ScriptSource (its last expression is the verdict).
  *
  * ```
@@ -232,8 +232,8 @@ type PolicyVerdict = PolicyResult | string | null | { runtime?: string; deny?: s
  * // policy: policy.py
  * ```
  */
-export type PolicyFn =
-  | ((ctx: PolicyContext) => PolicyVerdict | Promise<PolicyVerdict>)
+export type RoutePolicy =
+  | ((ctx: RouteContext) => RouteVerdict | Promise<RouteVerdict>)
   | ScriptSource
 
 /**
@@ -243,7 +243,7 @@ export type PolicyFn =
  * command". The vfs runtime is a legal value in either; a command
  * placed on it is served by the workspace executor itself.
  */
-export interface PolicyDecision {
+export interface RouteDecision {
   /**
    * Every command some entry captures, resolved for this line: the
    * runtime it runs on, or null when its capturers all refused

@@ -14,7 +14,7 @@
 
 from mirage.commands.errors import (CommandTimeoutError, FindParseError,
                                     UsageError)
-from mirage.runtime.policy import PolicyDeny
+from mirage.runtime.routing import RouteDeny
 from mirage.workspace.workspace.failure import failure_result
 
 
@@ -25,7 +25,7 @@ def test_timeout_reports_124_with_the_timeout_message():
 
 
 def test_deny_reports_126_named_by_the_command():
-    io = failure_result(PolicyDeny("no writes"), "rm -rf /data")
+    io = failure_result(RouteDeny("no writes"), "rm -rf /data")
     assert io.exit_code == 126
     assert io.stderr == b"rm: policy denied: no writes\n"
 
@@ -58,5 +58,5 @@ def test_unknown_exception_falls_back_to_exit_1():
 def test_blank_line_falls_back_to_the_raw_command():
     # No word to name, so the diagnostic keeps whatever was typed
     # rather than reporting an empty command name.
-    io = failure_result(PolicyDeny("nope"), "   ")
+    io = failure_result(RouteDeny("nope"), "   ")
     assert io.stderr == b"   : policy denied: nope\n"

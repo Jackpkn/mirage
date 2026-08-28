@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 import { IOResult } from '../../io/types.ts'
+import type { Action, CommandContext, Policy } from '../../policy/index.ts'
 import { Precision } from '../../provision/types.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import { NodeKind } from '../../shell/node_kind.ts'
@@ -72,12 +73,13 @@ const PLANS: Record<NodeKind, [string, string, string, string]> = {
   [NodeKind.UNSUPPORTED]: ['case x', '0', '0', 'unknown'],
 }
 
-function buildWorkspace(): Workspace {
+function buildWorkspace(policies: Policy[] = []): Workspace {
   return new Workspace(
     { '/data': new RAMResource() },
     {
       mode: MountMode.WRITE,
       shellParserFactory: async () => createShellParser({ engineWasm, grammarWasm }),
+      policies,
     },
   )
 }
@@ -223,6 +225,176 @@ describe('planner covers every statement kind', () => {
       expect(result.precision).toBe('exact')
       result = await ws.execute('sed -i s/x/y/ /data/a.txt', { provision: true })
       expect(result.precision).toBe('unknown')
+    } finally {
+      await ws.close()
+    }
+  })
+})
+
+class NoCat implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'cat') return null
+    return { kind: 'deny', reason: 'cats are off', scope: 'command' }
+  }
+}
+
+class AskCat implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'cat') return null
+    return { kind: 'ask', reason: 'cats need approval' }
+  }
+}
+
+class NoRead implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'read') return null
+    return { kind: 'deny', reason: 'no reads', scope: 'command' }
+  }
+}
+
+class NoF implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'f') return null
+    return { kind: 'deny', reason: 'no f', scope: 'command' }
+  }
+}
+
+class NoInternCat implements Policy {
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== 'cat' || ctx.agentId !== 'intern') return null
+    return { kind: 'deny', reason: 'interns read nothing', scope: 'command' }
+  }
+}
+
+class Counting implements Policy {
+  readonly commands: string[] = []
+  preCommand(ctx: CommandContext): Action | null {
+    this.commands.push(ctx.command)
+    return null
+  }
+}
+
+describe('provision clears the command gate first', () => {
+  it('preCommand is consulted once per redirected command', async () => {
+    // The run admits `cat < file` on one call, command and targets
+    // together; the plan's REDIRECT arm gates the same way and hands
+    // its verdict to the inner COMMAND recursion, so a stateful or
+    // metered hook is consulted exactly once per statement, never twice.
+    const counting = new Counting()
+    const ws = buildWorkspace([counting])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      counting.commands.length = 0
+      const result = await ws.execute('cat < /data/a.txt', { provision: true })
+      expect(result.networkRead).toBe('24')
+      expect(counting.commands).toEqual(['cat'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a denied command is not priced', async () => {
+    // A dry run reads the backend to price the line (stats, listings),
+    // so a command the policy refuses is not estimated either: the
+    // denied session must not learn byte counts the run itself would
+    // never be allowed to produce.
+    const ws = buildWorkspace([new NoCat()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const result = await ws.execute('cat /data/a.txt', { provision: true })
+      expect(result.precision).toBe(Precision.UNKNOWN)
+      expect(result.networkRead).toBe('0')
+      const priced = await ws.execute('head /data/a.txt', { provision: true })
+      expect(priced.networkRead).toBe('0-24')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a command that would ask is not priced ahead of the approval', async () => {
+    // An ask cannot be raised from a dry run (nothing here may reach
+    // the host), so a command that would ask is not priced before the
+    // approval it would need.
+    const ws = buildWorkspace([new AskCat()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const result = await ws.execute('cat /data/a.txt', { provision: true })
+      expect(result.precision).toBe(Precision.UNKNOWN)
+      expect(result.networkRead).toBe('0')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a denied builtin is refused before its redirect source is priced', async () => {
+    // The executor admits every command class at one chokepoint, with
+    // the statement's redirect targets judged on the same call. A
+    // denied `read < file` must plan the same way: no exact-looking
+    // builtin plan, and the redirect source never stat'd or priced.
+    const ws = buildWorkspace([new NoRead()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const result = await ws.execute('read x < /data/a.txt', { provision: true })
+      expect(result.precision).toBe(Precision.UNKNOWN)
+      expect(result.networkRead).toBe('0')
+    } finally {
+      await ws.close()
+    }
+    const control = buildWorkspace()
+    try {
+      await control.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const priced = await control.execute('read x < /data/a.txt', { provision: true })
+      expect(priced.networkRead).toBe('24')
+    } finally {
+      await control.close()
+    }
+  })
+
+  it('a denied shell function does not have its body walked', async () => {
+    // The body's own reads are byte counts the refusal is protecting.
+    const ws = buildWorkspace([new NoF()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const result = await ws.execute('f() { cat /data/a.txt; }; f', { provision: true })
+      expect(result.precision).toBe(Precision.UNKNOWN)
+      expect(result.networkRead).toBe('0')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('the walk vouches for a function the script itself defines', async () => {
+    // The run stores a function in the session before the call; a dry
+    // run keeps it in plan state, where the allow list cannot see it.
+    // The walk vouches for its own definitions, so a script that
+    // defines and calls a function still plans its body under a
+    // commands.allow profile that lists only the real tools it uses.
+    const ws = buildWorkspace()
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const session = ws.sessionManager.get(ws.sessionManager.defaultId)
+      session.commands = { allow: ['cat', 'tee'], ask: [], deny: [] }
+      const result = await ws.execute('f() { cat /data/a.txt; }; f', { provision: true })
+      expect(result.networkRead).toBe('24')
+      expect(result.precision).toBe(Precision.EXACT)
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('the plan is judged as the requesting agent and session', async () => {
+    // Provisioning through execute({provision: true, agentId}) reaches
+    // the gate as that agent, not as the workspace default: a command
+    // denied to the actual caller must not have its backend costs
+    // exposed under another identity.
+    const ws = buildWorkspace([new NoInternCat()])
+    try {
+      await ws.execute('tee /data/a.txt > /dev/null', { stdin: ENC.encode('x'.repeat(24)) })
+      const denied = await ws.execute('cat /data/a.txt', { provision: true, agentId: 'intern' })
+      expect(denied.precision).toBe(Precision.UNKNOWN)
+      expect(denied.networkRead).toBe('0')
+      const priced = await ws.execute('cat /data/a.txt', { provision: true })
+      expect(priced.networkRead).toBe('24')
     } finally {
       await ws.close()
     }

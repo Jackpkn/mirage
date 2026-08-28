@@ -30,15 +30,11 @@ async def ls(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     if not ops.is_mounted(accessor):
         raise ValueError("ls: no resource")
     if not paths:
-        cwd_virtual = opts.cwd.virtual if isinstance(opts.cwd,
-                                                     PathSpec) else opts.cwd
-        cwd_rp = (opts.cwd.resource_path
-                  if isinstance(opts.cwd, PathSpec) else opts.cwd.strip("/"))
         paths = [
-            PathSpec(virtual=cwd_virtual,
-                     directory=cwd_virtual,
+            PathSpec(virtual=opts.cwd.virtual,
+                     directory=opts.cwd.virtual,
                      resolved=False,
-                     resource_path=cwd_rp)
+                     resource_path=opts.cwd.resource_path)
         ]
     resolved = await ops.resolve_glob(accessor, paths, opts.index)
     stat_fn: Callable[..., Awaitable[FileStat]] = partial(ops.stat, accessor)

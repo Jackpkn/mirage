@@ -25,6 +25,39 @@ import { renderHelp } from './spec/help.ts'
 import { CommandSpec, Option, type FlagValue } from './spec/types.ts'
 
 /**
+ * The execution context `Mount.executeCmd` takes: everything the
+ * workspace supplies for one invocation beyond the parsed line — the
+ * one bag its fifth argument has always been, now named (mirrors
+ * Python's `ExecContext`, commands/config.py). `executeCmd` re-boxes
+ * these onto `CommandOpts` beside the facts only the mount can supply
+ * (mountPrefix, index, filetypeFns), so every field is spelled exactly
+ * as `CommandOpts` spells it — pinned by a mapped type in
+ * workspace/mount/mount.test.ts. The two exceptions are execution
+ * controls `executeCmd` consumes itself rather than forwards:
+ * `limitOverride` (the caller-resolved limit guard), while `signal`
+ * both rides onto `CommandOpts` and arms the guard. `sessionView`
+ * stays although no opts reader wants it today, because
+ * `CLIDoors.sessionView` has production readers and the doors record
+ * is pinned to be a subset of `CommandOpts`.
+ */
+export interface ExecContext {
+  stdin?: ByteSource | null
+  cwd?: string
+  dispatch?: DispatchFn
+  sessionId?: string
+  env?: Record<string, string>
+  sessionView?: SessionView
+  execAllowed?: boolean
+  execPathAllowed?: (virtual: string) => boolean
+  runtime?: Runtime
+  ns?: NamespaceView
+  statPath?: StatPath
+  readdirPath?: ReaddirPath
+  signal?: AbortSignal
+  limitOverride?: Limit | null
+}
+
+/**
  * The dispatcher context of one command invocation, as one value.
  * `Mount.executeCmd` constructs it once and hands it to every handler
  * as the fourth argument; the provision path builds the same bag with

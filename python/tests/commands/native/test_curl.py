@@ -26,6 +26,7 @@ from mirage.commands.builtin.general.curl import curl
 from mirage.commands.builtin.utils.http import HttpResponse
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
+from mirage.types import PathSpec
 
 
 def _ok(body: bytes = b"hello body",
@@ -65,7 +66,12 @@ def _run(*texts: str,
          dispatch=None,
          cwd=None,
          **flags) -> tuple[bytes, object]:
-    opts = CommandOpts(dispatch=dispatch, cwd=cwd or "/", flags=flags)
+    base = cwd or "/"
+    spec = PathSpec(virtual=base,
+                    directory=base,
+                    resource_path="",
+                    resolved=False)
+    opts = CommandOpts(dispatch=dispatch, cwd=spec, flags=flags)
     body, io = asyncio.run(curl(NOOPAccessor(), [], list(texts), opts))
     if body is None:
         return b"", io

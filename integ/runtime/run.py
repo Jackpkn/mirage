@@ -37,7 +37,7 @@ from mirage.policy.types import OpsContext  # noqa: E402
 from mirage.policy.types import OpsResultContext  # noqa: E402
 from mirage.runtime.base import Runtime  # noqa: E402
 from mirage.runtime.mixin import LineExecutorMixin  # noqa: E402
-from mirage.runtime.policy import ScriptSource  # noqa: E402
+from mirage.runtime.routing import ScriptSource  # noqa: E402
 from mirage.runtime.table import build_runtime  # noqa: E402
 from mirage.runtime.types import RunResult  # noqa: E402
 from mirage.types import Limit, PathSpec  # noqa: E402
@@ -352,8 +352,8 @@ async def _build_workspace(world: dict[str, Any], run_id: str) -> Workspace:
     kwargs: dict[str, Any] = {}
     if "runtimes" in world:
         kwargs["runtimes"] = [_build_entry(e) for e in world["runtimes"]]
-    if "policy" in world:
-        kwargs["policy"] = ScriptSource(world["policy"])
+    if "route_policy" in world:
+        kwargs["route_policy"] = ScriptSource(world["route_policy"])
     if "policies" in world:
         kwargs["policies"] = [_build_policy(s) for s in world["policies"]]
     if "profiles" in world:

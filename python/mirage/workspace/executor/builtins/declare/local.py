@@ -23,7 +23,7 @@ from mirage.workspace.executor.builtins.declare.declare import (
     store_staged_arrays, write_global)
 from mirage.workspace.executor.builtins.shared import (arith_refusal,
                                                        readonly_refusal,
-                                                       refusal, view_of)
+                                                       refusal, require_view)
 from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (env_get, session_view,
@@ -83,7 +83,7 @@ async def handle_local(
                               stderr=err), ExecutionNode(command=cmd,
                                                          exit_code=1,
                                                          stderr=err)
-    view = view_of(session, state)
+    view = require_view(state)
     errors: list[str] = []
     if arrays:
         refused = await store_staged_arrays(cmd,

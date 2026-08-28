@@ -233,7 +233,7 @@
             }
           }
         },
-        "policy": "const f = std.open('/ram/deny.txt', 'r'); const blocked = f !== null && f.readAsString().includes(ctx.command); if (f !== null) f.close(); blocked ? {deny: 'listed in /ram/deny.txt'} : null"
+        "route_policy": "const f = std.open('/ram/deny.txt', 'r'); const blocked = f !== null && f.readAsString().includes(ctx.command); if (f !== null) f.close(); blocked ? {deny: 'listed in /ram/deny.txt'} : null"
       },
       "steps": [
         {
@@ -264,7 +264,7 @@
             "resource": "ram"
           }
         },
-        "policy": "ctx.command === 'node' ? {deny: 'no js here'} : null"
+        "route_policy": "ctx.command === 'node' ? {deny: 'no js here'} : null"
       },
       "steps": [
         {

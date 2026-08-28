@@ -23,7 +23,7 @@ from mirage.io import IOResult
 from mirage.io.types import materialize
 from mirage.policy import PolicyDenied, resolve_limit
 from mirage.policy.types import SessionContext
-from mirage.runtime.policy import PolicyDecision
+from mirage.runtime.routing import RouteDecision
 from mirage.shell.bytes import encode_text
 from mirage.shell.parse import find_syntax_error, parse, syntax_error_result
 from mirage.shell.types import NodeType as NT
@@ -70,7 +70,7 @@ async def execute_command(
     call_stack,
     job_table,
     cancel: asyncio.Event | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
     agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Dispatch a command node by name."""
@@ -217,7 +217,7 @@ async def _dispatch_command_body(
     call_stack,
     job_table,
     cancel: asyncio.Event | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
     agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     parent = node.parent
@@ -318,7 +318,7 @@ async def _run_argv(
     call_stack,
     job_table,
     cancel: asyncio.Event | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
     row: int = 0,
     agent_id: str = "",
     redirects: tuple[PathSpec, ...] = (),
@@ -449,7 +449,7 @@ async def _route_argv(
     call_stack,
     job_table,
     cancel: asyncio.Event | None,
-    routing_decision: PolicyDecision | None,
+    routing_decision: RouteDecision | None,
     row: int,
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Route one admitted command to its builtin or mount handler.

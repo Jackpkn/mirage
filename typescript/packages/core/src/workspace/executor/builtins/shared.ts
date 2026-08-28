@@ -21,8 +21,6 @@ import { mountKey } from '../../../utils/key_prefix.ts'
 import { resolvePath } from '../../../utils/path.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
-import type { Session } from '../../session/session.ts'
-import { sessionView } from '../../session/state.ts'
 import { ExecutionNode } from '../../types.ts'
 import { IDENTIFIER_RE } from './constants.ts'
 import type { Result } from './types.ts'
@@ -244,12 +242,22 @@ export async function expandOperands(
 }
 
 /**
- * The session view to write through. Production callers thread the
- * workspace's gated view; a direct invocation (a unit test) gets an
- * ungated one over the same session.
+ * The gated session view this builtin writes through.
+ *
+ * Every session write goes through the workspace's gated view, which is
+ * what makes `preSession` rules enforceable; this used to fall back to
+ * an ungated view over the same session, so a caller that forgot to
+ * thread one silently wrote past every policy. A write reached without
+ * a view is a wiring bug, not a mode, so it throws.
  */
-export function viewOf(session: Session, state: SessionView | null): SessionView {
-  return state ?? sessionView(session)
+export function requireView(state: SessionView | null): SessionView {
+  if (state === null) {
+    throw new Error(
+      "builtin reached a session write without the workspace's gated " +
+        'session view; thread state from the executor arm',
+    )
+  }
+  return state
 }
 
 /** Render a policy denial in the builtin's own voice. */

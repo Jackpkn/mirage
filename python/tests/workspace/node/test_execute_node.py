@@ -16,6 +16,7 @@ import asyncio
 from functools import partial
 from unittest.mock import AsyncMock, MagicMock
 
+from mirage.commands.config import ExecContext
 from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.policy import Policies
@@ -101,12 +102,10 @@ async def _sort_execute_cmd(name,
                             paths,
                             texts,
                             flag_kwargs,
-                            *,
-                            stdin=None,
-                            **kwargs):
+                            context=ExecContext()):
     """Mock execute_cmd that sorts stdin for sort command."""
-    if name == "sort" and stdin:
-        data = stdin if isinstance(stdin, bytes) else b""
+    if name == "sort" and context.stdin:
+        data = context.stdin if isinstance(context.stdin, bytes) else b""
         lines = data.decode().strip().split("\n")
         lines.sort()
         return "\n".join(lines).encode() + b"\n", IOResult()
@@ -1013,15 +1012,17 @@ def test_command_flags_stay_text():
     assert "pattern" in texts
 
 
-def test_execute_cmd_receives_three_positional_args():
-    """execute_cmd is called with (cmd_name, paths, texts, flag_kwargs)."""
+def test_execute_cmd_receives_the_positional_args_and_one_context():
+    """execute_cmd is called with (cmd_name, paths, texts, flag_kwargs,
+    context) — the workspace's side arrives as one ExecContext value."""
     _, _, _, _, mount, _ = _exec("cat /data/file.txt")
     args = mount.execute_cmd.call_args[0]
-    assert len(args) == 4
+    assert len(args) == 5
     assert args[0] == "cat"
     assert isinstance(args[1], list)
     assert isinstance(args[2], list)
     assert isinstance(args[3], dict)
+    assert isinstance(args[4], ExecContext)
 
 
 def test_flag_kwargs_is_empty_without_spec():

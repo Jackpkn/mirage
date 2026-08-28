@@ -26,7 +26,7 @@ from mirage.workspace.executor.builtins.read.constants import \
 from mirage.workspace.executor.builtins.shared import (arith_refusal,
                                                        is_valid_name,
                                                        readonly_refusal,
-                                                       refusal, view_of)
+                                                       refusal, require_view)
 from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.elements import assign_element
@@ -341,7 +341,7 @@ async def handle_read(
             session._stdin_buffer = AsyncLineIterator(stdin)
             session._stdin_source = stdin
 
-    view = view_of(session, state)
+    view = require_view(state)
     buffer = session._stdin_buffer
     if timeout == 0:
         # `read -t 0` asks whether input is available and reads nothing.

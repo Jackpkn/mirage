@@ -12,14 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-export {
-  decideLine,
-  evaluatorOf,
-  parseVerdict,
-  runtimeForLanguage,
-  POLICY_EVAL_TIMEOUT,
-} from './decide.ts'
-export { PolicyDeny, PolicyError } from './errors.ts'
-export { commandNodes, parsedCommands } from './facts.ts'
-export { DenyResult, RouteResult, ScriptSource } from './types.ts'
-export type { PolicyDecision, PolicyContext, PolicyFn } from './types.ts'
+// The root working directory, as CommandOpts.cwd defaults to it. A
+// virtual-path string here, because the TS CommandOpts keeps cwd as
+// one; the Python twin (commands/constants.py) holds the promoted
+// PathSpec shape its CommandOpts reads.
+export const ROOT_CWD = '/'

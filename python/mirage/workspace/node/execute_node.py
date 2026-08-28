@@ -20,7 +20,7 @@ from mirage.io import IOResult
 from mirage.io.stream import async_chain
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
-from mirage.runtime.policy import PolicyDecision
+from mirage.runtime.routing import RouteDecision
 from mirage.runtime.types import DispatchFn
 from mirage.shell.arith import evaluate_arith
 from mirage.shell.barrier import BarrierPolicy, apply_barrier
@@ -262,7 +262,7 @@ async def execute_node(
     stdin: Any = None,
     call_stack: CallStack | None = None,
     cancel: asyncio.Event | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
     sink: JobConsole | None = None,
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Walk tree-sitter AST and dispatch each node.

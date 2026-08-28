@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { coerceRuntimeConfig, type RuntimeConfig } from './config.ts'
-import { ScriptSource, type PolicyScript } from './policy/types.ts'
+import { ScriptSource, type RouteScript } from './routing/types.ts'
 import type { RuntimeOptions, RuntimeReach } from './types.ts'
 
 /**
@@ -57,7 +57,7 @@ export abstract class Runtime {
   readonly reach: RuntimeReach = 'process'
   /** The runtime's coerced implementation knobs. */
   config: RuntimeConfig
-  script?: PolicyScript
+  script?: RouteScript
 
   constructor(
     options: RuntimeOptions<RuntimeConfig> = {},
@@ -85,7 +85,7 @@ export type RuntimeEntry = Runtime | string
 /** The code API takes functions; script source belongs to config. */
 export function scriptStringError(kind = 'a script'): Error {
   return new Error(
-    `${kind} in code must be a function taking the PolicyContext; config ` +
-      `scripts reference a .py file (script:/policy: in the workspace yaml)`,
+    `${kind} in code must be a function taking the RouteContext; config ` +
+      `scripts reference a .py file (script:/route_policy: in the workspace yaml)`,
   )
 }

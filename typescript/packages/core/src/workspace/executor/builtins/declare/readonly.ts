@@ -22,7 +22,7 @@ import type { Session } from '../../../session/session.ts'
 import { visibleEnv } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { arithRefusal, readonlyRefusal, refusal, viewOf } from '../shared.ts'
+import { arithRefusal, readonlyRefusal, refusal, requireView } from '../shared.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
 import { READONLY_FLAGS, READONLY_USAGE } from './constants.ts'
 import {
@@ -109,7 +109,7 @@ export async function handleReadonly(
     const out = new TextEncoder().encode(lines.length > 0 ? `${lines.join('\n')}\n` : '')
     return [out, new IOResult(), new ExecutionNode({ command: 'readonly', exitCode: 0 })]
   }
-  const view = viewOf(session, state)
+  const view = requireView(state)
   const errors: string[] = []
   if (arrays !== null && arrays.length > 0) {
     const refused = await storeStagedArrays(

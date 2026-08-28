@@ -24,17 +24,17 @@ import {
   type LineExecutor,
 } from '../runtime/mixin.ts'
 import type { EvalResult } from '../runtime/types.ts'
-import { POLICY_EVAL_TIMEOUT, evaluatorOf, runtimeForLanguage } from '../runtime/policy/index.ts'
+import { POLICY_EVAL_TIMEOUT, evaluatorOf, runtimeForLanguage } from '../runtime/routing/index.ts'
 import type { RunArgs, RunResult } from '../runtime/types.ts'
 import { MontyRuntime } from '../runtime/python/monty/index.ts'
 import { QuickJsRuntime } from '../runtime/js/quickjs.ts'
 import {
   DenyResult,
   parseVerdict,
-  PolicyDeny,
+  RouteDeny,
   RouteResult,
   ScriptSource,
-} from '../runtime/policy/index.ts'
+} from '../runtime/routing/index.ts'
 import { getTestParser } from './fixtures/workspace_fixture.ts'
 import { Channel, JobConsole } from '../shell/console/index.ts'
 import { RAMResource } from '../resource/ram/ram.ts'
@@ -247,7 +247,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), new NamedFakeRuntime('beta'), 'vfs'],
-        policy: (ctx) => (ctx.line.includes('heavy') ? 'beta' : null),
+        routePolicy: (ctx) => (ctx.line.includes('heavy') ? 'beta' : null),
       },
     )
     try {
@@ -270,7 +270,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new HangingEvaluator(), 'vfs'],
-        policy: new ScriptSource('1'),
+        routePolicy: new ScriptSource('1'),
       },
     )
     try {
@@ -289,7 +289,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new MontyRuntime(), new QuickJsRuntime(), 'vfs'],
-        policy: new ScriptSource(
+        routePolicy: new ScriptSource(
           "ctx.command === 'node' ? {deny: 'js-engine-picked'} : null",
           'js',
         ),
@@ -355,7 +355,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new QuickJsRuntime(), 'vfs'],
-        policy: new ScriptSource(
+        routePolicy: new ScriptSource(
           "const f = std.open('/deny.txt', 'r'); " +
             'const blocked = f !== null && f.readAsString().includes(ctx.command); ' +
             'if (f !== null) f.close(); ' +
@@ -384,7 +384,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), 'vfs'],
-        policy: (ctx) => (ctx.command === 'python3' ? { deny: 'python3 is blocked' } : null),
+        routePolicy: (ctx) => (ctx.command === 'python3' ? { deny: 'python3 is blocked' } : null),
       },
     )
     try {
@@ -412,7 +412,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), new NamedFakeRuntime('beta'), 'vfs'],
-        policy: () => ({ runtime: 'beta' }),
+        routePolicy: () => ({ runtime: 'beta' }),
       },
     )
     try {
@@ -432,7 +432,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), 'vfs'],
-        policy: (ctx) => {
+        routePolicy: (ctx) => {
           calls.push(ctx.line)
           return { deny: 'nothing runs' }
         },
@@ -450,7 +450,7 @@ describe('routing ladder', () => {
 
   it('the typed arms parse like their wire dicts', async () => {
     expect(parseVerdict(new RouteResult('beta'))).toBe('beta')
-    expect(() => parseVerdict(new DenyResult('not here'))).toThrow(PolicyDeny)
+    expect(() => parseVerdict(new DenyResult('not here'))).toThrow(RouteDeny)
     const parser = await getTestParser()
     const ws = new Workspace(
       { '/': new RAMResource() },
@@ -458,7 +458,7 @@ describe('routing ladder', () => {
         mode: MountMode.EXEC,
         shellParser: parser,
         runtimes: [new NamedFakeRuntime('alpha'), new NamedFakeRuntime('beta'), 'vfs'],
-        policy: (ctx) =>
+        routePolicy: (ctx) =>
           ctx.line.includes('secret')
             ? new DenyResult('secrets stay put')
             : new RouteResult('beta'),
@@ -496,7 +496,7 @@ describe('routing ladder', () => {
 
   it('parseVerdict folds a Map verdict into the wire object', () => {
     expect(parseVerdict(new Map([['runtime', 'beta']]))).toBe('beta')
-    expect(() => parseVerdict(new Map([['deny', 'nope']]))).toThrow(PolicyDeny)
+    expect(() => parseVerdict(new Map([['deny', 'nope']]))).toThrow(RouteDeny)
   })
 
   it('parseVerdict fails loud on bad verdict objects', () => {

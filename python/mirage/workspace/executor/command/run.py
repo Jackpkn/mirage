@@ -15,6 +15,7 @@
 import functools
 from typing import Any
 
+from mirage.commands.config import ExecContext
 from mirage.commands.errors import CommandTimeoutError, UsageError
 from mirage.commands.spec.types import FlagValue
 from mirage.commands.spec.usage import read_fail_exit
@@ -26,7 +27,7 @@ from mirage.ops.config import NamespaceLinks
 from mirage.ops.namespace_view import namespace_names
 from mirage.ops.types import LinkView, MountView, NamespaceView
 from mirage.runtime.base import Runtime
-from mirage.runtime.policy import PolicyDecision
+from mirage.runtime.routing import RouteDecision
 from mirage.runtime.table import VFSRuntime
 from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat, PathSpec, ResourceName
@@ -73,7 +74,7 @@ def admission_denial(cmd_name: str) -> IOResult:
 
 
 def line_runtime_for(
-        cmd_name: str, registry: MountRegistry, routing: PolicyDecision | None
+        cmd_name: str, registry: MountRegistry, routing: RouteDecision | None
 ) -> tuple[Runtime | None, IOResult | None]:
     """Resolve a command against the line's routing decision.
 
@@ -88,7 +89,7 @@ def line_runtime_for(
         cmd_name (str): the command being dispatched.
         registry (MountRegistry): registry holding static bindings and
             the world's vfs runtime.
-        routing (PolicyDecision | None): the typed line's decision.
+        routing (RouteDecision | None): the typed line's decision.
     """
     if routing is None:
         vfs = registry.vfs_runtime
@@ -338,7 +339,7 @@ async def run_on_mount(
     stdin: ByteSource | None = None,
     resolve_hint: PathSpec | None = None,
     mount: MountEntry | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     """Run one already-parsed command on the mount that owns its paths.
 
@@ -407,19 +408,21 @@ async def run_on_mount(
             paths,
             texts,
             flag_kwargs,
-            stdin=stdin,
-            cwd=session.cwd,
-            dispatch=dispatch,
-            session_id=session.session_id,
-            env=env_snapshot(session),
-            session_view=session_view(session, registry.policies),
-            exec_allowed=registry.is_exec_allowed(),
-            exec_path_allowed=registry.exec_allowed_at,
-            runtime=line_runtime,
-            runtime_unavailable=registry.runtime_unavailable.get(cmd_name),
-            ns=ns,
-            stat_path=stat_path,
-            readdir_path=readdir_path,
+            ExecContext(
+                stdin=stdin,
+                cwd=session.cwd,
+                dispatch=dispatch,
+                session_id=session.session_id,
+                env=env_snapshot(session),
+                session_view=session_view(session, registry.policies),
+                exec_allowed=registry.is_exec_allowed(),
+                exec_path_allowed=registry.exec_allowed_at,
+                runtime=line_runtime,
+                runtime_unavailable=registry.runtime_unavailable.get(cmd_name),
+                ns=ns,
+                stat_path=stat_path,
+                readdir_path=readdir_path,
+            ),
         )
     except UsageError as exc:
         # Command-owned usage errors (extra operands, missing patterns)

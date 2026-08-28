@@ -174,7 +174,7 @@
             "resource": "ram"
           }
         },
-        "policy": "{'deny': 'nothing runs'}"
+        "route_policy": "{'deny': 'nothing runs'}"
       },
       "steps": [
         {

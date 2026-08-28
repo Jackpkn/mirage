@@ -21,8 +21,6 @@ from mirage.utils.path import resolve_path
 from mirage.workspace.executor.builtins.constants import IDENTIFIER_RE
 from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
-from mirage.workspace.session import Session
-from mirage.workspace.session.state import session_view
 from mirage.workspace.types import ExecutionNode
 
 
@@ -207,17 +205,26 @@ async def expand_operands(
     return out
 
 
-def view_of(session: Session, state: SessionView | None) -> SessionView:
-    """The session view to write through.
+def require_view(state: SessionView | None) -> SessionView:
+    """The gated session view this builtin writes through.
 
-    Production callers thread the workspace's gated view; a direct
-    invocation (a unit test) gets an ungated one over the same session.
+    Every session write goes through the workspace's gated view, which
+    is what makes ``pre_session`` rules enforceable; this used to fall
+    back to an ungated view over the same session, so a caller that
+    forgot to thread one silently wrote past every policy. A write
+    reached without a view is a wiring bug, not a mode, so it raises.
 
     Args:
-        session (Session): shell session state.
         state (SessionView | None): the caller's view, if threaded.
+
+    Raises:
+        RuntimeError: no view was threaded.
     """
-    return state if state is not None else session_view(session)
+    if state is None:
+        raise RuntimeError(
+            "builtin reached a session write without the workspace's gated "
+            "session view; thread state= from the executor arm")
+    return state
 
 
 def refusal(cmd: str, exc: PolicyDenied) -> Result:

@@ -18,8 +18,9 @@ def reject_config_script(kind: str, value: object) -> None:
 
     In code, scripts and policies are callables; a plain string is
     almost always a script that should live next to the workspace
-    yaml and be referenced there (``script:`` on an entry, ``policy:``
-    on the workspace), where the loader wraps it as ScriptSource.
+    yaml and be referenced there (``script:`` on an entry,
+    ``route_policy:`` on the workspace), where the loader wraps it as
+    ScriptSource.
 
     Args:
         kind (str): what carried the string, for the error message.
@@ -30,6 +31,6 @@ def reject_config_script(kind: str, value: object) -> None:
     """
     if isinstance(value, str):
         raise TypeError(
-            f"{kind} must be a callable taking the PolicyContext; config "
-            f"scripts reference a .py file (script:/policy: in the "
-            f"workspace yaml)")
+            f"{kind} must be a callable taking the RouteContext; config "
+            f"scripts reference a .py file (script:/route_policy: in "
+            f"the workspace yaml)")

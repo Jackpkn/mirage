@@ -13,15 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 export {
-  JOB_BUILTINS,
-  SHELL_NAMES,
-  SLASH_KEEPS_LAST,
-  UNSUPPORTED_BUILTINS,
-  dereferences,
-  endOptionsAfterProgram,
-  followsLastComponent,
-  readsSubtrees,
-  walksMounts,
-} from './constants.ts'
-export { commandVisible, isTool, listed, lookup, lookupAll, verbVisible } from './lookup.ts'
-export { Consumer, SHELL_CONSUMERS, WordPolicy, wordPolicy } from './types.ts'
+  decideLine,
+  evaluatorOf,
+  parseVerdict,
+  runtimeForLanguage,
+  POLICY_EVAL_TIMEOUT,
+} from './decide.ts'
+export { RouteDeny, RouteError } from './errors.ts'
+export { commandNodes, parsedCommands } from './facts.ts'
+export { DenyResult, RouteResult, ScriptSource } from './types.ts'
+export type { RouteDecision, RouteContext, RoutePolicy } from './types.ts'

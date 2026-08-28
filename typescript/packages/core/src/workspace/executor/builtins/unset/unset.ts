@@ -23,7 +23,7 @@ import type { Session } from '../../../session/session.ts'
 import { envGet, visibleArrays, visibleAssocs, visibleEnv } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { refusal, viewOf } from '../shared.ts'
+import { refusal, requireView } from '../shared.ts'
 import { readonlyFunctionUnset } from '../declare/declare.ts'
 import type { BuiltinCall, Result } from '../types.ts'
 import { sessionView } from '../../../session/state.ts'
@@ -147,7 +147,7 @@ export async function handleUnset(
       // `unset -n` drops the reference itself rather than its target;
       // on a plain variable bash unsets it. Ungated-by-target unset.
       try {
-        await viewOf(session, state).unset(name, false)
+        await requireView(state).unset(name, false)
       } catch (err) {
         if (err instanceof PolicyDenied) return refusal('unset', err)
         throw err
@@ -186,9 +186,9 @@ export async function handleUnset(
     let status: 'ok' | 'notarray' | 'subscript'
     try {
       if (subscript !== undefined) {
-        status = await unsetElement(session, viewOf(session, state), base, subscript)
+        status = await unsetElement(session, requireView(state), base, subscript)
       } else {
-        await viewOf(session, state).unset(name)
+        await requireView(state).unset(name)
         unsetVariable(session, deref(session, name) || name)
         status = 'ok'
       }

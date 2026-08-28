@@ -15,11 +15,11 @@
 import {
   parsedCommands,
   decideLine,
-  PolicyError,
-  type PolicyContext,
-  type PolicyDecision,
-  type PolicyFn,
-} from '../../runtime/policy/index.ts'
+  RouteError,
+  type RouteContext,
+  type RouteDecision,
+  type RoutePolicy,
+} from '../../runtime/routing/index.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { MountResolver } from '../../runtime/resolver.ts'
 import { catchAll, runtimeBindingsFor } from '../../runtime/table.ts'
@@ -32,29 +32,29 @@ import type { Runtimes } from './runtimes.ts'
 
 /**
  * The policy ladder for one typed line: runtime argument, policy,
- * scripts. Mirrors the Python `PolicyRouter` in `workspace/policy.py`.
+ * scripts. Mirrors the Python `Router` in `workspace/routing.py`.
  *
  * `decide` returns null when nothing decides (no runtime argument, no
  * policy configured) so dispatch falls to the static bindings; a nested
  * eval inherits the typed line's decision and never re-routes.
  */
-export class PolicyRouter {
+export class Router {
   private readonly registry: MountRegistry
   private readonly runtimes: Runtimes
-  private readonly policy: PolicyFn | null
+  private readonly routePolicy: RoutePolicy | null
   private readonly agentId: string | null
   private readonly resolver: MountResolver
 
   constructor(
     registry: MountRegistry,
     runtimes: Runtimes,
-    policy: PolicyFn | null,
+    routePolicy: RoutePolicy | null,
     agentId: string | null,
     resolver: MountResolver,
   ) {
     this.registry = registry
     this.runtimes = runtimes
-    this.policy = policy
+    this.routePolicy = routePolicy
     this.agentId = agentId
     this.resolver = resolver
   }
@@ -64,14 +64,14 @@ export class PolicyRouter {
     command: string,
     options: ExecuteOptions,
     session: Session,
-  ): Promise<PolicyDecision | null> {
+  ): Promise<RouteDecision | null> {
     if (options.routingDecision !== undefined) return options.routingDecision
     if (options.runtime !== undefined) {
       let overlay: Record<string, Runtime>
       try {
         overlay = runtimeBindingsFor(this.runtimes.entries, options.runtime)
       } catch (caught) {
-        throw new PolicyError(caught instanceof Error ? caught.message : String(caught), {
+        throw new RouteError(caught instanceof Error ? caught.message : String(caught), {
           cause: caught,
         })
       }
@@ -85,9 +85,9 @@ export class PolicyRouter {
       }
     }
     const hasScripts = this.runtimes.entries.some((entry) => entry.script !== undefined)
-    if (this.policy === null && !hasScripts) return null
+    if (this.routePolicy === null && !hasScripts) return null
     const commands = parsedCommands(root, this.registry.clis.names())
-    const ctx: PolicyContext = {
+    const ctx: RouteContext = {
       line: command,
       commands,
       command: commands[0]?.command ?? '',
@@ -98,6 +98,6 @@ export class PolicyRouter {
       agentId: options.agentId ?? this.agentId ?? '',
       mounts: this.resolver.prefixes(),
     }
-    return decideLine(this.runtimes.entries, this.policy, ctx, this.runtimes.bindings)
+    return decideLine(this.runtimes.entries, this.routePolicy, ctx, this.runtimes.bindings)
   }
 }

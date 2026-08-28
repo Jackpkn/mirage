@@ -17,7 +17,7 @@
         "runtimes": [
           "node"
         ],
-        "policy": "policy.py",
+        "route_policy": "policy.py",
         "profiles": {
           "default": {
             "cwd": "/d",

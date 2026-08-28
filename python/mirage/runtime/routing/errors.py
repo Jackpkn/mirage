@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 
-class PolicyError(ValueError):
+class RouteError(ValueError):
     """The runtime argument, policy, or a script could not decide the line.
 
     Raised for caller-fixable routing mistakes (unknown runtime name, a
@@ -23,12 +23,12 @@ class PolicyError(ValueError):
     """
 
 
-class PolicyDeny(Exception):
+class RouteDeny(Exception):
     """The policy refused the line before anything ran.
 
     A legitimate policy outcome, not a mistake: execute() folds it into
     the line's IOResult (exit 126, the reason on stderr) instead of
-    propagating like PolicyError.
+    propagating like RouteError.
 
     Args:
         reason (str): why the line was denied, shown on stderr.

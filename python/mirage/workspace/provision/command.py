@@ -171,11 +171,17 @@ async def handle_command_provision(
         text_args = [p for p in parts[1:] if not isinstance(p, PathSpec)]
 
     # One typed bag, the provision-path twin of Mount.execute_cmd's
-    # (mirrors handleCommandProvision building CommandOpts in TS).
+    # (mirrors handleCommandProvision building CommandOpts in TS),
+    # promoting cwd the same way: CommandOpts.cwd is always a PathSpec.
     opts = CommandOpts(
         flags=flag_kwargs,
-        cwd=session.cwd,
-        mount_prefix=mount.prefix.rstrip("/"),
+        cwd=PathSpec(
+            virtual=session.cwd,
+            directory=session.cwd,
+            resolved=False,
+            resource_path=mount_key(session.cwd, mount_prefix),
+        ),
+        mount_prefix=mount_prefix,
         command=cmd_str,
         spec=spec,
         index=mount.resource.index,

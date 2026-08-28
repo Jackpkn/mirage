@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { makeVar } from '../../shell/variable.ts'
-import { seedVar, setAttr } from '../../workspace/session/state.ts'
+import { seedVar, sessionView, setAttr } from '../../workspace/session/state.ts'
 import { VarAttr } from '../../shell/variable.ts'
 import { varsFromEnv } from '../../workspace/session/session.ts'
 import { describe, expect, it, vi } from 'vitest'
@@ -94,7 +94,7 @@ const MAN_SESSION = new Session({ sessionId: 'man' })
 describe('handleExport / handleUnset / handlePrintenv', () => {
   it('export KEY=VAL sets session env', async () => {
     const s = new Session({ sessionId: 'test' })
-    await handleExport(['FOO=bar', 'BAZ=qux'], s)
+    await handleExport(['FOO=bar', 'BAZ=qux'], s, sessionView(s))
     expect(s.env.FOO).toBe('bar')
     expect(s.env.BAZ).toBe('qux')
   })
@@ -104,7 +104,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
     // `declare -x Y` with no `=`, and `env` does not carry it at all, so
     // the empty string this used to write was a divergence.
     const s = new Session({ sessionId: 'test', vars: varsFromEnv({ X: 'existing' }) })
-    await handleExport(['X', 'Y'], s)
+    await handleExport(['X', 'Y'], s, sessionView(s))
     expect(s.env.X).toBe('existing')
     expect(s.env.Y).toBeUndefined()
     expect(s.vars.Y?.attrs.has(VarAttr.Export)).toBe(true)
@@ -137,9 +137,16 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
     expect(decode(io.stderr as Uint8Array)).toContain('usage: export')
   })
 
+  it('export write without a threaded view is a wiring bug', async () => {
+    // The old fallback built an ungated view here, so `export
+    // AWS_SECRET_ACCESS_KEY=x` cleared every preSession rule.
+    const s = new Session({ sessionId: 'test' })
+    await expect(handleExport(['SECRET=x'], s)).rejects.toThrow(/gated session view/)
+  })
+
   it('export -p with a name does not print', async () => {
     const s = new Session({ sessionId: 'test', vars: varsFromEnv({ KEEP: '1' }) })
-    const [out, io] = await handleExport(['-p', 'FOO=bar'], s)
+    const [out, io] = await handleExport(['-p', 'FOO=bar'], s, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(out).toBeNull()
     expect(s.env.FOO).toBe('bar')
@@ -235,7 +242,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
 
   it('unset removes keys', async () => {
     const s = new Session({ sessionId: 'test', vars: varsFromEnv({ A: '1', B: '2' }) })
-    await handleUnset(['A'], s)
+    await handleUnset(['A'], s, sessionView(s))
     expect('A' in s.env).toBe(false)
     expect(s.env.B).toBe('2')
   })
@@ -243,7 +250,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   it('unset -f removes a function but not a same-named variable', async () => {
     const s = new Session({ sessionId: 'test', vars: varsFromEnv({ fn: 'v' }) })
     s.functions.fn = []
-    await handleUnset(['-f', 'fn'], s)
+    await handleUnset(['-f', 'fn'], s, sessionView(s))
     expect('fn' in s.functions).toBe(false)
     expect(s.env.fn).toBe('v')
   })
@@ -251,7 +258,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   it('unset -v removes a variable but not a same-named function', async () => {
     const s = new Session({ sessionId: 'test', vars: varsFromEnv({ fn: 'v' }) })
     s.functions.fn = []
-    await handleUnset(['-v', 'fn'], s)
+    await handleUnset(['-v', 'fn'], s, sessionView(s))
     expect('fn' in s.functions).toBe(true)
     expect('fn' in s.env).toBe(false)
   })
@@ -259,11 +266,11 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   it('unset bare prefers a variable, else the function', async () => {
     const s = new Session({ sessionId: 'test', vars: varsFromEnv({ a: 'v' }) })
     s.functions.a = []
-    await handleUnset(['a'], s)
+    await handleUnset(['a'], s, sessionView(s))
     expect('a' in s.env).toBe(false)
     expect('a' in s.functions).toBe(true)
     s.functions.b = []
-    await handleUnset(['b'], s)
+    await handleUnset(['b'], s, sessionView(s))
     expect('b' in s.functions).toBe(false)
   })
 
@@ -272,11 +279,11 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
     seedVar(s, 'arr', ['x', 'y', 'z'])
     // An interior element leaves a hole so later indices keep their
     // positions; a trailing one drops off, as bash does.
-    await handleUnset(['arr[1]'], s)
+    await handleUnset(['arr[1]'], s, sessionView(s))
     expect(s.arrays.arr).toEqual(['x', null, 'z'])
-    await handleUnset(['arr[2]'], s)
+    await handleUnset(['arr[2]'], s, sessionView(s))
     expect(s.arrays.arr).toEqual(['x'])
-    await handleUnset(['arr'], s)
+    await handleUnset(['arr'], s, sessionView(s))
     expect('arr' in s.arrays).toBe(false)
   })
 
@@ -284,7 +291,7 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
     const s = new Session({ sessionId: 'test' })
     seedVar(s, 'arr', ['x', 'y'])
     setAttr(s, 'arr', VarAttr.Readonly)
-    const [, io] = await handleUnset(['arr[1]'], s)
+    const [, io] = await handleUnset(['arr[1]'], s, sessionView(s))
     expect(io.exitCode).toBe(1)
     expect(decode(io.stderr as Uint8Array)).toBe(
       'bash: unset: arr: cannot unset: readonly variable\n',
@@ -294,10 +301,10 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
 
   it('unset NAME[0] removes a scalar, a non-zero subscript errors', async () => {
     const s = new Session({ sessionId: 'test', vars: varsFromEnv({ Y: 'sc', Z: 'sc' }) })
-    const [, io] = await handleUnset(['Y[0]'], s)
+    const [, io] = await handleUnset(['Y[0]'], s, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect('Y' in s.env).toBe(false)
-    const [, io2] = await handleUnset(['Z[1]'], s)
+    const [, io2] = await handleUnset(['Z[1]'], s, sessionView(s))
     expect(io2.exitCode).toBe(1)
     expect(decode(io2.stderr as Uint8Array)).toBe('bash: unset: Z: not an array variable\n')
     expect(s.env.Z).toBe('sc')
@@ -306,26 +313,26 @@ describe('handleExport / handleUnset / handlePrintenv', () => {
   it('unset of a negative element outside the extent errors', async () => {
     const s = new Session({ sessionId: 'test' })
     seedVar(s, 'arr', ['x'])
-    const [, io] = await handleUnset(['arr[-2]'], s)
+    const [, io] = await handleUnset(['arr[-2]'], s, sessionView(s))
     expect(io.exitCode).toBe(1)
     // bash prints only the bracketed part here, not the base name.
     expect(decode(io.stderr as Uint8Array)).toBe('bash: unset: [-2]: bad array subscript\n')
     expect(s.arrays.arr).toEqual(['x'])
     seedVar(s, 'two', ['x', 'y'])
-    const [, io2] = await handleUnset(['two[-2]'], s)
+    const [, io2] = await handleUnset(['two[-2]'], s, sessionView(s))
     expect(io2.exitCode).toBe(0)
     expect(s.arrays.two).toEqual([null, 'y'])
   })
 
   it('unset of an element of an unset name is a no-op', async () => {
     const s = new Session({ sessionId: 'test' })
-    const [, io] = await handleUnset(['GONE[3]'], s)
+    const [, io] = await handleUnset(['GONE[3]'], s, sessionView(s))
     expect(io.exitCode).toBe(0)
   })
 
   it('unset -z is an invalid option (exit 2)', async () => {
     const s = new Session({ sessionId: 'test' })
-    const [, io] = await handleUnset(['-z', 'x'], s)
+    const [, io] = await handleUnset(['-z', 'x'], s, sessionView(s))
     expect(io.exitCode).toBe(2)
   })
 
@@ -847,7 +854,7 @@ describe('handleShift', () => {
 describe('handleGetopts', () => {
   it('single flag sets var and advances OPTIND', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['ab', 'o', '-a'], s)
+    const [, io] = await handleGetopts(['ab', 'o', '-a'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('a')
     expect(s.env.OPTIND).toBe('2')
@@ -856,18 +863,18 @@ describe('handleGetopts', () => {
   it('iterates two flags then stops', async () => {
     const s = new Session({ sessionId: 't' })
     const args = ['ab', 'o', '-a', '-b']
-    await handleGetopts(args, s)
+    await handleGetopts(args, s, null, sessionView(s))
     expect([s.env.o, s.env.OPTIND]).toEqual(['a', '2'])
-    await handleGetopts(args, s)
+    await handleGetopts(args, s, null, sessionView(s))
     expect([s.env.o, s.env.OPTIND]).toEqual(['b', '3'])
-    const [, io3] = await handleGetopts(args, s)
+    const [, io3] = await handleGetopts(args, s, null, sessionView(s))
     expect(io3.exitCode).toBe(1)
     expect(s.env.o).toBe('?')
   })
 
   it('separate optarg', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['a:b', 'o', '-a', 'foo', '-b'], s)
+    const [, io] = await handleGetopts(['a:b', 'o', '-a', 'foo', '-b'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('a')
     expect(s.env.OPTARG).toBe('foo')
@@ -876,7 +883,7 @@ describe('handleGetopts', () => {
 
   it('attached optarg', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['a:', 'o', '-afoo'], s)
+    const [, io] = await handleGetopts(['a:', 'o', '-afoo'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('a')
     expect(s.env.OPTARG).toBe('foo')
@@ -886,17 +893,17 @@ describe('handleGetopts', () => {
   it('combined flags share OPTIND until the word is done', async () => {
     const s = new Session({ sessionId: 't' })
     const args = ['abc', 'o', '-abc']
-    await handleGetopts(args, s)
+    await handleGetopts(args, s, null, sessionView(s))
     expect([s.env.o, s.env.OPTIND]).toEqual(['a', '1'])
-    await handleGetopts(args, s)
+    await handleGetopts(args, s, null, sessionView(s))
     expect([s.env.o, s.env.OPTIND]).toEqual(['b', '1'])
-    await handleGetopts(args, s)
+    await handleGetopts(args, s, null, sessionView(s))
     expect([s.env.o, s.env.OPTIND]).toEqual(['c', '2'])
   })
 
   it('invalid option, non-silent', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['ab', 'o', '-x'], s)
+    const [, io] = await handleGetopts(['ab', 'o', '-x'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('?')
     expect(decode(io.stderr as Uint8Array)).toBe('bash: illegal option -- x\n')
@@ -905,7 +912,7 @@ describe('handleGetopts', () => {
 
   it('invalid option, silent → OPTARG set, no stderr', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts([':ab', 'o', '-x'], s)
+    const [, io] = await handleGetopts([':ab', 'o', '-x'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('?')
     expect(s.env.OPTARG).toBe('x')
@@ -914,7 +921,7 @@ describe('handleGetopts', () => {
 
   it('missing arg, non-silent', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['a:', 'o', '-a'], s)
+    const [, io] = await handleGetopts(['a:', 'o', '-a'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('?')
     expect(decode(io.stderr as Uint8Array)).toBe('bash: option requires an argument -- a\n')
@@ -922,7 +929,7 @@ describe('handleGetopts', () => {
 
   it('missing arg, silent → name ":" and OPTARG', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts([':a:', 'o', '-a'], s)
+    const [, io] = await handleGetopts([':a:', 'o', '-a'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe(':')
     expect(s.env.OPTARG).toBe('a')
@@ -931,56 +938,56 @@ describe('handleGetopts', () => {
 
   it('non-option word stops without advancing', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['ab', 'o', 'foo', '-a'], s)
+    const [, io] = await handleGetopts(['ab', 'o', 'foo', '-a'], s, null, sessionView(s))
     expect(io.exitCode).toBe(1)
     expect(s.env.OPTIND).toBe('1')
   })
 
   it('double dash is consumed then stops', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['ab', 'o', '--', '-a'], s)
+    const [, io] = await handleGetopts(['ab', 'o', '--', '-a'], s, null, sessionView(s))
     expect(io.exitCode).toBe(1)
     expect(s.env.OPTIND).toBe('2')
   })
 
   it('no args stops', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['ab', 'o'], s)
+    const [, io] = await handleGetopts(['ab', 'o'], s, null, sessionView(s))
     expect(io.exitCode).toBe(1)
     expect(s.env.OPTIND).toBe('1')
   })
 
   it('reads positional args when no explicit args', async () => {
     const s = new Session({ sessionId: 't', positionalArgs: ['-a', '-b'] })
-    const [, io] = await handleGetopts(['ab', 'o'], s)
+    const [, io] = await handleGetopts(['ab', 'o'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('a')
   })
 
   it('usage error on too few operands', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['ab'], s)
+    const [, io] = await handleGetopts(['ab'], s, null, sessionView(s))
     expect(io.exitCode).toBe(2)
     expect(decode(io.stderr as Uint8Array)).toBe('getopts: usage: getopts optstring name [arg]\n')
   })
 
   it('OPTIND reset reparses', async () => {
     const s = new Session({ sessionId: 't', positionalArgs: ['-a', '-b'] })
-    await handleGetopts(['ab', 'o'], s)
-    await handleGetopts(['ab', 'o'], s)
-    const [, stop] = await handleGetopts(['ab', 'o'], s)
+    await handleGetopts(['ab', 'o'], s, null, sessionView(s))
+    await handleGetopts(['ab', 'o'], s, null, sessionView(s))
+    const [, stop] = await handleGetopts(['ab', 'o'], s, null, sessionView(s))
     expect(stop.exitCode).toBe(1)
     seedVar(s, 'OPTIND', '1')
     s.positionalArgs = ['-b', '-a']
-    const [, io] = await handleGetopts(['ab', 'o'], s)
+    const [, io] = await handleGetopts(['ab', 'o'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('b')
   })
 
   it('does not read past the end of a shorter reused word', async () => {
     const s = new Session({ sessionId: 't' })
-    await handleGetopts(['ab', 'o', '-ab'], s)
-    const [, io] = await handleGetopts(['ab', 'o', '-a'], s)
+    await handleGetopts(['ab', 'o', '-ab'], s, null, sessionView(s))
+    const [, io] = await handleGetopts(['ab', 'o', '-a'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('a')
     expect(s.env.OPTIND).toBe('2')
@@ -989,7 +996,7 @@ describe('handleGetopts', () => {
   it('treats a nonpositive OPTIND as a restart at argument 1', async () => {
     const s = new Session({ sessionId: 't', positionalArgs: ['-a', '-b'] })
     seedVar(s, 'OPTIND', '0')
-    const [, io] = await handleGetopts(['ab', 'o'], s)
+    const [, io] = await handleGetopts(['ab', 'o'], s, null, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.o).toBe('a')
     expect(s.env.OPTIND).toBe('2')
@@ -997,7 +1004,7 @@ describe('handleGetopts', () => {
 
   it('rejects an invalid destination identifier', async () => {
     const s = new Session({ sessionId: 't' })
-    const [, io] = await handleGetopts(['a', 'bad-name', '-a'], s)
+    const [, io] = await handleGetopts(['a', 'bad-name', '-a'], s, null, sessionView(s))
     expect(io.exitCode).toBe(1)
     expect(decode(io.stderr as Uint8Array)).toContain('not a valid identifier')
     expect(s.env['bad-name']).toBeUndefined()
@@ -1008,7 +1015,7 @@ describe('handleGetopts', () => {
       sessionId: 't',
       vars: { o: makeVar('orig', new Set([VarAttr.Readonly])) },
     })
-    const [, io] = await handleGetopts(['a', 'o', '-a'], s)
+    const [, io] = await handleGetopts(['a', 'o', '-a'], s, null, sessionView(s))
     expect(io.exitCode).toBe(1)
     expect(s.env.o).toBe('orig')
     expect(decode(io.stderr as Uint8Array)).toContain('readonly variable')
@@ -1016,7 +1023,7 @@ describe('handleGetopts', () => {
 
   it('suppresses diagnostics when OPTERR=0', async () => {
     const s = new Session({ sessionId: 't', vars: varsFromEnv({ OPTERR: '0' }) })
-    const [, io] = await handleGetopts(['ab', 'o', '-x'], s)
+    const [, io] = await handleGetopts(['ab', 'o', '-x'], s, null, sessionView(s))
     expect(s.env.o).toBe('?')
     expect(io.stderr ?? null).toBeNull()
   })
@@ -1025,15 +1032,15 @@ describe('handleGetopts', () => {
     const s = new Session({ sessionId: 't' })
     const cs = new CallStack()
     cs.push(['-a', '-b'], 'f')
-    await handleGetopts(['ab', 'o'], s, cs)
+    await handleGetopts(['ab', 'o'], s, cs, sessionView(s))
     expect(s.env.o).toBe('a')
-    await handleGetopts(['ab', 'o'], s, cs)
+    await handleGetopts(['ab', 'o'], s, cs, sessionView(s))
     expect(s.env.o).toBe('b')
   })
 
   it('propagates the cursor across fork()', async () => {
     const s = new Session({ sessionId: 't' })
-    await handleGetopts(['ab', 'o', '-ab'], s)
+    await handleGetopts(['ab', 'o', '-ab'], s, null, sessionView(s))
     const forked = s.fork()
     expect(forked.getoptsPos).toBe(s.getoptsPos)
     expect(forked.getoptsOptind).toBe(s.getoptsOptind)
@@ -1105,14 +1112,14 @@ describe('handleTrap / handleReturn / handleLocal', () => {
     // nothing stored. Storing it globally and exiting 0 is the
     // silent-accept this tier removes.
     const s = new Session({ sessionId: 'test' })
-    const [, io] = await handleLocal(['X=1'], s)
+    const [, io] = await handleLocal(['X=1'], s, sessionView(s))
     expect(io.exitCode).toBe(1)
     expect(s.env.X).toBeUndefined()
   })
 
   it('handleLocal assigns to session.env under the declare spelling', async () => {
     const s = new Session({ sessionId: 'test' })
-    await handleLocal(['X=1'], s, null, null, 'declare')
+    await handleLocal(['X=1'], s, sessionView(s), null, 'declare')
     expect(s.env.X).toBe('1')
   })
 })
@@ -1121,7 +1128,7 @@ describe('handleRead', () => {
   it('reads single line into one variable', async () => {
     const s = new Session({ sessionId: 'test' })
     const stdin = new TextEncoder().encode('hello world\nrest\n')
-    const [, io] = await handleRead(['LINE'], s, stdin)
+    const [, io] = await handleRead(['LINE'], s, stdin, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.LINE).toBe('hello world')
   })
@@ -1129,7 +1136,7 @@ describe('handleRead', () => {
   it('splits whitespace across multiple variables', async () => {
     const s = new Session({ sessionId: 'test' })
     const stdin = new TextEncoder().encode('alice 30 engineer\n')
-    await handleRead(['NAME', 'AGE', 'ROLE'], s, stdin)
+    await handleRead(['NAME', 'AGE', 'ROLE'], s, stdin, sessionView(s))
     expect(s.env.NAME).toBe('alice')
     expect(s.env.AGE).toBe('30')
     expect(s.env.ROLE).toBe('engineer')
@@ -1138,7 +1145,7 @@ describe('handleRead', () => {
   it('last variable absorbs remainder', async () => {
     const s = new Session({ sessionId: 'test' })
     const stdin = new TextEncoder().encode('one two three four five\n')
-    await handleRead(['A', 'B', 'C'], s, stdin)
+    await handleRead(['A', 'B', 'C'], s, stdin, sessionView(s))
     expect(s.env.A).toBe('one')
     expect(s.env.B).toBe('two')
     expect(s.env.C).toBe('three four five')
@@ -1146,7 +1153,7 @@ describe('handleRead', () => {
 
   it('EOF / null stdin: assign empty + exit 1', async () => {
     const s = new Session({ sessionId: 'test' })
-    const [, io] = await handleRead(['X', 'Y'], s, null)
+    const [, io] = await handleRead(['X', 'Y'], s, null, sessionView(s))
     expect(io.exitCode).toBe(1)
     expect(s.env.X).toBe('')
     expect(s.env.Y).toBe('')
@@ -1158,18 +1165,18 @@ describe('handleRead', () => {
     async function* gen(): AsyncIterable<Uint8Array> {
       yield new TextEncoder().encode('streamed line\nignored\n')
     }
-    await handleRead(['L'], s, gen())
+    await handleRead(['L'], s, gen(), sessionView(s))
     expect(s.env.L).toBe('streamed line')
   })
 
   it('a NEW stdin source replaces a stale exhausted buffer', async () => {
     const s = new Session({ sessionId: 'test' })
     const first = new TextEncoder().encode('first\n')
-    await handleRead(['X'], s, first)
-    await handleRead(['X2'], s, first)
+    await handleRead(['X'], s, first, sessionView(s))
+    await handleRead(['X2'], s, first, sessionView(s))
     expect(s.env.X2).toBe('')
     const second = new TextEncoder().encode('second\n')
-    const [, io] = await handleRead(['Y'], s, second)
+    const [, io] = await handleRead(['Y'], s, second, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.Y).toBe('second')
   })
@@ -1177,8 +1184,8 @@ describe('handleRead', () => {
   it('the SAME stdin source keeps advancing through lines', async () => {
     const s = new Session({ sessionId: 'test' })
     const shared = new TextEncoder().encode('a\nb\n')
-    await handleRead(['P'], s, shared)
-    await handleRead(['Q'], s, shared)
+    await handleRead(['P'], s, shared, sessionView(s))
+    await handleRead(['Q'], s, shared, sessionView(s))
     expect(s.env.P).toBe('a')
     expect(s.env.Q).toBe('b')
   })
@@ -1187,7 +1194,7 @@ describe('handleRead', () => {
     const s = new Session({ sessionId: 'test' })
     seedVar(s, 'A', ['x', 'y'])
     const stdin = new TextEncoder().encode('one\n')
-    await handleRead(['A'], s, stdin)
+    await handleRead(['A'], s, stdin, sessionView(s))
     expect(s.env.A).toBe('one')
     expect(s.arrays.A).toBeUndefined()
   })
@@ -1462,7 +1469,7 @@ describe('handleRead options', () => {
   it('-r is consumed, not a variable', async () => {
     const s = new Session({ sessionId: 'test' })
     const stdin = new TextEncoder().encode('hello world\n')
-    const [, io] = await handleRead(['-r', 'v'], s, stdin)
+    const [, io] = await handleRead(['-r', 'v'], s, stdin, sessionView(s))
     expect(io.exitCode).toBe(0)
     expect(s.env.v).toBe('hello world')
     expect('-r' in s.env).toBe(false)
@@ -1470,14 +1477,14 @@ describe('handleRead options', () => {
 
   it('unknown option errors like bash', async () => {
     const s = new Session({ sessionId: 'test' })
-    const [, io] = await handleRead(['-q', 'v'], s, new TextEncoder().encode('x\n'))
+    const [, io] = await handleRead(['-q', 'v'], s, new TextEncoder().encode('x\n'), sessionView(s))
     expect(io.exitCode).toBe(2)
     expect(decode(await materialize(io.stderr))).toBe('read: -q: invalid option\n')
   })
 
   it('defaults to REPLY', async () => {
     const s = new Session({ sessionId: 'test' })
-    await handleRead([], s, new TextEncoder().encode('hi\n'))
+    await handleRead([], s, new TextEncoder().encode('hi\n'), sessionView(s))
     expect(s.env.REPLY).toBe('hi')
   })
 })

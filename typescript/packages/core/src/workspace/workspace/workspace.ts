@@ -49,7 +49,7 @@ import type { WorkspaceStateDict } from '../snapshot/types.ts'
 import type { FileEvent } from '../../types.ts'
 import { ConsistencyPolicy, DriftPolicy, MountMode, PathSpec } from '../../types.ts'
 import type { Explanation, Policies } from '../../policy/index.ts'
-import type { PolicyFn } from '../../runtime/policy/index.ts'
+import type { RoutePolicy } from '../../runtime/routing/index.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import type { ExecuteFn } from '../expand/node.ts'
 import type { ProvisionResult } from '../../provision/types.ts'
@@ -68,6 +68,7 @@ import { Namespace } from '../mount/namespace/namespace.ts'
 import { explainLine } from '../node/explain.ts'
 import { provisionNode } from '../node/provision_node.ts'
 import { buildFilePrompt } from '../file_prompt.ts'
+import { getCurrentSessionFor } from '../../context/session_context.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import type { Session } from '../session/session.ts'
@@ -81,11 +82,11 @@ import { executeLine, type ExecuteEnv } from './execute.ts'
 import { closeWorkspace } from './lifecycle.ts'
 import { WorkspaceMeta } from './meta.ts'
 import { normalizeResources, unmountPrefix } from './mounts.ts'
-import { PolicyRouter } from './policy.ts'
+import { Router } from './routing.ts'
 import { Runtimes } from './runtimes.ts'
 import type { ExecuteResult } from './types.ts'
 import { type ExecuteOptions, type MountSpec, type WorkspaceOptions } from './types.ts'
-import { commandName } from './utils.ts'
+import { commandName, forkForCall } from './utils.ts'
 import { WatchManager } from './watch.ts'
 
 export { ExecuteResult } from './types.ts'
@@ -131,8 +132,8 @@ export class Workspace {
   }
   private readonly watchManager: WatchManager
   private readonly runtimes: Runtimes
-  private readonly policyRouter: PolicyRouter
-  private readonly policy: PolicyFn | null
+  private readonly router: Router
+  private readonly routePolicy: RoutePolicy | null
   private readonly scriptPolicy: ScriptPolicy
   private readonly profiles: Record<string, SessionProfile>
   private readonly defaultProfileName: string | null
@@ -191,8 +192,8 @@ export class Workspace {
         this.closers.push(fn)
       },
     })
-    rejectConfigScript('policy', options.policy)
-    this.policy = options.policy ?? null
+    rejectConfigScript('routePolicy', options.routePolicy)
+    this.routePolicy = options.routePolicy ?? null
     // The permission profiles: one per name, and the one a session
     // gets when it names none. A profile is the whole document a
     // session runs under, so there is no workspace-wide block above it.
@@ -243,10 +244,10 @@ export class Workspace {
       const cliSpec = typeof specOrKey === 'string' ? cliSpecFor(specOrKey) : specOrKey
       this.registry.clis.install(cliName, cliSpec, cliConfig)
     }
-    this.policyRouter = new PolicyRouter(
+    this.router = new Router(
       this.registry,
       this.runtimes,
-      this.policy,
+      this.routePolicy,
       this.agentId,
       sandboxResolver,
     )
@@ -917,11 +918,27 @@ export class Workspace {
     await this.dispatcher.invalidateAfterWriteByPath(path)
   }
 
-  async provision(command: string): Promise<ProvisionResult> {
+  async provision(
+    command: string,
+    options: Pick<ExecuteOptions, 'sessionId' | 'agentId' | 'cwd' | 'env'> = {},
+  ): Promise<ProvisionResult> {
     const parser = await this.getShellParser()
     const root = parser.parse(command)
     const rootNode = root as unknown as TSNodeLike
-    const session = this.sessionManager.get(this.sessionManager.defaultId)
+    // The plan is judged as its caller: the same ambient-or-named
+    // session resolution as runLine, the per-call cwd/env overlay, and
+    // the line's agent — the gate inside the walk answers visibility
+    // and policy for that identity, never the default session's
+    // (mirrors Python's execute_line, which provisions on the
+    // effective session with the line's agent).
+    const ambient = getCurrentSessionFor(this.sessionManager)
+    const base =
+      ambient !== null &&
+      (options.sessionId === undefined || options.sessionId === ambient.sessionId)
+        ? ambient
+        : this.sessionManager.get(options.sessionId ?? this.sessionManager.defaultId)
+    const session = forkForCall(base, options.cwd, options.env)
+    const agentId = options.agentId ?? this.agentId ?? ''
     // A dry run must never execute: a command substitution with side
     // effects ($(tee ...)) would otherwise run while "estimating".
     // Substitutions expand to empty, so affected words degrade the
@@ -932,7 +949,7 @@ export class Workspace {
     const provTimeout = provResolved !== null ? provResolved.timeoutSeconds : null
     return runWithTimeout(
       provisionNode(
-        { registry: this.registry, executeFn, namespace: this.namespace },
+        { registry: this.registry, executeFn, namespace: this.namespace, agentId },
         rootNode,
         session,
       ),
@@ -958,13 +975,13 @@ export class Workspace {
       agentId: this.agentId,
       workspaceId: this.wsId,
       runtimes: this.runtimes,
-      policyRouter: this.policyRouter,
+      router: this.router,
       registerCloser: (fn) => {
         this.closers.push(fn)
       },
       ensureOpen: (resource) => this.ensureOpen(resource),
       invalidateAllAfterRemote: () => this.invalidateAllAfterRemote(),
-      provision: (cmd) => this.provision(cmd),
+      provision: (cmd, opts) => this.provision(cmd, opts),
       execute: (cmd, opts) =>
         this.executeInternal(cmd, opts as ExecuteOptions & { provision?: false | undefined }),
     }

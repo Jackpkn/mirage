@@ -101,7 +101,7 @@ interface CliSpecJson {
 
 interface World {
   runtimes?: (string | Record<string, unknown>)[]
-  policy?: string
+  route_policy?: string
   policies?: PolicySpec[]
   profiles?: Record<string, unknown>
   profile?: string
@@ -395,7 +395,7 @@ async function buildWorkspace(world: World, runId: string): Promise<Workspace> {
   }
   const options: Record<string, unknown> = { mode: MountMode.EXEC }
   if (world.runtimes !== undefined) options.runtimes = world.runtimes.map(buildEntry)
-  if (world.policy !== undefined) options.policy = new ScriptSource(world.policy)
+  if (world.route_policy !== undefined) options.routePolicy = new ScriptSource(world.route_policy)
   if (world.policies !== undefined) options.policies = world.policies.map(buildPolicy)
   if (world.profiles !== undefined) {
     options.profiles = Object.fromEntries(

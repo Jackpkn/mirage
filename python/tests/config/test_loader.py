@@ -357,7 +357,7 @@ async def test_script_paths_resolve_against_config_dir(tmp_path):
 mounts:
   /data:
     resource: ram
-policy: policy.py
+route_policy: policy.py
 runtimes:
   - name: local
     script: entry.py
@@ -365,7 +365,7 @@ runtimes:
 """)
     cfg = load_config(cfg_file)
     kwargs = cfg.to_workspace_kwargs()
-    assert kwargs["policy"] == ScriptSource("'local'")
+    assert kwargs["route_policy"] == ScriptSource("'local'")
     entry = kwargs["runtimes"][0]
     assert entry.script == ScriptSource("ctx['command'] == 'python3'")
 
@@ -378,12 +378,12 @@ async def test_js_script_path_stamps_the_language(tmp_path):
 mounts:
   /data:
     resource: ram
-policy: policy.js
+route_policy: policy.js
 """)
     cfg = load_config(cfg_file)
     kwargs = cfg.to_workspace_kwargs()
-    assert kwargs["policy"] == ScriptSource("null", language="js")
-    assert kwargs["policy"].language == "js"
+    assert kwargs["route_policy"] == ScriptSource("null", language="js")
+    assert kwargs["route_policy"].language == "js"
 
 
 def test_permissions_document_maps_to_workspace_kwargs(tmp_path):

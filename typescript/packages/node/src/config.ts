@@ -21,7 +21,7 @@ import type { IndexConfig, RedisIndexConfig } from '@struktoai/mirage-core/cache
 import { CLISpec } from '@struktoai/mirage-core/commands/cli/types'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import type { RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
-import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/index'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/index'
 import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
 import {
   ConsistencyPolicy,
@@ -143,7 +143,7 @@ const TOP_LEVEL_KEYS = [
   'mounts',
   'clis',
   'runtimes',
-  'policy',
+  'route_policy',
   'profiles',
   'profile',
   'mode',
@@ -600,7 +600,7 @@ export interface WorkspaceConfigRaw {
   mounts: Record<string, MountBlock>
   clis?: Record<string, CLIBlock> | null
   runtimes?: (string | Record<string, unknown>)[] | null
-  policy?: string | null
+  routePolicy?: string | null
   /** The profiles (`profiles:`); every entry validated by parseProfiles. */
   profiles?: unknown
   /** Which profile shapes a session created without one. */
@@ -676,14 +676,14 @@ export function loadWorkspaceConfig(
 /**
  * Resolve relative script paths against the config file's directory.
  *
- * A path-form `script`/`policy` in a config file means "next to the
+ * A path-form `script`/`route_policy` in a config file means "next to the
  * file" (the docker build-context model), never "wherever the server
  * happens to run". In-memory object configs are untouched.
  */
 function absolutizeScripts(raw: Record<string, unknown>, base: string): void {
-  const policy = raw.policy
+  const policy = raw.route_policy
   if (typeof policy === 'string' && isScriptPath(policy) && !isAbsolute(policy.trim())) {
-    raw.policy = join(base, policy.trim())
+    raw.route_policy = join(base, policy.trim())
   }
   if (Array.isArray(raw.runtimes)) {
     for (const entry of raw.runtimes) {
@@ -904,8 +904,8 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       ...(cfg.runtimes !== undefined && cfg.runtimes !== null
         ? { runtimes: buildRuntimeEntries(cfg.runtimes) }
         : {}),
-      ...(cfg.policy !== undefined && cfg.policy !== null
-        ? { policy: loadScriptSource(cfg.policy) }
+      ...(cfg.routePolicy !== undefined && cfg.routePolicy !== null
+        ? { routePolicy: loadScriptSource(cfg.routePolicy) }
         : {}),
       ...(cfg.profiles !== undefined && cfg.profiles !== null
         ? { profiles: loadProfileScripts(parseProfiles(cfg.profiles)) }

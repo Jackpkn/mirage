@@ -20,16 +20,16 @@ import { CommandTimeoutError } from '../../commands/errors.ts'
 import { EvalError } from '../errors.ts'
 import { isEvaluator, type Evaluator } from '../mixin.ts'
 import type { EvalValue } from '../types.ts'
-import { PolicyDeny, PolicyError } from './errors.ts'
+import { RouteDeny, RouteError } from './errors.ts'
 import {
   DenyResult,
   RouteResult,
   ScriptSource,
-  policyContextPayload,
-  type PolicyDecision,
-  type PolicyContext,
-  type PolicyFn,
-  type PolicyScript,
+  routeContextPayload,
+  type RouteDecision,
+  type RouteContext,
+  type RoutePolicy,
+  type RouteScript,
 } from './types.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 
@@ -97,7 +97,7 @@ async function evalSource(
   evaluator: Evaluator | null,
 ): Promise<EvalValue> {
   if (evaluator === null) {
-    throw new PolicyError(
+    throw new RouteError(
       'policy scripts need an evaluator runtime in the workspace ' +
         '(the default python runtime, or use a function instead)',
     )
@@ -112,16 +112,16 @@ async function evalSource(
     )
   } catch (caught) {
     if (caught instanceof CommandTimeoutError) {
-      throw new PolicyError(
+      throw new RouteError(
         `policy script timed out after ${String(POLICY_EVAL_TIMEOUT.seconds)}s`,
         { cause: caught },
       )
     }
     if (caught instanceof EvalError) {
       const prefix = caught.syntax ? 'policy script syntax error: ' : 'policy script failed: '
-      throw new PolicyError(prefix + caught.message, { cause: caught })
+      throw new RouteError(prefix + caught.message, { cause: caught })
     }
-    throw new PolicyError(caught instanceof Error ? caught.message : String(caught), {
+    throw new RouteError(caught instanceof Error ? caught.message : String(caught), {
       cause: caught,
     })
   }
@@ -134,7 +134,7 @@ async function evalSource(
  * captured stage on the line (including the catch-all vfs) keeps the
  * line's first stage.
  */
-function ctxForRuntime(ctx: PolicyContext, runtime: Runtime): PolicyContext {
+function ctxForRuntime(ctx: RouteContext, runtime: Runtime): RouteContext {
   for (const parsed of ctx.commands) {
     if (runtime.captures.includes(parsed.command)) {
       return { ...ctx, command: parsed.command, builtin: parsed.builtin }
@@ -147,12 +147,12 @@ function ctxForRuntime(ctx: PolicyContext, runtime: Runtime): PolicyContext {
  * Ask one runtime's script whether it wants the line.
  *
  * A script answering with a policy verdict shape (an object, Map, or a
- * PolicyResult arm) fails loud: a deny-dict is truthy, so coercing it
+ * RouteOutcome arm) fails loud: a deny-dict is truthy, so coercing it
  * would mean "willing", the opposite of intent.
  */
 async function evaluateScript(
-  script: PolicyScript,
-  ctx: PolicyContext,
+  script: RouteScript,
+  ctx: RouteContext,
   runtime: Runtime,
   entries: readonly Runtime[],
 ): Promise<boolean> {
@@ -161,7 +161,7 @@ async function evaluateScript(
     script instanceof ScriptSource
       ? await evalSource(
           script.source,
-          policyContextPayload(view, runtime),
+          routeContextPayload(view, runtime),
           evaluatorOf(entries, script.language),
         )
       : await script(view)
@@ -171,7 +171,7 @@ async function evaluateScript(
     !Array.isArray(verdict) &&
     !(verdict instanceof Uint8Array)
   ) {
-    throw new PolicyError(
+    throw new RouteError(
       'entry scripts answer a boolean (deny and placement belong to ' +
         `the global policy), got ${JSON.stringify(verdict)} from '${runtime.name}'`,
     )
@@ -190,7 +190,7 @@ export function parseVerdict(verdict: unknown): string | null {
   if (verdict === null) return null
   if (typeof verdict === 'string') return verdict
   if (verdict instanceof RouteResult) return verdict.runtime
-  if (verdict instanceof DenyResult) throw new PolicyDeny(verdict.reason)
+  if (verdict instanceof DenyResult) throw new RouteDeny(verdict.reason)
   if (verdict instanceof Map) {
     // A custom evaluator may hand python dicts back as Map (the monty
     // engine did before its boundary normalized); fold to the plain
@@ -205,24 +205,24 @@ export function parseVerdict(verdict: unknown): string | null {
       .filter((key) => key !== 'runtime' && key !== 'deny')
       .sort(compareCodePoints)
     if (unknown.length > 0) {
-      throw new PolicyError(`unknown policy verdict keys: ${JSON.stringify(unknown)}`)
+      throw new RouteError(`unknown policy verdict keys: ${JSON.stringify(unknown)}`)
     }
     if ('deny' in obj && 'runtime' in obj) {
-      throw new PolicyError('policy verdict cannot both place and deny')
+      throw new RouteError('policy verdict cannot both place and deny')
     }
-    if ('deny' in obj) throw new PolicyDeny(String(obj.deny))
+    if ('deny' in obj) throw new RouteDeny(String(obj.deny))
     if (typeof obj.runtime === 'string') return obj.runtime
-    throw new PolicyError("policy verdict dict needs a 'runtime' name or a 'deny' reason")
+    throw new RouteError("policy verdict dict needs a 'runtime' name or a 'deny' reason")
   }
-  throw new PolicyError(
+  throw new RouteError(
     `policy must return a runtime name, a verdict dict, or null, got ${JSON.stringify(verdict)}`,
   )
 }
 
 /** Run the global policy, returning a runtime name or null to pass. */
 async function evaluatePolicy(
-  policy: PolicyFn,
-  ctx: PolicyContext,
+  policy: RoutePolicy,
+  ctx: RouteContext,
   entries: readonly Runtime[],
 ): Promise<string | null> {
   // An untyped JS policy can return undefined for "pass"; `?? null`
@@ -231,7 +231,7 @@ async function evaluatePolicy(
     policy instanceof ScriptSource
       ? await evalSource(
           policy.source,
-          policyContextPayload(ctx),
+          routeContextPayload(ctx),
           evaluatorOf(entries, policy.language),
         )
       : ((await policy(ctx)) ?? null)
@@ -252,10 +252,10 @@ async function evaluatePolicy(
  */
 export async function decideLine(
   entries: readonly Runtime[],
-  policy: PolicyFn | null,
-  ctx: PolicyContext,
+  policy: RoutePolicy | null,
+  ctx: RouteContext,
   staticBindings: Record<string, Runtime>,
-): Promise<PolicyDecision> {
+): Promise<RouteDecision> {
   if (policy !== null) {
     const name = await evaluatePolicy(policy, ctx, entries)
     if (name !== null) {
@@ -263,7 +263,7 @@ export async function decideLine(
       try {
         overlay = runtimeBindingsFor(entries, name)
       } catch (caught) {
-        throw new PolicyError(caught instanceof Error ? caught.message : String(caught), {
+        throw new RouteError(caught instanceof Error ? caught.message : String(caught), {
           cause: caught,
         })
       }

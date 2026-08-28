@@ -24,7 +24,7 @@ from mirage.io.types import ByteSource
 from mirage.observe.context import RecordingScope
 from mirage.policy import resolve_limit
 from mirage.provision import ProvisionResult
-from mirage.runtime.policy import PolicyDecision, PolicyDeny, PolicyError
+from mirage.runtime.routing import RouteDecision, RouteDeny, RouteError
 from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
                                 parse, syntax_error_result)
 from mirage.workspace.abort import MirageAbortError
@@ -62,7 +62,7 @@ async def plan_eval_stub(cmd: str, **opts: Any) -> IOResult:
 async def recurse(
     ws: "Workspace",
     cancel: asyncio.Event | None,
-    routing_decision: PolicyDecision | None,
+    routing_decision: RouteDecision | None,
     agent_id: str | None,
     cmd: str,
     **opts: Any,
@@ -78,7 +78,7 @@ async def recurse(
     Args:
         ws: the workspace hosting the outer line.
         cancel (asyncio.Event | None): the outer line's abort event.
-        routing_decision (PolicyDecision | None): the typed line's
+        routing_decision (RouteDecision | None): the typed line's
             decision, inherited verbatim.
         agent_id (str | None): the typed line's agent, inherited.
         cmd (str): the nested command line.
@@ -119,7 +119,7 @@ async def execute_line(
     cancel: asyncio.Event | None,
     record: bool,
     runtime: str | None,
-    routing_decision: PolicyDecision | None,
+    routing_decision: RouteDecision | None,
 ) -> IOResult | ProvisionResult:
     """The body of ``Workspace.execute``; see its docstring for the
     argument contract.
@@ -190,19 +190,23 @@ async def execute_line(
         if offending is not None:
             io = syntax_error_result(offending)
             return io
-        decision = await ws._policy_router.decide(ast, command, runtime,
-                                                  provision, effective_session,
-                                                  session_id, agent or "",
-                                                  ws._policy, routing_decision)
+        decision = await ws._router.decide(ast, command, runtime, provision,
+                                           effective_session, session_id, agent
+                                           or "", ws._route_policy,
+                                           routing_decision)
         exec_recursion = partial(recurse, ws, cancel, decision, agent)
         if provision:
             name = command_name(command)
             guard = resolve_limit(name) if name else None
             timeout = guard.timeout_seconds if guard is not None else None
             return await run_with_timeout(
-                provision_node(ws._registry, ws.dispatch, plan_eval_stub,
-                               ws._namespace, ast, effective_session), timeout,
-                name)
+                provision_node(ws._registry,
+                               ws.dispatch,
+                               plan_eval_stub,
+                               ws._namespace,
+                               ast,
+                               effective_session,
+                               agent_id=agent or ""), timeout, name)
         line_runtime = ws._runtimes.whole_line(ast, decision)
         if line_runtime is not None:
             # A whole line is a command like any other: the same
@@ -256,11 +260,11 @@ async def execute_line(
         io = failure_result(exc, command)
         session.last_exit_code = io.exit_code
         return io
-    except PolicyDeny as exc:
+    except RouteDeny as exc:
         io = failure_result(exc, command)
         session.last_exit_code = io.exit_code
         return io
-    except (MirageAbortError, ContentDriftError, PolicyError):
+    except (MirageAbortError, ContentDriftError, RouteError):
         # The caller's problem, not the line's: an abort it requested,
         # drift it must reconcile, a policy it misconfigured.
         raise

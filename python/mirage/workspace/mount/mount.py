@@ -21,7 +21,7 @@ from typing import Any, Callable
 from mirage.cache.context import push_cache_manager
 from mirage.cache.manager import CacheManager
 from mirage.commands.builtin.utils.limit import run_with_timeout
-from mirage.commands.config import CommandOpts, RegisteredCommand
+from mirage.commands.config import CommandOpts, ExecContext, RegisteredCommand
 from mirage.commands.resolve import get_extension
 from mirage.commands.spec import CommandSpec
 from mirage.commands.spec.types import FlagValue
@@ -35,11 +35,8 @@ from mirage.observe.context import (push_mount_prefix, push_revisions,
                                     with_revisions)
 from mirage.ops.host_io import host_io, with_host_io
 from mirage.ops.registry import RegisteredOp
-from mirage.ops.types import NamespaceView, ReaddirPath, SessionView, StatPath
 from mirage.policy import resolve_limit
 from mirage.resource.base import BaseResource
-from mirage.runtime.base import Runtime
-from mirage.runtime.types import DispatchFn, ExecPathFn
 from mirage.types import (ConsistencyPolicy, FileType, Limit, MountMode,
                           PathSpec, Producer)
 from mirage.utils.errors import ReadOnlyError, enotsup
@@ -473,20 +470,7 @@ class MountEntry:
         paths: list[PathSpec],
         texts: list[str],
         flag_kwargs: dict[str, FlagValue],
-        *,
-        stdin: ByteSource | None = None,
-        cwd: str = "/",
-        dispatch: DispatchFn | None = None,
-        session_id: str | None = None,
-        env: dict[str, str] | None = None,
-        exec_allowed: bool = True,
-        exec_path_allowed: ExecPathFn | None = None,
-        runtime: Runtime | None = None,
-        runtime_unavailable: str | None = None,
-        ns: NamespaceView | None = None,
-        stat_path: StatPath | None = None,
-        readdir_path: ReaddirPath | None = None,
-        session_view: SessionView | None = None,
+        context: ExecContext = ExecContext(),
     ) -> tuple[ByteSource | None, IOResult]:
         """Execute a command on this mount's resource.
 
@@ -499,22 +483,17 @@ class MountEntry:
             paths (list[PathSpec]): positional path args.
             texts (list[str]): positional text args.
             flag_kwargs (dict): parsed flags from upstream.
-            stdin (ByteSource | None): stdin data.
-            cwd (str): virtual cwd from session.
-            ns (NamespaceView | None): the name plane's facts
-                (symlinks, mount boundaries, attr overlay, child
-                names), which no backend can see.
-            stat_path (StatPath | None): dispatcher-backed stat of one
-                path, for a traversal command's start point.
-            readdir_path (ReaddirPath | None): dispatcher-backed readdir
-                of one path, for a walker that has to read past a mount
-                boundary (tree).
-            session_view (SessionView | None): the session plane's
-                live, gated handle, beside the frozen ``env`` snapshot.
-                All four ride ``CommandOpts``; a handler reads the
-                fields it wants, so no list of command names is kept
-                here.
+            context (ExecContext): the invocation's execution context —
+                everything the workspace supplies beyond the parsed line
+                (the fifth argument TypeScript's ``executeCmd`` has
+                always taken); re-boxed whole onto ``CommandOpts``
+                beside the facts only this mount can supply. A handler
+                reads the fields it wants, so no list of command names
+                is kept here.
         """
+        stdin = context.stdin
+        cwd = context.cwd
+        stat_path = context.stat_path
         extension = get_extension(paths[0].virtual) if paths else None
         # A filetype handler is selected from the operand's NAME, and a
         # directory can carry any extension, so the cascade would hand a
@@ -587,17 +566,17 @@ class MountEntry:
             mount_prefix=mount_prefix,
             filetype_fns=(filetype_fns if not is_filetype_cmd else None),
             index=self.resource.index,
-            dispatch=dispatch,
-            session_id=session_id,
-            env=env,
-            exec_allowed=exec_allowed,
-            exec_path_allowed=exec_path_allowed,
-            runtime=runtime,
-            runtime_unavailable=runtime_unavailable,
-            ns=ns,
+            dispatch=context.dispatch,
+            session_id=context.session_id,
+            env=context.env,
+            exec_allowed=context.exec_allowed,
+            exec_path_allowed=context.exec_path_allowed,
+            runtime=context.runtime,
+            runtime_unavailable=context.runtime_unavailable,
+            ns=context.ns,
             stat_path=stat_path,
-            readdir_path=readdir_path,
-            session_view=session_view,
+            readdir_path=context.readdir_path,
+            session_view=context.session_view,
         )
 
         prev_prefix = push_mount_prefix(mount_prefix)

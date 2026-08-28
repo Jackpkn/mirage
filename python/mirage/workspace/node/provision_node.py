@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Callable
@@ -29,6 +30,7 @@ from mirage.workspace.expand import (classify_parts, expand_and_classify,
                                      expand_parts, expand_redirects)
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
+from mirage.workspace.node.admission import Refusal, gate
 from mirage.workspace.provision.command import handle_command_provision
 from mirage.workspace.provision.control import (handle_for_provision,
                                                 handle_function_provision,
@@ -86,9 +88,15 @@ class PlanScope:
     Function definitions seen during this plan are recorded here (not
     on the session: planning must not mutate shell state), and
     `planning` guards recursive functions from looping the planner.
+    `gated` hands the REDIRECT arm's admission verdict (its classified
+    words, keyed by the command node's id) to the inner COMMAND arm:
+    the run admits a redirected command once, with its targets, so the
+    plan must not consult ``pre_command`` a second time for the same
+    statement. Each entry is popped by the recursion that consumes it.
     """
     functions: dict[str, FunctionBody] = field(default_factory=dict)
     planning: set[str] = field(default_factory=set)
+    gated: dict[int, list[str | PathSpec]] = field(default_factory=dict)
 
 
 async def handle_builtin_provision() -> ProvisionResult:
@@ -96,22 +104,98 @@ async def handle_builtin_provision() -> ProvisionResult:
     return ProvisionResult(precision=Precision.EXACT)
 
 
+async def _gate_command(
+    registry: MountRegistry,
+    namespace: Namespace | None,
+    execute_fn: Callable[..., Any],
+    name: str,
+    parts: list[Any],
+    session: Session,
+    plan_scope: PlanScope,
+    agent_id: str,
+    redirects: Sequence[PathSpec] = (),
+) -> tuple[ProvisionResult | None, list[str | PathSpec]]:
+    """Ask the run's own admission about one COMMAND node before any
+    of it is planned.
+
+    The executor admits every command class at one chokepoint — shell
+    builtins, functions, and mount commands alike, with the statement's
+    redirect targets judged on the same call (``_run_argv``) — so the
+    plan walk asks the same question in the same place: ahead of the
+    function and builtin arms, and with the redirect targets when the
+    REDIRECT arm is the caller. A dry run stats and lists to estimate,
+    and a refused command's byte counts are exactly what the refusal is
+    protecting, so a command the chain would deny — or would hold for
+    an approval no dry run can obtain — plans as an honest UNKNOWN
+    before anything prices it. ``gate`` is the dry-run half of
+    ``admit`` (no request recorded, no grant consumed, no ask raised).
+    One residual, deliberate: the estimator's own backend reads run
+    against the accessor directly, so ``pre_ops`` rules do not see
+    them. A name the walk's own script defines is vouched visible
+    (``assume_visible``): the run stores that function in the session
+    before the call, the dry run keeps it in plan state.
+
+    Args:
+        registry (MountRegistry): mount registry for classification and
+            the policy chain.
+        namespace (Namespace | None): addressing authority.
+        execute_fn (Callable): recursive execute (for expansions).
+        name (str): the node's command name, unexpanded.
+        parts (list): the node's words, env prefix already split off.
+        session (Session): shell session state.
+        plan_scope (PlanScope): walk-local planner state.
+        agent_id (str): the agent the plan is attributed to.
+        redirects (Sequence[PathSpec]): the statement's expanded
+            redirect targets, judged with the command exactly as the
+            run itself judges them.
+
+    Returns:
+        ``(refusal, classified)``: the honest UNKNOWN plan when the
+        gate refuses, else None, beside the classified words that feed
+        the mount-command estimate.
+    """
+    expanded = await expand_parts(parts, session, execute_fn)
+    classified = classify_parts(expanded, registry, session.cwd)
+    cmd_name = str(classified[0]) if classified else name
+    cmd_args = [
+        p.virtual if isinstance(p, PathSpec) else p for p in classified[1:]
+    ]
+    verdict = await gate(cmd_name,
+                         cmd_args,
+                         classified[1:],
+                         session,
+                         registry,
+                         namespace,
+                         agent_id,
+                         redirects=redirects,
+                         defined_fn=name in plan_scope.functions)
+    if isinstance(verdict, Refusal) or verdict[1] is not None:
+        cmd_str = " ".join([cmd_name, *cmd_args])
+        return ProvisionResult(command=cmd_str,
+                               precision=Precision.UNKNOWN), classified
+    return None, classified
+
+
 async def _provision_redirected(
     recurse: Callable[..., Any],
     registry: MountRegistry,
     namespace: Namespace | None,
     execute_fn: Callable[..., Any],
+    plan_scope: PlanScope,
+    agent_id: str,
     command: Any,
     redirects: list[Any],
     session: Session,
 ) -> ProvisionResult:
-    """Plan one redirected command: expand targets, cost, degrade.
+    """Plan one redirected command: expand targets, gate, cost, degrade.
 
     Args:
         recurse (Callable): the provision recursion.
         registry (MountRegistry): mount registry.
         namespace (Namespace | None): addressing authority.
         execute_fn (Callable): recursive execute (for expansions).
+        plan_scope (PlanScope): walk-local planner state.
+        agent_id (str): the agent the plan is attributed to.
         command (Any): the redirected command node.
         redirects (list): parsed redirects.
         session (Session): shell session state.
@@ -128,6 +212,33 @@ async def _provision_redirected(
         and not (r.target_node is not None
                  and has_command_substitution(r.target_node))
     ]
+    # The run judges redirect targets on the same admit call as the
+    # command ("their I/O runs on the shell's own fds"), so the plan
+    # gates them together too, before a `< file` source is priced as a
+    # read: a refused `read < /secret` must not stat the secret. Only a
+    # plain COMMAND node gates here; a compound's inner commands each
+    # gate on their own recursion.
+    if command is not None and node_kind(command) == NodeKind.COMMAND:
+        name = get_command_name(command)
+        _, cmd_parts = split_env_prefix(get_parts(command))
+        if cmd_parts:
+            refusal, classified = await _gate_command(
+                registry,
+                namespace,
+                execute_fn,
+                name,
+                cmd_parts,
+                session,
+                plan_scope,
+                agent_id,
+                redirects=[t for _, t in targets])
+            if refusal is not None:
+                return refusal
+            # This verdict, judged with its redirects, covers the whole
+            # statement: the recursion below re-plans the same COMMAND
+            # node, and it consumes this instead of consulting
+            # ``pre_command`` a second time for one command.
+            plan_scope.gated[id(command)] = classified
     result = await handle_redirect_provision(recurse, registry, command,
                                              targets, session, namespace)
     if any(r.kind not in (RedirectKind.HEREDOC, RedirectKind.HERESTRING) and r.
@@ -147,6 +258,8 @@ async def _provision_reassociated(
     registry: MountRegistry,
     namespace: Namespace | None,
     execute_fn: Callable[..., Any],
+    plan_scope: PlanScope,
+    agent_id: str,
     redirects: list[Any],
     right: Any,
     node: Any,
@@ -162,6 +275,8 @@ async def _provision_reassociated(
         registry (MountRegistry): mount registry.
         namespace (Namespace | None): addressing authority.
         execute_fn (Callable): recursive execute (for expansions).
+        plan_scope (PlanScope): walk-local planner state.
+        agent_id (str): the agent the plan is attributed to.
         redirects (list): parsed redirects hoisted off the list.
         right (Any): the list's last command node.
         node (Any): node being provisioned by the connection handler.
@@ -170,7 +285,8 @@ async def _provision_reassociated(
     if node is not right:
         return await recurse(node, session)
     return await _provision_redirected(recurse, registry, namespace,
-                                       execute_fn, right, redirects, session)
+                                       execute_fn, plan_scope, agent_id, right,
+                                       redirects, session)
 
 
 async def provision_node(
@@ -181,6 +297,7 @@ async def provision_node(
     node: Any,
     session: Session,
     scope: PlanScope | None = None,
+    agent_id: str = "",
 ) -> ProvisionResult:
     """Walk tree-sitter AST and estimate execution cost.
 
@@ -197,6 +314,8 @@ async def provision_node(
         session (Session): shell session state.
         scope (PlanScope | None): walk-local planner state; created at
             the root and threaded through recursion.
+        agent_id (str): the agent the plan is attributed to, for the
+            same command gate the run itself would clear.
     """
     plan_scope = scope if scope is not None else PlanScope()
     recurse = partial(provision_node,
@@ -204,7 +323,8 @@ async def provision_node(
                       dispatch,
                       execute_fn,
                       namespace,
-                      scope=plan_scope)
+                      scope=plan_scope,
+                      agent_id=agent_id)
     kind = node_kind(node)
 
     if kind == NodeKind.COMMENT:
@@ -224,6 +344,25 @@ async def provision_node(
 
     if kind == NodeKind.COMMAND:
         name = get_command_name(node)
+        _, parts = split_env_prefix(get_parts(node))
+        if not parts:
+            return ProvisionResult(precision=Precision.EXACT)
+        # The gate fires ahead of the function and builtin arms,
+        # mirroring the executor's chokepoint: a denied function must
+        # not have its body walked, and a denied builtin must not come
+        # back as an admitted-looking EXACT plan. A REDIRECT arm that
+        # already admitted this very node (with its targets) hands its
+        # verdict down instead of a second ``pre_command`` consultation.
+        gated = plan_scope.gated.pop(id(node), None)
+        if gated is not None:
+            classified = gated
+        else:
+            refusal, classified = await _gate_command(registry, namespace,
+                                                      execute_fn, name, parts,
+                                                      session, plan_scope,
+                                                      agent_id)
+            if refusal is not None:
+                return refusal
         func_body = plan_scope.functions.get(name)
         if func_body is None:
             func_body = session.functions.get(name)
@@ -233,11 +372,6 @@ async def provision_node(
                                                    session)
         if name in _BUILTIN_NAMES:
             return await handle_builtin_provision()
-        _, parts = split_env_prefix(get_parts(node))
-        if not parts:
-            return ProvisionResult(precision=Precision.EXACT)
-        expanded = await expand_parts(parts, session, execute_fn)
-        classified = classify_parts(expanded, registry, session.cwd)
         result = await handle_command_provision(registry, classified, session,
                                                 namespace)
         if any(has_command_substitution(p) for p in parts):
@@ -262,12 +396,13 @@ async def provision_node(
             # &&/|| list binds to the last command.
             left, op, right = get_list_parts(command)
             wrapped = partial(_provision_reassociated, recurse, registry,
-                              namespace, execute_fn, redirects, right)
+                              namespace, execute_fn, plan_scope, agent_id,
+                              redirects, right)
             return await handle_connection_provision(wrapped, left, op, right,
                                                      session)
         return await _provision_redirected(recurse, registry, namespace,
-                                           execute_fn, command, redirects,
-                                           session)
+                                           execute_fn, plan_scope, agent_id,
+                                           command, redirects, session)
 
     if kind == NodeKind.IF:
         branches, else_body = get_if_branches(node)

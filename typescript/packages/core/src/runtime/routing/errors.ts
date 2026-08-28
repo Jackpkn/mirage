@@ -18,10 +18,10 @@
  * missing monty package) propagate loud instead of folding into the
  * line's IOResult like a command failure.
  */
-export class PolicyError extends Error {
+export class RouteError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
-    this.name = 'PolicyError'
+    this.name = 'RouteError'
   }
 }
 
@@ -30,11 +30,11 @@ export class PolicyError extends Error {
  *
  * A legitimate policy outcome, not a mistake: execute() folds it into
  * the line's result (exit 126, the reason on stderr) instead of
- * propagating like PolicyError.
+ * propagating like RouteError.
  */
-export class PolicyDeny extends Error {
+export class RouteDeny extends Error {
   constructor(readonly reason: string) {
     super(reason)
-    this.name = 'PolicyDeny'
+    this.name = 'RouteDeny'
   }
 }

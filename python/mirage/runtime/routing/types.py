@@ -43,7 +43,7 @@ class ParsedCommand:
 
 
 @dataclass(frozen=True, slots=True)
-class PolicyContext:
+class RouteContext:
     """What a policy may consult about the line, parse-before-policy.
 
     For ``cat /data/logs.txt | python3 process.py`` typed in ``/data``,
@@ -95,7 +95,7 @@ class PolicyContext:
     agent_id: str
     mounts: tuple[str, ...]
 
-    def for_runtime(self, runtime: Runtime) -> "PolicyContext":
+    def for_runtime(self, runtime: Runtime) -> "RouteContext":
         """The context as one runtime's script sees it.
 
         ``command``/``builtin`` become the first stage the runtime
@@ -164,7 +164,7 @@ class PolicyContext:
         return payload
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "PolicyContext":
+    def from_dict(cls, payload: dict[str, Any]) -> "RouteContext":
         """Rebuild a context from its wire-schema payload.
 
         The inverse of to_dict for the context's own fields (the
@@ -196,12 +196,12 @@ class PolicyContext:
 
 
 # A per-runtime willingness script, answering "do I want this line?".
-# In code: a callable (sync or async) on the PolicyContext returning a
+# In code: a callable (sync or async) on the RouteContext returning a
 # truthy verdict. From config: a .py file reference, loaded as
 # ScriptSource (its last expression is the verdict). Mirrors the TS
-# PolicyScript.
+# RouteScript.
 #
-#     def wants(ctx: PolicyContext) -> bool:
+#     def wants(ctx: RouteContext) -> bool:
 #         return ctx.builtin and "/secret" not in ctx.line
 #
 #     VFSRuntime(script=wants)
@@ -210,10 +210,10 @@ class PolicyContext:
 #     runtimes:
 #       - name: vfs
 #         script: guard.py
-PolicyScript = Callable[[PolicyContext], bool | Awaitable[bool]] | ScriptSource
+RouteScript = Callable[[RouteContext], bool | Awaitable[bool]] | ScriptSource
 
 
-class PolicyResult:
+class RouteOutcome:
     """The typed spelling of a policy verdict, one subclass per arm.
 
     Code policies return an arm instance (or the plain-shape sugar
@@ -225,7 +225,7 @@ class PolicyResult:
 
 
 @dataclass(frozen=True, slots=True)
-class RouteResult(PolicyResult):
+class RouteResult(RouteOutcome):
     """The affirmative arm: this runtime serves the line.
 
     Args:
@@ -237,7 +237,7 @@ class RouteResult(PolicyResult):
 
 
 @dataclass(frozen=True, slots=True)
-class DenyResult(PolicyResult):
+class DenyResult(RouteOutcome):
     """The negative arm: refuse the line before anything runs.
 
     The line exits 126 with ``<command>: policy denied: <reason>`` on
@@ -250,33 +250,33 @@ class DenyResult(PolicyResult):
     reason: str
 
 
-# What the global policy may answer: a PolicyResult arm, a runtime
+# What the global policy may answer: a RouteOutcome arm, a runtime
 # name, None to pass, or the verdict dict (the wire spelling of the
 # arms, the only form a config script can return). Dict keys are
 # mutually exclusive: {"runtime": name} places the line, {"deny":
 # reason} refuses it. New powers grow as arm fields and dict keys,
-# never as new return types. Mirrors the TS PolicyVerdict.
-PolicyVerdict = PolicyResult | str | Mapping[str, Any] | None
+# never as new return types. Mirrors the TS RouteVerdict.
+RouteVerdict = RouteOutcome | str | Mapping[str, Any] | None
 
 # The global policy, answering "who takes this line?". In code: a
-# callable (sync or async) on the PolicyContext returning a
-# PolicyVerdict. From config: a .py file reference, loaded as
+# callable (sync or async) on the RouteContext returning a
+# RouteVerdict. From config: a .py file reference, loaded as
 # ScriptSource (its last expression is the verdict). Mirrors the TS
-# PolicyFn.
+# RoutePolicy.
 #
-#     def policy(ctx: PolicyContext) -> str | None:
+#     def policy(ctx: RouteContext) -> str | None:
 #         return "wasi" if ctx.command == "python3" else None
 #
-#     Workspace(..., policy=policy)
+#     Workspace(..., route_policy=policy)
 #
 #     # workspace yaml: policy.py next to the config file
-#     policy: policy.py
-PolicyFn = Callable[[PolicyContext],
-                    PolicyVerdict | Awaitable[PolicyVerdict]] | ScriptSource
+#     route_policy: policy.py
+RoutePolicy = Callable[[RouteContext],
+                       RouteVerdict | Awaitable[RouteVerdict]] | ScriptSource
 
 
 @dataclass(frozen=True, slots=True)
-class PolicyDecision:
+class RouteDecision:
     """The one-line placement decision the dispatcher consults.
 
     Both fields hold runtimes: the decision IS "which runtime runs

@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.history import HistoryAccessor
-from mirage.commands.config import CommandOpts, cwd_str
+from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView
@@ -69,7 +69,7 @@ async def history_cmd(
     if s and texts:
         await observer.log_command_text(" ".join(texts),
                                         session=session,
-                                        cwd=cwd_str(opts.cwd))
+                                        cwd=opts.cwd.virtual)
     if p and not s:
         out = "\n".join(texts) + "\n" if texts else ""
         return out.encode(), IOResult()

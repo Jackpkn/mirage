@@ -19,7 +19,7 @@ from mirage.policy import PolicyDenied
 from mirage.shell.array import array_extent, array_unset
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.executor.builtins.constants import TARGET_RE
-from mirage.workspace.executor.builtins.shared import refusal, view_of
+from mirage.workspace.executor.builtins.shared import refusal, require_view
 from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.expand.variable import _array_index
 from mirage.workspace.session import Session
@@ -161,7 +161,7 @@ async def handle_unset(
             # points at; on a name that is not a reference bash unsets
             # the variable, and both are one ungated-by-target unset.
             try:
-                await view_of(session, state).unset(name, follow_ref=False)
+                await require_view(state).unset(name, follow_ref=False)
             except PolicyDenied as exc:
                 return refusal("unset", exc)
             continue
@@ -195,10 +195,10 @@ async def handle_unset(
         # sidestep a policy that vetoes `unset X`.
         try:
             if subscript is not None:
-                status = await _unset_element(session, view_of(session, state),
+                status = await _unset_element(session, require_view(state),
                                               base, subscript)
             else:
-                await view_of(session, state).unset(name)
+                await require_view(state).unset(name)
                 _unset_variable(session, deref(session, name))
                 status = "ok"
         except PolicyDenied as exc:
