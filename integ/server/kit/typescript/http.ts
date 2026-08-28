@@ -177,6 +177,13 @@ async function answer<C extends MinimalClient>(
     const split = splitRunPath(url.pathname)
     pathRun = split.run
     path = split.path
+    // The URL a HANDLER sees loses the prefix too, not just the one the router
+    // matches on. A handler reads this pathname for things a caller observes:
+    // github renders it into a pull_request url, and the http fake LOOKS ROWS
+    // UP by it, which a prefixed path misses outright. Leaving it also put the
+    // harness's random run id into error text, so a golden would differ
+    // between runs. Origin, host and query are untouched.
+    url.pathname = path
   } catch (err: unknown) {
     if (err instanceof TenantError) {
       return {

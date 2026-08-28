@@ -205,6 +205,13 @@ export const selftestFake: Fake<C> = {
     },
   }),
   routes: (): KitRoute<C>[] => [
+    // Echoes what a HANDLER sees, which is not what the router matched on: the
+    // run prefix has to be gone from ctx.url too, because handlers render this
+    // pathname into responses and one fake looks rows up by it.
+    route('GET', '/whereami', (ctx) => ({
+      status: 200,
+      body: { path: ctx.url.pathname, run: ctx.run, query: ctx.url.search },
+    })),
     route('GET', '/boards', listBoards),
     route('GET', '/boards/:board/cards', listCards),
     route('GET', '/boards/:board/cards-naive', listCardsNaive),

@@ -660,6 +660,23 @@ async function main(): Promise<void> {
         JSON.stringify(malformed.json),
       )
     }
+    // The router matched on the stripped path, but a handler reads ctx.url
+    // directly. github renders that pathname into a response body and the http
+    // fake looks rows up by it, so a prefix left on it is a wrong answer, not
+    // just untidy output; it also put the harness's random run id into error
+    // text, which a golden cannot match twice.
+    const here = await call(fake, '/whereami?x=1', { runInPath: 'u1', tenant: 'shared' })
+    check(
+      'a handler sees the path WITHOUT the run prefix',
+      (here.json as { path: string }).path === '/whereami',
+      JSON.stringify(here.json),
+    )
+    check(
+      'while still being told which run it is in, with the query intact',
+      (here.json as { run: string }).run === 'u1' &&
+        (here.json as { query: string }).query === '?x=1',
+      JSON.stringify(here.json),
+    )
     const clash = await call(fake, '/reset', {
       method: 'POST',
       runInPath: 'u1',
