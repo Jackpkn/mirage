@@ -109,6 +109,13 @@
       "targets": ["hf-hub"],
       "command": "wc -c < /data/example.parquet",
       "expect": { "exit": 0, "stdout": "2401\n", "stderr": "" }
+    },
+    {
+      "id": "hf_hub_a_spaces_mount_reads_its_own_repo",
+      "seq": 960015,
+      "targets": ["hf-hub"],
+      "command": "cat /space/one_byte.txt",
+      "expect": { "exit": 0, "stdout": "x", "stderr": "" }
     }
   ]
 }

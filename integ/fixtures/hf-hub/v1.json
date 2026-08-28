@@ -17,6 +17,12 @@
       "namespace": "integ",
       "name": "repo-cli",
       "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "kind": "spaces",
+      "namespace": "integ",
+      "name": "space-v1",
+      "createdAt": "2026-01-01T00:00:00.000Z"
     }
   ],
   "commits": [
@@ -35,6 +41,12 @@
     {
       "repo": "models/integ/repo-cli",
       "sha": "c3d4e5f60718293a4b5c6d7e8f90213243546576",
+      "message": "initial commit",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "repo": "spaces/integ/space-v1",
+      "sha": "d4e5f60718293a4b5c6d7e8f9021324354657687",
       "message": "initial commit",
       "createdAt": "2026-01-01T00:00:00.000Z"
     }
@@ -57,6 +69,12 @@
       "refType": "branch",
       "name": "main",
       "sha": "c3d4e5f60718293a4b5c6d7e8f90213243546576"
+    },
+    {
+      "repo": "spaces/integ/space-v1",
+      "refType": "branch",
+      "name": "main",
+      "sha": "d4e5f60718293a4b5c6d7e8f9021324354657687"
     }
   ],
   "blobs": []

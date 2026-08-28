@@ -1031,7 +1031,7 @@ class HfService:
 
 
 class HfHubService:
-    """Points hf_models / hf_datasets mounts at the shared fake Hub.
+    """Points hf_models / hf_datasets / hf_spaces mounts at the fake Hub.
 
     The server (integ/server/hf_hub/) is external, Prisma-backed and shared
     across both hosts, and the token IS the tenant: the client sends it

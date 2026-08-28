@@ -60,6 +60,7 @@ import {
   HfBucketsResource,
   HfDatasetsResource,
   HfModelsResource,
+  HfSpacesResource,
   JaegerResource,
   JobConsole,
   LanceDBResource,
@@ -674,20 +675,39 @@ async function openHfHub(target: Target): Promise<Open> {
     body: JSON.stringify({ tenants: [token], fixture: 'v1' }),
   })
   if (!reset.ok) throw new Error(`hf-hub /reset failed: ${String(reset.status)}`)
-  const mounts: Record<string, HfModelsResource | HfDatasetsResource | RAMResource> = {}
+  const mounts: Record<
+    string,
+    HfModelsResource | HfDatasetsResource | HfSpacesResource | RAMResource
+  > = {}
   for (const m of target.mounts) {
     if (m.resource === 'ram') {
       mounts[m.path] = new RAMResource()
       continue
     }
+    // A Hub mount NAMES a repository, so an absent one is a broken target
+    // rather than a default: `repoId: ''` would reach the fake as a request
+    // for the repository called nothing.
+    if (m.repo === undefined) throw new Error(`hf-hub mount ${m.path} needs a repo`)
     const config = {
-      repoId: m.repo ?? '',
+      repoId: m.repo,
       token,
       endpoint,
       ...(m.prefix !== undefined ? { keyPrefix: m.prefix } : {}),
     }
-    mounts[m.path] =
-      m.resource === 'hf_datasets' ? new HfDatasetsResource(config) : new HfModelsResource(config)
+    // Every kind is named, and an unrecognized one throws. The three differ
+    // only by the `repo_type` they send, so falling back to models for an
+    // unknown name does not fail: it silently exercises the wrong endpoints
+    // and reports the models implementation as the one under test.
+    const kinds = {
+      hf_models: HfModelsResource,
+      hf_datasets: HfDatasetsResource,
+      hf_spaces: HfSpacesResource,
+    }
+    const kind = kinds[m.resource as keyof typeof kinds] as
+      | (new (c: typeof config) => HfModelsResource | HfDatasetsResource | HfSpacesResource)
+      | undefined
+    if (kind === undefined) throw new Error(`hf-hub cannot mount ${m.resource}`)
+    mounts[m.path] = new kind(config)
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
   if (target.clis?.includes('hf') === true) {

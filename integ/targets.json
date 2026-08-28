@@ -1433,6 +1433,13 @@
           "backend": "hf_hub",
           "repo": "integ/data-v1",
           "fixture": "columnar/v1"
+        },
+        {
+          "path": "/space",
+          "resource": "hf_spaces",
+          "backend": "hf_hub",
+          "repo": "integ/space-v1",
+          "fixture": "files/v1"
         }
       ]
     },
