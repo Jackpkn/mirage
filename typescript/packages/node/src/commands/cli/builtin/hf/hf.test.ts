@@ -12,8 +12,10 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { FileType } from '@struktoai/mirage-core/types'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cliSpecFor } from '@struktoai/mirage-core/commands/cli/specs'
+import type * as CommitModule from '../../../../core/hf_hub/commit.ts'
 import type { CLIDoors, CLIInvocation, CLISpec } from '@struktoai/mirage-core/commands/cli/types'
 import { UsageError } from '@struktoai/mirage-core/commands/errors'
 import { materialize } from '@struktoai/mirage-core/io/types'
@@ -28,7 +30,7 @@ import type * as TreeModule from '../../../../core/hf_hub/tree.ts'
 import { HF } from './index.ts'
 import { createCmd, tagCreateCmd, tagDeleteCmd, tagListCmd } from './repo.ts'
 import { downloadCmd, refuseVariadic, selected } from './download.ts'
-import { inRepoBase, keep } from './upload.ts'
+import { inRepoBase, keep, uploadCmd } from './upload.ts'
 
 const createRepoMock = vi.hoisted(() => vi.fn())
 const createTagMock = vi.hoisted(() => vi.fn())
@@ -36,6 +38,7 @@ const deleteTagMock = vi.hoisted(() => vi.fn())
 const listTagsMock = vi.hoisted(() => vi.fn())
 const classifyAbsenceMock = vi.hoisted(() => vi.fn())
 const fetchTreeMock = vi.hoisted(() => vi.fn())
+const commitMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../../../core/hf_hub/repo.ts', async (orig) => ({
   ...(await orig<typeof RepoModule>()),
@@ -45,6 +48,11 @@ vi.mock('../../../../core/hf_hub/repo.ts', async (orig) => ({
 vi.mock('../../../../core/hf_hub/tree.ts', async (orig) => ({
   ...(await orig<typeof TreeModule>()),
   fetchTree: fetchTreeMock,
+}))
+
+vi.mock('../../../../core/hf_hub/commit.ts', async (orig) => ({
+  ...(await orig<typeof CommitModule>()),
+  commit: commitMock,
 }))
 
 vi.mock('../../../../core/hf_hub/admin.ts', () => ({
@@ -320,5 +328,54 @@ describe('operand and glob selection', () => {
     ]
     expect(keep(rows, ['*.json'], []).map((r) => r.name)).toEqual(['b.json'])
     expect(keep(rows, [], ['*.json']).map((r) => r.name)).toEqual(['a.txt'])
+  })
+})
+
+describe('where an upload lands', () => {
+  // Upstream reads `path_in_repo` as the destination FILE for a file source
+  // and as the destination FOLDER for a directory one; `_resolve_upload_paths`
+  // only falls back to the basename when the operand is absent. Probed against
+  // hf 0.35.3 pointed at the integ fake: `hf upload r ./a.txt docs` leaves a
+  // tree of exactly ['docs']. Appending the basename either way stored it at
+  // `docs/a.txt`, which the tree then reported as a directory and
+  // `hf download` could not find at all.
+  const tree: Record<string, { dir: boolean; data: string; kids: string[] }> = {
+    '/work': { dir: true, data: '', kids: ['/work/a.txt', '/work/sub'] },
+    '/work/sub': { dir: true, data: '', kids: ['/work/sub/b.txt'] },
+    '/work/a.txt': { dir: false, data: 'alpha', kids: [] },
+    '/work/sub/b.txt': { dir: false, data: 'beta', kids: [] },
+  }
+  const doors = {
+    dispatch: vi.fn((op: string, spec: { virtual: string }) => {
+      const node = tree[spec.virtual]
+      if (node === undefined) {
+        return Promise.reject(Object.assign(new Error('nope'), { code: 'ENOENT' }))
+      }
+      if (op === 'stat') {
+        return Promise.resolve([{ type: node.dir ? FileType.DIRECTORY : FileType.TEXT }, null])
+      }
+      if (op === 'readdir') return Promise.resolve([node.kids, null])
+      return Promise.resolve([new TextEncoder().encode(node.data), null])
+    }),
+  } as unknown as CLIDoors
+
+  const additions = (): { path: string }[] =>
+    (commitMock.mock.calls[0]?.[1] as { additions: { path: string }[] }).additions
+
+  beforeEach(() => commitMock.mockReset())
+
+  it('puts a file AT path_in_repo', async () => {
+    await uploadCmd(inv(['acme/widget', '/work/a.txt', 'docs'], {}, CONFIG, doors))
+    expect(additions()[0]?.path).toBe('docs')
+  })
+
+  it('spreads a directory UNDER path_in_repo', async () => {
+    await uploadCmd(inv(['acme/widget', '/work', 'docs'], {}, CONFIG, doors))
+    expect(additions().map((a) => a.path)).toEqual(['docs/a.txt', 'docs/sub/b.txt'])
+  })
+
+  it('falls back to the basename when path_in_repo is absent', async () => {
+    await uploadCmd(inv(['acme/widget', '/work/a.txt'], {}, CONFIG, doors))
+    expect(additions()[0]?.path).toBe('a.txt')
   })
 })

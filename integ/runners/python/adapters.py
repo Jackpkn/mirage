@@ -81,6 +81,9 @@ from mirage.resource.gsheets.gsheets import GSheetsResource
 from mirage.resource.gslides.config import GSlidesConfig
 from mirage.resource.gslides.gslides import GSlidesResource
 from mirage.resource.hf_buckets import HfBucketsConfig, HfBucketsResource
+from mirage.resource.hf_datasets import HfDatasetsConfig, HfDatasetsResource
+from mirage.resource.hf_models import HfModelsConfig, HfModelsResource
+from mirage.resource.hf_spaces import HfSpacesConfig, HfSpacesResource
 from mirage.resource.jaeger import JaegerConfig, JaegerResource
 from mirage.resource.lancedb import LanceDBConfig, LanceDBResource
 from mirage.resource.langfuse import LangfuseConfig, LangfuseResource
@@ -1022,6 +1025,77 @@ class HfService:
                 endpoint=self.endpoint,
                 key_prefix=mount.get("prefix"),
             ))
+
+    async def teardown(self) -> None:
+        return None
+
+
+class HfHubService:
+    """Points hf_models / hf_datasets / hf_spaces mounts at the fake Hub.
+
+    The server (integ/server/hf_hub/) is external, Prisma-backed and shared
+    across both hosts, and the token IS the tenant: the client sends it
+    verbatim on every Hub call and the fake reads it off `Authorization`, so
+    a per-run token isolates two runs against one server.
+
+    Unlike every object-store fake here, the fixture is not optional. A Hub
+    mount NAMES a repository, and mounting one never creates it, so the
+    repositories a target mounts must exist before the mount is built;
+    `/reset` seeds them from integ/fixtures/hf-hub/v1.json. The file CONTENT
+    then arrives the ordinary way, through each mount's own `fixture:` seed,
+    which writes over the resource's commit path rather than behind it.
+
+    Args:
+        run_id (str): this run's id, which names its account.
+        endpoint (str): HF_HUB_URL origin.
+    """
+
+    KINDS = {
+        "hf_models": HfModelsResource,
+        "hf_datasets": HfDatasetsResource,
+        "hf_spaces": HfSpacesResource,
+    }
+    CONFIGS = {
+        "hf_models": HfModelsConfig,
+        "hf_datasets": HfDatasetsConfig,
+        "hf_spaces": HfSpacesConfig,
+    }
+
+    def __init__(self, run_id: str, endpoint: str) -> None:
+        self.run_id = run_id
+        self.endpoint = endpoint
+        self.token = f"integ-hfhub-{run_id}"
+
+    @classmethod
+    async def create(cls, run_id: str) -> "HfHubService":
+        endpoint = os.environ["HF_HUB_URL"].rstrip("/")
+        token = f"integ-hfhub-{run_id}"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{endpoint}/reset",
+                                    json={
+                                        "tenants": [token],
+                                        "fixture": "v1"
+                                    }) as resp:
+                resp.raise_for_status()
+        return cls(run_id, endpoint)
+
+    def resource(self, mount: dict) -> object:
+        kind = mount["resource"]
+        config = self.CONFIGS[kind](
+            repo_id=mount["repo"],
+            token=self.token,
+            endpoint=self.endpoint,
+            key_prefix=mount.get("prefix"),
+        )
+        return self.KINDS[kind](config)
+
+    def cli_installs(self) -> dict[str, tuple[CLISpec, dict[str, object]]]:
+        return {
+            "hf": (cli_spec_for("hf"), {
+                "token": self.token,
+                "endpoint": self.endpoint,
+            }),
+        }
 
     async def teardown(self) -> None:
         return None
@@ -2032,7 +2106,8 @@ class PostgresService:
 Service = (S3Service | OneDriveService | SharePointService | Mem0Service
            | SSHService | PostgresService | MongoDBService | ChromaService
            | QdrantService | LanceDBService | NotionService
-           | NextcloudService | GwsService | HfService | BoxService
+           | NextcloudService | GwsService | HfService | HfHubService
+           | BoxService
            | DropboxService | GridFSService | SlackService | TrelloService
            | LinearService | DifyService | DatabricksVolumeService
            | LangfuseService | JaegerService)
@@ -2155,6 +2230,13 @@ def build_hf(
         mount: dict, run_id: str, service: Service | None
 ) -> tuple[object, Callable[[], Awaitable[None]]]:
     assert isinstance(service, HfService)
+    return service.resource(mount), _noop
+
+
+def build_hf_hub(
+        mount: dict, run_id: str, service: Service | None
+) -> tuple[object, Callable[[], Awaitable[None]]]:
+    assert isinstance(service, HfHubService)
     return service.resource(mount), _noop
 
 
@@ -2408,6 +2490,9 @@ BUILDERS = {
     "gmail": build_gmail,
     "email": build_email,
     "hf": build_hf,
+    "hf_models": build_hf_hub,
+    "hf_datasets": build_hf_hub,
+    "hf_spaces": build_hf_hub,
     "box": build_box,
     "dropbox": build_dropbox,
     "github": build_github,
@@ -2459,6 +2544,8 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
         return await EmailService.create(run_id, target)
     if target.get("service") == "hf":
         return await HfService.create(run_id)
+    if target.get("service") == "hf-hub":
+        return await HfHubService.create(run_id)
     if target.get("service") == "box":
         return await BoxService.create(run_id, target)
     if target.get("service") == "dropbox":
@@ -2545,9 +2632,9 @@ def cli_install(service: "Service | None",
     if service is None:
         return cli_spec_for(cli_name), None
     # Widen the assert when another service grows a CLI.
-    assert isinstance(service,
-                      (DiscordService, EmailService, GitHubService, GwsService,
-                       LinearService, NotionService, SlackService))
+    assert isinstance(
+        service, (DiscordService, EmailService, GitHubService, GwsService,
+                  HfHubService, LinearService, NotionService, SlackService))
     return service.cli_installs()[cli_name]
 
 

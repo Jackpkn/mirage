@@ -31,7 +31,8 @@ from mirage.io.types import ByteSource, IOResult
 from mirage.types import FileType, PathSpec
 
 
-async def collect(doors: CLIDoors, local: str) -> list[tuple[str, bytes]]:
+async def collect(doors: CLIDoors,
+                  local: str) -> tuple[list[tuple[str, bytes]], bool]:
     """Read a workspace file, or every file under a workspace directory.
 
     Read through the op dispatcher rather than any filesystem of its
@@ -44,8 +45,12 @@ async def collect(doors: CLIDoors, local: str) -> list[tuple[str, bytes]]:
         local (str): the virtual path to read.
 
     Returns:
-        list[tuple[str, bytes]]: (path relative to ``local``, content).
-        A file yields one row named by its own basename.
+        tuple[list[tuple[str, bytes]], bool]: the (path relative to
+        ``local``, content) rows, and whether ``local`` was a directory.
+        The caller needs that second fact: upstream reads
+        ``path_in_repo`` as the destination FILE for a file source and as
+        the destination FOLDER for a directory one, so a file uploaded to
+        ``u.txt`` must land at ``u.txt`` and not at ``u.txt/u.txt``.
 
     Raises:
         UsageError: the path does not exist, or the line ran outside a
@@ -61,7 +66,7 @@ async def collect(doors: CLIDoors, local: str) -> list[tuple[str, bytes]]:
         raise UsageError(f"{local}: No such file or directory") from None
     if getattr(stat, "type", None) is not FileType.DIRECTORY:
         data, _ = await dispatch("read", spec)
-        return [(posixpath.basename(local.rstrip("/")), bytes(data))]
+        return [(posixpath.basename(local.rstrip("/")), bytes(data))], False
     rows: list[tuple[str, bytes]] = []
     pending = [local.rstrip("/")]
     while pending:
@@ -78,7 +83,7 @@ async def collect(doors: CLIDoors, local: str) -> list[tuple[str, bytes]]:
             data, _ = await dispatch("read", PathSpec.from_str_path(child))
             rows.append((posixpath.relpath(child,
                                            local.rstrip("/")), bytes(data)))
-    return sorted(rows)
+    return sorted(rows), True
 
 
 def keep(rows: list[tuple[str, bytes]], include: list[str],
@@ -146,14 +151,19 @@ async def upload_cmd(
             refuse_variadic(operands, flag, patterns)
     local = operands[0] if operands else "."
     in_repo = operands[1] if len(operands) > 1 else ""
-    rows = keep(await collect(inv.doors, local), include, exclude)
+    collected, from_dir = await collect(inv.doors, local)
+    rows = keep(collected, include, exclude)
     if not rows:
         raise UsageError(f"no files matched under {local}")
     base = in_repo_base(in_repo)
+    # A directory source spreads under `path_in_repo`; a file source lands
+    # AT it. Appending the basename either way stored `hf upload r f.txt
+    # f.txt` at `f.txt/f.txt`, which the tree then reported as a directory
+    # and `hf download` could not find at all.
     additions = [
         Addition(path=posixpath.join(base, name) if base else name, data=data)
         for name, data in rows
-    ]
+    ] if from_dir else [Addition(path=base or rows[0][0], data=rows[0][1])]
     repo_type = repo_type_of(fl)
     # Upstream creates the repository if it is missing and ignores
     # --private when it already exists, so the flag picks the visibility

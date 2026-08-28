@@ -23,7 +23,9 @@ export type C = PrismaClient
 export const config = parseConfig({
   service: 'hf-hub',
   schema: schemaFor('hf_hub'),
-  defaultPort: 5090,
+  // 5090 is discord's in the cli and chat facets, and this fake runs
+  // alongside it there, so the Hub sits below the 5087-5099 block.
+  defaultPort: 5086,
   tenantKind: 'pk-column',
   tenantFromBearer: true,
   // Commit shas. One counter serves the whole account, so a commit in one
