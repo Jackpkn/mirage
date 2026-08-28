@@ -395,7 +395,13 @@ async function refs(ctx: Ctx<C>): Promise<Reply> {
  * row that a concurrent write inserted, and the kit's write queue is what makes
  * that impossible here.
  */
-function pageOf(rows: JsonValue[], cursorRaw: string | null, limit: number, url: URL): Reply {
+function pageOf(
+  rows: JsonValue[],
+  cursorRaw: string | null,
+  limit: number,
+  url: URL,
+  runPrefix: string,
+): Reply {
   const start = cursorRaw === null ? 0 : Number(Buffer.from(cursorRaw, 'base64').toString('utf8'))
   const from = Number.isFinite(start) && start > 0 ? start : 0
   const page = rows.slice(from, from + limit)
@@ -404,6 +410,12 @@ function pageOf(rows: JsonValue[], cursorRaw: string | null, limit: number, url:
   if (next < rows.length) {
     const cursor = Buffer.from(String(next), 'utf8').toString('base64')
     const link = new URL(url.toString())
+    // The prefix goes back on, for the same reason github's Link header puts
+    // it back: this URL is handed to the client to follow, and the request
+    // flow strips the run segment before a handler ever sees the path. Left
+    // off, page two of a tree listing came from the DEFAULT run. It is '' for
+    // an unscoped request, so that case is unchanged.
+    link.pathname = `${runPrefix}${url.pathname}`
     link.searchParams.set('cursor', cursor)
     headers.Link = `<${link.toString()}>; rel="next"`
   }
@@ -483,7 +495,7 @@ async function tree(ctx: Ctx<C>): Promise<Reply> {
     ...dirs.map((d) => dirRow(d, expand, sha, date)),
     ...kept.map((b) => treeRow(b, expand)),
   ]
-  return pageOf(rows, ctx.query.get('cursor'), limit, ctx.url)
+  return pageOf(rows, ctx.query.get('cursor'), limit, ctx.url, ctx.runPrefix)
 }
 
 // ----------------------------------------------------------------- resolve
