@@ -48,10 +48,10 @@ interface Fake {
   stderr: () => string
 }
 
-async function launch(env: Record<string, string> = {}): Promise<Fake> {
+async function launch(env: Record<string, string> = {}, argv: string[] = []): Promise<Fake> {
   const child = spawn(
     join(INTEG, 'node_modules', '.bin', 'tsx'),
-    [join(HERE, 'main.ts'), '--port', '0'],
+    [join(HERE, 'main.ts'), '--port', '0', ...argv],
     { cwd: INTEG, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } },
   )
   let err = ''
@@ -80,6 +80,9 @@ interface CallOpts {
   body?: JsonValue
   run?: string
   tenant?: string
+  // Address the run through the URL instead of the header, which is the only
+  // spelling a mount handing its base URL to an SDK can actually use.
+  runInPath?: string
 }
 
 async function call(
@@ -90,7 +93,8 @@ async function call(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (opts.run !== undefined) headers['x-mirage-run'] = opts.run
   if (opts.tenant !== undefined) headers['x-mirage-tenant'] = opts.tenant
-  const res = await fetch(`${fake.endpoint}${path}`, {
+  const prefix = opts.runInPath === undefined ? '' : `/_run/${opts.runInPath}`
+  const res = await fetch(`${fake.endpoint}${prefix}${path}`, {
     method: opts.method ?? 'GET',
     headers,
     ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
@@ -445,6 +449,400 @@ async function main(): Promise<void> {
       refused.includes('Global') && refused.includes('tenant'),
       refused === '' ? 'did NOT throw' : refused,
     )
+
+    // One binary, several scenarios. github is served three ways from one
+    // server (three repos, one repo and no creation, and empty for the watch
+    // battery), which only works if a bare reset replays what the process was
+    // started on rather than defaulting back to v1.
+    process.stdout.write(
+      '\n14. --fixture picks the startup scenario, and a bare reset replays it\n',
+    )
+    const alt = await launch({}, ['--fixture', 'alt'])
+    try {
+      const seeded = await call(alt, '/boards')
+      eq(
+        'startup seeded the named fixture',
+        (seeded.json as { boards: { name: JsonValue }[] }).boards.map((b) => b.name),
+        ['Alternate'],
+      )
+      const bare = await call(alt, '/reset', { method: 'POST', body: {} })
+      eq('bare reset succeeds', (bare.json as { ok: JsonValue }).ok, true)
+      const again = await call(alt, '/boards')
+      eq(
+        'and it replayed alt, NOT the default v1',
+        (again.json as { boards: { name: JsonValue }[] }).boards.map((b) => b.name),
+        ['Alternate'],
+      )
+      // A refused reset must not change what a later bare one replays. Recording
+      // the name before applying it wedged the fake: the 400 left the bad name
+      // remembered, so the next bare reset failed on a request already refused.
+      const refusedFixture = await call(alt, '/reset', {
+        method: 'POST',
+        body: { fixture: 'nope' },
+      })
+      check(
+        'a reset naming an unknown fixture is still 400',
+        refusedFixture.status === 400,
+        JSON.stringify(refusedFixture.json),
+      )
+      const after = await call(alt, '/reset', { method: 'POST', body: {} })
+      eq(
+        'and the refusal did NOT poison the remembered fixture',
+        (after.json as { ok: JsonValue }).ok,
+        true,
+      )
+      const kept2 = await call(alt, '/boards')
+      eq(
+        'so a bare reset still replays alt',
+        (kept2.json as { boards: { name: JsonValue }[] }).boards.map((b) => b.name),
+        ['Alternate'],
+      )
+    } finally {
+      alt.child.kill('SIGTERM')
+    }
+
+    // A flag the kit does not implement must stop the process, not be skipped.
+    // Every fake here parses argv by scanning for its own flags, so an ignored
+    // one meant a caller asked for one world and silently got the default: the
+    // github fake replaced one that took --repo/--metadata/--commits, and a
+    // launch line carrying those announced a healthy server seeded with v1.
+    process.stdout.write('\n15. an argument the kit does not implement is refused\n')
+    let refusedArgv = ''
+    try {
+      const bad = await launch({}, ['--repo', 'integ/x=dir', '--no-create-repos'])
+      bad.child.kill('SIGTERM')
+    } catch (err: unknown) {
+      refusedArgv = (err as Error).message
+    }
+    check(
+      'an unknown flag fails the launch',
+      refusedArgv.includes('--repo') && refusedArgv.includes('--no-create-repos'),
+      refusedArgv === '' ? 'launched ANYWAY' : (refusedArgv.split('\n')[0] ?? ''),
+    )
+    check(
+      'and it names the flags the kit does take',
+      refusedArgv.includes('--fixture') && refusedArgv.includes('--port'),
+      refusedArgv.split('\n')[0] ?? '',
+    )
+    // The likelier slip than an unknown flag: `--port N alt` is `--fixture alt`
+    // with the flag dropped, and skipping the bare word served the DEFAULT
+    // fixture under a line that reads as asking for another one.
+    let refusedWord = ''
+    try {
+      const stray = await launch({}, ['alt'])
+      stray.child.kill('SIGTERM')
+    } catch (err: unknown) {
+      refusedWord = (err as Error).message
+    }
+    check(
+      'a stray positional fails the launch too',
+      refusedWord.includes('exited 1'),
+      refusedWord === '' ? 'launched ANYWAY' : (refusedWord.split('\n')[0] ?? ''),
+    )
+
+    process.stdout.write('\n16. a tenant nobody seeded is refused, not crashed\n')
+    // The failure this covers reached the caller as a 500 carrying whatever
+    // the fake's own query threw, which reads as a crashed service: a
+    // container healthcheck that probes with a credential marked the fake
+    // permanently unhealthy. Both routes to an unseeded tenant are checked,
+    // because they were two separate 500s with one cause.
+    const ghost = await call(fake, '/boards', { run: 'p', tenant: 'never-seeded' })
+    check('an unseeded tenant is 401, not 500', ghost.status === 401, JSON.stringify(ghost.json))
+    check(
+      'and the refusal names the tenant it did not find',
+      JSON.stringify(ghost.json).includes('never-seeded'),
+      JSON.stringify(ghost.json),
+    )
+    // Reading a tenant must not bring it into being. `of()` mints per-tenant
+    // state for any legal name on first sight, so a check written against that
+    // map would answer 401 once and then serve an empty world forever after.
+    const again = await call(fake, '/boards', { run: 'p', tenant: 'never-seeded' })
+    check('and asking twice is still 401', again.status === 401, JSON.stringify(again.json))
+    const born = await call(fake, '/reset', {
+      method: 'POST',
+      body: { run: 'p', tenants: ['never-seeded'] },
+    })
+    check('seeding it is 200', born.status === 200, JSON.stringify(born.json))
+    check(
+      'and now the same request is served',
+      (await call(fake, '/boards', { run: 'p', tenant: 'never-seeded' })).status === 200,
+      JSON.stringify((await call(fake, '/boards', { run: 'p', tenant: 'never-seeded' })).json),
+    )
+    // A run is its own file, so seeding a tenant in one run says nothing about
+    // the same name in another.
+    const elsewhere = await call(fake, '/boards', { run: 'q', tenant: 'never-seeded' })
+    check(
+      'the same name in another run is still unseeded',
+      elsewhere.status === 401,
+      JSON.stringify(elsewhere.json),
+    )
+
+    process.stdout.write('\n17. a run can be addressed by URL, not just by header\n')
+    // The header and the query parameter are only reachable by a caller that
+    // builds its own requests. Every mount here hands a base URL to a vendor
+    // SDK and never sees the request again, which is why the run axis went
+    // unused and the tenant column was made to carry host isolation instead.
+    // A path prefix is just part of the base URL, so it survives the trip.
+    const seedU = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'u1',
+      body: { tenants: ['shared'] },
+    })
+    check(
+      'a reset under /_run/<id> resets THAT run',
+      (seedU.json as { run: string }).run === 'u1',
+      JSON.stringify(seedU.json),
+    )
+    await call(fake, '/reset', { method: 'POST', runInPath: 'u2', body: { tenants: ['shared'] } })
+    // The same tenant name in both, which is the point: notion's bearer token
+    // is echoed by `ntn auth token` and pinned by a golden, so it CANNOT be
+    // minted per run. The run has to be the axis that separates two hosts.
+    const wroteU1 = await call(fake, '/boards/brd_1/cards', {
+      method: 'POST',
+      runInPath: 'u1',
+      tenant: 'shared',
+      body: { title: 'only-in-u1' },
+    })
+    check('a write into run u1 is 201', wroteU1.status === 201, JSON.stringify(wroteU1.json))
+    check(
+      'u1 sees it',
+      titles(
+        (await call(fake, '/boards/brd_1/cards', { runInPath: 'u1', tenant: 'shared' })).json,
+      ).includes('only-in-u1'),
+      JSON.stringify(
+        titles(
+          (await call(fake, '/boards/brd_1/cards', { runInPath: 'u1', tenant: 'shared' })).json,
+        ),
+      ),
+    )
+    check(
+      'and u2 does NOT, under the very same tenant name',
+      !titles(
+        (await call(fake, '/boards/brd_1/cards', { runInPath: 'u2', tenant: 'shared' })).json,
+      ).includes('only-in-u1'),
+      JSON.stringify(
+        titles(
+          (await call(fake, '/boards/brd_1/cards', { runInPath: 'u2', tenant: 'shared' })).json,
+        ),
+      ),
+    )
+    const noPrefix = await call(fake, '/boards')
+    check(
+      'an unprefixed URL still means the default run',
+      noPrefix.status === 200,
+      JSON.stringify(noPrefix.json),
+    )
+    const badRun = await call(fake, '/boards', { runInPath: 'bad%2Fname' })
+    check(
+      'an illegal run in the path is 400, not 500',
+      badRun.status === 400,
+      JSON.stringify(badRun.json),
+    )
+    // decodeURIComponent throws a URIError on this, which is not a TenantError
+    // and so reached the 500 envelope: a typed URL reported as a fake bug.
+    // The kit keeps internal files under names a run cannot spell, and the
+    // seeded templates now live in their own directory as well. Both rest on
+    // checkName refusing a leading underscore, so that refusal is pinned here:
+    // loosening the name rule would otherwise let a reset overwrite a cached
+    // template and hand later runs the wrong database.
+    for (const reserved of ['_seeded-0', '_build-0', '_template']) {
+      const viaPath = await call(fake, '/boards', { runInPath: reserved })
+      check(
+        `a run named ${reserved} is refused in the path`,
+        viaPath.status === 400,
+        JSON.stringify(viaPath.json),
+      )
+      const viaBody = await call(fake, '/reset', { method: 'POST', body: { run: reserved } })
+      check(`and refused in the /reset body`, viaBody.status === 400, JSON.stringify(viaBody.json))
+    }
+    const badEscape = await call(fake, '/boards', { runInPath: '%ZZ' })
+    check(
+      'a malformed percent escape in the run is 400, not 500',
+      badEscape.status === 400,
+      JSON.stringify(badEscape.json),
+    )
+    // The prefix fills in an ABSENT run only. Overwriting a malformed one
+    // turned a request that owes a 400 into a successful reset.
+    for (const bad of [12, '']) {
+      const malformed = await call(fake, '/reset', {
+        method: 'POST',
+        runInPath: 'u1',
+        body: { run: bad, tenants: ['shared'] },
+      })
+      check(
+        `a malformed body run ${JSON.stringify(bad)} is still refused`,
+        malformed.status === 400,
+        JSON.stringify(malformed.json),
+      )
+    }
+    // The router matched on the stripped path, but a handler reads ctx.url
+    // directly. github renders that pathname into a response body and the http
+    // fake looks rows up by it, so a prefix left on it is a wrong answer, not
+    // just untidy output; it also put the harness's random run id into error
+    // text, which a golden cannot match twice.
+    const here = await call(fake, '/whereami?x=1', { runInPath: 'u1', tenant: 'shared' })
+    check(
+      'a handler sees the path WITHOUT the run prefix',
+      (here.json as { path: string }).path === '/whereami',
+      JSON.stringify(here.json),
+    )
+    check(
+      'but a URL it mints to be followed BACK keeps the prefix',
+      (here.json as { self: string }).self === '/_run/u1/whereami',
+      JSON.stringify(here.json),
+    )
+    const bare = await call(fake, '/whereami?x=1')
+    check(
+      'and carries no prefix when the request arrived without one',
+      (bare.json as { self: string }).self === '/whereami',
+      JSON.stringify(bare.json),
+    )
+    check(
+      'while still being told which run it is in, with the query intact',
+      (here.json as { run: string }).run === 'u1' &&
+        (here.json as { query: string }).query === '?x=1',
+      JSON.stringify(here.json),
+    )
+    const clash = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'u1',
+      body: { run: 'u2', tenants: ['shared'] },
+    })
+    check(
+      'a body naming a different run than the prefix is refused',
+      clash.status === 400,
+      JSON.stringify(clash.json),
+    )
+
+    process.stdout.write('\n18. a run copied from the seeded template is complete\n')
+    // A new run is served by copying a template that was itself seeded once,
+    // rather than by seeding again. The hazard is SQLite's -wal: only the last
+    // connection to close folds it back into the .db, so snapshotting a LIVE
+    // run file captures a database missing its most recent commits. The
+    // template is therefore built in a throwaway run that is disconnected
+    // first, and this is what proves that worked: a copied run must be
+    // indistinguishable from one that ran the seed itself.
+    const copied = await call(fake, '/boards/brd_1/cards', { runInPath: 'w1', tenant: 'x' })
+    check('a run never reset yet is not served', copied.status === 401, JSON.stringify(copied.json))
+    await call(fake, '/reset', { method: 'POST', runInPath: 'w1', body: { tenants: ['x'] } })
+    const fromTemplate = await call(fake, '/boards/brd_1/cards', { runInPath: 'w1', tenant: 'x' })
+    const fromSeed = await call(fake, '/boards/brd_1/cards')
+    check(
+      'and once seeded it matches a run that seeded itself, exactly',
+      JSON.stringify(fromTemplate.json) === JSON.stringify(fromSeed.json),
+      `${JSON.stringify(fromTemplate.json)} vs ${JSON.stringify(fromSeed.json)}`,
+    )
+    // The row report has to survive too: a run served from a copy never ran
+    // the seed that counts them, so /reset would answer an empty report.
+    const report = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'w2',
+      body: { tenants: ['x'] },
+    })
+    check(
+      'and /reset still reports the rows it would have seeded',
+      Object.keys(rowsOf(report.json, 'x') as Record<string, JsonValue>).length > 0,
+      JSON.stringify(rowsOf(report.json, 'x')),
+    )
+
+    process.stdout.write('\n19. a seed that fails leaves nothing behind\n')
+    const boom = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'v1',
+      body: { tenants: ['boom'] },
+    })
+    check('a reset whose afterSeed throws is 500', boom.status === 500, JSON.stringify(boom.json))
+    // The tenant must NOT count as seeded: it was marked at the START of the
+    // reset once, which served a half-built world as a valid one.
+    const afterBoom = await call(fake, '/boards', { runInPath: 'v1', tenant: 'boom' })
+    check(
+      'and the tenant it failed on is not served',
+      afterBoom.status === 401,
+      JSON.stringify(afterBoom.json),
+    )
+    // And the pool must not be wedged. The failed build's promise is evicted
+    // so this retries the seed rather than replaying the rejection, which is
+    // exactly why its throwaway client and files have to be cleaned up too.
+    const recover = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'v2',
+      body: { tenants: ['fine'] },
+    })
+    check('a later reset still works', recover.status === 200, JSON.stringify(recover.json))
+    check(
+      'and serves its data',
+      (await call(fake, '/boards', { runInPath: 'v2', tenant: 'fine' })).status === 200,
+      JSON.stringify((await call(fake, '/boards', { runInPath: 'v2', tenant: 'fine' })).json),
+    )
+    // Retried twice, because the first failure is the one that evicts and the
+    // second is the one that would replay a remembered rejection.
+    const boomAgain = await call(fake, '/reset', {
+      method: 'POST',
+      runInPath: 'v3',
+      body: { tenants: ['boom'] },
+    })
+    check(
+      'a repeat of the failing reset still reaches the seed',
+      boomAgain.status === 500,
+      JSON.stringify(boomAgain.json),
+    )
+
+    process.stdout.write('\n20. a request cannot preempt a run being installed\n')
+    // The fake that opts OUT of the unknown-tenant refusal is the one at risk,
+    // because nothing holds its requests while a reset runs. Building a ctx
+    // calls pool.client(run), which CREATES the run from the schema-only
+    // template; the reset then found that client already there and never
+    // copied its seeded one, so the run stayed empty and the reset still
+    // answered 200. Probed on github before the fix: 0 rows where 357 were
+    // expected.
+    const lazy = await launch({ SELFTEST_LAZY_TENANTS: '1' })
+    try {
+      const resetting = call(lazy, '/reset', {
+        method: 'POST',
+        runInPath: 'z1',
+        body: { tenants: ['slow'] },
+      })
+      // Into the middle of the seed, which tenant `slow` holds open for 300ms.
+      await new Promise((ok) => setTimeout(ok, 100))
+      // /_kit/health describes the caller's own worlds, so the throwaway the
+      // template is built in must never appear among them. It used to, for the
+      // length of the seed, because it was registered in the same client map
+      // runs() reads.
+      const mid = await call(lazy, '/_kit/health')
+      check(
+        'health lists no internal build while one is running',
+        (mid.json as { runs: string[] }).runs.every((r) => !r.startsWith('_')),
+        JSON.stringify(mid.json),
+      )
+      const raced = await call(lazy, '/boards', { runInPath: 'z1', tenant: 'slow' })
+      const done = await resetting
+      check('the reset succeeds', done.status === 200, JSON.stringify(done.json))
+      check(
+        'the raced request waited for it rather than creating an empty run',
+        raced.status === 200 && (raced.json as { boards: unknown[] }).boards.length === 2,
+        JSON.stringify(raced.json),
+      )
+      check(
+        'and the run really holds its data afterwards',
+        titles((await call(lazy, '/boards/brd_1/cards', { runInPath: 'z1', tenant: 'slow' })).json)
+          .length === 3,
+        JSON.stringify(
+          titles(
+            (await call(lazy, '/boards/brd_1/cards', { runInPath: 'z1', tenant: 'slow' })).json,
+          ),
+        ),
+      )
+      // Opting out is still opting out: an unseeded tenant is served, not
+      // refused, which is what dropbox needs and what a blanket refusal broke.
+      const lazyMiss = await call(lazy, '/boards', { runInPath: 'z2', tenant: 'never' })
+      check(
+        'a fake that declares no unknownTenant still serves an unseeded tenant',
+        lazyMiss.status === 200,
+        JSON.stringify(lazyMiss.json),
+      )
+    } finally {
+      lazy.child.kill('SIGTERM')
+    }
 
     process.stdout.write(`\nselftest: ${String(checks)} checks passed\n`)
   } finally {

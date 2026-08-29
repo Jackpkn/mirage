@@ -19,7 +19,7 @@ import { scriptStringError } from '../../runtime/base.ts'
  *
  * In code, scripts and policies are functions; a plain string is almost
  * always a script that should live next to the workspace yaml and be
- * referenced there (`script:` on an entry, `policy:` on the workspace),
+ * referenced there (`script:` on an entry, `route_policy:` on the workspace),
  * where the loader wraps it as a ScriptSource.
  *
  * Twin of python's `workspace/workspace/guard.py`. The message itself

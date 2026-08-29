@@ -8,8 +8,10 @@ A workspace serves every agent the same mounts; a **profile** decides what
 one session sees of them and what it may run. Profiles are declared on the
 workspace, sessions are created under one, and every command line an agent
 types passes the same admission gate before anything runs. This page is
-about that gate. (Routing a line to a runtime is a different decision,
-made by the [policy engine](/home/policy-engine).)
+about that gate as the profile document states it; the
+[policy engine](/home/policy-engine) is the mechanism underneath, and
+what a host extends in code. (Routing a line to a runtime is a
+different decision, made by the [route policy](/home/route-policy).)
 
 ```yaml
 mode: WRITE

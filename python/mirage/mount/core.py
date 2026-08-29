@@ -13,12 +13,14 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import errno
+import inspect
 import os
 import posixpath
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, cast
 
+from mirage.context import reset_current_session, set_current_session
 from mirage.mount.errors import NO_XATTR
 from mirage.mount.platform.macos import is_macos_metadata
 from mirage.mount.prefetch import PrefetchCache
@@ -37,6 +39,43 @@ class Handle:
     path: str
     data: bytes | None = None
     write_buf: WriteBuf = field(default_factory=list)
+
+
+class _ScopedOps:
+    """An op facade whose every call runs under one session's grants.
+
+    One wrapper rather than a binding at each of the core's twenty-odd
+    op call sites: a core that bound nineteen of them would serve the
+    twentieth with the workspace's full reach, and nothing at the
+    missing call site would look wrong. The adapters bind at their own
+    entry points too, which is harmless -- setting the same contextvar
+    twice changes nothing -- and this is what makes the guarantee hold
+    for a core constructed directly, with no adapter above it.
+
+    Args:
+        inner (Ops): the facade to scope.
+        session (Session): the session whose mount grants apply.
+    """
+
+    __slots__ = ("_inner", "_session")
+
+    def __init__(self, inner: Ops, session: Session) -> None:
+        self._inner = inner
+        self._session = session
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._inner, name)
+        if not inspect.iscoroutinefunction(attr):
+            return attr
+
+        async def scoped(*args: Any, **kwargs: Any) -> Any:
+            token = set_current_session(self._session)
+            try:
+                return await attr(*args, **kwargs)
+            finally:
+                reset_current_session(token)
+
+        return scoped
 
 
 class MountCore:
@@ -70,8 +109,14 @@ class MountCore:
                  ops: Ops,
                  root_prefix: str = "",
                  session: Session | None = None) -> None:
-        self._ops = ops
         self._session = session
+        # Scoped here, not at each call site: see _ScopedOps.
+        # Cast because the proxy answers the facade by delegation
+        # rather than by inheritance: it forwards every attribute and
+        # subclassing Ops would mean re-declaring a surface it does not
+        # own. Every caller below sees an Ops and nothing else.
+        self._ops: Ops = (ops if session is None else cast(
+            "Ops", _ScopedOps(ops, session)))
         # Seconds, matching MountAttrs and the TypeScript twin's Date.
         self._now = time.time()
         self._root = root_prefix.rstrip("/")
@@ -521,11 +566,18 @@ class MountCore:
         await self._ops.symlink(self.resolve(target), stored)
 
     async def unlink(self, path: str) -> None:
-        links = self._ops.links
-        if links is not None and links.is_link(self.resolve(path)):
-            await links.unlink(self.resolve(path))
-            self._forget(path)
-            return
+        """Remove the entry at ``path``, a link entry like any other.
+
+        A link routes through the op door rather than straight to the
+        node table: ``unlink`` is a LINK_ENTRY_OPS member, so the door
+        answers a link path itself, gated by session grants and
+        admission policies and recorded on the ledger. Writing the
+        table here instead let a session-scoped kernel mount delete a
+        link on a mount its profile hides.
+
+        Args:
+            path (str): mount path of the entry to remove.
+        """
         await self._ops.unlink(self.resolve(path))
         self._forget(path)
 

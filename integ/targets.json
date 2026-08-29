@@ -18,15 +18,11 @@
     },
     "databricks": {
       "python": [],
-      "typescript": [
-        "DATABRICKS_ENDPOINT"
-      ]
+      "typescript": []
     },
     "dify": {
       "python": [],
-      "typescript": [
-        "DIFY_ENDPOINT"
-      ]
+      "typescript": []
     },
     "discord": {
       "python": [
@@ -73,9 +69,19 @@
       ]
     },
     "hf": {
-      "python": [],
+      "python": [
+        "HF_URL"
+      ],
       "typescript": [
-        "HF_ENDPOINT"
+        "HF_URL"
+      ]
+    },
+    "hf-hub": {
+      "python": [
+        "HF_HUB_URL"
+      ],
+      "typescript": [
+        "HF_HUB_URL"
       ]
     },
     "http": {
@@ -1403,6 +1409,59 @@
           "backend": "hf",
           "bucket": "res",
           "fixture": "columnar/v1"
+        }
+      ]
+    },
+    {
+      "id": "hf-hub",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "service": "hf-hub",
+      "mounts": [
+        {
+          "path": "/repo",
+          "resource": "hf_models",
+          "backend": "hf_hub",
+          "repo": "integ/repo-v1"
+        },
+        {
+          "path": "/data",
+          "resource": "hf_datasets",
+          "backend": "hf_hub",
+          "repo": "integ/data-v1"
+        },
+        {
+          "path": "/space",
+          "resource": "hf_spaces",
+          "backend": "hf_hub",
+          "repo": "integ/space-v1"
+        }
+      ]
+    },
+    {
+      "id": "cli-hf",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "service": "hf-hub",
+      "facet": "cli",
+      "clis": [
+        "hf"
+      ],
+      "mounts": [
+        {
+          "path": "/repo",
+          "resource": "hf_models",
+          "backend": "hf_hub",
+          "repo": "integ/repo-cli"
+        },
+        {
+          "path": "/scratch",
+          "resource": "ram",
+          "backend": "memory"
         }
       ]
     },

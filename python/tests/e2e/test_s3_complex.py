@@ -31,8 +31,7 @@ from mirage.workspace import Workspace
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 
-s3_cat = next(fn for fn in _S3_COMMANDS for rc in fn._registered_commands
-              if rc.name == "cat" and rc.filetype is None)
+s3_cat = _S3_COMMANDS.require("cat").fn
 LAST_MODIFIED = datetime(2026, 3, 26, tzinfo=timezone.utc)
 
 # Every kit-derived op reaches the store through the driver's single

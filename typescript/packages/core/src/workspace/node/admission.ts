@@ -26,7 +26,7 @@ import type { Ask, CommandContext, CommandRule, AdmissionRules, Deny } from '../
 import { ioRefusal } from '../../policy/match/rule.ts'
 import { hasRules, readsArgs, scopesPaths } from '../../policy/match/reads.ts'
 import type { ValueType } from '../../commands/spec/types.ts'
-import { commandNodes } from '../../runtime/policy/index.ts'
+import { commandNodes } from '../../runtime/routing/index.ts'
 import {
   getParts,
   getRedirects,
@@ -56,11 +56,12 @@ import { specForCommand, specWordBases, specWordKinds } from '../expand/spec_hin
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import {
+  SHELL_NAMES,
   SLASH_KEEPS_LAST,
   WordPolicy,
-  commandVisible,
   followsLastComponent,
   isTool,
+  listed,
   readsSubtrees,
   lookup,
   walksMounts,
@@ -291,6 +292,15 @@ export function redirectPaths(
  * consequences. Nothing here records a request, consumes a grant or
  * reaches the host, which is what makes it safe for `explain`;
  * `admit` adds exactly those and renders.
+ *
+ * `definedFn` is the caller vouching the head word is a shell function
+ * defined by run time. The provision walk vouches for a function its
+ * own script defines — the run stores that definition in the session
+ * before the call, a dry run keeps it in plan state, where neither
+ * `commandVisible` nor `isTool` can see it. The word is then judged
+ * exactly as the run would judge it: exempt from the allow lists
+ * unless a builtin shadows it (`SHELL_NAMES`), and `ctx.tool` false
+ * accordingly.
  */
 export async function gate(
   name: string,
@@ -302,8 +312,10 @@ export async function gate(
   agentId = '',
   stdin: ByteSource | null = null,
   redirects: readonly PathSpec[] = [],
+  definedFn = false,
 ): Promise<Refusal | [CommandContext, Deny | Ask | null]> {
-  if (!commandVisible(name, session)) {
+  const tool = definedFn ? SHELL_NAMES.has(name) : isTool(name, session)
+  if (tool && !listed(name, session)) {
     return { stderr: new TextEncoder().encode(`${name}: command not found\n`), exitCode: 127 }
   }
   const [tokens, program] = programTokens(registry, name, [...args], session.cwd)
@@ -325,7 +337,7 @@ export async function gate(
     agentId,
     tokens,
     program,
-    tool: isTool(name, session),
+    tool,
     walks: walksMounts(name, [name, ...args]),
   }
   return [ctx, await registry.policies.preCommand(ctx)]

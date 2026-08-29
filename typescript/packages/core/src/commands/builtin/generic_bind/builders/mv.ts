@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { PathSpec } from '../../../../types.ts'
-import { mvGeneric, parseMvFlags } from '../../generic/mv.ts'
+import { mvGeneric, parseFlags } from '../../generic/mv.ts'
 import type { Builder } from '../adapter.ts'
 import { refuseReveal } from '../adapter.ts'
 import { overlayableStat } from './cp.ts'
@@ -30,7 +30,7 @@ export const MV_BUILDER: Builder = {
       throw new Error('mv: backend provides no rename op')
     }
     const idx = opts.index ?? undefined
-    const parsed = parseMvFlags(new FlagView(opts.flags, specOf('mv')))
+    const parsed = parseFlags(new FlagView(opts.flags, specOf('mv')))
     return mvGeneric(
       paths,
       overlayableStat(ops, accessor, idx, opts.ns?.statOverlay),

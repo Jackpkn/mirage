@@ -2,7 +2,7 @@ import zlib
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.constants import flag_kwarg_name
@@ -44,10 +44,10 @@ async def gzip(
 ) -> tuple[ByteSource | None, IOResult]:
     if not paths:
         if decompress:
-            source = _resolve_source(stdin,
-                                     "gzip: (stdin): unexpected end of file")
+            source = resolve_source(stdin,
+                                    "gzip: (stdin): unexpected end of file")
             return gzip_decompress_stream(source), IOResult()
-        source = _resolve_source(stdin)
+        source = resolve_source(stdin)
         return gzip_compress_stream(source, level=level), IOResult()
 
     if to_stdout:

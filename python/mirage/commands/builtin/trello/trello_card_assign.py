@@ -18,6 +18,7 @@ from mirage.accessor.trello import TrelloAccessor
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec.types import CommandSpec, FlagView, Option
+from mirage.context import require_mount_writable
 from mirage.core.trello.client import card_assign
 from mirage.core.trello.normalize import normalize_card
 from mirage.io.stream import yield_bytes
@@ -30,7 +31,7 @@ SPEC = CommandSpec(options=(
 ), )
 
 
-@command("trello card assign", resource="trello", spec=SPEC)
+@command("trello card assign", resource="trello", spec=SPEC, write=True)
 async def trello_card_assign(
         accessor: TrelloAccessor, paths: list[PathSpec], texts: list[str],
         opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
@@ -42,6 +43,9 @@ async def trello_card_assign(
     member_id = fl.as_str("member_id")
     if not member_id:
         raise ValueError("--member_id is required")
+    # A card write is addressed by id, not path, so only the mount-wide
+    # grant can admit it (a write-granting carve-out names no card).
+    require_mount_writable()
     card = await card_assign(config, card_id=card_id, member_id=member_id)
     return yield_bytes(
         json.dumps(normalize_card(card),

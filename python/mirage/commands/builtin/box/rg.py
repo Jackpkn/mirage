@@ -19,7 +19,7 @@ from mirage.accessor.box import BoxAccessor
 from mirage.commands.builtin.box.pushdown import narrow_scope
 from mirage.commands.builtin.generic.rg import rg as generic_rg
 from mirage.commands.builtin.generic_bind.adapter import bound_op
-from mirage.commands.builtin.grep_helper import pattern_arg
+from mirage.commands.builtin.grep_pattern import pattern_arg
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec import SPECS

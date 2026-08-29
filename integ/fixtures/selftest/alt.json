@@ -1,0 +1,10 @@
+{
+  "boards": [
+    {
+      "id": "brd_9",
+      "name": "Alternate",
+      "owner": { "id": "own_9", "name": "Grace Hopper" },
+      "cards": [{ "id": "crd_alt", "title": "only-in-alt" }]
+    }
+  ]
+}

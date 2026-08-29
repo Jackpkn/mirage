@@ -14,6 +14,7 @@
 
 import asyncio
 
+from mirage.commands.config import ExecContext
 from mirage.observe.log_entry import EVENT_COMMAND, LogEntry
 from mirage.observe.observer import Observer
 from mirage.resource.history import HistoryViewResource
@@ -52,10 +53,8 @@ async def _drain(stream) -> bytes:
 
 
 async def _history(mount, texts=(), session_id="s1", **flags):
-    stream, io = await mount.execute_cmd("history", [],
-                                         list(texts),
-                                         flags,
-                                         session_id=session_id)
+    stream, io = await mount.execute_cmd("history", [], list(texts), flags,
+                                         ExecContext(session_id=session_id))
     return await _drain(stream), io
 
 

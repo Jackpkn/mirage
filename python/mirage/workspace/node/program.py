@@ -17,9 +17,9 @@ from typing import Any
 from mirage.commands.spec.usage import read_fail_exit
 from mirage.io import IOResult
 from mirage.io.stream import async_chain, materialize
+from mirage.shell.constants import ERREXIT_EXEMPT_TYPES
 from mirage.shell.errors import ExitSignal
 from mirage.shell.helpers import get_text
-from mirage.shell.types import ERREXIT_EXEMPT_TYPES
 from mirage.shell.types import NodeType as NT
 from mirage.utils.errors import format_fs_error
 from mirage.workspace.executor.builtins.exec import divert_statement

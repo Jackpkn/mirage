@@ -15,13 +15,12 @@
 import { IOResult } from '../../../../io/types.ts'
 import type { CallStack } from '../../../../shell/call_stack.ts'
 import { parseOptionWord } from '../../../../shell/options.ts'
-import { SET_OPTION_DEFAULTS, SET_OPTION_NAMES } from '../../../../shell/types.ts'
+import { SET_OPTION_DEFAULTS, SET_OPTION_NAMES } from '../../../../shell/constants.ts'
 import type { Session } from '../../../session/session.ts'
 import { visibleEnv } from '../../../session/state.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result } from '../shared.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 export function handleSet(
   args: string[],

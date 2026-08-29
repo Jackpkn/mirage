@@ -14,14 +14,14 @@
 
 import type { S3Accessor } from '../../../accessor/s3.ts'
 import { ResourceName } from '../../../types.ts'
-import type { RegisteredCommand } from '../../config.ts'
+import { CommandCatalog } from '../../config.ts'
 import { resolveGlobOf } from '../generic_bind/adapter.ts'
 import { makeGenericCommands } from '../generic_bind/index.ts'
 import { withDefaultProvisions } from '../generic_bind/provision.ts'
 import { makeObjectStoreCommands, OBJECT_STORE_OVERRIDES } from '../object_store/index.ts'
 import { S3_IO } from './io.ts'
 
-export const S3_COMMANDS: readonly RegisteredCommand[] = [
+export const S3_COMMANDS = new CommandCatalog([
   ...makeGenericCommands<S3Accessor>(ResourceName.S3, S3_IO, {
     overrides: OBJECT_STORE_OVERRIDES,
   }),
@@ -31,4 +31,4 @@ export const S3_COMMANDS: readonly RegisteredCommand[] = [
     resolveGlobOf(S3_IO),
     S3_IO.readdir,
   ),
-]
+])

@@ -47,16 +47,17 @@ export {
 } from './fixture.ts'
 export { HEALTH_PATH, RESET_PATH, createKitServer, makeRuntime, parseBody } from './http.ts'
 export { Minter } from './mint.ts'
-export { parsePort } from './port.ts'
+export { checkArgv, parseFixture, parsePort } from './port.ts'
 export { parseRange, rangeHeaderOf, rangeReply } from './range.ts'
 export type { ByteRange } from './range.ts'
 export { Router, compilePath, route } from './route.ts'
 export type { Ctx, KitHandler, KitRoute, Matched } from './route.ts'
-export { applyReset, defaultTenantsOf, parseResetBody } from './reset.ts'
+export { applyReset, defaultTenantsOf, parseResetBody, withPathRun } from './reset.ts'
 export {
   DEFAULT_RUN,
   DEFAULT_TENANT,
   RUN_HEADER,
+  RUN_PREFIX,
   RUN_QUERY,
   TENANT_FIELD,
   TENANT_HEADER,
@@ -66,6 +67,7 @@ export {
   resolveRun,
   resolveTenant,
   runId,
+  splitRunPath,
   tenantKeyName,
   tenantWhere,
 } from './tenant.ts'

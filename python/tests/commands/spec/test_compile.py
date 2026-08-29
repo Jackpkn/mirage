@@ -73,6 +73,20 @@ def test_compile_is_cached_per_spec():
     assert compile_spec(spec) is compile_spec(spec)
 
 
+def test_option_requires_a_spelling():
+    with pytest.raises(ValueError, match="requires a short or long spelling"):
+        compile_spec(CommandSpec(options=(Option(), )))
+
+
+@pytest.mark.parametrize("options", (
+    (Option(short="-m"), Option(short="-m", type="str")),
+    (Option(long="--mode"), Option(long="--mode", type="str")),
+))
+def test_duplicate_option_spellings_are_spec_errors(options):
+    with pytest.raises(ValueError, match="duplicate option spelling"):
+        compile_spec(CommandSpec(options=options))
+
+
 def test_count_choices_required_default_tables():
     spec = CommandSpec(options=(
         Option(short="-v", long="--verbose", count=True),

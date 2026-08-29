@@ -25,6 +25,39 @@ import { renderHelp } from './spec/help.ts'
 import { CommandSpec, Option, type FlagValue } from './spec/types.ts'
 
 /**
+ * The execution context `Mount.executeCmd` takes: everything the
+ * workspace supplies for one invocation beyond the parsed line — the
+ * one bag its fifth argument has always been, now named (mirrors
+ * Python's `ExecContext`, commands/config.py). `executeCmd` re-boxes
+ * these onto `CommandOpts` beside the facts only the mount can supply
+ * (mountPrefix, index, filetypeFns), so every field is spelled exactly
+ * as `CommandOpts` spells it — pinned by a mapped type in
+ * workspace/mount/mount.test.ts. The two exceptions are execution
+ * controls `executeCmd` consumes itself rather than forwards:
+ * `limitOverride` (the caller-resolved limit guard), while `signal`
+ * both rides onto `CommandOpts` and arms the guard. `sessionView`
+ * stays although no opts reader wants it today, because
+ * `CLIDoors.sessionView` has production readers and the doors record
+ * is pinned to be a subset of `CommandOpts`.
+ */
+export interface ExecContext {
+  stdin?: ByteSource | null
+  cwd?: string
+  dispatch?: DispatchFn
+  sessionId?: string
+  env?: Record<string, string>
+  sessionView?: SessionView
+  execAllowed?: boolean
+  execPathAllowed?: (virtual: string) => boolean
+  runtime?: Runtime
+  ns?: NamespaceView
+  statPath?: StatPath
+  readdirPath?: ReaddirPath
+  signal?: AbortSignal
+  limitOverride?: Limit | null
+}
+
+/**
  * The dispatcher context of one command invocation, as one value.
  * `Mount.executeCmd` constructs it once and hands it to every handler
  * as the fourth argument; the provision path builds the same bag with
@@ -115,6 +148,11 @@ export interface RegisteredCommandInit {
   limit?: Limit | null
 }
 
+export interface RegisteredCommandOverrides {
+  fn?: CommandFn
+  provision?: ProvisionFn | null
+}
+
 export class RegisteredCommand {
   readonly name: string
   readonly spec: CommandSpec
@@ -140,6 +178,67 @@ export class RegisteredCommand {
     this.dst = init.dst ?? null
     this.write = init.write ?? false
     this.limit = init.limit ?? null
+    Object.freeze(this)
+  }
+
+  /** Return an independent command definition with selected changes. */
+  withOverrides(overrides: RegisteredCommandOverrides): RegisteredCommand {
+    return new RegisteredCommand({
+      name: this.name,
+      spec: this.spec,
+      resource: this.resource,
+      filetype: this.filetype,
+      fn: overrides.fn ?? this.fn,
+      provisionFn: overrides.provision === undefined ? this.provisionFn : overrides.provision,
+      aggregate: this.aggregate,
+      src: this.src,
+      dst: this.dst,
+      write: this.write,
+      limit: this.limit,
+    })
+  }
+}
+
+/** Immutable command array with exact name/filetype lookup. */
+export class CommandCatalog extends Array<RegisteredCommand> {
+  readonly #byKey: ReadonlyMap<string, RegisteredCommand>
+
+  constructor(commands: readonly RegisteredCommand[]) {
+    super(...commands)
+    const byKey = new Map<string, RegisteredCommand>()
+    for (const command of commands) {
+      byKey.set(CommandCatalog.key(command.name, command.filetype), command)
+    }
+    this.#byKey = byKey
+    Object.freeze(this)
+  }
+
+  get size(): number {
+    return this.length
+  }
+
+  toArray(): readonly RegisteredCommand[] {
+    return this
+  }
+
+  get(name: string, filetype: string | null = null): RegisteredCommand | null {
+    return this.#byKey.get(CommandCatalog.key(name, filetype)) ?? null
+  }
+
+  require(name: string, filetype: string | null = null): RegisteredCommand {
+    const command = this.get(name, filetype)
+    if (command === null) {
+      throw new Error(`command '${name}' with filetype ${String(filetype)} is not registered`)
+    }
+    return command
+  }
+
+  private static key(name: string, filetype: string | null): string {
+    return `${name}\0${filetype ?? ''}`
+  }
+
+  static override get [Symbol.species](): ArrayConstructor {
+    return Array
   }
 }
 

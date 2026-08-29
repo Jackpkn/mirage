@@ -12,28 +12,16 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import re
-
 from mirage.io import IOResult
-from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.errors import ArithError
 from mirage.types import PathSpec, word_text
 from mirage.utils.path import resolve_path
+from mirage.workspace.executor.builtins.constants import IDENTIFIER_RE
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
-from mirage.workspace.session import Session
-from mirage.workspace.session.state import session_view
 from mirage.workspace.types import ExecutionNode
-
-Result = tuple[ByteSource | None, IOResult, ExecutionNode]
-
-IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-# An assignment target with an optional subscript (`name` or `name[sub]`).
-# A subscript must be non-empty: bash rejects `a[]` as an invalid
-# identifier, while `a[ ]` is a valid arithmetic 0.
-TARGET_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[(.+)\])?\Z")
 
 
 def result(
@@ -217,17 +205,26 @@ async def expand_operands(
     return out
 
 
-def view_of(session: Session, state: SessionView | None) -> SessionView:
-    """The session view to write through.
+def require_view(state: SessionView | None) -> SessionView:
+    """The gated session view this builtin writes through.
 
-    Production callers thread the workspace's gated view; a direct
-    invocation (a unit test) gets an ungated one over the same session.
+    Every session write goes through the workspace's gated view, which
+    is what makes ``pre_session`` rules enforceable; this used to fall
+    back to an ungated view over the same session, so a caller that
+    forgot to thread one silently wrote past every policy. A write
+    reached without a view is a wiring bug, not a mode, so it raises.
 
     Args:
-        session (Session): shell session state.
         state (SessionView | None): the caller's view, if threaded.
+
+    Raises:
+        RuntimeError: no view was threaded.
     """
-    return state if state is not None else session_view(session)
+    if state is None:
+        raise RuntimeError(
+            "builtin reached a session write without the workspace's gated "
+            "session view; thread state= from the executor arm")
+    return state
 
 
 def refusal(cmd: str, exc: PolicyDenied) -> Result:
@@ -241,6 +238,37 @@ def refusal(cmd: str, exc: PolicyDenied) -> Result:
     return None, IOResult(exit_code=1, stderr=err), ExecutionNode(command=cmd,
                                                                   exit_code=1,
                                                                   stderr=err)
+
+
+def read_only_error(cmd: str, namespace: Namespace, path: PathSpec) -> str:
+    """Render the mirage read-only refusal, naming the mount.
+
+    The voice ``Mount.execute_cmd`` uses when a command's own mount
+    region is unwritable, so a refusal reached from anywhere else says
+    the same thing: ``rm`` of a symlink is answered by the node table
+    rather than the mount, and rendering it in GNU's per-operand voice
+    made one read-only grant speak twice about the same mount.
+
+    It names the mount, not the operand, so two refused operands on one
+    mount produce one line and callers collecting several must drop the
+    duplicates. A refusal keyed to a *path* rather than a mount region
+    (a read-only rename destination on another mount) is not this
+    message: those keep GNU's per-operand wording, as the backend path
+    does.
+
+    A path no mount owns (an attr overlay or link above every mount,
+    gated on its ``/`` turf) has no prefix to blame, so the refusal
+    keeps GNU's own phrase instead of naming a mount that is not there.
+
+    Args:
+        cmd (str): command name.
+        namespace (Namespace): addressing authority (mount lookup).
+        path (PathSpec): the refused path.
+    """
+    mount = namespace.try_mount_for(path.virtual)
+    if mount is None:
+        return f"{cmd}: {path.virtual}: Read-only file system\n"
+    return f"{cmd}: read-only mount at {mount.prefix}\n"
 
 
 def readonly_refusal(cmd: str, name: str) -> Result:

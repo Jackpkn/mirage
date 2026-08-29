@@ -126,7 +126,7 @@ export class S3Resource extends BaseResource implements Resource {
   }
 
   commands(): readonly RegisteredCommand[] {
-    return S3_COMMANDS
+    return S3_COMMANDS.toArray()
   }
 
   ops(): readonly RegisteredOp[] {

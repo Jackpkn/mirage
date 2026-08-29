@@ -14,11 +14,11 @@
 
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
-from mirage.shell.types import (SET_OPTION_DEFAULTS, SET_OPTION_NAMES,
-                                SHOPT_DEFAULTS, SHOPT_UNSUPPORTED)
+from mirage.shell.constants import (SET_OPTION_DEFAULTS, SET_OPTION_NAMES,
+                                    SHOPT_DEFAULTS, SHOPT_UNSUPPORTED)
 from mirage.workspace.executor.builtins.getopt import last_of, scan_options
-from mirage.workspace.executor.builtins.shared import Result, fail
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import fail
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.types import ExecutionNode
 

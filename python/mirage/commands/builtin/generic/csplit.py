@@ -2,7 +2,7 @@ import re
 from collections.abc import Awaitable, Callable
 
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
@@ -54,7 +54,7 @@ async def csplit(
     if paths:
         raw = await read_bytes(paths[0])
     else:
-        stdin_raw = await _read_stdin_async(stdin)
+        stdin_raw = await read_stdin_async(stdin)
         raw = stdin_raw if stdin_raw is not None else b""
     text = raw.decode(errors="replace")
     lines = split_lines(text)

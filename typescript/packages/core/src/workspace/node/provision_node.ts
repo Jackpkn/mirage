@@ -48,6 +48,7 @@ import { expandAndClassify, expandParts } from '../expand/parts.ts'
 import { expandRedirects } from '../expand/redirects.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
+import { gate } from './admission.ts'
 import { handleCommandProvision } from '../provision/command.ts'
 import {
   handleForProvision,
@@ -99,20 +100,89 @@ interface ProvisionContext {
   registry: MountRegistry
   executeFn: ExecuteFn
   namespace?: Namespace | null
+  agentId?: string
 }
 
 /**
  * Walk-local planner state. Function definitions seen during this
  * plan are recorded here (not on the session: planning must not
  * mutate shell state), and `planning` guards recursive functions
- * from looping the planner.
+ * from looping the planner. `gated` hands the REDIRECT arm's
+ * admission verdict (its classified words, keyed by the command
+ * node) to the inner COMMAND arm: the run admits a redirected
+ * command once, with its targets, so the plan must not consult
+ * `preCommand` a second time for the same statement. Each entry is
+ * deleted by the recursion that consumes it.
  */
 interface PlanScope {
   functions: Map<string, TSNodeLike[]>
   planning: Set<string>
+  gated: Map<TSNodeLike, (string | PathSpec)[]>
 }
 
 // Plan one redirected command: expand targets, cost, degrade. A cmdsub
+/**
+ * Ask the run's own admission about one COMMAND node before any of it
+ * is planned.
+ *
+ * The executor admits every command class at one chokepoint — shell
+ * builtins, functions, and mount commands alike, with the statement's
+ * redirect targets judged on the same call (`runArgv`) — so the plan
+ * walk asks the same question in the same place: ahead of the function
+ * and builtin arms, and with the redirect targets when the REDIRECT
+ * arm is the caller. A dry run stats and lists to estimate, and a
+ * refused command's byte counts are exactly what the refusal is
+ * protecting, so a command the chain would deny — or would hold for an
+ * approval no dry run can obtain — plans as an honest UNKNOWN before
+ * anything prices it. `gate` is the dry-run half of `admit` (no
+ * request recorded, no grant consumed, no ask raised). One residual,
+ * deliberate: the estimator's own backend reads run against the
+ * accessor directly, so `preOps` rules do not see them. A name the
+ * walk's own script defines is vouched visible (`assumeVisible`): the
+ * run stores that function in the session before the call, the dry run
+ * keeps it in plan state.
+ *
+ * Returns `[refusal, classified]`: the honest UNKNOWN plan when the
+ * gate refuses, else null, beside the classified words that feed the
+ * mount-command estimate.
+ */
+async function gateCommand(
+  ctx: ProvisionContext,
+  name: string,
+  parts: TSNodeLike[],
+  session: Session,
+  planScope: PlanScope,
+  redirects: readonly PathSpec[] = [],
+): Promise<[ProvisionResult | null, (string | PathSpec)[]]> {
+  const expanded = await expandParts(parts, session, ctx.executeFn)
+  const classified = classifyParts(expanded, ctx.registry, session.cwd)
+  const head = classified[0]
+  const cmdName = head === undefined ? name : head instanceof PathSpec ? head.virtual : head
+  const cmdArgs = classified.slice(1).map((p) => (p instanceof PathSpec ? p.virtual : p))
+  const verdict = await gate(
+    cmdName,
+    cmdArgs,
+    classified.slice(1),
+    session,
+    ctx.registry,
+    ctx.namespace ?? null,
+    ctx.agentId ?? '',
+    null,
+    redirects,
+    planScope.functions.has(name), // definedFn: the walk vouches its own definitions
+  )
+  if (!Array.isArray(verdict) || verdict[1] !== null) {
+    return [
+      new ProvisionResult({
+        command: [cmdName, ...cmdArgs].join(' '),
+        precision: Precision.UNKNOWN,
+      }),
+      classified,
+    ]
+  }
+  return [null, classified]
+}
+
 // target expands empty under provision, so its classification is
 // garbage; the precision degrade keeps the plan honest without costing
 // a phantom write.
@@ -120,6 +190,7 @@ async function provisionRedirected(
   ctx: ProvisionContext,
   recurse: (n: TSNodeLike, s: Session) => Promise<ProvisionResult>,
   recurseUnknown: (n: unknown, s: Session) => Promise<ProvisionResult>,
+  planScope: PlanScope,
   command: unknown,
   redirects: Redirect[],
   session: Session,
@@ -139,6 +210,37 @@ async function provisionRedirected(
       continue
     }
     targets.push([r.kind, r.target])
+  }
+  // The run judges redirect targets on the same admit call as the
+  // command ("their I/O runs on the shell's own fds"), so the plan
+  // gates them together too, before a `< file` source is priced as a
+  // read: a refused `read < /secret` must not stat the secret. Only a
+  // plain COMMAND node gates here; a compound's inner commands each
+  // gate on their own recursion.
+  if (
+    command !== null &&
+    command !== undefined &&
+    nodeKind(command as TSNodeLike) === NodeKind.COMMAND
+  ) {
+    const cmdNode = command as TSNodeLike
+    const name = getCommandName(cmdNode)
+    const [, cmdParts] = splitEnvPrefix(getParts(cmdNode))
+    if (cmdParts.length > 0) {
+      const [refusal, classified] = await gateCommand(
+        ctx,
+        name,
+        cmdParts,
+        session,
+        planScope,
+        targets.map(([, t]) => t),
+      )
+      if (refusal !== null) return refusal
+      // This verdict, judged with its redirects, covers the whole
+      // statement: the recursion below re-plans the same COMMAND node,
+      // and it consumes this instead of consulting `preCommand` a
+      // second time for one command.
+      planScope.gated.set(cmdNode, classified)
+    }
   }
   const result = await handleRedirectProvision(
     recurseUnknown,
@@ -182,7 +284,11 @@ export async function provisionNode(
   session: Session,
   scope?: PlanScope,
 ): Promise<ProvisionResult> {
-  const planScope: PlanScope = scope ?? { functions: new Map(), planning: new Set() }
+  const planScope: PlanScope = scope ?? {
+    functions: new Map(),
+    planning: new Set(),
+    gated: new Map(),
+  }
   const recurse = (n: TSNodeLike, s: Session): Promise<ProvisionResult> =>
     provisionNode(ctx, n, s, planScope)
   const recurseUnknown = (n: unknown, s: Session): Promise<ProvisionResult> =>
@@ -209,16 +315,28 @@ export async function provisionNode(
 
   if (kind === NodeKind.COMMAND) {
     const name = getCommandName(node)
+    const [, parts] = splitEnvPrefix(getParts(node))
+    if (parts.length === 0) return new ProvisionResult({ precision: Precision.EXACT })
+    // The gate fires ahead of the function and builtin arms, mirroring
+    // the executor's chokepoint: a denied function must not have its
+    // body walked, and a denied builtin must not come back as an
+    // admitted-looking EXACT plan. A REDIRECT arm that already admitted
+    // this very node (with its targets) hands its verdict down instead
+    // of a second `preCommand` consultation.
+    let classified = planScope.gated.get(node)
+    if (classified !== undefined) {
+      planScope.gated.delete(node)
+    } else {
+      const [refusal, gatedWords] = await gateCommand(ctx, name, parts, session, planScope)
+      if (refusal !== null) return refusal
+      classified = gatedWords
+    }
     const funcBody =
       planScope.functions.get(name) ?? (session.functions[name] as TSNodeLike[] | undefined)
     if (funcBody !== undefined) {
       return handleFunctionProvision(recurseUnknown, name, funcBody, planScope.planning, session)
     }
     if (BUILTIN_NAMES.has(name)) return handleBuiltinProvision()
-    const [, parts] = splitEnvPrefix(getParts(node))
-    if (parts.length === 0) return new ProvisionResult({ precision: Precision.EXACT })
-    const expanded = await expandParts(parts, session, ctx.executeFn)
-    const classified = classifyParts(expanded, ctx.registry, session.cwd)
     const result = await handleCommandProvision(
       ctx.registry,
       classified,
@@ -251,11 +369,11 @@ export async function provisionNode(
       const [left, op, right] = getListParts(command)
       const wrapped = (n: unknown, s: Session): Promise<ProvisionResult> =>
         n === right
-          ? provisionRedirected(ctx, recurse, recurseUnknown, right, redirects, s)
+          ? provisionRedirected(ctx, recurse, recurseUnknown, planScope, right, redirects, s)
           : recurseUnknown(n, s)
       return handleConnectionProvision(wrapped, left, op ?? '&&', right, session)
     }
-    return provisionRedirected(ctx, recurse, recurseUnknown, command, redirects, session)
+    return provisionRedirected(ctx, recurse, recurseUnknown, planScope, command, redirects, session)
   }
 
   if (kind === NodeKind.IF) {

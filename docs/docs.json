@@ -77,6 +77,7 @@
               "home/observer",
               "home/permissions",
               "home/policy-engine",
+              "home/route-policy",
               "home/auth"
             ]
           },
@@ -187,6 +188,7 @@
               "home/setup/cli/ntn",
               "home/setup/cli/linear",
               "home/setup/cli/gh",
+                "home/setup/cli/hf",
               "home/setup/cli/git"
             ]
           },
@@ -369,6 +371,7 @@
             "group": "CLIs",
             "pages": [
               "python/cli/index",
+              "python/cli/custom",
               "python/cli/himalaya",
               "python/cli/gws",
               "python/cli/slack",
@@ -376,6 +379,7 @@
               "python/cli/ntn",
               "python/cli/linear",
               "python/cli/gh",
+                "python/cli/hf",
               "python/cli/git"
             ]
           },
@@ -557,6 +561,7 @@
             "group": "CLIs",
             "pages": [
               "typescript/cli/index",
+              "typescript/cli/custom",
               "typescript/cli/himalaya",
               "typescript/cli/gws",
               "typescript/cli/slack",
@@ -564,6 +569,7 @@
               "typescript/cli/ntn",
               "typescript/cli/linear",
               "typescript/cli/gh",
+                "typescript/cli/hf",
               "typescript/cli/git"
             ]
           },

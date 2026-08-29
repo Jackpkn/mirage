@@ -22,14 +22,13 @@ import {
   runWithOpPolicies,
 } from '../../context/session_context.ts'
 import type { Runtime } from '../../runtime/base.ts'
-import type { PolicyDecision } from '../../runtime/policy/index.ts'
+import type { RouteDecision } from '../../runtime/routing/index.ts'
 import { mergeSignals } from '../abort.ts'
 import { type ByteSource, IOResult, materialize } from '../../io/types.ts'
 import type { Resource } from '../../resource/base.ts'
 import { encodeText } from '../../shell/bytes.ts'
 import type { CallStack } from '../../shell/call_stack.ts'
 import {
-  ProcessSubDirection,
   getCommandName,
   getParts,
   getProcessSubBody,
@@ -38,7 +37,7 @@ import {
   splitEnvPrefix,
 } from '../../shell/helpers.ts'
 import type { JobTable } from '../../shell/job_table/index.ts'
-import { NodeType as NT } from '../../shell/types.ts'
+import { NodeType as NT, ProcessSubDirection } from '../../shell/types.ts'
 import { PathSpec, wordText } from '../../types.ts'
 import { Argv, expandArgv } from '../expand/argv.ts'
 import { expandBoundaryGlobs } from '../expand/globs.ts'
@@ -98,7 +97,7 @@ export async function executeCommand(
   jobTable: JobTable | null,
   ensureOpen?: (resource: Resource) => Promise<void>,
   runtimeBindings?: Record<string, Runtime>,
-  routingDecision?: PolicyDecision,
+  routingDecision?: RouteDecision,
   signal?: AbortSignal,
   // Parse one line into a tree; only alias expansion needs it. Absent
   // means an alias is stored and printed but never expanded.
@@ -293,7 +292,7 @@ async function runCommandBody(
   jobTable: JobTable | null,
   ensureOpen?: (resource: Resource) => Promise<void>,
   runtimeBindings?: Record<string, Runtime>,
-  routingDecision?: PolicyDecision,
+  routingDecision?: RouteDecision,
   signalIn?: AbortSignal,
   agentId = '',
 ): Promise<Result> {
@@ -448,7 +447,7 @@ async function runArgv(
   jobTable: JobTable | null,
   ensureOpen?: (resource: Resource) => Promise<void>,
   runtimeBindings?: Record<string, Runtime>,
-  routingDecision?: PolicyDecision,
+  routingDecision?: RouteDecision,
   signal?: AbortSignal,
   // The command's line within its parse, which only `alias` reads: a
   // definition remembers where it was made so a use on the same line
@@ -552,6 +551,25 @@ async function runArgv(
   return runWithOpPolicies(registry.policies, () => runWithAdmission(gated, route))
 }
 
+// Drop the refusal lines the command tier already wrote.
+//
+// A mount-mode refusal names the mount, not the operand, so the line the
+// node table wrote for a refused link is the very line Mount.executeCmd
+// writes for the backend operands beside it on the same mount, and
+// `rm dlink file` would say it twice. Compared on the trimmed text, so a
+// trailing-newline difference between the two renderers cannot defeat
+// it. Mirrors Python's unsaid.
+export function unsaid(lines: readonly string[], said: Uint8Array): string[] {
+  if (said.byteLength === 0) return [...lines]
+  const spoken = new Set(
+    new TextDecoder()
+      .decode(said)
+      .split('\n')
+      .map((t) => t.trim()),
+  )
+  return lines.filter((line) => !spoken.has(line.trim()))
+}
+
 async function routeArgv(
   recurse: (
     n: TSNodeLike,
@@ -570,7 +588,7 @@ async function routeArgv(
   jobTable: JobTable | null,
   ensureOpen: ((resource: Resource) => Promise<void>) | undefined,
   runtimeBindings: Record<string, Runtime> | undefined,
-  routingDecision: PolicyDecision | undefined,
+  routingDecision: RouteDecision | undefined,
   signal: AbortSignal | undefined,
   row: number,
 ): Promise<Result> {
@@ -686,6 +704,7 @@ async function routeArgv(
   // the link entry itself (lstat semantics).
   let postUnlink: string | null = null
   let postRename: [string, string] | null = null
+  let linkErrors: string[] = []
   let dispatchArgv = argv
   if (namespace.nodes.size > 0) {
     try {
@@ -699,10 +718,26 @@ async function routeArgv(
         (name === 'rm' || name === 'unlink') &&
         acceptsLine(name, argv.args, operands, session.cwd)
       ) {
-        const [rest, removed] = await stripLinkOperands(namespace, operands)
+        const [rest, handled, stripErrors] = await stripLinkOperands(
+          name,
+          dispatch,
+          namespace,
+          operands,
+          argv.args,
+          session.cwd,
+        )
         operands = rest
-        if (removed > 0 && !rest.some((a) => a instanceof PathSpec)) {
-          return [null, new IOResult(), new ExecutionNode({ command: name, exitCode: 0 })]
+        linkErrors = stripErrors
+        if (handled > 0 && !rest.some((a) => a instanceof PathSpec)) {
+          if (linkErrors.length === 0) {
+            return [null, new IOResult(), new ExecutionNode({ command: name, exitCode: 0 })]
+          }
+          const err = new TextEncoder().encode(linkErrors.join(''))
+          return [
+            null,
+            new IOResult({ exitCode: 1, stderr: err }),
+            new ExecutionNode({ command: name, exitCode: 1, stderr: err }),
+          ]
         }
       } else if (name === 'mv') {
         const prepared = await prepareMv(namespace, dispatch, operands)
@@ -769,6 +804,20 @@ async function routeArgv(
     }
     if (postUnlink !== null) await namespace.unlink(postUnlink)
     if (postRename !== null) await namespace.rename(postRename[0], postRename[1])
+  }
+  if (linkErrors.length > 0) {
+    // A refused link operand fails the line the way a refused backend
+    // operand does: its lines lead (they were reported first) and any
+    // success stays a partial one. Merged after the bookkeeping above
+    // so the operands the backend did remove still shed their node
+    // meta.
+    const enc = new TextEncoder()
+    const tail = io.stderr instanceof Uint8Array ? io.stderr : new Uint8Array(0)
+    io.stderr = concatBytes([enc.encode(unsaid(linkErrors, tail).join('')), tail])
+    if (io.exitCode === 0) io.exitCode = 1
+    const nodeTail = execNode.stderr
+    execNode.stderr = concatBytes([enc.encode(unsaid(linkErrors, nodeTail).join('')), nodeTail])
+    if (execNode.exitCode === 0) execNode.exitCode = 1
   }
   return [stdout, io, execNode]
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { CommandTimeoutError } from '../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../commands/errors.ts'
 import { EvalError } from './errors.ts'
 import { EVALUATOR, isEvaluator, type Evaluator } from './mixin.ts'
-import { ScriptSource } from './policy/types.ts'
+import { ScriptSource } from './routing/types.ts'
 import { CTX_GLOBAL, evalWithCtx, scriptEngine } from './script.ts'
 import type { EvalResult, EvalValue } from './types.ts'
 

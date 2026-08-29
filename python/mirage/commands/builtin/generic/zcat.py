@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from mirage.commands.builtin.utils.operands import (materialized_read,
                                                     merge_split_errors,
                                                     split_readable_coded)
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.commands.config import CommandOpts
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec, PolymorphicReadFn, StatFn
@@ -23,7 +23,7 @@ async def zcat(
         for p in paths:
             parts.append(gziplib.decompress(await read_bytes(p)))
         return b"".join(parts), IOResult()
-    raw = await _read_stdin_async(stdin)
+    raw = await read_stdin_async(stdin)
     if raw is None:
         raise ValueError("zcat: (stdin): unexpected end of file")
     return gziplib.decompress(raw), IOResult()

@@ -18,6 +18,8 @@
 // earlier version threw on !resp.ok here, which made both tools fail on any
 // 4xx and leaked 'fetch failed' onto stderr for a refused connection.
 
+import { HttpConnectError } from '../errors.ts'
+
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; mirage/1.0)'
 const DEFAULT_PORTS: Record<string, number> = { 'http:': 80, 'https:': 443 }
 
@@ -30,23 +32,6 @@ export interface HttpResponse {
 
 export function isHttpError(resp: HttpResponse): boolean {
   return resp.status >= 400
-}
-
-/**
- * The request never got an HTTP response. Carries the host and port rather
- * than the platform's error text, which differs between runtimes and
- * platforms and so cannot be asserted in a cross-language test.
- */
-export class HttpConnectError extends Error {
-  readonly host: string
-  readonly port: number
-
-  constructor(host: string, port: number) {
-    super(`Failed to connect to ${host} port ${String(port)}`)
-    this.name = 'HttpConnectError'
-    this.host = host
-    this.port = port
-  }
 }
 
 function endpoint(url: string): { host: string; port: number } {

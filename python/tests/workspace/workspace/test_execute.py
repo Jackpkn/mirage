@@ -203,7 +203,9 @@ async def test_policy_reads_the_ambient_sessions_cwd():
     store = resource._store
     store.dirs.add("/")
     store.dirs.add("/subdir")
-    ws = Workspace({"/ram/": resource}, mode=MountMode.WRITE, policy=policy)
+    ws = Workspace({"/ram/": resource},
+                   mode=MountMode.WRITE,
+                   route_policy=policy)
 
     @command("policyprobe", resource="ram", spec=CommandSpec())
     async def policyprobe(accessor, paths, texts, opts):

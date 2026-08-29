@@ -13,9 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.base import Accessor
-from mirage.commands.builtin.utils.http import (HttpConnectError,
-                                                _http_form_request,
-                                                _http_request)
+from mirage.commands.builtin.errors import HttpConnectError
+from mirage.commands.builtin.utils.http import http_form_request, http_request
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.commands.registry import command
@@ -35,7 +34,7 @@ EXIT_HTTP_ERROR = 22
 EXIT_WRITE = 23
 
 
-def _resolve_target(o: str | PathSpec, cwd: PathSpec | str | None) -> PathSpec:
+def resolve_target(o: str | PathSpec, cwd: PathSpec | str | None) -> PathSpec:
     if isinstance(o, PathSpec):
         return o
     if o.startswith("/"):
@@ -84,19 +83,19 @@ async def curl(
         if F:
             method = X or "POST"
             key, _, value = F.partition("=")
-            resp = _http_form_request(texts[0],
-                                      method=method,
-                                      form_data={key: value},
-                                      headers=headers,
-                                      follow_redirects=L)
+            resp = http_form_request(texts[0],
+                                     method=method,
+                                     form_data={key: value},
+                                     headers=headers,
+                                     follow_redirects=L)
         else:
             method = X or ("POST" if d else "GET")
             body = d.encode() if d else None
-            resp = _http_request(texts[0],
-                                 method=method,
-                                 headers=headers,
-                                 data=body,
-                                 follow_redirects=L)
+            resp = http_request(texts[0],
+                                method=method,
+                                headers=headers,
+                                data=body,
+                                follow_redirects=L)
     except HttpConnectError as exc:
         err = b"" if quiet else (
             f"curl: ({EXIT_CONNECT}) Failed to connect to {exc.host} port "
@@ -112,7 +111,7 @@ async def curl(
     if isinstance(o, (PathSpec, str)):
         o_str = o.virtual if isinstance(o, PathSpec) else o
         if opts.dispatch is not None:
-            scope = _resolve_target(o, opts.cwd)
+            scope = resolve_target(o, opts.cwd)
             try:
                 await opts.dispatch("write", scope, data=result)
             # WALK_ERRORS is the shared recoverable set (every filesystem error

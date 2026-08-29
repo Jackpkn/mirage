@@ -52,7 +52,7 @@ class Runtime(ABC):
     # wider runtime voids it.
     reach: RuntimeReach = "process"
     # Per-line admission script for the routing ladder, answering "do
-    # I want this line": a callable taking a PolicyContext, or a
+    # I want this line": a callable taking a RouteContext, or a
     # config-borne ScriptSource. None = always willing. Policy, not
     # capability: it can only refuse lines the captures already allow.
     script: Callable[..., Any] | ScriptSource | None = None

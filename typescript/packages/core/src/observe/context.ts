@@ -158,11 +158,21 @@ export function runWithRevisions<T>(
 /**
  * Look up the active revision pin for `path`, or null if no pin is
  * installed (or no revisions context is active).
+ *
+ * Every live frame's map is searched, because pins are mount state
+ * threaded through the context only for reach: each bind hands over
+ * the mount's own map, keyed by full virtual path, so a hit is never
+ * another task's different pin — the same mount binds the same map,
+ * and another mount's map cannot hold this path. On the fallback
+ * storage this is what keeps a pinned read pinned while an unpinned
+ * op's frame shadows the newest slot.
  */
 export function revisionFor(path: string): string | null {
-  const map = revisionsStorage.getStore()?.map
-  if (!map) return null
-  return map.get(path) ?? null
+  for (const state of revisionsStorage.liveStores()) {
+    const pin = state.map?.get(path)
+    if (pin !== undefined) return pin
+  }
+  return null
 }
 
 // Backends name the mount-relative path ('/report.json') and a few name the

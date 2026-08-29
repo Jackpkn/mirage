@@ -16,8 +16,8 @@ import dataclasses
 
 from mirage.ops.config import NamespaceLinks
 from mirage.ops.namespace_view import child_mount_names, namespace_names
+from mirage.shell.constants import SHOPT_DEFAULTS
 from mirage.shell.errors import ExitSignal
-from mirage.shell.types import SHOPT_DEFAULTS
 from mirage.types import PathSpec
 from mirage.utils.glob_walk import (glob_name_matches, glob_pattern, has_glob,
                                     literal_word, spell_match, unmark_globs)

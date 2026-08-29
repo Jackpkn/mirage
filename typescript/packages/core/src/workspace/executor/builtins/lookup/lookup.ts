@@ -17,11 +17,10 @@ import type { MountRegistry } from '../../../mount/registry.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
 import { lastOf, scanOptions } from '../getopt.ts'
-import type { Result } from '../shared.ts'
 import { classifyAll, describe, locations } from './classify.ts'
 import { TYPE_OPTIONS, TYPE_USAGE, WHICH_OPTIONS, WHICH_USAGE } from './constants.ts'
 import { NameKind } from './types.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 /** The refusal shape both builtins use for an unknown option. */
 function optionError(cmd: string, bad: string, usage: string): Result {

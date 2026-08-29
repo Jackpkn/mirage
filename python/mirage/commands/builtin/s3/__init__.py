@@ -18,8 +18,9 @@ from mirage.commands.builtin.generic_bind.provision import \
 from mirage.commands.builtin.object_store import (OBJECT_STORE_OVERRIDES,
                                                   make_object_store_commands)
 from mirage.commands.builtin.s3.io import IO as _IO
+from mirage.commands.registry import CommandCatalog
 
-COMMANDS = [
+COMMANDS = CommandCatalog([
     *make_generic_commands(
         "s3",
         _IO,
@@ -27,4 +28,4 @@ COMMANDS = [
     ),
     *with_default_provisions(make_object_store_commands("s3", _IO), _IO.stat,
                              _IO.resolve_glob, _IO.readdir),
-]
+])

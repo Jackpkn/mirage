@@ -18,9 +18,8 @@ import math
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
 from mirage.workspace.abort import cancellable_sleep
-from mirage.workspace.executor.builtins.shared import Result
 from mirage.workspace.executor.builtins.sleep.constants import SLEEP_INTERVAL
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.types import ExecutionNode
 
 

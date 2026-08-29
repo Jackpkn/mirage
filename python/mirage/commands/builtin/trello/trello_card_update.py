@@ -20,6 +20,7 @@ from mirage.commands.builtin.trello._input import (file_operand,
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command
 from mirage.commands.spec.types import CommandSpec, FlagView, Option
+from mirage.context import require_mount_writable
 from mirage.core.trello.client import card_update
 from mirage.core.trello.normalize import normalize_card
 from mirage.io.stream import yield_bytes
@@ -36,7 +37,7 @@ SPEC = CommandSpec(options=(
 ), )
 
 
-@command("trello card update", resource="trello", spec=SPEC)
+@command("trello card update", resource="trello", spec=SPEC, write=True)
 async def trello_card_update(
         accessor: TrelloAccessor, paths: list[PathSpec], texts: list[str],
         opts: CommandOpts) -> tuple[ByteSource | None, IOResult]:
@@ -62,6 +63,9 @@ async def trello_card_update(
     if closed_flag is not None:
         closed = closed_flag.lower() in ("true", "1", "yes")
     due = fl.as_str("due")
+    # A card write is addressed by id, not path, so only the mount-wide
+    # grant can admit it (a write-granting carve-out names no card).
+    require_mount_writable()
     card = await card_update(
         config,
         card_id=card_id,

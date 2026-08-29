@@ -161,11 +161,17 @@ export async function startMockMcpServer(): Promise<{
         server,
         port: address.port,
         close: async () => {
-          await new Promise<void>((ok) =>
+          // `close` only stops new connections and then WAITS for the open
+          // ones, and the MCP client's keep-alive socket is still open by
+          // then, so the wait ran to node's 300s `requestTimeout` and every
+          // teardown cost five idle minutes. Destroy the sockets too; the
+          // callback fires once they are gone.
+          await new Promise<void>((ok) => {
             server.close(() => {
               ok()
-            }),
-          )
+            })
+            server.closeAllConnections()
+          })
           await rest.close()
         },
       })

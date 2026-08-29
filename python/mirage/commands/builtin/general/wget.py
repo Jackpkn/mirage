@@ -13,8 +13,9 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.accessor.base import Accessor
-from mirage.commands.builtin.general.curl import _resolve_target
-from mirage.commands.builtin.utils.http import HttpConnectError, _http_get
+from mirage.commands.builtin.errors import HttpConnectError
+from mirage.commands.builtin.general.curl import resolve_target
+from mirage.commands.builtin.utils.http import http_get
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
 from mirage.commands.registry import command
@@ -55,7 +56,7 @@ async def wget(
 
     # wget follows redirects unconditionally; it has no -L equivalent.
     try:
-        resp = _http_get(url)
+        resp = http_get(url)
     except HttpConnectError as exc:
         err = b"" if q else (f"Connecting to {exc.host}:{exc.port}... "
                              f"failed: Connection refused.\n").encode()
@@ -84,7 +85,7 @@ async def wget(
     # truncates the -O target before it learns the response code.
     data = b"" if resp.is_error else resp.body
     if dispatch is not None:
-        scope = _resolve_target(dest_raw, opts.cwd)
+        scope = resolve_target(dest_raw, opts.cwd)
         try:
             await dispatch("write", scope, data=data)
         # WALK_ERRORS is the shared recoverable set (every filesystem error

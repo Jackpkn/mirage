@@ -118,7 +118,11 @@ async def test_missing_operand_is_reported_and_exits_one():
 @pytest.mark.asyncio
 async def test_no_operand_walks_the_working_directory():
     """GNU du with no operand summarises '.'; mirage uses the session cwd."""
-    stream, io = await du(_ops(), object(), [], [], CommandOpts(cwd='/db'))
+    stream, io = await du(
+        _ops(), object(), [], [],
+        CommandOpts(cwd=PathSpec(
+            virtual='/db', directory='/db', resource_path='db',
+            resolved=False)))
     assert (await materialize(stream)).decode() == "2\t/db/sub\n5\t/db\n"
     assert io.exit_code == 0
 

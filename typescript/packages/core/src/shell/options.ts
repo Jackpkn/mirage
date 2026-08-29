@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { SET_FLAG_TO_OPTION } from './types.ts'
+import { SET_FLAG_TO_OPTION } from './constants.ts'
 import type { OptionWord } from './types.ts'
 
 /**

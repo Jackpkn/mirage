@@ -6,7 +6,7 @@ from mirage.commands.builtin.utils.limit import truncate_stream
 from mirage.commands.builtin.utils.operands import (normalized_read,
                                                     operands_io,
                                                     split_readable)
-from mirage.commands.builtin.utils.stream import _resolve_source
+from mirage.commands.builtin.utils.stream import resolve_source
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagValue, FlagView
@@ -133,7 +133,7 @@ async def cat_generic(
         if _wants_display(parsed):
             return _display(source, parsed), io
         return source, io
-    source = _resolve_source(opts.stdin, "cat: missing operand")
+    source = resolve_source(opts.stdin, "cat: missing operand")
     if _wants_display(parsed):
         return _display(source, parsed), IOResult()
     return source, IOResult()

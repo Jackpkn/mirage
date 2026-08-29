@@ -38,8 +38,8 @@ from mirage.policy import (AskHandler, Decisions, Explanation,
 from mirage.provision import ProvisionResult
 from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
-from mirage.runtime.policy import PolicyDecision, PolicyFn
 from mirage.runtime.resolver import PrefixResolver
+from mirage.runtime.routing import RouteDecision, RoutePolicy
 from mirage.shell import parse
 from mirage.shell.job_table import ConsoleFactory, JobTable
 from mirage.types import (ConsistencyPolicy, DriftPolicy, FileEvent, FileStat,
@@ -109,7 +109,7 @@ class Workspace:
         session_store: SessionStore | None = None,
         console_factory: ConsoleFactory | None = None,
         runtimes: list[Runtime | str] | None = None,
-        policy: PolicyFn | None = None,
+        route_policy: RoutePolicy | None = None,
         profiles: Mapping[str, SessionProfile | Mapping[str, Any]]
         | None = None,
         profile: str | None = None,
@@ -165,8 +165,9 @@ class Workspace:
         # from the manager by the id the door puts in the context), the
         # profile's script (ScriptPolicy, evaluated per command through
         # the same manager), then Policy instances, then anything added
-        # later through ws.policies.add(). The runtime policy (policy=)
-        # is the line-level counterpart until it is absorbed as a hook.
+        # later through ws.policies.add(). The route policy
+        # (route_policy=) is the line-level counterpart until it is
+        # absorbed as a hook.
         self._registry.policies.add(PermissionsPolicy(self._session_mgr))
         self._script_policy = ScriptPolicy(self._session_mgr,
                                            self._mount_prefixes)
@@ -233,12 +234,12 @@ class Workspace:
         self._original_os_names: dict[str, Callable[..., Any]] | None = None
         self._vfs_loop: asyncio.AbstractEventLoop | None = None
 
-        self._runtimes, self._policy_router = wire_runtime_world(
+        self._runtimes, self._router = wire_runtime_world(
             self._registry, self.dispatch,
-            PrefixResolver(self._ops.mount_prefixes,
+            PrefixResolver(self._sandbox_visible_mounts,
                            self._namespace.link_names_under), runtimes)
-        reject_config_script("policy", policy)
-        self._policy = policy
+        reject_config_script("route_policy", route_policy)
+        self._route_policy = route_policy
 
         # Installed CLIs, fully separate from mounts: the YAML `clis:`
         # section arrives as {head: (spec key or tree, config)}; a spec
@@ -478,6 +479,29 @@ class Workspace:
     def clis(self) -> dict[str, CLIInstall]:
         """Snapshot of the installed CLIs keyed by head word."""
         return self._registry.clis.items()
+
+    def _sandbox_visible_mounts(self) -> list[str]:
+        """The mount prefixes announced to sandboxed runtimes, read live.
+
+        Two are withheld, and neither is withheld for being ``/``. An
+        explicit root mount is forwarded like any other prefix, and a
+        runtime that cannot serve it refuses on its own (pyodide does,
+        because Emscripten already owns ``/``). What is withheld is the
+        history view, which is a shell surface rather than a place to
+        put files, and the synthetic root anchor, which nobody mounted:
+        the workspace adds it so arg-less commands and root listing
+        have somewhere to resolve, so announcing it as a mount would
+        make every runtime report a claim on a resource the embedder
+        never asked for (TS ``sandboxVisibleMounts``).
+        """
+        prefixes: list[str] = []
+        for entry in self._registry.mounts():
+            if entry.prefix in (HISTORY_PREFIX, HISTORY_PREFIX + "/"):
+                continue
+            if self._implicit_root and entry.prefix == "/":
+                continue
+            prefixes.append(entry.prefix)
+        return prefixes
 
     def add_runtime(self, runtime: Runtime | str) -> Runtime:
         """Append a runtime entry to the workspace's ordered set.
@@ -941,7 +965,7 @@ class Workspace:
             cancel: asyncio.Event | None = ...,
             record: bool = ...,
             runtime: str | None = ...,
-            routing_decision: "PolicyDecision | None" = ...) -> IOResult:
+            routing_decision: "RouteDecision | None" = ...) -> IOResult:
         ...
 
     @overload
@@ -958,8 +982,7 @@ class Workspace:
             cancel: asyncio.Event | None = ...,
             record: bool = ...,
             runtime: str | None = ...,
-            routing_decision: "PolicyDecision | None" = ...
-    ) -> ProvisionResult:
+            routing_decision: "RouteDecision | None" = ...) -> ProvisionResult:
         ...
 
     async def execute(
@@ -974,7 +997,7 @@ class Workspace:
         cancel: asyncio.Event | None = None,
         record: bool = True,
         runtime: str | None = None,
-        routing_decision: PolicyDecision | None = None,
+        routing_decision: RouteDecision | None = None,
     ) -> IOResult | ProvisionResult:
         """Execute a shell command in the workspace.
 

@@ -52,11 +52,15 @@ import {
   GWS,
   HIMALAYA,
   GH,
+  HF,
   GIT,
   LINEAR,
   NTN,
   SLACK,
   HfBucketsResource,
+  HfDatasetsResource,
+  HfModelsResource,
+  HfSpacesResource,
   JaegerResource,
   JobConsole,
   LanceDBResource,
@@ -92,7 +96,7 @@ import {
   type ConsoleFactory,
 } from '@struktoai/mirage-node'
 import { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
-import { ScriptSource } from '@struktoai/mirage-core/runtime/policy/types'
+import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/types'
 import * as lancedb from '@lancedb/lancedb'
 import { QdrantClient } from '@qdrant/js-client-rest'
 import { ChromaClient } from 'chromadb'
@@ -106,7 +110,6 @@ import {
 import { integRoot, walkFiles } from './harness.ts'
 import type { ExecWorkspace, Mount, Target } from './harness.ts'
 import { start as startKitFake } from '../../server/kit/typescript/index.ts'
-import { startPythonServer } from './server_process.ts'
 
 export interface Open {
   ws: ExecWorkspace
@@ -167,7 +170,6 @@ const S3_ENDPOINT = process.env.S3_ENDPOINT
 const S3_REGION = process.env.S3_REGION ?? 'us-east-1'
 const S3_ACCESS = process.env.AWS_ACCESS_KEY_ID ?? 'testing'
 const S3_SECRET = process.env.AWS_SECRET_ACCESS_KEY ?? 'testing'
-const DATABRICKS_ENDPOINT = process.env.DATABRICKS_ENDPOINT
 const NEXTCLOUD_URL = process.env.NEXTCLOUD_URL
 const NEXTCLOUD_USERNAME = process.env.NEXTCLOUD_USERNAME ?? 'admin'
 const NEXTCLOUD_PASSWORD = process.env.NEXTCLOUD_PASSWORD ?? 'admin123'
@@ -349,13 +351,18 @@ async function openGridfs(target: Target, options?: OpenOptions): Promise<Open> 
   return { ws: opened.ws, shadow: opened.shadow, cleanup }
 }
 
+// No subprocess and no CI setup: the fake is a kit fake now and this host is
+// already a node process, so it starts in-process on an ephemeral port. The
+// token is per-run because the fake reads it as its tenant.
 async function openDatabricksVolume(target: Target): Promise<Open> {
-  if (DATABRICKS_ENDPOINT === undefined || DATABRICKS_ENDPOINT === '') {
-    throw new Error('databricks target requires DATABRICKS_ENDPOINT')
-  }
-  const endpoint = DATABRICKS_ENDPOINT
+  // Imported here rather than at the top of the file, because this module is
+  // loaded for every target and a kit fake's module reaches its generated
+  // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
+  const { databricksFake } = await import('../../server/databricks/fake.ts')
+  const server = await startKitFake(databricksFake)
+  const endpoint = server.endpoint
   const id = runId()
-  const token = 'integ-token'
+  const token = `integ-${id}`
   const mounts: Record<string, DatabricksVolumeResource> = {}
   for (const m of target.mounts) {
     const volume = `mirage-integ-${id}-${String(m.volume)}`
@@ -377,7 +384,11 @@ async function openDatabricksVolume(target: Target): Promise<Open> {
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
+  const cleanup = async (): Promise<void> => {
+    await ws.close()
+    await server.close()
+  }
+  return { ws: ws as unknown as ExecWorkspace, cleanup }
 }
 
 function objectStorageResource(
@@ -618,17 +629,23 @@ async function openEmail(target: Target): Promise<Open> {
 }
 
 async function openHf(target: Target, options?: OpenOptions): Promise<Open> {
-  const endpoint = process.env.HF_ENDPOINT
-  if (!endpoint) throw new Error('hf target requires HF_ENDPOINT')
-  const id = runId()
+  let endpoint = process.env.HF_URL ?? ''
+  while (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1)
+  if (endpoint === '') throw new Error('hf target requires HF_URL')
+  // Each run takes its own ACCOUNT on the shared fake. The client sends the
+  // user's token verbatim on every Hub call, so the token IS the account,
+  // which replaces naming the bucket `integ/<runid>-<mount>` inside one shared
+  // process: that isolated runs only as far as a name collision, and a bucket
+  // named after the run is not a name any real deployment would carry.
+  const token = `integ-hf-${runId()}`
   const build = (): MountMap => {
     const mounts: Record<string, HfBucketsResource> = {}
     for (const m of target.mounts) {
-      // Buckets auto-create on first touch in the fake hub, so a per-run
-      // bucket name is enough isolation.
+      // Buckets auto-create on first touch, exactly as a real one does for a
+      // namespace the token owns.
       mounts[m.path] = new HfBucketsResource({
-        bucket: `integ/${id}-${String(m.bucket)}`,
-        token: 'integ-token',
+        bucket: `integ/${String(m.bucket)}`,
+        token,
         endpoint,
         keyPrefix: m.prefix,
       })
@@ -637,6 +654,66 @@ async function openHf(target: Target, options?: OpenOptions): Promise<Open> {
   }
   const opened = openWorkspaces(build, options)
   return { ws: opened.ws, shadow: opened.shadow, cleanup: opened.closeAll }
+}
+
+async function openHfHub(target: Target): Promise<Open> {
+  let endpoint = process.env.HF_HUB_URL ?? ''
+  while (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1)
+  if (endpoint === '') throw new Error('hf-hub target requires HF_HUB_URL')
+  // The token IS the tenant here, as it is for the hf buckets fake: the client
+  // sends it verbatim on every Hub call and the fake reads it off
+  // Authorization, so a per-run token isolates two runs against one server.
+  const token = `integ-hfhub-${runId()}`
+  // Not optional, unlike every object-store fake here. A Hub mount NAMES a
+  // repository and mounting never creates one, so the repositories the target
+  // mounts have to exist before the mount is built. File CONTENT still arrives
+  // the ordinary way, through each mount's own `fixture:` seed, which writes
+  // over the resource's commit path rather than behind it.
+  const reset = await fetch(`${endpoint}/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tenants: [token], fixture: 'v1' }),
+  })
+  if (!reset.ok) throw new Error(`hf-hub /reset failed: ${String(reset.status)}`)
+  const mounts: Record<
+    string,
+    HfModelsResource | HfDatasetsResource | HfSpacesResource | RAMResource
+  > = {}
+  for (const m of target.mounts) {
+    if (m.resource === 'ram') {
+      mounts[m.path] = new RAMResource()
+      continue
+    }
+    // A Hub mount NAMES a repository, so an absent one is a broken target
+    // rather than a default: `repoId: ''` would reach the fake as a request
+    // for the repository called nothing.
+    if (m.repo === undefined) throw new Error(`hf-hub mount ${m.path} needs a repo`)
+    const config = {
+      repoId: m.repo,
+      token,
+      endpoint,
+      ...(m.prefix !== undefined ? { keyPrefix: m.prefix } : {}),
+    }
+    // Every kind is named, and an unrecognized one throws. The three differ
+    // only by the `repo_type` they send, so falling back to models for an
+    // unknown name does not fail: it silently exercises the wrong endpoints
+    // and reports the models implementation as the one under test.
+    const kinds = {
+      hf_models: HfModelsResource,
+      hf_datasets: HfDatasetsResource,
+      hf_spaces: HfSpacesResource,
+    }
+    const kind = kinds[m.resource as keyof typeof kinds] as
+      | (new (c: typeof config) => HfModelsResource | HfDatasetsResource | HfSpacesResource)
+      | undefined
+    if (kind === undefined) throw new Error(`hf-hub cannot mount ${m.resource}`)
+    mounts[m.path] = new kind(config)
+  }
+  const ws = new Workspace(mounts, { mode: MountMode.WRITE })
+  if (target.clis?.includes('hf') === true) {
+    ws.registerCli('hf', HF, { token, endpoint })
+  }
+  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
 // The seeding calls have to reach the SAME account the mount will read, and
@@ -893,17 +970,23 @@ async function openNotion(target: Target): Promise<Open> {
   let base = process.env.NOTION_URL ?? ''
   while (base.endsWith('/')) base = base.slice(0, -1)
   if (base === '') throw new Error('notion target requires NOTION_URL')
-  // NOT minted per run, and notion is the only kit fake that cannot be. Its
-  // tenant channel is the bearer token, and the token is OBSERVABLE: `ntn auth
-  // token` prints the CLI's configured value without contacting the server at
-  // all, and integ/cli/ntn.json pins that literal, asserted a second time
-  // against the real ntn binary by integ/ntn_conformance.ts. A per-run token
-  // makes the battery print one value and the conformance run another, with
-  // one golden between them. So the two hosts share this workspace and must
-  // not reset it concurrently; the scoped reset still buys the sequential
-  // case, where a reset no longer destroys the whole run file.
+  // The TOKEN is not minted per run, and notion is the only kit fake whose
+  // token cannot be. It is OBSERVABLE: `ntn auth token` prints the CLI's
+  // configured value without contacting the server at all, integ/cli/ntn.json
+  // pins that literal, and integ/ntn_conformance.ts asserts the same line
+  // against the real ntn binary configured with the same fixed token. A
+  // per-run token makes the battery print one value and the conformance run
+  // another, with one golden between them.
+  //
+  // So the RUN separates the two hosts instead, riding the base URL as a
+  // leading `/_run/<id>` segment. That is the only channel available here: the
+  // mount hands this URL to NotionResource and never sees the request, so a
+  // header or a `?_run=` query would have to be threaded through the resource.
+  // Each host now gets its own SQLite file under the one shared token, and the
+  // two can reset concurrently instead of taking turns.
   const token = NOTION_TOKEN
-  const reset = await fetch(`${base}/reset`, {
+  const scoped = `${base}/_run/${runId()}`
+  const reset = await fetch(`${scoped}/reset`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tenants: [token] }),
@@ -917,15 +1000,18 @@ async function openNotion(target: Target): Promise<Open> {
     }
     const resource = new NotionResource({
       apiKey: token,
-      baseUrl: `${base}/v1`,
+      baseUrl: `${scoped}/v1`,
     })
     mounts[mount.path] = mount.mode === 'read' ? [resource, MountMode.READ] : resource
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
   if (target.clis?.includes('ntn') === true) {
+    // The same run as the mounts above. The CLI and the mount are two views of
+    // one workspace, so pointing them at different runs would give a case that
+    // writes with `ntn` and reads through /notion two different worlds.
     ws.registerCli('ntn', NTN, {
       api_key: token,
-      base_url: `${base}/v1`,
+      base_url: `${scoped}/v1`,
     })
   }
   const cleanup = async (): Promise<void> => {
@@ -1540,6 +1626,12 @@ async function openGws(target: Target): Promise<Open> {
   let base = process.env.GWS_URL ?? ''
   while (base.endsWith('/')) base = base.slice(0, -1)
   if (base === '') throw new Error('gdrive target requires GWS_URL')
+  // Every call below goes to this run's own world. gws keeps per-run state
+  // already; what it lacked was a way for a mount to ask for one, since a
+  // mount hands its base URL to a client and never sees the request. Scoping
+  // the base once covers the reset, the drive and folder creation, the seeds
+  // and every mount, which is what makes this one line rather than sixteen.
+  base = `${base}/_run/${runId()}`
   // Native mounts (gdocs/gsheets/gslides) render the modified date into
   // filenames, so those targets pin the server clock. Secondary calendars
   // and seeded form responses ride the same call rather than being
@@ -1667,7 +1759,7 @@ async function openSlack(target: Target): Promise<Open> {
 // git remote real gh reads. Seeded by the fake alongside the mounted one.
 const GH_CLI_REPO = 'integ/repo-cli'
 
-// The fake api.github.com server (integ/server/github_server.py) is external
+// The fake api.github.com server (integ/server/github) is a kit fake, external
 // and shared across both hosts, mirroring the fake Slack server. It used to
 // have to be out of process for the python host, whose GitHubResource
 // fetched the repo tree with a blocking urlopen from its constructor; that
@@ -1709,19 +1801,28 @@ async function openGitHub(target: Target): Promise<Open> {
   return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
 }
 
+// In-process for the reason openMem0 is: the fake is a kit fake and this host
+// is already a node process, so the target needs no CI setup at all.
 async function openDify(target: Target): Promise<Open> {
-  const endpoint = process.env.DIFY_ENDPOINT
-  if (!endpoint) throw new Error('dify target requires DIFY_ENDPOINT')
+  // Imported here rather than at the top of the file, because this module is
+  // loaded for every target and a kit fake's module reaches its generated
+  // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
+  const { difyFake } = await import('../../server/dify/fake.ts')
+  const server = await startKitFake(difyFake)
   const mounts: Record<string, DifyResource> = {}
   for (const m of target.mounts) {
     mounts[m.path] = new DifyResource({
       apiKey: 'integ-key',
-      baseUrl: endpoint,
+      baseUrl: server.endpoint,
       datasetId: target.dataset ?? 'kb-7f3a',
     })
   }
   const ws = new Workspace(mounts, { mode: MountMode.WRITE })
-  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
+  const cleanup = async (): Promise<void> => {
+    await ws.close()
+    await server.close()
+  }
+  return { ws: ws as unknown as ExecWorkspace, cleanup }
 }
 
 async function openTrello(target: Target): Promise<Open> {
@@ -1884,11 +1985,15 @@ const ARG_ERROR_RESOURCES: Record<string, () => Resource> = {
 
 // The fixture web server curl and wget fetch from. Exported through
 // HTTP_ENDPOINT rather than a mount, because the cases name it as a URL in the
-// command text (the {http} token) instead of a path. Owning the process here
-// means --facet http needs no CI setup.
+// command text (the {http} token) instead of a path. Starting it in-process
+// means --facet http needs no CI setup and no python interpreter.
 async function openHttp(target: Target): Promise<Open> {
-  const server = await startPythonServer('http_server.py')
-  process.env.HTTP_ENDPOINT = server.endpoint.replace(/^HTTP_ENDPOINT=/, '')
+  // Imported here rather than at the top of the file, because this module is
+  // loaded for every target and a kit fake's module reaches its generated
+  // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
+  const { httpFake } = await import('../../server/http/fake.ts')
+  const server = await startKitFake(httpFake)
+  process.env.HTTP_ENDPOINT = server.endpoint
   const mounts: Record<string, RAMResource | [RAMResource, MountMode]> = {}
   for (const m of target.mounts) {
     const resource = new RAMResource()
@@ -1931,6 +2036,9 @@ export const ADAPTERS: Record<string, (target: Target, options?: OpenOptions) =>
   gmail: openGws,
   email: openEmail,
   hf: openHf,
+  hf_models: openHfHub,
+  hf_datasets: openHfHub,
+  hf_spaces: openHfHub,
   box: openBox,
   dropbox: openDropbox,
   onedrive: openOneDrive,

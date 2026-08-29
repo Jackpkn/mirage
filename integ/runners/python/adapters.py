@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import shutil
-import sys
 import tempfile
 import uuid
 from collections.abc import Awaitable, Callable
@@ -38,6 +37,7 @@ import asyncpg
 import boto3
 import chromadb
 import lancedb
+from databricks_client import HttpFilesClient
 from moto.server import ThreadedMotoServer
 from pymongo import AsyncMongoClient
 from qdrant_client import AsyncQdrantClient, models
@@ -81,6 +81,9 @@ from mirage.resource.gsheets.gsheets import GSheetsResource
 from mirage.resource.gslides.config import GSlidesConfig
 from mirage.resource.gslides.gslides import GSlidesResource
 from mirage.resource.hf_buckets import HfBucketsConfig, HfBucketsResource
+from mirage.resource.hf_datasets import HfDatasetsConfig, HfDatasetsResource
+from mirage.resource.hf_models import HfModelsConfig, HfModelsResource
+from mirage.resource.hf_spaces import HfSpacesConfig, HfSpacesResource
 from mirage.resource.jaeger import JaegerConfig, JaegerResource
 from mirage.resource.lancedb import LanceDBConfig, LanceDBResource
 from mirage.resource.langfuse import LangfuseConfig, LangfuseResource
@@ -294,20 +297,34 @@ class GridFSService:
 
 
 class DatabricksVolumeService:
+    """Points databricks mounts at the kit fake for volume files.
 
-    def __init__(self, run_id: str, module: ModuleType, store: object,
-                 runner: object, base: str) -> None:
+    The fake is a TypeScript kit service now, so the adapter spawns it the way
+    the mem0 one does instead of importing an aiohttp app. The volume root is
+    created over HTTP rather than by reaching into the server's own store,
+    which is the same PUT the TypeScript host already sends and the only way
+    to say it once the fake is another process.
+
+    Each run takes its own bearer token, which the fake reads as its tenant,
+    so two runs sharing one server cannot see each other's writes.
+
+    Args:
+        run_id (str): this run's id, which scopes the token and the volumes.
+        base (str): the fake's origin.
+        process (asyncio.subprocess.Process): the running fake.
+    """
+
+    def __init__(self, run_id: str, base: str,
+                 process: asyncio.subprocess.Process) -> None:
         self.run_id = run_id
-        self.module = module
-        self.store = store
-        self.runner = runner
         self.base = base
+        self.process = process
+        self.token = f"integ-{run_id}"
 
     @classmethod
     async def create(cls, run_id: str) -> "DatabricksVolumeService":
-        module = _load_databricks_server()
-        store, runner, base = await module.start_fake_databricks()
-        return cls(run_id, module, store, runner, base)
+        base, process = await start_kit_fake("databricks")
+        return cls(run_id, base, process)
 
     def resource(self, mount: dict) -> DatabricksVolumeResource:
         volume = f"mirage-integ-{self.run_id}-{mount['volume']}"
@@ -315,12 +332,59 @@ class DatabricksVolumeService:
                                         schema="default",
                                         volume=volume,
                                         root_path=mount.get("prefix") or "/")
-        self.store.make_dir(configured_root(config))
-        client = self.module.HttpFilesClient(self.base, "integ-token")
+        client = HttpFilesClient(self.base, self.token)
+        client.files.create_directory(configured_root(config))
         return DatabricksVolumeResource(config, client=client)
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        await stop_kit_fake(self.process)
+
+
+async def start_kit_fake(
+        service: str) -> tuple[str, asyncio.subprocess.Process]:
+    """Start integ/server/<service>/main.ts and read the endpoint it announces.
+
+    The adapter owns the process rather than reading a URL from the
+    environment, which is what keeps a single-target run free of CI setup.
+    Every kit fake announces ``<SERVICE>_URL=<origin>`` on its first stdout
+    line, so one reader serves all of them instead of one per service.
+
+    Args:
+        service (str): directory under integ/server/ holding main.ts.
+
+    Returns:
+        tuple[str, asyncio.subprocess.Process]: the endpoint and the process.
+    """
+    integ = Path(__file__).resolve().parents[2]
+    process = await asyncio.create_subprocess_exec(
+        str(integ / "node_modules" / ".bin" / "tsx"),
+        str(integ / "server" / service / "main.ts"),
+        "--port",
+        "0",
+        cwd=str(integ),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    token = f"{service.upper().replace('-', '_')}_URL"
+    line = (await process.stdout.readline()).decode().strip()
+    endpoint = line.partition("=")[2] if line.startswith(f"{token}=") else ""
+    if not endpoint:
+        assert process.stderr is not None
+        detail = (await process.stderr.read()).decode().strip()
+        raise RuntimeError(f"{service} fake failed to start: {line}{detail}")
+    return endpoint, process
+
+
+async def stop_kit_fake(process: asyncio.subprocess.Process) -> None:
+    """Terminate a fake started by :func:`start_kit_fake`.
+
+    Args:
+        process (asyncio.subprocess.Process): the running fake.
+    """
+    if process.returncode is None:
+        process.terminate()
+        await process.wait()
 
 
 def _load_module(path: Path) -> ModuleType:
@@ -333,25 +397,9 @@ def _load_module(path: Path) -> ModuleType:
     return module
 
 
-def _load_hf_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "hf_server.py")
-
-
 def _load_ssh_server() -> ModuleType:
     return _load_module(
         Path(__file__).resolve().parents[2] / "server" / "ssh_server.py")
-
-
-def _load_dify_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "dify_server.py")
-
-
-def _load_databricks_server() -> ModuleType:
-    return _load_module(
-        Path(__file__).resolve().parents[2] / "server" /
-        "databricks_server.py")
 
 
 async def _admin_exec(ws: Workspace, command: str) -> None:
@@ -486,7 +534,12 @@ class GwsService:
 
     @classmethod
     async def create(cls, run_id: str, target: dict) -> "GwsService":
-        url = os.environ["GWS_URL"].rstrip("/")
+        # Every call below goes to this run's own world. gws keeps per-run
+        # state already; what it lacked was a way for a mount to ask for one,
+        # since a mount hands its base URL to a client and never sees the
+        # request. Scoping the base once covers the reset, the drives and
+        # folders, the seeds and every mount.
+        url = f'{os.environ["GWS_URL"].rstrip("/")}/_run/{run_id}'
         folder_ids: dict[str, str] = {}
         drive_ids: dict[str, str] = {}
         # Native mounts (gdocs/gsheets/gslides) render the modified date
@@ -852,31 +905,11 @@ class Mem0Service:
 
         The adapter owns the process rather than reading a URL from the
         environment, which is what keeps ``--facet mem0`` free of CI setup.
-        The fake moved from aiohttp to the kit, so the interpreter is tsx and
-        the first stdout line is the kit's announce line rather than a bare
-        endpoint.
 
         Returns:
             Mem0Service: the running fake.
         """
-        integ = Path(__file__).resolve().parents[2]
-        process = await asyncio.create_subprocess_exec(
-            str(integ / "node_modules" / ".bin" / "tsx"),
-            str(integ / "server" / "mem0" / "main.ts"),
-            "--port",
-            "0",
-            cwd=str(integ),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        assert process.stdout is not None
-        line = (await process.stdout.readline()).decode().strip()
-        endpoint = line.partition("=")[2] if line.startswith(
-            "MEM0_URL=") else ""
-        if not endpoint:
-            assert process.stderr is not None
-            detail = (await process.stderr.read()).decode().strip()
-            raise RuntimeError(f"mem0 fake failed to start: {line}{detail}")
+        endpoint, process = await start_kit_fake("mem0")
         return cls(endpoint, process)
 
     def resource(self, mount: dict) -> Mem0Resource:
@@ -887,9 +920,7 @@ class Mem0Service:
                        default_page_size=2))
 
     async def teardown(self) -> None:
-        if self.process.returncode is None:
-            self.process.terminate()
-            await self.process.wait()
+        await stop_kit_fake(self.process)
 
 
 class HttpService:
@@ -898,6 +929,7 @@ class HttpService:
     Exported through ``HTTP_ENDPOINT`` rather than a mount, because the cases
     name it as a URL in the command text (the ``{http}`` token) instead of a
     path. Owning the process here means ``--facet http`` needs no CI setup.
+    The fake is a TypeScript kit service, so the interpreter is tsx.
     """
 
     def __init__(self, endpoint: str,
@@ -907,29 +939,13 @@ class HttpService:
 
     @classmethod
     async def create(cls) -> "HttpService":
-        script = (Path(__file__).resolve().parents[2] / "server" /
-                  "http_server.py")
-        process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            str(script),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        assert process.stdout is not None
-        line = (await process.stdout.readline()).decode().strip()
-        if not line.startswith("HTTP_ENDPOINT="):
-            assert process.stderr is not None
-            detail = (await process.stderr.read()).decode().strip()
-            raise RuntimeError(f"http fixture failed to start: {detail}")
-        endpoint = line.split("=", 1)[1]
+        endpoint, process = await start_kit_fake("http")
         os.environ["HTTP_ENDPOINT"] = endpoint
         return cls(endpoint, process)
 
     async def teardown(self) -> None:
         os.environ.pop("HTTP_ENDPOINT", None)
-        if self.process.returncode is None:
-            self.process.terminate()
-            await self.process.wait()
+        await stop_kit_fake(self.process)
 
 
 class DropboxService:
@@ -981,31 +997,113 @@ class DropboxService:
 
 
 class HfService:
+    """Points hf mounts at the shared fake Hugging Face hub.
 
-    def __init__(self, run_id: str, runner, endpoint: str) -> None:
+    The server (integ/server/hf/) is external, Prisma-backed and shared across
+    both hosts. Each run takes its own ACCOUNT: the client sends the user's
+    token verbatim on every Hub call, so the token IS the account and the fake
+    reads it off `Authorization`. That replaces naming the bucket
+    `integ/<runid>-<mount>` inside one shared process, which isolated runs only
+    as far as a name collision.
+
+    Args:
+        run_id (str): this run's id, which names its account.
+        endpoint (str): HF_URL origin.
+    """
+
+    def __init__(self, run_id: str, endpoint: str) -> None:
         self.run_id = run_id
-        self.runner = runner
         self.endpoint = endpoint
+        self.token = f"integ-hf-{run_id}"
 
     @classmethod
     async def create(cls, run_id: str) -> "HfService":
-        module = _load_hf_server()
-        _hub, server, runner = await module.start_fake_hub()
-        return cls(run_id, runner, server.endpoint)
+        return cls(run_id, os.environ["HF_URL"].rstrip("/"))
 
     def resource(self, mount: dict) -> HfBucketsResource:
-        # Buckets auto-create on first touch in the fake, so a per-run
-        # bucket name is enough isolation.
+        # Buckets auto-create on first touch, exactly as a real one does for a
+        # namespace the token owns.
         return HfBucketsResource(
             HfBucketsConfig(
-                bucket=f"integ/{self.run_id}-{mount['bucket']}",
-                token="integ-token",
+                bucket=f"integ/{mount['bucket']}",
+                token=self.token,
                 endpoint=self.endpoint,
                 key_prefix=mount.get("prefix"),
             ))
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        return None
+
+
+class HfHubService:
+    """Points hf_models / hf_datasets / hf_spaces mounts at the fake Hub.
+
+    The server (integ/server/hf_hub/) is external, Prisma-backed and shared
+    across both hosts, and the token IS the tenant: the client sends it
+    verbatim on every Hub call and the fake reads it off `Authorization`, so
+    a per-run token isolates two runs against one server.
+
+    Unlike every object-store fake here, the fixture is not optional. A Hub
+    mount NAMES a repository, and mounting one never creates it, so the
+    repositories a target mounts must exist before the mount is built;
+    `/reset` seeds them from integ/fixtures/hf-hub/v1.json. The file CONTENT
+    then arrives the ordinary way, through each mount's own `fixture:` seed,
+    which writes over the resource's commit path rather than behind it.
+
+    Args:
+        run_id (str): this run's id, which names its account.
+        endpoint (str): HF_HUB_URL origin.
+    """
+
+    KINDS = {
+        "hf_models": HfModelsResource,
+        "hf_datasets": HfDatasetsResource,
+        "hf_spaces": HfSpacesResource,
+    }
+    CONFIGS = {
+        "hf_models": HfModelsConfig,
+        "hf_datasets": HfDatasetsConfig,
+        "hf_spaces": HfSpacesConfig,
+    }
+
+    def __init__(self, run_id: str, endpoint: str) -> None:
+        self.run_id = run_id
+        self.endpoint = endpoint
+        self.token = f"integ-hfhub-{run_id}"
+
+    @classmethod
+    async def create(cls, run_id: str) -> "HfHubService":
+        endpoint = os.environ["HF_HUB_URL"].rstrip("/")
+        token = f"integ-hfhub-{run_id}"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{endpoint}/reset",
+                                    json={
+                                        "tenants": [token],
+                                        "fixture": "v1"
+                                    }) as resp:
+                resp.raise_for_status()
+        return cls(run_id, endpoint)
+
+    def resource(self, mount: dict) -> object:
+        kind = mount["resource"]
+        config = self.CONFIGS[kind](
+            repo_id=mount["repo"],
+            token=self.token,
+            endpoint=self.endpoint,
+            key_prefix=mount.get("prefix"),
+        )
+        return self.KINDS[kind](config)
+
+    def cli_installs(self) -> dict[str, tuple[CLISpec, dict[str, object]]]:
+        return {
+            "hf": (cli_spec_for("hf"), {
+                "token": self.token,
+                "endpoint": self.endpoint,
+            }),
+        }
+
+    async def teardown(self) -> None:
+        return None
 
 
 class BoxService:
@@ -1222,9 +1320,9 @@ class SlackService:
 class GitHubService:
     """Points github mounts at the fake api.github.com server.
 
-    The server (integ/server/github_server.py) runs out of process on
-    GITHUB_URL, mirroring the fake Slack and Google Workspace servers and
-    shared with the typescript host. It used to be out of process by
+    The server (integ/server/github) is a kit fake running out of process
+    on GITHUB_URL, mirroring the fake Slack and Google Workspace servers
+    and shared with the typescript host. It used to be out of process by
     necessity — GitHubResource fetched the repo tree with a blocking
     urlopen from its constructor, which would starve an aiohttp fake on
     the runner's loop. That constraint is gone now that the constructor
@@ -1275,17 +1373,28 @@ class GitHubService:
 
 
 class DifyService:
+    """Points dify mounts at the kit fake for the knowledge base.
 
-    def __init__(self, runner, base: str, dataset: str) -> None:
-        self.runner = runner
+    The adapter owns the process for the reason the mem0 one does: the fake is
+    a TypeScript kit service now, and spawning it here keeps ``--facet dify``
+    free of CI setup.
+
+    Args:
+        base (str): the fake's origin.
+        dataset (str): the dataset id the mounts read.
+        process (asyncio.subprocess.Process): the running fake.
+    """
+
+    def __init__(self, base: str, dataset: str,
+                 process: asyncio.subprocess.Process) -> None:
         self.base = base
         self.dataset = dataset
+        self.process = process
 
     @classmethod
     async def create(cls, target: dict) -> "DifyService":
-        module = _load_dify_server()
-        state, _server, runner = await module.start_fake_dify()
-        return cls(runner, state.base, target.get("dataset", "kb-7f3a"))
+        base, process = await start_kit_fake("dify")
+        return cls(base, target.get("dataset", "kb-7f3a"), process)
 
     def resource(self, mount: dict) -> DifyResource:
         return DifyResource(
@@ -1294,7 +1403,7 @@ class DifyService:
                        dataset_id=self.dataset))
 
     async def teardown(self) -> None:
-        await self.runner.cleanup()
+        await stop_kit_fake(self.process)
 
 
 class TrelloService:
@@ -1556,44 +1665,60 @@ class NotionService:
     across both hosts. The token doubles as the workspace id, the way a real
     Notion integration token scopes you to one workspace.
 
-    It is NOT minted per run, and notion is the only kit fake that cannot be:
-    the token is observable. `ntn auth token` prints the CLI's configured value
-    without contacting the server, integ/cli/ntn.json pins that literal, and
-    integ/ntn_conformance.ts asserts the same line against the real ntn binary,
-    which it configures with this same fixed token. A per-run token would make
-    those two runs print different things with one golden between them. So the
-    hosts share this workspace and must not reset it concurrently; the scoped
-    reset still buys the sequential case, where a reset no longer destroys the
-    whole run file out from under the other host.
+    The token is NOT minted per run, and notion is the only kit fake whose
+    token cannot be: it is observable. `ntn auth token` prints the CLI's
+    configured value without contacting the server, integ/cli/ntn.json pins
+    that literal, and integ/ntn_conformance.ts asserts the same line against
+    the real ntn binary, which it configures with this same fixed token. A
+    per-run token would make those two runs print different things with one
+    golden between them.
+
+    So the RUN is the axis that separates the hosts, and it rides the base URL
+    as a leading `/_run/<id>` segment. A header or a query parameter cannot do
+    this job: the mount hands its base URL to the resource and never sees the
+    request again. With the run in the URL the two hosts keep the one shared
+    token, get a SQLite file each, and can reset concurrently.
 
     Args:
         url (str): NOTION_URL origin (the REST surface lives under /v1).
         token (str): the shared workspace token.
+        run_id (str): this run's id, which names its own server-side file.
     """
 
-    def __init__(self, url: str, token: str) -> None:
+    def __init__(self, url: str, token: str, run_id: str) -> None:
         self.url = url
         self.token = token
+        self.run_id = run_id
+
+    @property
+    def base(self) -> str:
+        """Return the run-scoped origin every mount and CLI is pointed at.
+
+        Returns:
+            str: the origin with this run's `/_run/<id>` prefix.
+        """
+        return f"{self.url}/_run/{self.run_id}"
 
     @classmethod
-    async def create(cls) -> "NotionService":
+    async def create(cls, run_id: str) -> "NotionService":
         url = os.environ["NOTION_URL"].rstrip("/")
         token = NOTION_TOKEN
+        made = cls(url, token, run_id)
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{url}/reset", json={"tenants":
-                                                          [token]}) as resp:
+            async with session.post(f"{made.base}/reset",
+                                    json={"tenants": [token]}) as resp:
                 resp.raise_for_status()
-        return cls(url, token)
+        return made
 
     def resource(self, mount: dict) -> NotionResource:
-        return NotionResource(
-            config=NotionConfig(api_key=self.token, base_url=f"{self.url}/v1"))
+        return NotionResource(config=NotionConfig(api_key=self.token,
+                                                  base_url=f"{self.base}/v1"))
 
     def cli_installs(self) -> dict[str, tuple[CLISpec, dict[str, object]]]:
         return {
             "ntn": (cli_spec_for("ntn"), {
                 "api_key": self.token,
-                "base_url": f"{self.url}/v1",
+                "base_url": f"{self.base}/v1",
             }),
         }
 
@@ -2002,7 +2127,8 @@ class PostgresService:
 Service = (S3Service | OneDriveService | SharePointService | Mem0Service
            | SSHService | PostgresService | MongoDBService | ChromaService
            | QdrantService | LanceDBService | NotionService
-           | NextcloudService | GwsService | HfService | BoxService
+           | NextcloudService | GwsService | HfService | HfHubService
+           | BoxService
            | DropboxService | GridFSService | SlackService | TrelloService
            | LinearService | DifyService | DatabricksVolumeService
            | LangfuseService | JaegerService)
@@ -2125,6 +2251,13 @@ def build_hf(
         mount: dict, run_id: str, service: Service | None
 ) -> tuple[object, Callable[[], Awaitable[None]]]:
     assert isinstance(service, HfService)
+    return service.resource(mount), _noop
+
+
+def build_hf_hub(
+        mount: dict, run_id: str, service: Service | None
+) -> tuple[object, Callable[[], Awaitable[None]]]:
+    assert isinstance(service, HfHubService)
     return service.resource(mount), _noop
 
 
@@ -2378,6 +2511,9 @@ BUILDERS = {
     "gmail": build_gmail,
     "email": build_email,
     "hf": build_hf,
+    "hf_models": build_hf_hub,
+    "hf_datasets": build_hf_hub,
+    "hf_spaces": build_hf_hub,
     "box": build_box,
     "dropbox": build_dropbox,
     "github": build_github,
@@ -2418,7 +2554,7 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
     if target.get("service") == "lancedb":
         return await LanceDBService.create(target)
     if target.get("service") == "notion":
-        return await NotionService.create()
+        return await NotionService.create(run_id)
     if target.get("service") == "ssh":
         return await SSHService.create(run_id, target)
     if target.get("service") == "nextcloud":
@@ -2429,6 +2565,8 @@ async def make_service(target: dict, run_id: str) -> "Service | None":
         return await EmailService.create(run_id, target)
     if target.get("service") == "hf":
         return await HfService.create(run_id)
+    if target.get("service") == "hf-hub":
+        return await HfHubService.create(run_id)
     if target.get("service") == "box":
         return await BoxService.create(run_id, target)
     if target.get("service") == "dropbox":
@@ -2515,9 +2653,9 @@ def cli_install(service: "Service | None",
     if service is None:
         return cli_spec_for(cli_name), None
     # Widen the assert when another service grows a CLI.
-    assert isinstance(service,
-                      (DiscordService, EmailService, GitHubService, GwsService,
-                       LinearService, NotionService, SlackService))
+    assert isinstance(
+        service, (DiscordService, EmailService, GitHubService, GwsService,
+                  HfHubService, LinearService, NotionService, SlackService))
     return service.cli_installs()[cli_name]
 
 

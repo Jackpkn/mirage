@@ -39,7 +39,7 @@ def _mock_backend(data: bytes) -> S3Resource:
 
 
 def test_grep_file_uses_streaming():
-    from mirage.commands.builtin.grep_helper import grep_lines
+    from mirage.commands.builtin.grep_scan import grep_lines
     data = b"hello world\nfoo bar\nhello again\n"
     compiled = re.compile("hello")
     results = grep_lines("test.txt",
@@ -56,7 +56,7 @@ def test_grep_file_uses_streaming():
 
 
 def test_grep_file_max_count():
-    from mirage.commands.builtin.grep_helper import grep_lines
+    from mirage.commands.builtin.grep_scan import grep_lines
     lines = [f"match line {i}".encode() for i in range(100)]
     data = b"\n".join(lines) + b"\n"
     compiled = re.compile("match")

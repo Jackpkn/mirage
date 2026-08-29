@@ -19,8 +19,8 @@ from typing import Any
 
 from mirage.accessor.langfuse import LangfuseAccessor
 from mirage.commands.builtin.generic_bind.search import make_search
-from mirage.commands.builtin.grep_helper import (compile_pattern,
-                                                 pushdown_operand)
+from mirage.commands.builtin.grep_pattern import compile_pattern
+from mirage.commands.builtin.grep_pushdown import pushdown_operand
 from mirage.commands.builtin.langfuse._provision import file_read_provision
 from mirage.commands.builtin.langfuse.io import IO
 from mirage.commands.config import CommandOpts

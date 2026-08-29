@@ -14,8 +14,7 @@
 
 from mirage.io import IOResult
 from mirage.io.types import ByteSource
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.types import ExecutionNode
 

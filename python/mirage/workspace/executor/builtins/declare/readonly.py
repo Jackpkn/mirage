@@ -25,7 +25,7 @@ from mirage.workspace.executor.builtins.declare.declare import (
     premark, readonly_functions, split_decl_flags, store_staged_arrays)
 from mirage.workspace.executor.builtins.shared import (arith_refusal,
                                                        readonly_refusal,
-                                                       refusal, view_of)
+                                                       refusal, require_view)
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (env_is_readonly, set_attr,
                                             visible_env)
@@ -114,7 +114,7 @@ async def handle_readonly(
         lines = _readonly_lines(session, flags)
         out = (("\n".join(lines) + "\n") if lines else "").encode()
         return out, IOResult(), ExecutionNode(command="readonly", exit_code=0)
-    view = view_of(session, state)
+    view = require_view(state)
     errors: list[str] = []
     if arrays:
         refused = await store_staged_arrays("readonly",

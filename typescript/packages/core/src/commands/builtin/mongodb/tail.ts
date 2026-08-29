@@ -30,7 +30,7 @@ import { type PathSpec, ResourceName } from '../../../types.ts'
 import { command, type CommandFnResult, type CommandOpts } from '../../config.ts'
 import { specOf } from '../../spec/builtins.ts'
 import { tailGeneric } from '../generic/tail.ts'
-import { parseN } from '../tail_helper.ts'
+import { parseN } from '../tail_counts.ts'
 import { FlagView } from '../../spec/types.ts'
 
 const resolveGlob = resolveGlobOf(MONGODB_IO)

@@ -18,10 +18,13 @@ import posixpath
 from mirage.commands.spec import SPECS, parse_command
 from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat, FileType, PathSpec
+from mirage.utils.errors import FS_ERRORS, ReadOnlyError, fs_strerror
 from mirage.utils.path import CycleError
 from mirage.workspace.executor.builtins.links.probe import stat_or_none
-from mirage.workspace.executor.builtins.shared import (Result, fail, ok,
+from mirage.workspace.executor.builtins.shared import (fail, ok,
+                                                       read_only_error,
                                                        split_flags)
+from mirage.workspace.executor.builtins.types import Result
 from mirage.workspace.mount.namespace import Namespace
 
 
@@ -142,13 +145,32 @@ def accepts_line(name: str, args: tuple[str, ...], items: list[str | PathSpec],
 
 
 async def strip_link_operands(
+    name: str,
+    dispatch: DispatchFn,
     namespace: Namespace,
     items: list[str | PathSpec],
-) -> tuple[list[str | PathSpec], int]:
+    args: tuple[str, ...],
+    cwd: str,
+) -> tuple[list[str | PathSpec], int, list[str]]:
     """Unlink and drop ``rm``/``unlink`` operands that are symlinks.
 
     GNU ``rm`` removes the link itself and never follows it; a dangling
     link removes fine. Remaining operands stay for backend dispatch.
+
+    The removal is a dispatch op, never a direct table write: the door
+    is where session grants, the turf's mode, admission policies and
+    the op ledger fire, and writing the table from here let a session
+    delete a link its grant reads and a policy protecting one never
+    fired (the same hole the FUSE unlink had). A refused operand does
+    not stop the rest, which is also rm's rule for a backend operand;
+    ``-f`` silences only the absent (a hidden link answers ENOENT, the
+    no-name-leak rule).
+
+    The refusal is voiced the way the same refusal on a backend file is
+    voiced, so one grant does not describe itself two ways: a mount-mode
+    refusal renders ``read_only_error`` (naming the mount, deduplicated
+    because two operands on one mount are one fact), everything else
+    renders GNU's per-operand line.
 
     An operand typed with a trailing slash is deliberately kept: the
     slash asked for a directory, and GNU refuses rather than removing
@@ -157,23 +179,53 @@ async def strip_link_operands(
     slash was protecting, so the command reports it instead.
 
     Args:
+        name (str): the command, ``rm`` or ``unlink`` (picks the
+            refusal verb, and only rm has ``-f``).
+        dispatch (DispatchFn): op dispatcher (the door).
         namespace (Namespace): addressing authority holding the link table.
         items (list[str | PathSpec]): classified command parts.
+        args (tuple[str, ...]): the line's words after the name, parsed
+            for rm's ``-f``.
+        cwd (str): session working directory the parse resolves against.
 
     Returns:
-        tuple[list[str | PathSpec], int]: surviving parts and the number
-        of link entries removed.
+        tuple[list[str | PathSpec], int, list[str]]: surviving parts,
+        the number of link operands consumed (removed, refused or
+        force-silenced), and the refusal lines.
     """
-    removed = 0
+    force = False
+    if name == "rm":
+        force = bool(
+            parse_command(SPECS["rm"], list(args), cwd).flags.get("-f"))
+    verb = "remove" if name == "rm" else "unlink"
+    handled = 0
+    errors: list[str] = []
     kept: list[str | PathSpec] = []
     for item in items:
         if (isinstance(item, PathSpec) and not item.raw_path.endswith("/")
                 and namespace.is_link(item.virtual)):
-            await namespace.unlink(item.virtual)
-            removed += 1
+            handled += 1
+            try:
+                await dispatch("unlink", item)
+            except FileNotFoundError as exc:
+                if not force:
+                    errors.append(f"{name}: cannot {verb} '{item.raw_path}': "
+                                  f"{fs_strerror(exc)}\n")
+            except ReadOnlyError:
+                # The mount voice, because the mount is what refused:
+                # a backend file on this operand's turf is answered by
+                # `Mount.execute_cmd` with this exact line, and one
+                # grant must not describe itself two ways depending on
+                # whether the name it stopped was a link.
+                line = read_only_error(name, namespace, item)
+                if line not in errors:
+                    errors.append(line)
+            except FS_ERRORS as exc:
+                errors.append(f"{name}: cannot {verb} '{item.raw_path}': "
+                              f"{fs_strerror(exc)}\n")
             continue
         kept.append(item)
-    return kept, removed
+    return kept, handled, errors
 
 
 async def _slashed_link_refusal(
@@ -277,10 +329,26 @@ async def prepare_mv(
             await dispatch("rename",
                            src,
                            dst=PathSpec.from_str_path(target_dst))
-        except PermissionError:
+        except ReadOnlyError as exc:
+            # Voiced as the same refusal on a backend file is: the mount
+            # voice when the source's own turf is what refused (the case
+            # `Mount.execute_cmd` answers, since the command runs on the
+            # source mount), GNU's per-operand line when it was the
+            # destination -- which is what a cross-mount `mv f /ro/f`
+            # already answers for a regular file.
+            blame = exc.filename or src.virtual
+            if blame == src.virtual:
+                return items, None, None, fail(
+                    "mv", read_only_error("mv", namespace, src))
             return items, None, None, fail(
                 "mv", f"mv: cannot move '{src.raw_path}' to "
-                f"'{dst.raw_path}': Permission denied\n")
+                f"'{dst.raw_path}': {fs_strerror(exc)}\n")
+        except PermissionError as exc:
+            # A policy deny, which GNU voices per operand and which the
+            # backend mv path voices the same way.
+            return items, None, None, fail(
+                "mv", f"mv: cannot move '{src.raw_path}' to "
+                f"'{dst.raw_path}': {fs_strerror(exc)}\n")
         return items, None, None, ok("mv")
 
     post_rename: tuple[str, str] | None = None

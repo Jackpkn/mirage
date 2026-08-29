@@ -23,7 +23,7 @@ from mirage.io import IOResult
 from mirage.io.types import materialize
 from mirage.policy import PolicyDenied, resolve_limit
 from mirage.policy.types import SessionContext
-from mirage.runtime.policy import PolicyDecision
+from mirage.runtime.routing import RouteDecision
 from mirage.shell.bytes import encode_text
 from mirage.shell.parse import find_syntax_error, parse, syntax_error_result
 from mirage.shell.types import NodeType as NT
@@ -48,8 +48,9 @@ from mirage.workspace.session.state import (ensure_var_visible,
 from mirage.workspace.types import ExecutionNode
 
 from mirage.shell.helpers import (  # isort: skip
-    ProcessSubDirection, get_command_name, get_parts, get_process_sub_body,
+    get_command_name, get_parts, get_process_sub_body,
     get_process_sub_direction, get_text, split_env_prefix)
+from mirage.shell.types import ProcessSubDirection  # isort: skip
 
 from mirage.workspace.executor.builtins import (  # isort: skip
     accepts_line, follow_paths, handle_chgrp, handle_exec_path, handle_chmod,
@@ -69,7 +70,7 @@ async def execute_command(
     call_stack,
     job_table,
     cancel: asyncio.Event | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
     agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Dispatch a command node by name."""
@@ -216,7 +217,7 @@ async def _dispatch_command_body(
     call_stack,
     job_table,
     cancel: asyncio.Event | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
     agent_id: str = "",
 ) -> tuple[Any, IOResult, ExecutionNode]:
     parent = node.parent
@@ -317,7 +318,7 @@ async def _run_argv(
     call_stack,
     job_table,
     cancel: asyncio.Event | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
     row: int = 0,
     agent_id: str = "",
     redirects: tuple[PathSpec, ...] = (),
@@ -413,6 +414,29 @@ async def _run_argv(
         reset_op_policies(ptoken)
 
 
+def unsaid(lines: list[str], said: bytes) -> list[str]:
+    """Drop the refusal lines the command tier already wrote.
+
+    A mount-mode refusal names the mount, not the operand, so the line
+    the node table wrote for a refused link is the very line
+    ``Mount.execute_cmd`` writes for the backend operands beside it on
+    the same mount, and ``rm dlink file`` would say it twice. The tier
+    writes it without a trailing newline, so the comparison is on the
+    stripped text.
+
+    Args:
+        lines (list[str]): the node table's refusal lines, in order.
+        said (bytes): stderr the command tier already produced.
+
+    Returns:
+        list[str]: the lines not already present.
+    """
+    if not said:
+        return lines
+    spoken = {t.strip() for t in said.decode(errors="replace").split("\n")}
+    return [line for line in lines if line.strip() not in spoken]
+
+
 async def _route_argv(
     recurse,
     dispatch,
@@ -425,7 +449,7 @@ async def _route_argv(
     call_stack,
     job_table,
     cancel: asyncio.Event | None,
-    routing_decision: PolicyDecision | None,
+    routing_decision: RouteDecision | None,
     row: int,
 ) -> tuple[Any, IOResult, ExecutionNode]:
     """Route one admitted command to its builtin or mount handler.
@@ -526,6 +550,7 @@ async def _route_argv(
     #    on the link entry itself (lstat semantics) ──
     post_unlink: str | None = None
     post_rename: tuple[str, str] | None = None
+    link_errors: list[str] = []
     if namespace.nodes:
         try:
             # Both remove the link entry itself, which no backend can
@@ -536,12 +561,19 @@ async def _route_argv(
             # and `unlink dlink other` with the link still there).
             if name in ("rm", "unlink") and accepts_line(
                     name, argv.args, operands, session.cwd):
-                operands, removed = await strip_link_operands(
-                    namespace, operands)
-                if removed and not any(
+                operands, handled, link_errors = await strip_link_operands(
+                    name, dispatch, namespace, operands, argv.args,
+                    session.cwd)
+                if handled and not any(
                         isinstance(a, PathSpec) for a in operands):
-                    return None, IOResult(), ExecutionNode(command=name,
-                                                           exit_code=0)
+                    if not link_errors:
+                        return None, IOResult(), ExecutionNode(command=name,
+                                                               exit_code=0)
+                    err = "".join(link_errors).encode()
+                    return None, IOResult(
+                        exit_code=1, stderr=err), ExecutionNode(command=name,
+                                                                exit_code=1,
+                                                                stderr=err)
             elif name == "mv":
                 operands, post_unlink, post_rename, early = await prepare_mv(
                     namespace, dispatch, operands)
@@ -597,4 +629,20 @@ async def _route_argv(
             await namespace.unlink(post_unlink)
         if post_rename is not None:
             await namespace.rename(post_rename[0], post_rename[1])
+    if link_errors:
+        # A refused link operand fails the line the way a refused
+        # backend operand does: its lines lead (they were reported
+        # first) and any success stays a partial one. Merged after the
+        # bookkeeping above so the operands the backend did remove
+        # still shed their node meta.
+        tail = io.stderr if isinstance(io.stderr, bytes) else b""
+        err = "".join(unsaid(link_errors, tail)).encode()
+        io.stderr = err + tail
+        if io.exit_code == 0:
+            io.exit_code = 1
+        node_tail = exec_node.stderr or b""
+        node_err = "".join(unsaid(link_errors, node_tail)).encode()
+        exec_node.stderr = node_err + node_tail
+        if exec_node.exit_code == 0:
+            exec_node.exit_code = 1
     return stdout, io, exec_node

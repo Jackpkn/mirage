@@ -6,11 +6,17 @@
     "server/linear/**/*.ts",
     "server/trello/**/*.ts",
     "server/gws/**/*.ts",
+    "server/hf/**/*.ts",
+    "server/hf_hub/**/*.ts",
     "server/dropbox/**/*.ts",
     "server/box/**/*.ts",
     "server/onedrive/**/*.ts",
     "server/slack/**/*.ts",
     "server/notion/**/*.ts",
-    "server/mem0/**/*.ts"
+    "server/mem0/**/*.ts",
+    "server/databricks/**/*.ts",
+    "server/dify/**/*.ts",
+    "server/http/**/*.ts",
+    "server/github/**/*.ts"
   ]
 }

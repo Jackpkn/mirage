@@ -273,6 +273,222 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "sess_read_grant_blocks_link_rm",
+      "seq": 920015,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "session": "reader",
+      "command": "rm /data/sess/al",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: read-only mount at /data/\n"
+      }
+    },
+    {
+      "id": "sess_read_grant_blocks_forced_link_rm",
+      "seq": 920016,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "session": "reader",
+      "command": "rm -f /data/sess/al",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: read-only mount at /data/\n"
+      }
+    },
+    {
+      "id": "sess_read_grant_blocks_unlink",
+      "seq": 920017,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "session": "reader",
+      "command": "unlink /data/sess/al",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "unlink: read-only mount at /data/\n"
+      }
+    },
+    {
+      "id": "sess_read_grant_blocks_link_create",
+      "seq": 920018,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "session": "reader",
+      "command": "ln -s /data/sess/a.txt /data/sess/nl",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "ln: read-only mount at /data/\n"
+      }
+    },
+    {
+      "id": "sess_read_grant_blocks_link_mv",
+      "seq": 920019,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "session": "reader",
+      "command": "mv /data/sess/al /data/sess/moved",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: read-only mount at /data/\n"
+      }
+    },
+    {
+      "id": "sess_denied_link_writes_changed_nothing",
+      "seq": 920025,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "readlink /data/sess/al; readlink /data/sess/nl || echo no-nl; readlink /data/sess/moved || echo no-moved",
+      "expect": {
+        "exit": 0,
+        "stdout": "/data/sess/a.txt\nno-nl\nno-moved\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sess_root_link_seed",
+      "seq": 920030,
+      "targets": [
+        "ram-root"
+      ],
+      "command": "ln -s /root.txt /rootlk",
+      "expect": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sess_root_read_grant_blocks_link_create",
+      "seq": 920031,
+      "targets": [
+        "ram-root"
+      ],
+      "session": "root_ro",
+      "command": "ln -s /root.txt /rootlk2",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "ln: read-only mount at /\n"
+      }
+    },
+    {
+      "id": "sess_root_read_grant_blocks_link_rm",
+      "seq": 920032,
+      "targets": [
+        "ram-root"
+      ],
+      "session": "root_ro",
+      "command": "rm /rootlk",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "rm: read-only mount at /\n"
+      }
+    },
+    {
+      "id": "sess_root_read_grant_blocks_link_mv",
+      "seq": 920033,
+      "targets": [
+        "ram-root"
+      ],
+      "session": "root_ro",
+      "command": "mv /rootlk /rootlk3",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "mv: read-only mount at /\n"
+      }
+    },
+    {
+      "id": "sess_root_grant_still_links_on_data",
+      "seq": 920034,
+      "targets": [
+        "ram-root"
+      ],
+      "session": "root_ro",
+      "command": "ln -s /root.txt /data/datalk && readlink /data/datalk",
+      "expect": {
+        "exit": 0,
+        "stdout": "/root.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sess_root_denied_link_writes_changed_nothing",
+      "seq": 920035,
+      "targets": [
+        "ram-root"
+      ],
+      "command": "readlink /rootlk; readlink /rootlk2 || echo no-rootlk2; readlink /rootlk3 || echo no-rootlk3",
+      "expect": {
+        "exit": 0,
+        "stdout": "/root.txt\nno-rootlk2\nno-rootlk3\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sess_read_mount_still_takes_a_link",
+      "seq": 920040,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "ln -s /ro/y.txt /ro/rolink && readlink /ro/rolink",
+      "note": "A read-only MOUNT is a statement about a backend that cannot write, not a ban on names above it: symlinks are namespace state, so a link here needs no write capability from the resource and the target need not exist. integ/resources/<svc>/sym.json pins the same rule above postgres, mongodb, chroma and qdrant, all mounted read; those need containers, so /ro guards it on every host. What DOES gate this plane is a session grant -- see sess_read_grant_blocks_link_create.",
+      "expect": {
+        "exit": 0,
+        "stdout": "/ro/y.txt\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sess_read_mount_still_refuses_the_backend_write",
+      "seq": 920041,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "echo x > /ro/nope.txt",
+      "note": "The other half of the pair: one mount, two planes, opposite answers. A gate that refused the link above would have to refuse this too, and one that allows this would have to allow the link -- so the two cases together are what keep the planes told apart.",
+      "expect": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "/ro/nope.txt: Read-only file system\n"
+      }
+    },
+    {
+      "id": "sess_read_mount_link_removes_again",
+      "seq": 920042,
+      "targets": [
+        "ram",
+        "disk"
+      ],
+      "command": "rm /ro/rolink && readlink /ro/rolink || echo gone",
+      "note": "Removal is a node-table write on the same read-only mount, so it follows the create; it also leaves no residue for a later listing.",
+      "expect": {
+        "exit": 0,
+        "stdout": "gone\n",
+        "stderr": ""
+      }
     }
   ]
 }

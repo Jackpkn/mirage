@@ -18,7 +18,7 @@ from mirage.io import IOResult
 from mirage.io.stream import async_chain
 from mirage.io.types import ByteSource
 from mirage.shell.call_stack import CallStack
-from mirage.shell.types import ERREXIT_EXEMPT_TYPES
+from mirage.shell.constants import ERREXIT_EXEMPT_TYPES
 from mirage.shell.variable import ShellVar
 from mirage.types import PathSpec, word_text
 from mirage.workspace.executor.command.types import ExecuteNodeFn

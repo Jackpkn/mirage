@@ -50,22 +50,17 @@ def resolve_script(name: str, cwd: PathSpec | str | None) -> PathSpec:
 
 
 def default_paths(paths: list[PathSpec],
-                  cwd: PathSpec | str | None) -> list[PathSpec]:
+                  cwd: PathSpec | None) -> list[PathSpec]:
     """Default a command's path operands the way the shell would.
 
     Args:
         paths (list[PathSpec]): operands as parsed; returned untouched
             when non-empty.
-        cwd (PathSpec | str | None): the session working directory as
-            ``CommandOpts.cwd`` carries it; a plain string names a
-            root-mounted directory.
+        cwd (PathSpec | None): the session working directory as
+            ``CommandOpts.cwd`` carries it.
     """
     if paths:
         return paths
-    if isinstance(cwd, PathSpec):
+    if cwd is not None:
         return [cwd]
-    if isinstance(cwd, str) and cwd:
-        return [
-            PathSpec(resource_path=cwd.strip("/"), virtual=cwd, directory=cwd)
-        ]
     return [PathSpec(resource_path="", virtual="/", directory="/")]

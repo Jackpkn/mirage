@@ -28,9 +28,21 @@ def test_config_defaults():
     assert cfg.revision is None
 
 
-def test_config_rejects_bad_repo_id():
+def test_config_accepts_a_bare_repo_id():
+    """The Hub resolves a bare name against whoever the token belongs
+    to, and the real CLI relies on it: `hf repo create widget` then
+    `hf download widget`. Refusing it rejected an id the Hub had just
+    minted."""
+    cfg = HfModelsConfig(repo_id="widget")
+    assert cfg.repo_id == "widget"
+    assert cfg.namespace == ""
+    assert cfg.repo_name == "widget"
+
+
+@pytest.mark.parametrize("bad", ["a/b/c", "ns/", "/name", ""])
+def test_config_rejects_a_shape_the_hub_cannot_read(bad):
     with pytest.raises(ValueError):
-        HfModelsConfig(repo_id="just-one-segment")
+        HfModelsConfig(repo_id=bad)
 
 
 def test_config_token_secret():

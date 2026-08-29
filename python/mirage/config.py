@@ -338,7 +338,7 @@ def _is_script_path(value: str) -> bool:
     policy engine.
 
     Args:
-        value (str): a yaml ``script``/``policy`` value.
+        value (str): a yaml ``script``/``route_policy`` value.
     """
     return "\n" not in value and value.strip().endswith((".py", ".js", ".mjs"))
 
@@ -352,7 +352,7 @@ def _load_script_source(value: str) -> ScriptSource:
     only door for script source.
 
     Args:
-        value (str): the yaml ``script``/``policy`` value.
+        value (str): the yaml ``script``/``route_policy`` value.
 
     Raises:
         ValueError: the value is not a script path.
@@ -371,7 +371,7 @@ def _load_script_source(value: str) -> ScriptSource:
 def _absolutize_scripts(raw: dict[str, Any], base: Path) -> None:
     """Resolve relative script paths against the config file's dir.
 
-    A path-form ``script``/``policy`` in a config file means "next to
+    A path-form ``script``/``route_policy`` in a config file means "next to
     the file" (the docker build-context model), never "wherever the
     server happens to run". Mutates the parsed mapping in place;
     in-memory dict configs are untouched by the loader.
@@ -380,10 +380,10 @@ def _absolutize_scripts(raw: dict[str, Any], base: Path) -> None:
         raw (dict[str, Any]): the parsed config mapping.
         base (Path): directory containing the config file.
     """
-    policy = raw.get("policy")
+    policy = raw.get("route_policy")
     if isinstance(policy, str) and _is_script_path(policy) \
             and not Path(policy.strip()).is_absolute():
-        raw["policy"] = str(base / policy.strip())
+        raw["route_policy"] = str(base / policy.strip())
     runtimes = raw.get("runtimes")
     if isinstance(runtimes, list):
         for entry in runtimes:
@@ -513,10 +513,10 @@ class WorkspaceConfig(BaseModel):
     # with a name plus the uniform runtime options ({name: wasi,
     # config: {home: /opt/...}}). Unset = the default world.
     runtimes: list[str | dict[str, Any]] | None = None
-    # Global policy script: a .py path whose content is embedded at
-    # load. Its last expression names the runtime for the line, or
+    # Global route-policy script: a .py path whose content is embedded
+    # at load. Its last expression names the runtime for the line, or
     # None to fall to entry scripts.
-    policy: str | None = None
+    route_policy: str | None = None
     # The permission documents: one profile per name. A profile is the whole
     # document a session runs under, so there is no workspace-wide
     # block; the policy script is the line-level counterpart.
@@ -600,8 +600,8 @@ class WorkspaceConfig(BaseModel):
             kwargs["console_factory"] = _build_console_factory(self.console)
         if self.runtimes is not None:
             kwargs["runtimes"] = _build_runtime_entries(self.runtimes)
-        if self.policy is not None:
-            kwargs["policy"] = _load_script_source(self.policy)
+        if self.route_policy is not None:
+            kwargs["route_policy"] = _load_script_source(self.route_policy)
         if self.profiles is not None:
             kwargs["profiles"] = {
                 name:

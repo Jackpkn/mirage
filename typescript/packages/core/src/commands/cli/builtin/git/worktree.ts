@@ -13,6 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { LinkView, StatPath } from '../../../../ops/types.ts'
+import { GIT_DIR } from './constants.ts'
 import { FileType, type FileStat } from '../../../../types.ts'
 import type { IgnoreStack } from './ignore.ts'
 import { loadIgnores } from './ignore.ts'
@@ -21,7 +22,6 @@ import { basename } from './path.ts'
 import type { Dispatch, RepoLocation, WorkTree } from './types.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
 
-const GIT_DIR = '.git'
 const GITIGNORE = '.gitignore'
 
 // git's three untracked modes. "normal" names an untracked directory once

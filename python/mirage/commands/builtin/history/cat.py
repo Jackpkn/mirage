@@ -16,9 +16,8 @@ from mirage.accessor.history import HistoryAccessor
 from mirage.commands.builtin.aggregators import concat_aggregate
 from mirage.commands.builtin.generic.cat import cat_generic
 from mirage.commands.builtin.generic_bind.adapter import (bound_op,
-                                                          dir_aware_stat)
-from mirage.commands.builtin.generic_bind.builders.common import \
-    resolve_or_empty
+                                                          dir_aware_stat,
+                                                          resolve_or_empty)
 from mirage.commands.builtin.history.io import IO
 from mirage.commands.config import CommandOpts
 from mirage.commands.registry import command

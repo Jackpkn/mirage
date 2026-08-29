@@ -1,0 +1,132 @@
+{
+  "documents": [
+    {
+      "id": "doc-quickstart",
+      "name": "Quickstart",
+      "size": 180,
+      "createdAt": 1716282000,
+      "segments": [
+        {
+          "content": "Welcome to Acme. This quickstart gets you running fast."
+        },
+        {
+          "content": "Install the CLI with npm i -g acme then run acme login."
+        },
+        {
+          "content": "Set your token in the ACME_TOKEN environment variable."
+        }
+      ],
+      "slug": "guides/quickstart"
+    },
+    {
+      "id": "doc-auth",
+      "name": "Authentication",
+      "size": 190,
+      "createdAt": 1716282000,
+      "segments": [
+        {
+          "content": "Authentication uses bearer tokens via the Authorization header."
+        },
+        {
+          "content": "Requests are rate limited to 100 calls per minute per token."
+        },
+        {
+          "content": "If you exceed the limit you receive HTTP 429 and must back off."
+        }
+      ],
+      "slug": "guides/auth"
+    },
+    {
+      "id": "doc-refunds",
+      "name": "Refund policy",
+      "size": 150,
+      "createdAt": 1716282000,
+      "segments": [
+        {
+          "content": "Refunds are available within 30 days of purchase."
+        },
+        {
+          "content": "Email support to start a refund with your order id."
+        },
+        {
+          "content": "Approved refunds are processed within five business days."
+        }
+      ],
+      "slug": "policies/refunds"
+    },
+    {
+      "id": "doc-privacy",
+      "name": "Privacy policy",
+      "size": 120,
+      "createdAt": 1716282000,
+      "segments": [
+        {
+          "content": "Customer data is stored encrypted at rest and in transit."
+        },
+        {
+          "content": "You may request deletion of your data at any time."
+        }
+      ],
+      "slug": "policies/privacy"
+    },
+    {
+      "id": "doc-changelog",
+      "name": "CHANGELOG.md",
+      "size": 90,
+      "createdAt": 1716282000,
+      "segments": [
+        {
+          "content": "v2.0 added rate limit headers and refund automation."
+        },
+        {
+          "content": "v1.5 introduced encrypted data exports."
+        }
+      ]
+    }
+  ],
+  "retrievalRules": [
+    {
+      "id": "rate-limit",
+      "keywords": "throttl rate 429",
+      "hits": [
+        {
+          "documentId": "doc-auth",
+          "content": "Requests are rate limited to 100 calls per minute per token.",
+          "score": 0.92
+        },
+        {
+          "documentId": "doc-auth",
+          "content": "If you exceed the limit you receive HTTP 429 and must back off.",
+          "score": 0.88
+        }
+      ]
+    },
+    {
+      "id": "refunds",
+      "keywords": "refund money",
+      "hits": [
+        {
+          "documentId": "doc-refunds",
+          "content": "Refunds are available within 30 days of purchase.",
+          "score": 0.91
+        },
+        {
+          "documentId": "doc-refunds",
+          "content": "Approved refunds are processed within five business days.",
+          "score": 0.84
+        }
+      ]
+    },
+    {
+      "id": "privacy",
+      "keywords": "encrypt privacy",
+      "hits": [
+        {
+          "documentId": "doc-privacy",
+          "content": "Customer data is stored encrypted at rest and in transit.",
+          "score": 0.89
+        }
+      ]
+    }
+  ]
+}

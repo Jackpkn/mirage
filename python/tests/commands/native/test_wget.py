@@ -21,10 +21,12 @@ import asyncio
 import pytest
 
 from mirage.accessor.base import NOOPAccessor
+from mirage.commands.builtin.errors import HttpConnectError
 from mirage.commands.builtin.general.wget import wget
-from mirage.commands.builtin.utils.http import HttpConnectError, HttpResponse
+from mirage.commands.builtin.utils.http import HttpResponse
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
+from mirage.types import PathSpec
 
 
 def _ok(body: bytes = b"file-body",
@@ -45,7 +47,7 @@ def _stub(monkeypatch, resp=None, exc=None) -> list[str]:
             raise exc
         return resp if resp is not None else _ok()
 
-    monkeypatch.setitem(wget.__wrapped__.__globals__, "_http_get", fake)
+    monkeypatch.setitem(wget.__wrapped__.__globals__, "http_get", fake)
     return calls
 
 
@@ -53,7 +55,12 @@ def _run(*texts: str,
          dispatch=None,
          cwd=None,
          **flags) -> tuple[bytes, object]:
-    opts = CommandOpts(dispatch=dispatch, cwd=cwd or "/", flags=flags)
+    base = cwd or "/"
+    spec = PathSpec(virtual=base,
+                    directory=base,
+                    resource_path="",
+                    resolved=False)
+    opts = CommandOpts(dispatch=dispatch, cwd=spec, flags=flags)
     body, io = asyncio.run(wget(NOOPAccessor(), [], list(texts), opts))
     if body is None:
         return b"", io

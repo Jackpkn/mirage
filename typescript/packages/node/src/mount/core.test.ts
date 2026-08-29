@@ -98,6 +98,41 @@ describe('MountCore', () => {
     expect(ws.namespace.readlink('/data/lk')).toBe('greeting.txt')
   })
 
+  it('refuses to remove a link on hidden turf for a scoped session', async () => {
+    // The other half of the R8 hole, open until unlink stopped calling
+    // the namespace table directly: creation was routed through the op
+    // door, removal still wrote the table at a layer no session view
+    // covers, so a scoped mount could delete a link on a mount its
+    // profile hides. ENOENT rather than the create's EACCES is the
+    // no-name-leak rule: only an op that spells out a name it is
+    // creating answers EACCES.
+    const ws = new Workspace(
+      { '/data/': new RAMResource(), '/extra/': new RAMResource() },
+      { mode: MountMode.WRITE },
+    )
+    await ws.execute("echo 'classified' > /extra/secret.txt")
+    await ws.execute('ln -s secret.txt /extra/lk')
+    const sess = ws.createSession('agent', { profile: { paths: { hide: ['/extra'] } } })
+    const core = new MountCore(ws.fs, { session: sess })
+    await runWithSession(sess, async () => {
+      await expect(core.unlink('/extra/lk')).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+    expect(ws.namespace.isLink('/extra/lk')).toBe(true)
+  })
+
+  it('removes a link and keeps its target', async () => {
+    // The other side of routing removal through the door: an unscoped
+    // mount still drops the link entry, and only that, the way
+    // unlink(2) on a symlink leaves the pointee alone.
+    const ws = new Workspace({ '/data/': new RAMResource() }, { mode: MountMode.WRITE })
+    await ws.execute("echo 'body' > /data/f.txt")
+    await ws.execute('ln -s f.txt /data/lk')
+    const core = new MountCore(ws.fs)
+    await core.unlink('/data/lk')
+    expect(ws.namespace.isLink('/data/lk')).toBe(false)
+    expect(new TextDecoder().decode((await ws.execute('cat /data/f.txt')).stdout)).toBe('body\n')
+  })
+
   it('reports a file with its real size', async () => {
     const core = await mkCore()
     const attr = await core.getattr('/data/greeting.txt')

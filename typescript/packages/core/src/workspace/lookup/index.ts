@@ -14,6 +14,7 @@
 
 export {
   JOB_BUILTINS,
+  SHELL_NAMES,
   SLASH_KEEPS_LAST,
   UNSUPPORTED_BUILTINS,
   dereferences,
@@ -22,5 +23,5 @@ export {
   readsSubtrees,
   walksMounts,
 } from './constants.ts'
-export { commandVisible, isTool, lookup, lookupAll, verbVisible } from './lookup.ts'
+export { commandVisible, isTool, listed, lookup, lookupAll, verbVisible } from './lookup.ts'
 export { Consumer, SHELL_CONSUMERS, WordPolicy, wordPolicy } from './types.ts'

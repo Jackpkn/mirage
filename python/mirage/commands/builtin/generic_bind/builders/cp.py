@@ -17,7 +17,7 @@ from functools import partial
 from mirage.accessor.base import Accessor
 from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.generic.cp import cp as generic_cp
-from mirage.commands.builtin.generic.cp import parse_cp_flags
+from mirage.commands.builtin.generic.cp import parse_flags
 from mirage.commands.builtin.generic.find import parse_find_args, walk_find
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
                                                           Operation,
@@ -92,7 +92,7 @@ async def cp(ops: CommandIO, accessor: Accessor, paths: list[PathSpec],
     if not ops.is_mounted(accessor):
         raise ValueError("cp: no resource")
     fl = FlagView(opts.flags, spec=SPECS["cp"])
-    parsed = parse_cp_flags(fl)
+    parsed = parse_flags(fl)
     paths = await ops.resolve_glob(accessor, paths, opts.index)
     dir_copy = partial(ops.dir_copy, accessor) if ops.dir_copy else None
     mkdir = partial(ops.mkdir, accessor) if ops.mkdir else None

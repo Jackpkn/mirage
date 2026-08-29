@@ -24,17 +24,10 @@ import type { Session } from '../../../session/session.ts'
 import { visibleEnv } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import {
-  TARGET_RE,
-  type Result,
-  arithRefusal,
-  isValidName,
-  readonlyRefusal,
-  refusal,
-  viewOf,
-} from '../shared.ts'
+import { arithRefusal, isValidName, readonlyRefusal, refusal, requireView } from '../shared.ts'
+import { TARGET_RE } from '../constants.ts'
 import { READ_VALUE_LETTERS } from './constants.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 import { sessionView } from '../../../session/state.ts'
 
 /** Split on whitespace runs with a maxsplit, like Python's split(None, n). */
@@ -259,7 +252,7 @@ export async function handleRead(
     }
     session.stdinSource = stdin
   }
-  const view = viewOf(session, state)
+  const view = requireView(state)
   const buffer = session.stdinBuffer
   if (timeout === 0) {
     const code = buffer !== null ? 0 : 1

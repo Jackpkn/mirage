@@ -30,6 +30,7 @@ export { OPFS_OPS } from './ops/opfs/index.ts'
 export { OPFSAccessor } from './accessor/opfs.ts'
 export { OPFS_COMMANDS } from './commands/builtin/opfs/index.ts'
 export { S3Resource, S3_BROWSER_PROMPT, type S3ResourceState } from './resource/s3/s3.ts'
+export { S3_COMMANDS } from '@struktoai/mirage-core/commands/builtin/s3/index'
 export {
   normalizeS3Config,
   redactConfig as redactS3Config,

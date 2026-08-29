@@ -24,7 +24,8 @@ import {
   type StatFn,
 } from '../../../types.ts'
 import { UsageError } from '../../errors.ts'
-import { DEFAULT_BACKUP_SUFFIX, backupControl, siblingPath } from '../utils/backup.ts'
+import { backupControl, siblingPath } from '../utils/backup.ts'
+import { DEFAULT_BACKUP_SUFFIX } from '../utils/constants.ts'
 import { backendKeyDefault, copyTargets, pathExists, type BackendKeyFn } from '../utils/copy.ts'
 import { fsStrerror, isFsError } from '../../../utils/errors.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
@@ -87,7 +88,7 @@ function isPrimitiveMove(strategy: MoveStrategy): strategy is PrimitiveMove {
 // no-ops (non-interactive control plane: overwrite always proceeds unless
 // -n/--update say otherwise), and --strip-trailing-slashes is a no-op
 // because PathSpec already normalizes trailing slashes.
-export function parseMvFlags(fl: FlagView): MvFlags {
+export function parseFlags(fl: FlagView): MvFlags {
   const update = updateMode('mv', fl)
   const suffix = suffixFlag(fl)
   const control = backupControl('mv', backupRaw(fl), suffix)

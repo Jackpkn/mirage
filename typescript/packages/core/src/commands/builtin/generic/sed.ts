@@ -20,15 +20,8 @@ import { readFailExitCode } from '../../spec/usage.ts'
 import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
-import {
-  executeProgram,
-  parseOneCommand,
-  parseProgram,
-  SED_MISSING_SCRIPT,
-  SED_NO_INPUT_EXIT,
-  SED_NO_INPUT_FILES,
-  type SedCommand,
-} from '../sed_helper.ts'
+import { SED_MISSING_SCRIPT, SED_NO_INPUT_EXIT, SED_NO_INPUT_FILES } from '../constants.ts'
+import { executeProgram, parseOneCommand, parseProgram, type SedCommand } from '../sed_script.ts'
 import { readStdinAsync } from '../utils/stream.ts'
 
 const ENC = new TextEncoder()

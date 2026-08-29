@@ -20,10 +20,13 @@ import { getTestParser } from '../../fixtures/workspace_fixture.ts'
 import { Workspace } from '../../workspace/workspace.ts'
 import { PolicyDenied } from '../../../policy/errors.ts'
 import { ArithError } from '../../../shell/errors.ts'
+import { Namespace } from '../../mount/namespace/namespace.ts'
+import type { ResolveFn } from '../../dispatcher/index.ts'
+import { MountRegistry } from '../../mount/registry.ts'
 import { Session } from '../../session/session.ts'
 import { sessionView } from '../../session/state.ts'
+import { IDENTIFIER_RE } from './constants.ts'
 import {
-  IDENTIFIER_RE,
   absPath,
   arithRefusal,
   expandOperands,
@@ -33,11 +36,12 @@ import {
   isValidName,
   ok,
   operandText,
+  readOnlyError,
   readonlyRefusal,
   refusal,
   splitFlags,
   splitValueFlags,
-  viewOf,
+  requireView,
 } from './shared.ts'
 
 const DEC = new TextDecoder()
@@ -163,11 +167,14 @@ describe('builtins/shared: expandOperands', () => {
 })
 
 describe('builtins/shared: the session helpers', () => {
-  it('viewOf threads the caller view and falls back to an ungated one', () => {
+  it('requireView returns the threaded view', () => {
     const session = new Session({ sessionId: 's1' })
     const view = sessionView(session)
-    expect(viewOf(session, view)).toBe(view)
-    expect(viewOf(session, null)).not.toBeNull()
+    expect(requireView(view)).toBe(view)
+  })
+
+  it('requireView refuses a missing view', () => {
+    expect(() => requireView(null)).toThrow(/gated session view/)
   })
 
   it('refusal speaks in the builtin voice', () => {
@@ -205,5 +212,27 @@ describe('builtins/shared: the session helpers', () => {
     expect(isCountWord('+3')).toBe(true)
     expect(isCountWord('x')).toBe(false)
     expect(isCountWord('-')).toBe(false)
+  })
+  it('readOnlyError names the owning mount', () => {
+    // The one voice for a mode refusal, whichever tier reached it: the
+    // command tier renders this line for a backend operand and the node
+    // table renders it for a symlink, so `rm f.txt` and `rm lk` under one
+    // read grant answer identically.
+    const ws = new Workspace({ '/data': [new RAMResource(), MountMode.WRITE] })
+    const owned = PathSpec.fromStrPath('/data/lk')
+    expect(readOnlyError('rm', ws.namespace, owned)).toBe('rm: read-only mount at /data/\n')
+  })
+
+  it('readOnlyError falls back to GNUs phrase with no mount', () => {
+    // No prefix to blame, so it does not invent one. Inside a workspace
+    // this is unreachable -- a "/" mount is always synthesized, and that
+    // root is what governs a path above every other mount -- so the
+    // branch belongs to a namespace built without one.
+    const unusedResolve: ResolveFn = () => Promise.reject(new Error('unused'))
+    const ns = new Namespace(new MountRegistry({}, MountMode.WRITE), unusedResolve)
+    expect(ns.tryMountFor('/top')).toBe(null)
+    expect(readOnlyError('ln', ns, PathSpec.fromStrPath('/top'))).toBe(
+      'ln: /top: Read-only file system\n',
+    )
   })
 })

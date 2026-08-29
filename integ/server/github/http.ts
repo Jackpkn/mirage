@@ -1,0 +1,127 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import { route } from '../kit/typescript/index.ts'
+import type { Ctx, JsonValue, KitRoute, Reply } from '../kit/typescript/index.ts'
+import type { C } from './config.ts'
+import { errorBody } from './wire.ts'
+import { repoByName } from './store.ts'
+import type { RepoRow } from './store.ts'
+
+export type Handler = (ctx: Ctx<C>) => Promise<Reply> | Reply
+
+export function notFound(message = 'Not Found'): Reply {
+  return { status: 404, body: errorBody(message) }
+}
+
+export function fail(status: number, message: string): Reply {
+  return { status, body: errorBody(message) }
+}
+
+// Every repository route refuses an unauthenticated caller before it looks
+// anything up, which is what the vendor does and what a golden pins: an
+// anonymous read of a private-by-default fake is 401, not 404.
+export function authedRoute(fn: Handler): Handler {
+  return async (ctx: Ctx<C>): Promise<Reply> => {
+    const auth = ctx.headers.authorization
+    if (auth === undefined || auth === '') return fail(401, 'Requires authentication')
+    return await fn(ctx)
+  }
+}
+
+export function param(ctx: Ctx<C>, name: string): string {
+  return ctx.params[name] ?? ''
+}
+
+// A path segment that is not a number can never name an issue or a pull, and
+// parsing it as one would make `/issues/abc` read as issue NaN.
+export function numberParam(ctx: Ctx<C>): number | null {
+  const raw = param(ctx, 'number')
+  return /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : null
+}
+
+// Every repository route resolves owner/name the same way, so the lookup and
+// its 404 live here rather than at the top of sixty handlers.
+export function withRepo(fn: (ctx: Ctx<C>, repo: RepoRow) => Promise<Reply> | Reply): Handler {
+  return async (ctx: Ctx<C>): Promise<Reply> => {
+    const full = `${param(ctx, 'owner')}/${param(ctx, 'repo')}`
+    const repo = await repoByName(ctx.db, ctx.tenant, full)
+    if (repo === null) return notFound()
+    return await fn(ctx, repo)
+  }
+}
+
+export interface Page {
+  items: JsonValue[]
+  headers: Record<string, string>
+}
+
+// One GitHub REST page, advertising the next with a Link header. A bad page or
+// per_page is 422, which is what the vendor answers and what a golden pins.
+export function paged(ctx: Ctx<C>, items: JsonValue[]): Page | null {
+  const rawPage = ctx.query.get('page') ?? '1'
+  const rawPer = ctx.query.get('per_page') ?? '30'
+  if (!/^-?\d+$/.test(rawPage) || !/^-?\d+$/.test(rawPer)) return null
+  const page = Math.max(1, Number.parseInt(rawPage, 10))
+  const per = Math.max(1, Math.min(100, Number.parseInt(rawPer, 10)))
+  const start = (page - 1) * per
+  const batch = items.slice(start, start + per)
+  const headers: Record<string, string> = {}
+  if (start + per < items.length) {
+    const query = new URLSearchParams(ctx.query)
+    query.set('page', String(page + 1))
+    query.set('per_page', String(per))
+    const host = ctx.headers.host ?? '127.0.0.1'
+    // The prefix goes back on. This URL is handed to the client to follow, so
+    // dropping it sent `gh api --paginate` to the DEFAULT run for page two,
+    // silently answering later pages from another world.
+    const base = `http://${String(host)}${ctx.runPrefix}${ctx.url.pathname}`
+    headers.Link = `<${base}?${query.toString()}>; rel="next"`
+  }
+  return { items: batch, headers }
+}
+
+export function pagedReply(ctx: Ctx<C>, items: JsonValue[], key?: string): Reply {
+  const page = paged(ctx, items)
+  if (page === null) return fail(422, 'Validation Failed')
+  const body = key === undefined ? page.items : { [key]: page.items }
+  return { status: 200, body, headers: page.headers }
+}
+
+export function jsonBodyOf(ctx: Ctx<C>): Record<string, JsonValue> {
+  let parsed: JsonValue
+  try {
+    parsed = ctx.json()
+  } catch {
+    return {}
+  }
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {}
+}
+
+export function str(body: Record<string, JsonValue>, key: string, fallback = ''): string {
+  const v = body[key]
+  return typeof v === 'string' ? v : fallback
+}
+
+// The same handler is registered once per API prefix, because the Enterprise
+// mount serves every route again under /api/v3 and the kit router matches a
+// path exactly.
+export function everywhere<T>(
+  prefixes: readonly string[],
+  make: (prefix: string) => KitRoute<T>[],
+): KitRoute<T>[] {
+  return prefixes.flatMap(make)
+}
+
+export { route }

@@ -21,9 +21,9 @@ from dulwich.index import ConflictedIndexEntry, IndexEntry
 from dulwich.object_store import BaseObjectStore, iter_tree_contents
 from dulwich.objects import Blob, ObjectID
 from dulwich.objectspec import parse_commit
-from dulwich.refs import Ref
 from dulwich.repo import BaseRepo
 
+from mirage.commands.cli.builtin.git.constants import HEAD_REF
 from mirage.commands.cli.builtin.git.index import read_index
 from mirage.commands.cli.builtin.git.io import entry_bytes
 from mirage.commands.cli.builtin.git.types import (IndexState, RepoLocation,
@@ -34,7 +34,6 @@ from mirage.runtime.types import DispatchFn
 from mirage.types import FileStat
 from mirage.utils.errors import MISS_ERRORS
 
-HEAD_REF = Ref(b"HEAD")
 UNCHANGED = " "
 MODIFIED = "M"
 ADDED = "A"

@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { rmSync } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -124,6 +124,66 @@ async function runPolicyProbe(
   }
 }
 
+// Link-removal probe: FUSE used to drop a link straight into the namespace
+// table, at a layer no policy or session view covers, so a preOps deny never
+// fired on one and the removal left no OpRecord. Routing the removal through
+// the op door is exactly what makes the two answers below differ, and unlink
+// is a LINK_ENTRY_OPS member so the door answers a link path itself.
+class PinLinksPolicy implements Policy {
+  preOps(ctx: OpsContext): Action | null {
+    if (ctx.op === 'unlink' && ctx.path.virtual.endsWith('.pinned')) {
+      return { kind: 'deny', reason: 'pinned' }
+    }
+    return null
+  }
+}
+
+async function runLinkProbe(
+  result: Record<string, string | number | boolean | null>,
+): Promise<void> {
+  const enc = new TextEncoder()
+  const res = new RAMResource()
+  res.store.dirs.add('/')
+  res.store.files.set('/f.txt', enc.encode('body\n'))
+  const ws = new Workspace(
+    { '/data': new Mount(res, { mode: MountMode.WRITE }) },
+    { policies: [new PinLinksPolicy()] },
+  )
+  // Seeded before the mount goes live: creating a link through the mountpoint
+  // would depend on libfuse's symlink argument order, which is the adapter's
+  // business, not this probe's.
+  await ws.execute('ln -s f.txt /data/lk.pinned')
+  await ws.execute('ln -s f.txt /data/lk.plain')
+  const handle = await fuseMount(ws)
+  const mp = handle.mountpoint
+  try {
+    // A denied removal must FAIL and leave the link where it was. Keyed
+    // on the refusal, not on an errno, because Windows cannot report
+    // one: DeleteFile only sets FileDispositionInformation, so the deny
+    // lands when the handle closes and unlink resolves on a removal that
+    // never happened. The strict EACCES is therefore required only where
+    // it is observable, and the surviving link is the proof everywhere.
+    let raised: string | null = null
+    try {
+      await unlink(`${mp}/data/lk.pinned`)
+    } catch (err) {
+      raised = (err as { code?: string }).code === 'EACCES' ? 'eacces' : 'other'
+    }
+    const survives = ws.namespace.isLink('/data/lk.pinned')
+    result.link_policy_unlink_refused =
+      survives && (raised === 'eacces' || process.platform === 'win32')
+    result.link_policy_survives = survives
+    // An unguarded link still goes, and only the link: unlink(2) on a symlink
+    // leaves the pointee alone.
+    await unlink(`${mp}/data/lk.plain`)
+    result.link_plain_unlink_ok = !ws.namespace.isLink('/data/lk.plain')
+    result.link_target_survives = (await readFile(`${mp}/data/f.txt`, 'utf8')).trim()
+  } finally {
+    await handle.unmount()
+    await ws.close()
+  }
+}
+
 // Per-mount FUSE: two mounts exposed at distinct OS paths simultaneously. Reads
 // go through the real kernel -> FUSE handler. Async fs APIs are required: the
 // mounts' napi callbacks run on the single Node event loop, so a *sync* read
@@ -188,6 +248,7 @@ async function main(): Promise<void> {
   }
   await runSizelessProbe(result)
   await runPolicyProbe(result)
+  await runLinkProbe(result)
   process.stdout.write(JSON.stringify(result) + '\n')
 }
 

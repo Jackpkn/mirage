@@ -20,14 +20,14 @@ from mirage.io.types import ByteSource
 from mirage.ops.types import SessionView
 from mirage.policy import PolicyDenied
 from mirage.shell.errors import ArithError
+from mirage.workspace.executor.builtins.constants import TARGET_RE
 from mirage.workspace.executor.builtins.read.constants import \
     READ_VALUE_LETTERS
-from mirage.workspace.executor.builtins.shared import (TARGET_RE, Result,
-                                                       arith_refusal,
+from mirage.workspace.executor.builtins.shared import (arith_refusal,
                                                        is_valid_name,
                                                        readonly_refusal,
-                                                       refusal, view_of)
-from mirage.workspace.executor.builtins.types import BuiltinCall
+                                                       refusal, require_view)
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.elements import assign_element
 from mirage.workspace.session.state import session_view, visible_env
@@ -341,7 +341,7 @@ async def handle_read(
             session._stdin_buffer = AsyncLineIterator(stdin)
             session._stdin_source = stdin
 
-    view = view_of(session, state)
+    view = require_view(state)
     buffer = session._stdin_buffer
     if timeout == 0:
         # `read -t 0` asks whether input is available and reads nothing.

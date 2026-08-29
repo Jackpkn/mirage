@@ -14,7 +14,13 @@
 
 import { mountPrefixOf } from '../../utils/key_prefix.ts'
 import { describe, expect, it } from 'vitest'
-import { command, type CommandFn, RegisteredCommand } from '../../commands/config.ts'
+import {
+  command,
+  type CommandFn,
+  type CommandOpts,
+  type ExecContext,
+  RegisteredCommand,
+} from '../../commands/config.ts'
 import { CommandSpec, Operand } from '../../commands/spec/types.ts'
 import { IOResult } from '../../io/types.ts'
 import type { Accessor } from '../../accessor/base.ts'
@@ -190,6 +196,28 @@ describe('Mount.executeCmd', () => {
     const [, io] = await m.executeCmd('rm', [PathSpec.fromStrPath('/x')], [], {})
     expect(io.exitCode).toBe(1)
     expect(new TextDecoder().decode(io.stderr as Uint8Array)).toMatch(/read-only/)
+  })
+
+  it('terminates the read-only refusal with a newline', async () => {
+    // stderr accumulates across a line, so an unterminated refusal ran
+    // into the next one: `{ rm /ro/a; rm /ro/b; }` printed the single
+    // line `rm: read-only mount at /ro/rm: read-only mount at /ro/`.
+    // It is also the line the node table renders for a refused symlink
+    // (shared.readOnlyError), which concatenates with this one.
+    const m = makeMount(MountMode.READ)
+    const [wcmd] = command({
+      name: 'rm',
+      resource: 'ram',
+      spec: BASIC_SPEC,
+      fn: OK_CMD,
+      write: true,
+    })
+    if (wcmd === undefined) throw new Error('missing')
+    m.register(wcmd)
+    const [, io] = await m.executeCmd('rm', [PathSpec.fromStrPath('/x')], [], {})
+    expect(new TextDecoder().decode(io.stderr as Uint8Array)).toBe(
+      `rm: read-only mount at ${m.prefix}\n`,
+    )
   })
 
   it('passes the mount prefix through PathSpecs given to the command', async () => {
@@ -381,5 +409,20 @@ describe('Mount.registerCross / resolveCross', () => {
     m.registerCross(rc, 'disk')
     expect(m.resolveCross('cp', 'disk')).toBe(rc)
     expect(m.resolveCross('cp', 'gdrive')).toBeNull()
+  })
+})
+
+describe('ExecContext parity with CommandOpts', () => {
+  it('every line fact is spelled as CommandOpts spells it', () => {
+    // executeCmd re-boxes the bag onto CommandOpts, so a fact spelled
+    // two ways across that seam is two vocabularies for one plane.
+    // Checked at compile time because a TS interface has no fields to
+    // enumerate at runtime. `limitOverride` is the one execution
+    // control executeCmd consumes itself rather than forwards, so it
+    // is the one exemption. The Python twin is
+    // tests/commands/test_exec_context_parity.py.
+    type Shared = { [K in keyof Omit<ExecContext, 'limitOverride'>]: CommandOpts[K] }
+    const parity: Shared = {} as ExecContext
+    expect(parity).toBeDefined()
   })
 })

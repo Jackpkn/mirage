@@ -22,7 +22,7 @@ import { ExecutionNode } from '../../../types.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import { resolvePathStat } from '../links/index.ts'
 import { toScope } from '../scope.ts'
-import type { Result } from '../shared.ts'
+import type { Result } from '../types.ts'
 
 /**
  * A diagnostic from a shell that never got as far as running.

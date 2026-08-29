@@ -14,7 +14,7 @@
 
 import functools
 
-from mirage.commands.builtin.find_parse import (FindParseError, find_expr_tail,
+from mirage.commands.builtin.find_parse import (find_expr_tail,
                                                 parse_find_expression)
 from mirage.commands.builtin.generic.crossmount import (handle_cross_mount,
                                                         is_cross_mount)
@@ -23,18 +23,19 @@ from mirage.commands.builtin.generic.crossmount.types import Strategy
 from mirage.commands.builtin.generic.tar.mode import is_create_mode
 from mirage.commands.builtin.utils.limit import maybe_with_timeout
 from mirage.commands.config import version_request
+from mirage.commands.errors import FindParseError
 from mirage.commands.spec import SPECS
 from mirage.io import IOResult
 from mirage.io.stream import materialize
 from mirage.io.types import ByteSource
 from mirage.policy import resolve_limit, resolve_producer
-from mirage.runtime.policy import PolicyDecision
+from mirage.runtime.routing import RouteDecision
 from mirage.runtime.types import DispatchFn
 from mirage.shell.call_stack import CallStack
 from mirage.shell.job_table import JobTable
 from mirage.types import PathSpec, Producer
 from mirage.workspace.executor.builtins.links import path_stat
-from mirage.workspace.executor.command.cli import handle_cli
+from mirage.workspace.executor.command.cli import CLIContext, handle_cli
 from mirage.workspace.executor.command.flags import option_error, parse_flags
 from mirage.workspace.executor.command.functions import run_shell_function
 from mirage.workspace.executor.command.routing import (CWD_DEFAULT_RAW,
@@ -81,7 +82,7 @@ async def handle_command(
     call_stack: CallStack | None = None,
     job_table: JobTable | None = None,
     namespace: Namespace | None = None,
-    routing_decision: PolicyDecision | None = None,
+    routing_decision: RouteDecision | None = None,
 ) -> tuple[ByteSource | None, IOResult, ExecutionNode]:
     """Execute a simple command.
 
@@ -123,12 +124,14 @@ async def handle_command(
             parts,
             session,
             stdin,
-            entries=registry.runtime_entries,
-            dispatch=dispatch,
-            stat_path=(functools.partial(path_stat, dispatch)
-                       if dispatch is not None else None),
-            ns=namespace_view_of(registry, namespace, dispatch),
-            session_view=session_view(session, registry.policies),
+            CLIContext(
+                entries=registry.runtime_entries,
+                dispatch=dispatch,
+                stat_path=(functools.partial(path_stat, dispatch)
+                           if dispatch is not None else None),
+                ns=namespace_view_of(registry, namespace, dispatch),
+                session_view=session_view(session, registry.policies),
+            ),
             drop_caches=functools.partial(drop_service_caches, registry,
                                           cli_install.spec.serves),
         )

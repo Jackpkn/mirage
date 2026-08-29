@@ -25,9 +25,10 @@ import type { Session } from '../../../session/session.ts'
 import { visibleEnv } from '../../../session/state.ts'
 import type { SessionView } from '../../../../ops/types.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result, arithRefusal, isValidName, readonlyRefusal, refusal } from '../shared.ts'
+import { arithRefusal, isValidName, readonlyRefusal, refusal } from '../shared.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'
 import { ANSI_C_ESCAPES, BARE_KEY_RE, CONTROL_RE, SUBSCRIPT_RE } from './constants.ts'
+import type { Result } from '../types.ts'
 
 export async function premark(
   view: SessionView,

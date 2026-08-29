@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import json
 import os
 import shutil
@@ -25,6 +26,11 @@ from mirage.policy import Policy
 from mirage.policy.types import Deny, OpsContext, OpsResultContext
 from mirage.resource.ram import RAMResource
 from mirage.types import FileStat
+
+# What a probe records: a captured file body or stat string, a byte
+# count, an assertion that held. Mirrors the TypeScript twin's
+# Record<string, string | number | boolean | null>.
+ProbeValue = str | int | bool | None
 
 
 class SizelessOps:
@@ -69,7 +75,76 @@ class RedactReadsPolicy(Policy):
         return None
 
 
-def run_policy_probe(result: dict[str, object]) -> None:
+class PinLinksPolicy(Policy):
+    """pre_ops deny: a pinned link never leaves the node table."""
+
+    async def pre_ops(self, ctx: OpsContext) -> Deny | None:
+        if ctx.op == "unlink" and ctx.path.virtual.endswith(".pinned"):
+            return Deny("pinned")
+        return None
+
+
+def run_link_probe(result: dict[str, ProbeValue]) -> None:
+    """Record that removing a link through the kernel goes through the door.
+
+    FUSE used to drop a link straight into the namespace table, at a
+    layer no policy or session view covers, so a pre_ops deny never
+    fired on one and the removal left no OpRecord. Routing the removal
+    through the op door is exactly what makes the two answers below
+    differ, and unlink is a LINK_ENTRY_OPS member so the door answers a
+    link path itself.
+
+    Args:
+        result (dict[str, ProbeValue]): the probe result to extend.
+    """
+    res = RAMResource()
+    res._store.dirs.add("/")
+    res._store.files["/f.txt"] = b"body\n"
+    ws = Workspace({"/data": Mount(res, mode=MountMode.WRITE)},
+                   policies=[PinLinksPolicy()])
+    # Seeded before the mount goes live: creating a link through the
+    # mountpoint would depend on libfuse's symlink argument order, which
+    # is the adapter's business, not this probe's.
+    asyncio.run(ws.execute("ln -s f.txt /data/lk.pinned"))
+    asyncio.run(ws.execute("ln -s f.txt /data/lk.plain"))
+    mountpoint = tempfile.mkdtemp(prefix="mirage-fuse-link-")
+    mount_background(ws.ops, mountpoint)
+    try:
+        # A denied removal must FAIL and leave the link where it was.
+        # Keyed on the refusal, not on an errno, because Windows cannot
+        # report one: DeleteFile only sets FileDispositionInformation,
+        # so the deny lands when the handle closes and os.unlink returns
+        # success on a removal that never happened. The strict EACCES is
+        # therefore required only where it is observable, and the
+        # surviving link is the proof everywhere.
+        raised: str | None = None
+        try:
+            os.unlink(f"{mountpoint}/data/lk.pinned")
+        except PermissionError:
+            raised = "eacces"
+        except OSError:
+            raised = "other"
+        survives = ws.namespace.is_link("/data/lk.pinned")
+        result["link_policy_unlink_refused"] = survives and (
+            raised == "eacces" or sys.platform == "win32")
+        result["link_policy_survives"] = survives
+        # An unguarded link still goes, and only the link: unlink(2) on a
+        # symlink leaves the pointee alone.
+        os.unlink(f"{mountpoint}/data/lk.plain")
+        result["link_plain_unlink_ok"] = not ws.namespace.is_link(
+            "/data/lk.plain")
+        with open(f"{mountpoint}/data/f.txt", "rb") as fh:
+            result["link_target_survives"] = fh.read().decode().strip()
+    finally:
+        if sys.platform == "darwin":
+            subprocess.run(["diskutil", "unmount", "force", mountpoint],
+                           capture_output=True)
+        elif sys.platform != "win32":
+            subprocess.run(["fusermount", "-u", mountpoint],
+                           capture_output=True)
+
+
+def run_policy_probe(result: dict[str, ProbeValue]) -> None:
     """Record that op policies gate the kernel path too.
 
     FUSE serves the workspace's op door, so a pre_ops deny (sealed
@@ -77,7 +152,7 @@ def run_policy_probe(result: dict[str, object]) -> None:
     EACCES to ordinary file APIs, while unguarded reads pass.
 
     Args:
-        result (dict[str, object]): the probe result to extend.
+        result (dict[str, ProbeValue]): the probe result to extend.
     """
     res = RAMResource()
     res._store.dirs.add("/")
@@ -116,11 +191,11 @@ def run_policy_probe(result: dict[str, object]) -> None:
             result["policy_redact_eacces"] = sys.platform == "win32"
 
 
-def run_sizeless_probe(result: dict[str, object]) -> None:
+def run_sizeless_probe(result: dict[str, ProbeValue]) -> None:
     """Record the size-unknown semantics into the shared result.
 
     Args:
-        result (dict[str, object]): the probe result to extend.
+        result (dict[str, ProbeValue]): the probe result to extend.
     """
     api = RAMResource()
     api._store.dirs.add("/")
@@ -151,7 +226,7 @@ def run_sizeless_probe(result: dict[str, object]) -> None:
 
 
 def main() -> None:
-    result: dict[str, object] = {}
+    result: dict[str, ProbeValue] = {}
     data = RAMResource()
     data._store.dirs.add("/")
     data._store.files["/a.txt"] = b"alpha\n"
@@ -205,6 +280,7 @@ def main() -> None:
 
     run_sizeless_probe(result)
     run_policy_probe(result)
+    run_link_probe(result)
     print(json.dumps(result))
 
 

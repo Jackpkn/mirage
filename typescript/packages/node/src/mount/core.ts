@@ -404,16 +404,20 @@ export class MountCore {
     await this.ops.symlink(this.resolve(dest), stored)
   }
 
+  /**
+   * Remove the entry at `path`, a link entry like any other.
+   *
+   * A link routes through the op door rather than straight to the node
+   * table: `unlink` is a LINK_ENTRY_OPS member, so the door answers a
+   * link path itself, gated by session grants and admission policies
+   * and recorded on the ledger. Writing the table here instead let a
+   * session-scoped kernel mount delete a link on a mount its profile
+   * hides. Mirrors Python's MountCore.unlink.
+   */
   async unlink(path: string): Promise<void> {
-    const links = this.ops.links
-    if (links?.isLink(this.resolve(path)) === true) {
-      await links.unlink(this.resolve(path))
-      this.xattrs.delete(path)
-      this.prefetchCache.invalidate(path)
-      return
-    }
     await this.ops.unlink(this.resolve(path))
     this.xattrs.delete(path)
+    this.prefetchCache.invalidate(path)
   }
 
   async rename(src: string, dst: string): Promise<void> {

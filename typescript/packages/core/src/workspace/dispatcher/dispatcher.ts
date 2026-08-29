@@ -32,7 +32,7 @@ import {
 import { Policies, PolicyDenied, postOpsGate, preOpsGate } from '../../policy/index.ts'
 import { PolicyError } from '../../policy/errors.ts'
 import { mountKey } from '../../utils/key_prefix.ts'
-import { normDir, ownerPrefix, rstripSlash } from '../../utils/slash.ts'
+import { normDir, rstripSlash } from '../../utils/slash.ts'
 import { record, runWithMountPrefix, runWithRevisions } from '../../observe/context.ts'
 import type { OpRecord } from '../../observe/record.ts'
 import type { OpsRegistry } from '../../ops/registry.ts'
@@ -64,10 +64,12 @@ import {
   POLICY_WRITE_OPS,
   SETATTR_KEYS,
 } from './constants.ts'
+import { requireTurfWritable } from './lineage.ts'
 import {
   effectivePathMode,
   getCurrentSession,
   hiddenPathsIntersect,
+  liveSessions,
   pathAllowed,
 } from '../../context/session_context.ts'
 import { moveReveals } from '../../utils/hidden.ts'
@@ -204,13 +206,13 @@ export class Dispatcher {
       // (rmR, the remnant rmdir below); relocating it into view is
       // refused. Only a directory has anything below it to re-anchor,
       // so a file source passes.
-      const sess = getCurrentSession()
-      if (
-        sess !== null &&
-        moveReveals(sess.hiddenPaths, sess.shownPaths, path.virtual, dstArg.virtual) &&
-        (await this.movedSourceIsDir(path))
-      ) {
-        throw eacces(path.virtual)
+      for (const sess of liveSessions()) {
+        if (
+          moveReveals(sess.hiddenPaths, sess.shownPaths, path.virtual, dstArg.virtual) &&
+          (await this.movedSourceIsDir(path))
+        ) {
+          throw eacces(path.virtual)
+        }
       }
     }
     if (this.tableAnswers(opName, path.virtual, kwargs)) {
@@ -256,6 +258,7 @@ export class Dispatcher {
       // case and keeps the canonical denial.
       if (opName === 'setattr' && isMissingPath(err)) {
         await preOpsGate(this.policies, opName, p, true, '', sessionId())
+        requireTurfWritable(null, p)
         const stored = await this.overlaySetattr(p, kwargs ?? {})
         memoryAnswered(report)
         await postOpsGate(this.policies, opName, p, true, '', stored)
@@ -509,15 +512,22 @@ export class Dispatcher {
         throw erofsReadOnly(`mount at '${spec.virtual}' is read-only`, spec)
       }
     }
+    // The fence reruns backend ops outside `dispatch`, so the revision
+    // pins have to ride here as on the main path above, or a cascade
+    // read answers from the wrong version of a revision-pinned mount.
+    // Python's twin gets both bindings from `Mount.execute_op`.
+    const mount = this.namespace.mountFor(spec.virtual)
     try {
       return await runWithMountPrefix(rstripSlash(mountPrefix), () =>
-        this.opsRegistry.call(
-          opName,
-          resource.kind,
-          resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
-          spec,
-          [],
-          this.indexKwargs(resource),
+        runWithRevisions(mount.revisions.size > 0 ? mount.revisions : null, () =>
+          this.opsRegistry.call(
+            opName,
+            resource.kind,
+            resource.accessor ?? NOOP_ACCESSOR_INSTANCE,
+            spec,
+            [],
+            this.indexKwargs(resource),
+          ),
         ),
       )
     } finally {
@@ -655,9 +665,13 @@ export class Dispatcher {
    * a backend write: the link's turf is the longest mount prefix above it
    * (the same ownership rule the link read filter uses), session grants
    * and both gates run, and the write leaves an OpRecord — a scoped
-   * kernel mount refuses exactly like a scoped shell. A link above
-   * every mount is bare namespace structure and clears the gates with
-   * an empty prefix. Also answers the `unlink`, `rename` and no-follow
+   * kernel mount refuses exactly like a scoped shell. The turf's mode
+   * gates the write too (`requireTurfWritable`), so a read-only mount
+   * or grant answers EROFS for a link exactly as for a file; a link
+   * above every mount is bare namespace structure, gated with an empty
+   * prefix and governed by `/` (see `lineage.ts`). A rename's
+   * destination is judged on its own turf, since the endpoints need not
+   * share one. Also answers the `unlink`, `rename` and no-follow
    * `stat` of a path the node table holds a link for. Mirrors Python's
    * Dispatcher._namespace_table_op.
    */
@@ -669,9 +683,11 @@ export class Dispatcher {
     report: OpReport | undefined,
   ): Promise<string | FileStat | null> {
     const start = performance.now()
-    const owner = ownerPrefix(this.namespace.mountPrefixes(), path.virtual)
+    const mount = this.namespace.tryMountFor(path.virtual)
+    const owner = mount?.prefix ?? null
     const write = POLICY_WRITE_OPS.has(opName)
     await preOpsGate(this.policies, opName, path, write, owner ?? '', sessionId())
+    if (write) requireTurfWritable(mount, path)
     let target: string
     let result: string | FileStat | null = null
     if (opName === 'unlink') {
@@ -681,11 +697,13 @@ export class Dispatcher {
       target = this.namespace.readlink(path.virtual) ?? ''
       const dst = args[0]
       if (!(dst instanceof PathSpec)) throw new Error('rename op requires dst')
-      // The destination is a create there, gated like the source, the
-      // way the backend path gates both ends of a rename. It is then
-      // replaced as rename(2) replaces it: any node the table holds at
-      // that name (a link, an attr overlay) goes.
-      await preOpsGate(this.policies, opName, dst, true, owner ?? '', sessionId())
+      // The destination is a create there, gated like the source and on
+      // its own turf, the way the backend path gates both ends of a
+      // rename. It is then replaced as rename(2) replaces it: any node
+      // the table holds at that name (a link, an attr overlay) goes.
+      const dstMount = this.namespace.tryMountFor(dst.virtual)
+      await preOpsGate(this.policies, opName, dst, true, dstMount?.prefix ?? '', sessionId())
+      requireTurfWritable(dstMount, dst)
       await this.namespace.unlink(dst.virtual)
       await this.namespace.rename(path.virtual, dst.virtual)
     } else if (opName === 'symlink') {

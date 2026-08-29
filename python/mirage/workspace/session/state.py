@@ -590,13 +590,13 @@ def seed_var(session: Session, name: str, value: ShellValue) -> None:
     which is the whole point of the store being read-only from outside.
     One caller is neither, and is called out here rather than left to
     be discovered: `execute_command` lands a prefix assignment
-    (``FOO=bar cmd``) through this door, so a ``pre_session`` rule
-    never sees one. That predates the record store -- the same site
-    wrote ``session.env[k]`` before -- and closing it means deciding
-    what bash does when a prefix assignment is refused, which is its
-    own divergence (GNU prints the readonly refusal, runs the command
-    anyway and exits 0, where mirage refuses the whole statement). It
-    belongs with that work, not here.
+    (``FOO=bar cmd``) through this door. That is not a way around the
+    gate. The same site asks ``ensure_var_visible`` and then
+    ``pre_session``, with the value, before it seeds anything, because
+    a prefix assignment is a session write like any other and the form
+    exports the name for the command. A refusal there takes the whole
+    statement, which is a deliberate divergence: GNU prints its
+    readonly refusal, runs the command anyway and exits 0.
 
     Args:
         session (Session): the session being seeded.

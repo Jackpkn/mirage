@@ -39,9 +39,9 @@ async def eval_with_ctx(source: str, ctx: dict[str, EvalValue],
 
     Deliberately raises rather than words its failures. Each caller
     refuses in its own voice and its own error type (the runtime
-    router's PolicyError is a ValueError, the permissions layer's is
-    not), so a shared wording here would put one layer's words on the
-    other layer's failure.
+    router's RouteError is a ValueError, the permissions layer's
+    PolicyError is not), so a shared wording here would put one
+    layer's words on the other layer's failure.
 
     Args:
         source (str): the script program.

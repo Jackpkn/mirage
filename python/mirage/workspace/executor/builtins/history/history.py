@@ -12,22 +12,22 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from mirage.commands.config import ExecContext
 from mirage.commands.spec.types import FlagValue
 from mirage.io.types import ByteSource, IOResult
 from mirage.resource.history import HISTORY_PREFIX
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.mount.registry import MountRegistry
 from mirage.workspace.session.session import Session
 from mirage.workspace.types import ExecutionNode
 
-USAGE = ("history: usage: history [-c] [-d offset] [n] or "
-         "history -awrn [filename] or history -ps arg [arg...]\n")
-OPTION_CHARS = "cdanrwsp"
+_USAGE = ("history: usage: history [-c] [-d offset] [n] or "
+          "history -awrn [filename] or history -ps arg [arg...]\n")
+_OPTION_CHARS = "cdanrwsp"
 
 
 def _usage_error(message: str) -> tuple[None, IOResult, ExecutionNode]:
-    err = (message + USAGE).encode()
+    err = (message + _USAGE).encode()
     io = IOResult(exit_code=2, stderr=err)
     return None, io, ExecutionNode(command="history", exit_code=2, stderr=err)
 
@@ -64,7 +64,7 @@ def _parse_args(
             j = 1
             while j < len(token):
                 ch = token[j]
-                if ch not in OPTION_CHARS:
+                if ch not in _OPTION_CHARS:
                     return {}, [], f"history: -{ch}: invalid option\n"
                 flags[ch] = True
                 if ch == "d":
@@ -110,11 +110,9 @@ async def handle_history(
                               stderr=err), ExecutionNode(command="history",
                                                          exit_code=1,
                                                          stderr=err)
-    stream, io = await mount.execute_cmd("history", [],
-                                         texts,
-                                         flags,
-                                         cwd=session.cwd,
-                                         session_id=session.session_id)
+    stream, io = await mount.execute_cmd(
+        "history", [], texts, flags,
+        ExecContext(cwd=session.cwd, session_id=session.session_id))
     # The view command always returns byte stderr, but io.stderr is typed
     # as a ByteSource (a possible lazy stream); resolve it to bytes so the
     # execution-tree node holds concrete stderr, never an unread stream.

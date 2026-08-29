@@ -14,8 +14,7 @@
 
 import pytest
 
-from mirage.commands.builtin.utils.formatting import (_human_size,
-                                                      format_ls_long)
+from mirage.commands.builtin.utils.formatting import format_ls_long, human_size
 from mirage.types import ContentType, FileStat, FileType
 
 # Read off GNU coreutils 9.7 (`ls -lh` on a file of each size, debian
@@ -54,7 +53,7 @@ GNU_HUMAN_SIZES = [
 
 @pytest.mark.parametrize(("size", "expected"), GNU_HUMAN_SIZES)
 def test_human_size_matches_gnu(size: int, expected: str):
-    assert _human_size(size) == expected
+    assert human_size(size) == expected
 
 
 def test_format_ls_long_regular_file():

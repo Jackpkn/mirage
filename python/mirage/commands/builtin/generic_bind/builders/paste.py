@@ -15,9 +15,8 @@
 from mirage.accessor.base import Accessor
 from mirage.commands.builtin.generic.paste import paste as generic_paste
 from mirage.commands.builtin.generic_bind.adapter import (Builder, CommandIO,
-                                                          bound_op)
-from mirage.commands.builtin.generic_bind.builders.common import \
-    resolve_or_empty
+                                                          bound_op,
+                                                          resolve_or_empty)
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
 from mirage.commands.spec.types import FlagView

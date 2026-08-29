@@ -19,9 +19,7 @@ import { asyncChain } from '../../../../io/stream.ts'
 import { shellJoin } from '../../../../shell/join.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
-import type { ExecuteStringFn } from '../scope.ts'
-import type { Result } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, ExecuteStringFn, Result } from '../types.ts'
 
 const UNSUPPORTED = ['I', 'P']
 

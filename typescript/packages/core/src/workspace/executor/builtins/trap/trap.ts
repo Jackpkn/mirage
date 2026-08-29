@@ -15,8 +15,7 @@
 import { IOResult } from '../../../../io/types.ts'
 import type { Session } from '../../../session/session.ts'
 import { ExecutionNode } from '../../../types.ts'
-import { type Result } from '../shared.ts'
-import type { BuiltinCall } from '../types.ts'
+import type { BuiltinCall, Result } from '../types.ts'
 
 export function handleTrap(_session: Session): Result {
   return [null, new IOResult(), new ExecutionNode({ command: 'trap', exitCode: 0 })]

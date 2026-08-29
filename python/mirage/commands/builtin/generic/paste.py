@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 from itertools import cycle, zip_longest
 
 from mirage.commands.builtin.utils.lines import split_lines
-from mirage.commands.builtin.utils.stream import _read_stdin_async
+from mirage.commands.builtin.utils.stream import read_stdin_async
 from mirage.io.types import ByteSource, IOResult
 from mirage.types import PathSpec
 
@@ -57,7 +57,7 @@ async def paste(
     remaining_stdin = stdin
     for p in paths:
         if p.virtual == "-":
-            raw = await _read_stdin_async(remaining_stdin)
+            raw = await read_stdin_async(remaining_stdin)
             data = raw.decode(errors="replace") if raw else ""
             remaining_stdin = None
         else:
@@ -67,7 +67,7 @@ async def paste(
             split("\0") if zero_terminated else split_lines(data))
 
     if not file_lines:
-        raw = await _read_stdin_async(remaining_stdin)
+        raw = await read_stdin_async(remaining_stdin)
         data = raw.decode(errors="replace") if raw is not None else ""
         file_lines.append(
             data.rstrip("\0").

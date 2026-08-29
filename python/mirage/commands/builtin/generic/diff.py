@@ -3,7 +3,7 @@ import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
-from mirage.commands.builtin.diff_helper import _ed_script, _normal_diff
+from mirage.commands.builtin.diff_format import ed_script, normal_diff
 from mirage.commands.builtin.utils.lines import split_lines_keepends
 from mirage.commands.config import CommandOpts
 from mirage.commands.errors import UsageError
@@ -61,7 +61,7 @@ async def _diff_pair(
     a_lines = split_lines_keepends(text_a)
     b_lines = split_lines_keepends(text_b)
     if flags.e:
-        result = _ed_script(a_lines, b_lines)
+        result = ed_script(a_lines, b_lines)
     elif flags.u:
         result = list(
             difflib.unified_diff(a_lines,
@@ -69,7 +69,7 @@ async def _diff_pair(
                                  fromfile=name1,
                                  tofile=name2))
     else:
-        result = _normal_diff(a_lines, b_lines)
+        result = normal_diff(a_lines, b_lines)
     return "".join(result).encode()
 
 

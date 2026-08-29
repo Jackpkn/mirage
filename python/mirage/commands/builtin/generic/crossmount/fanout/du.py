@@ -16,12 +16,12 @@ from collections.abc import Sequence
 
 from mirage.commands.builtin.generic.crossmount.types import OperandRun
 from mirage.commands.builtin.generic.du import rollup, separate_total
-from mirage.commands.builtin.utils.formatting import _human_size
+from mirage.commands.builtin.utils.formatting import human_size
 from mirage.utils.path import respell_raw
 
 
 def _format_size(size: int, human: bool) -> str:
-    return _human_size(size) if human else str(size)
+    return human_size(size) if human else str(size)
 
 
 def _parse_rows(blocks: Sequence[bytes]) -> list[tuple[str, int]]:
@@ -139,7 +139,7 @@ def _humanize_row(line: str) -> str:
     size_text, tab, label = line.partition("\t")
     if not tab:
         return line
-    return _human_size(int(size_text)) + "\t" + label
+    return human_size(int(size_text)) + "\t" + label
 
 
 def merge_du_totals(blocks: Sequence[bytes], human: bool) -> bytes:

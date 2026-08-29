@@ -12,8 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { CLI_CONFIG_ENV } from '../../../commands/cli/constants.ts'
-import { CLAP_EXIT, clapMissingOperands, leafRefusal } from '../../../commands/cli/refusal.ts'
+import { CLAP_EXIT, CLI_CONFIG_ENV } from '../../../commands/cli/constants.ts'
+import { clapMissingOperands, leafRefusal } from '../../../commands/cli/refusal.ts'
 import { CLISpec, type CLIInvocation, type CLIDoors } from '../../../commands/cli/types.ts'
 import { ownsArgv, walk } from '../../../commands/cli/walk.ts'
 import type { DispatchFn } from '../../../runtime/types.ts'
@@ -27,18 +27,15 @@ import { UsageError } from '../../../commands/errors.ts'
 import { IOResult, materialize, type ByteSource } from '../../../io/types.ts'
 import { wordText, type PathSpec } from '../../../types.ts'
 import { concatBytes } from '../../../core/jq/format.ts'
-import {
-  CommandTimeoutError,
-  maybeWithTimeout,
-  runWithTimeout,
-} from '../../../commands/builtin/utils/limit.ts'
+import { maybeWithTimeout, runWithTimeout } from '../../../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../../../commands/errors.ts'
 import type { CLIInstall } from '../../cli/types.ts'
 import type { Session } from '../../session/session.ts'
 import { envSnapshot } from '../../session/state.ts'
 import { ExecutionNode } from '../../types.ts'
 import { resolveLimit } from '../../../policy/index.ts'
-import { runtimeForLanguage } from '../../../runtime/policy/decide.ts'
-import type { ScriptSource } from '../../../runtime/policy/types.ts'
+import { runtimeForLanguage } from '../../../runtime/routing/decide.ts'
+import type { ScriptSource } from '../../../runtime/routing/types.ts'
 import { runOutput } from '../../../commands/builtin/general/interpreter.ts'
 import type { Runtime } from '../../../runtime/base.ts'
 import { LanguageRuntime } from '../../../runtime/language.ts'
@@ -154,7 +151,7 @@ async function scriptOutput(
  * there is no allowlist of filesystem-aware CLIs to keep in step (the same rule
  * `links` follows for mount commands).
  */
-export interface CliFacts {
+export interface CLIContext {
   /**
    * The workspace's ordered runtime world, which a script leaf selects
    * its interpreter from; absent (outside a workspace) refuses script
@@ -181,15 +178,15 @@ export interface CliFacts {
  * (scriptOutput), so usage refusals, limits, and classification all
  * happen in front of either tier. Help too, for every node that declared
  * a grammar to render it from (parseSpecFor). The workspace facts in
- * `facts` reach a verb as one `inv.doors` field, one door per state plane,
- * so a verb that never reads it cannot touch a mount.
+ * `context` reach a verb as one `inv.doors` field, one door per state
+ * plane, so a verb that never reads it cannot touch a mount.
  */
 export async function handleCli(
   install: CLIInstall,
   parts: readonly (string | PathSpec)[],
   session: Session,
   stdin: ByteSource | null = null,
-  facts: CliFacts = {},
+  context: CLIContext = {},
   dropCaches: (() => Promise<void>) | null = null,
 ): Promise<[ByteSource | null, IOResult, ExecutionNode]> {
   // Words re-enter string space as typed (wordText): the walk owns
@@ -270,10 +267,10 @@ export async function handleCli(
   // while `git` is nothing but one. Absent outside a workspace, so a verb
   // that needs a mount refuses there on its own.
   const doors: CLIDoors = {
-    ...(facts.dispatch !== undefined ? { dispatch: facts.dispatch } : {}),
-    ...(facts.statPath !== undefined ? { statPath: facts.statPath } : {}),
-    ...(facts.ns !== undefined ? { ns: facts.ns } : {}),
-    ...(facts.sessionView !== undefined ? { sessionView: facts.sessionView } : {}),
+    ...(context.dispatch !== undefined ? { dispatch: context.dispatch } : {}),
+    ...(context.statPath !== undefined ? { statPath: context.statPath } : {}),
+    ...(context.ns !== undefined ? { ns: context.ns } : {}),
+    ...(context.sessionView !== undefined ? { sessionView: context.sessionView } : {}),
   }
   const inv: CLIInvocation = {
     config: install.config,
@@ -288,7 +285,7 @@ export async function handleCli(
 
   let body: Promise<[ByteSource | null, IOResult] | null>
   if (leaf.script !== null) {
-    const [runtime, refused] = selectRuntime(prog, leaf, facts.entries ?? [])
+    const [runtime, refused] = selectRuntime(prog, leaf, context.entries ?? [])
     if (runtime === null) {
       // The interpreter is missing, not the command: 127 like an
       // interpreter command no runtime entry captures.

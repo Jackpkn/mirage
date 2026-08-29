@@ -15,10 +15,10 @@
 from mirage.accessor.box import BoxAccessor
 from mirage.cache.index import IndexCacheStore
 from mirage.commands.builtin.box.io import resolve_glob
-from mirage.commands.builtin.grep_helper import (BINARY_EXTENSIONS,
-                                                 get_extension,
-                                                 is_literal_pattern,
-                                                 search_query)
+from mirage.commands.builtin.constants import BINARY_EXTENSIONS
+from mirage.commands.builtin.grep_pushdown import (is_literal_pattern,
+                                                   search_query)
+from mirage.commands.resolve import get_extension
 from mirage.core.box.search import narrow_paths
 from mirage.core.box.stat import stat as box_stat
 from mirage.types import FileType, PathSpec

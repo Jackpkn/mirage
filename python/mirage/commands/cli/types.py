@@ -28,7 +28,7 @@ from mirage.types import Limit, PathSpec, ResourceName
 
 # The group-level flag bag the walk accumulates, keyed by canonical
 # dashed spelling like ParsedArgs.flags.
-FlagBag = dict[str, ParsedFlagValue]
+WalkFlagBag = dict[str, ParsedFlagValue]
 
 ConfigT = TypeVar("ConfigT")
 
@@ -54,9 +54,10 @@ class CLIDoors:
 
     Args:
         dispatch (DispatchFn | None): the data plane's door, the
-            workspace op dispatcher. Typed loosely on purpose: the
-            DispatchFn Protocol lives in ``workspace.types``, and
-            ``commands`` stays free of a workspace import.
+            workspace op dispatcher. The Protocol is declared in
+            ``runtime.types``, on the consumer side, because the
+            workspace provides the door and everyone else receives one;
+            naming it from here costs no workspace import.
         stat_path (StatPath | None): dispatcher-backed stat that asks
             both channels a backend can answer on.
         ns (NamespaceView | None): the name plane's door, holding the
@@ -196,7 +197,10 @@ class CLISpec(CommandSpec):
     """
     name: str = ""
     aliases: tuple[str, ...] = ()
-    fn: Callable[..., Any] | None = None
+    # Any callable is valid, including stateful callable objects whose
+    # class deliberately has no hash. The handler does not affect the
+    # inherited CommandSpec grammar cached by compile_spec.
+    fn: Callable[..., Any] | None = field(default=None, hash=False)
     subcommands: tuple["CLISpec", ...] = ()
     write: bool = False
     usage_style: UsageStyle = UsageStyle.ARGPARSE
@@ -239,7 +243,7 @@ class WalkResult:
     """
     leaf: "CLISpec | None" = None
     path: tuple[str, ...] = ()
-    group_flags: FlagBag = field(default_factory=dict)
+    group_flags: WalkFlagBag = field(default_factory=dict)
     argv: tuple[str, ...] = ()
     output: bytes = b""
     stream: Literal["stdout", "stderr"] = "stdout"

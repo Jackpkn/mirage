@@ -23,7 +23,7 @@ import { z } from 'zod'
 import { setCwd } from '../session/shell_dirs.ts'
 import type { CLIInstall } from '../cli/types.ts'
 import { CLISpec } from '../../commands/cli/types.ts'
-import { ScriptSource } from '../../runtime/policy/types.ts'
+import { ScriptSource } from '../../runtime/routing/types.ts'
 
 /**
  * Per-name overrides for restoring installed CLIs: a plain mapping is a

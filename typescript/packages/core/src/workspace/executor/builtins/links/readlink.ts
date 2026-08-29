@@ -18,8 +18,9 @@ import { PolicyDenied } from '../../../../policy/index.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
 import type { Session } from '../../../session/session.ts'
-import { absPath, fail, result, splitFlags, type Result } from '../shared.ts'
+import { absPath, fail, result, splitFlags } from '../shared.ts'
 import { pathExists } from './probe.ts'
+import type { Result } from '../types.ts'
 
 // Any filesystem answer other than a target: a refusal (session view or
 // policy), EINVAL (not a link), ENOENT (absent, which is what a hidden

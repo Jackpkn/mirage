@@ -22,10 +22,9 @@ from mirage.workspace.executor.builtins.declare.constants import (EXPORT_FLAGS,
 from mirage.workspace.executor.builtins.declare.declare import (
     declare_line, identifier_failure, identifier_refusal, split_decl_flags,
     store_staged_arrays)
-from mirage.workspace.executor.builtins.shared import (Result,
-                                                       readonly_refusal,
-                                                       refusal, view_of)
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.shared import (readonly_refusal,
+                                                       refusal, require_view)
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.state import (exported_names, session_view,
                                             set_attr)
@@ -91,7 +90,7 @@ async def handle_export(
     # -f is accepted and marks nothing: mirage carries no export
     # attribute on functions. -n is the off direction, and applies to
     # both spellings, since `export -n K=v` assigns and unexports.
-    view = view_of(session, state)
+    view = require_view(state)
     on = "n" not in flags
     if arrays:
         # `export ARR=(a b)` marks the array as surely as it marks a

@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { IOResult, type ByteSource } from '../../../io/types.ts'
+import { IOResult } from '../../../io/types.ts'
 import type { SessionView } from '../../../ops/types.ts'
 import type { PolicyDenied } from '../../../policy/errors.ts'
 import type { ArithError } from '../../../shell/errors.ts'
@@ -21,18 +21,9 @@ import { mountKey } from '../../../utils/key_prefix.ts'
 import { resolvePath } from '../../../utils/path.ts'
 import { rstripSlash } from '../../../utils/slash.ts'
 import type { Namespace } from '../../mount/namespace/namespace.ts'
-import type { Session } from '../../session/session.ts'
-import { sessionView } from '../../session/state.ts'
 import { ExecutionNode } from '../../types.ts'
-
-export type Result = [ByteSource | null, IOResult, ExecutionNode]
-
-export const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
-
-// An assignment target with an optional subscript (`name` or `name[sub]`).
-// A subscript must be non-empty: bash rejects `a[]` as an invalid
-// identifier, while `a[ ]` is a valid arithmetic 0.
-export const TARGET_RE = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[(.+)\])?$/
+import { IDENTIFIER_RE } from './constants.ts'
+import type { Result } from './types.ts'
 
 const ENC = new TextEncoder()
 
@@ -251,12 +242,22 @@ export async function expandOperands(
 }
 
 /**
- * The session view to write through. Production callers thread the
- * workspace's gated view; a direct invocation (a unit test) gets an
- * ungated one over the same session.
+ * The gated session view this builtin writes through.
+ *
+ * Every session write goes through the workspace's gated view, which is
+ * what makes `preSession` rules enforceable; this used to fall back to
+ * an ungated view over the same session, so a caller that forgot to
+ * thread one silently wrote past every policy. A write reached without
+ * a view is a wiring bug, not a mode, so it throws.
  */
-export function viewOf(session: Session, state: SessionView | null): SessionView {
-  return state ?? sessionView(session)
+export function requireView(state: SessionView | null): SessionView {
+  if (state === null) {
+    throw new Error(
+      "builtin reached a session write without the workspace's gated " +
+        'session view; thread state from the executor arm',
+    )
+  }
+  return state
 }
 
 /** Render a policy denial in the builtin's own voice. */
@@ -270,6 +271,30 @@ export function refusal(cmd: string, err: PolicyDenied): Result {
 }
 
 /** Render the shell's own readonly refusal, checked before the door. */
+// Render the mirage read-only refusal, naming the mount.
+//
+// The voice `Mount.executeCmd` uses when a command's own mount region is
+// unwritable, so a refusal reached from anywhere else says the same
+// thing: `rm` of a symlink is answered by the node table rather than the
+// mount, and rendering it in GNU's per-operand voice made one read-only
+// grant speak twice about the same mount.
+//
+// It names the mount, not the operand, so two refused operands on one
+// mount produce one line and callers collecting several must drop the
+// duplicates. A refusal keyed to a *path* rather than a mount region (a
+// read-only rename destination on another mount) is not this message:
+// those keep GNU's per-operand wording, as the backend path does.
+//
+// A path no mount owns (an attr overlay or link above every mount, gated
+// on its `/` turf) has no prefix to blame, so the refusal keeps GNU's own
+// phrase instead of naming a mount that is not there. Mirrors Python's
+// read_only_error.
+export function readOnlyError(cmd: string, namespace: Namespace, path: PathSpec): string {
+  const mount = namespace.tryMountFor(path.virtual)
+  if (mount === null) return `${cmd}: ${path.virtual}: Read-only file system\n`
+  return `${cmd}: read-only mount at ${mount.prefix}\n`
+}
+
 export function readonlyRefusal(cmd: string, name: string): Result {
   const encoded = new TextEncoder().encode(`bash: ${name}: readonly variable\n`)
   return [

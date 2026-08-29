@@ -13,5 +13,9 @@
   "api_size_postread": 16,
   "policy_clean_read": "hello",
   "policy_sealed_eacces": true,
-  "policy_redact_eacces": true
+  "policy_redact_eacces": true,
+  "link_policy_unlink_refused": true,
+  "link_policy_survives": true,
+  "link_plain_unlink_ok": true,
+  "link_target_survives": "body"
 }

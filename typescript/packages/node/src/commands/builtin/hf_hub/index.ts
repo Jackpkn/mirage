@@ -1,0 +1,37 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import { makeGenericCommands } from '@struktoai/mirage-core/commands/builtin/generic_bind/index'
+import type { RegisteredCommand } from '@struktoai/mirage-core/commands/config'
+import { ResourceName } from '@struktoai/mirage-core/types'
+import type { HfHubAccessor } from '../../../accessor/hf_hub.ts'
+import { HF_HUB_IO } from './io.ts'
+
+// The three git-repo resources. `hf_buckets` is deliberately absent: it is a
+// different Hugging Face product (Xet-backed mutable object storage, no
+// commits and no revisions) and keeps its own OpenDAL-backed commands.
+export const HF_HUB_RESOURCES = [
+  ResourceName.HF_MODELS,
+  ResourceName.HF_DATASETS,
+  ResourceName.HF_SPACES,
+] as const
+
+// cp and mv are skipped because the Hub has no server-side copy or rename.
+const HF_HUB_OVERRIDES = new Set(['cp', 'mv'])
+
+export const HF_HUB_COMMANDS: readonly RegisteredCommand[] = HF_HUB_RESOURCES.flatMap((resource) =>
+  makeGenericCommands<HfHubAccessor>(resource, HF_HUB_IO, {
+    overrides: HF_HUB_OVERRIDES,
+  }),
+)

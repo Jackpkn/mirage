@@ -125,6 +125,31 @@ const res = await ws.execute('cat /bucket/hello.txt')
 console.log(res.stdoutText)
 ```
 
+### Customize a builtin command
+
+Backend command definitions are available before a workspace is created. Copy
+the definition with the behavior you want to change, then register that copy on
+one mount:
+
+```ts
+import { S3_COMMANDS } from '@struktoai/mirage-browser'
+
+const cat = S3_COMMANDS.require('cat')
+const loggedCat = cat.withOverrides({
+  fn: async (accessor, paths, texts, opts) => {
+    console.log('reading', paths.map((path) => path.virtual))
+    return cat.fn(accessor, paths, texts, opts)
+  },
+})
+
+ws.mount('/bucket/')?.register(loggedCat)
+```
+
+Use the same `S3_COMMANDS` export from `@struktoai/mirage-node` for a Node
+workspace. The builtin definition and other mounts stay unchanged.
+Registration is a host application action; an agent can discover and run the
+resulting `cat` command, but cannot alter the command table.
+
 ### 3. Configure CORS on the bucket
 
 Presigned URLs reach the S3 host directly from the browser. Your bucket must allow cross-origin requests from your app's origin, otherwise every `fetch()` fails with `TypeError: Failed to fetch` (the browser drops the response at the CORS preflight).

@@ -18,8 +18,7 @@ from mirage.types import PathSpec
 from mirage.workspace.executor.builtins.dirs.constants import (PWD_OPTIONS,
                                                                PWD_USAGE)
 from mirage.workspace.executor.builtins.dirs.dirs import split_mode_options
-from mirage.workspace.executor.builtins.shared import Result
-from mirage.workspace.executor.builtins.types import BuiltinCall
+from mirage.workspace.executor.builtins.types import BuiltinCall, Result
 from mirage.workspace.session import Session
 from mirage.workspace.session.shell_dirs import logical_cwd
 from mirage.workspace.types import ExecutionNode

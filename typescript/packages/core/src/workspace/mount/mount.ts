@@ -18,15 +18,17 @@ import type {
   CommandFn,
   CommandFnResult,
   CommandOpts,
+  ExecContext,
   RegisteredCommand,
 } from '../../commands/config.ts'
+import { ROOT_CWD } from '../../commands/constants.ts'
 import type { OpKwargs } from '../../ops/registry.ts'
-import type { NamespaceView, ReaddirPath, SessionView, StatPath } from '../../ops/types.ts'
 
 const NOOP_ACCESSOR = new NOOPAccessor()
 import { getExtension } from '../../commands/resolve.ts'
 import { resolveLimit } from '../../policy/index.ts'
-import { CommandTimeoutError, runWithTimeout } from '../../commands/builtin/utils/limit.ts'
+import { runWithTimeout } from '../../commands/builtin/utils/limit.ts'
+import { CommandTimeoutError } from '../../commands/errors.ts'
 import type { CommandSpec, FlagValue } from '../../commands/spec/types.ts'
 import { CachableAsyncIterator } from '../../io/cachable_iterator.ts'
 import type { ByteSource } from '../../io/types.ts'
@@ -38,8 +40,6 @@ import { runWithMountPrefix, runWithRevisions, withMountPrefix } from '../../obs
 import type { RegisteredOp } from '../../ops/registry.ts'
 import type { Resource } from '../../resource/base.ts'
 import { type Limit, ConsistencyPolicy, FileType, MountMode, PathSpec } from '../../types.ts'
-import type { Runtime } from '../../runtime/base.ts'
-import type { DispatchFn } from '../../runtime/types.ts'
 import { enotsup, erofsReadOnly } from '../../utils/errors.ts'
 import { rstripSlash } from '../../utils/slash.ts'
 import {
@@ -395,22 +395,7 @@ export class MountEntry {
     paths: PathSpec[],
     texts: string[],
     flags: Record<string, FlagValue>,
-    opts: {
-      stdin?: ByteSource | null
-      cwd?: string
-      dispatch?: DispatchFn
-      sessionId?: string
-      env?: Record<string, string>
-      sessionView?: SessionView
-      execAllowed?: boolean
-      execPathAllowed?: (virtual: string) => boolean
-      runtime?: Runtime
-      ns?: NamespaceView
-      statPath?: StatPath
-      readdirPath?: ReaddirPath
-      signal?: AbortSignal
-      limitOverride?: Limit | null
-    } = {},
+    context: ExecContext = {},
   ): Promise<[ByteSource | null, IOResult]> {
     let extension =
       paths.length > 0 && paths[0] !== undefined ? getExtension(paths[0].virtual) : null
@@ -429,10 +414,10 @@ export class MountEntry {
       extension !== null &&
       extension !== '' &&
       first !== undefined &&
-      opts.statPath !== undefined &&
+      context.statPath !== undefined &&
       this.cmds.has(cmdKey(cmdName, extension))
     ) {
-      const entry = await opts.statPath(first.virtual)
+      const entry = await context.statPath(first.virtual)
       if (entry !== null && entry.type === FileType.DIRECTORY) extension = null
     }
 
@@ -469,22 +454,24 @@ export class MountEntry {
 
     const accessor = (this.resource as { accessor?: Accessor }).accessor ?? NOOP_ACCESSOR
     const cmdOpts: CommandOpts = {
-      stdin: opts.stdin ?? null,
+      stdin: context.stdin ?? null,
       flags,
       filetypeFns: isFiletypeCmd ? null : filetypeFns,
       mountPrefix,
-      cwd: opts.cwd ?? '/',
+      cwd: context.cwd ?? ROOT_CWD,
       ...(this.resource.index !== undefined ? { index: this.resource.index } : {}),
-      ...(opts.dispatch !== undefined ? { dispatch: opts.dispatch } : {}),
-      ...(opts.sessionId !== undefined ? { sessionId: opts.sessionId } : {}),
-      ...(opts.env !== undefined ? { env: opts.env } : {}),
-      ...(opts.sessionView !== undefined ? { sessionView: opts.sessionView } : {}),
-      ...(opts.execAllowed !== undefined ? { execAllowed: opts.execAllowed } : {}),
-      ...(opts.execPathAllowed !== undefined ? { execPathAllowed: opts.execPathAllowed } : {}),
-      ...(opts.runtime !== undefined ? { runtime: opts.runtime } : {}),
-      ...(opts.ns !== undefined ? { ns: opts.ns } : {}),
-      ...(opts.statPath !== undefined ? { statPath: opts.statPath } : {}),
-      ...(opts.readdirPath !== undefined ? { readdirPath: opts.readdirPath } : {}),
+      ...(context.dispatch !== undefined ? { dispatch: context.dispatch } : {}),
+      ...(context.sessionId !== undefined ? { sessionId: context.sessionId } : {}),
+      ...(context.env !== undefined ? { env: context.env } : {}),
+      ...(context.sessionView !== undefined ? { sessionView: context.sessionView } : {}),
+      ...(context.execAllowed !== undefined ? { execAllowed: context.execAllowed } : {}),
+      ...(context.execPathAllowed !== undefined
+        ? { execPathAllowed: context.execPathAllowed }
+        : {}),
+      ...(context.runtime !== undefined ? { runtime: context.runtime } : {}),
+      ...(context.ns !== undefined ? { ns: context.ns } : {}),
+      ...(context.statPath !== undefined ? { statPath: context.statPath } : {}),
+      ...(context.readdirPath !== undefined ? { readdirPath: context.readdirPath } : {}),
     }
 
     // What the command tier's mode guard reads: the write-command gate
@@ -504,7 +491,13 @@ export class MountEntry {
               for (const cmd of handlers) {
                 // strongestModeUnder, not effectiveMode: a mount whose
                 // only writable region is a show entry still runs the
-                // command, and the op door refuses per path.
+                // command, and the op door refuses per path. The
+                // trailing newline is load-bearing: stderr accumulates
+                // across a line, so two refusals in one list ran
+                // together as `...at /ro/rm: read-only mount at /ro/`,
+                // and the node table's twin of this refusal (a symlink
+                // `rm`, rendered by shared.readOnlyError) concatenates
+                // with it.
                 if (
                   cmd.write &&
                   !infoOnly &&
@@ -515,7 +508,7 @@ export class MountEntry {
                     new IOResult({
                       exitCode: 1,
                       stderr: new TextEncoder().encode(
-                        `${cmdName}: read-only mount at ${this.prefix}`,
+                        `${cmdName}: read-only mount at ${this.prefix}\n`,
                       ),
                     }),
                   ]
@@ -535,18 +528,18 @@ export class MountEntry {
                   cmdName,
                   [],
                   cmd.limit,
-                  opts.limitOverride ?? this.commandLimits.get(cmdName) ?? null,
+                  context.limitOverride ?? this.commandLimits.get(cmdName) ?? null,
                 )
                 const cmdTimeout = resolvedLimit !== null ? resolvedLimit.timeoutSeconds : null
                 // runWithTimeout abandons the promise, it cannot cancel
                 // it; the aborted signal lets a runtime kill what it
                 // spawned (python cancels the task instead). The ambient
-                // opts.signal is a background job's kill channel, folded
+                // context.signal is a background job's kill channel, folded
                 // into the same wire. timeoutSeconds rides along so an
                 // engine that executes on the event loop (quickjs) can
                 // interrupt itself when the timer cannot fire.
                 const guard = cmdTimeout !== null && cmdTimeout > 0 ? new AbortController() : null
-                const runSignal = mergeSignals(guard?.signal, opts.signal)
+                const runSignal = mergeSignals(guard?.signal, context.signal)
                 const runOpts =
                   runSignal !== undefined
                     ? {
@@ -573,7 +566,7 @@ export class MountEntry {
                   // mount's cap (limitOverride); fold it as the
                   // declared bound since the origin prefix is not ours.
                   result[1].producer =
-                    opts.limitOverride != null
+                    context.limitOverride != null
                       ? { command: cmdName, prefixes: [], declared: resolvedLimit }
                       : { command: cmdName, prefixes: [this.prefix], declared: cmd.limit ?? null }
                   return wrapMountStreams(result, mountPrefix)

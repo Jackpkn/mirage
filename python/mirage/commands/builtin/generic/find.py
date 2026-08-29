@@ -7,13 +7,13 @@ from mirage.commands.builtin.find_eval import (FindArgs, FindEntry, PredNode,
                                                args_to_tree, emit_start_path,
                                                has_link_children, keep,
                                                prefix_path_nodes,
-                                               start_basename, tree_has_empty)
-from mirage.commands.builtin.find_helper import (_kind_letter, _parse_depth,
-                                                 _parse_mtime, _parse_size,
-                                                 expand_printf,
-                                                 printf_needs_stat,
-                                                 unrespell_raw)
-from mirage.commands.builtin.find_parse import parse_find_expression
+                                               start_basename, tree_has_empty,
+                                               unrespell_raw)
+from mirage.commands.builtin.find_parse import (parse_depth,
+                                                parse_find_expression,
+                                                parse_mtime, parse_size)
+from mirage.commands.builtin.find_printf import (expand_printf, printf_kind,
+                                                 printf_needs_stat)
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
@@ -56,15 +56,15 @@ def parse_find_args(
     ftype: FindType | str | None = type
     if type in (FindType.DIRECTORY.value, FindType.FILE.value):
         ftype = FindType(type)
-    md = _parse_depth(maxdepth, "-maxdepth") if maxdepth is not None else None
-    md_min = (_parse_depth(mindepth, "-mindepth")
+    md = parse_depth(maxdepth, "-maxdepth") if maxdepth is not None else None
+    md_min = (parse_depth(mindepth, "-mindepth")
               if mindepth is not None else None)
     min_size, max_size = (None, None)
     if size is not None:
-        min_size, max_size = _parse_size(size)
+        min_size, max_size = parse_size(size)
     mtime_min, mtime_max = (None, None)
     if mtime is not None:
-        mtime_min, mtime_max = _parse_mtime(mtime)
+        mtime_min, mtime_max = parse_mtime(mtime)
     return FindArgs(
         name=name,
         iname=iname,
@@ -373,7 +373,7 @@ def start_point_results(
     emit_start_path(results,
                     search_path.mount_path,
                     start_basename(search_path),
-                    kind=_kind_letter(start),
+                    kind=printf_kind(start),
                     is_empty=empty,
                     exists=True,
                     tree=tree,
@@ -747,7 +747,7 @@ async def _walk_collect(
             trimmed = child
             st = await _stat_entry(stat, trimmed, prefix, index)
             is_dir = st is not None and st.type == FileType.DIRECTORY
-            kind = _kind_letter(st)
+            kind = printf_kind(st)
         acc.append((trimmed, kind))
         if is_dir:
             child_spec = PathSpec(virtual=trimmed,
@@ -810,7 +810,7 @@ async def link_results(
         if follow:
             target = await links.target_stat(path)
             if target is not None:
-                kind = _kind_letter(target)
+                kind = printf_kind(target)
                 st = target
         key = path[len(prefix
                        ):] if prefix and path.startswith(prefix) else path
@@ -865,7 +865,7 @@ async def walk_find(
                  if search_path.virtual != "/" else "/")
     root_stat = await _stat_entry(stat, root_path, prefix, index)
     if root_stat is not None:
-        collected.append((root_path, _kind_letter(root_stat)))
+        collected.append((root_path, printf_kind(root_stat)))
     # GNU depth convention: the search root is depth 0, its children are
     # depth 1. A start point that is not a directory has no children, so
     # readdir on it is either an error the walk would have to swallow

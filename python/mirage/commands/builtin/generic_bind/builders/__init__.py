@@ -88,7 +88,7 @@ from mirage.commands.builtin.generic_bind.builders import zgrep
 from mirage.commands.builtin.generic_bind.builders import zip_cmd
 # yapf: enable
 
-_BUILDERS = (
+BUILDERS = (
     awk.BUILDER,
     base64.BUILDER,
     basename.BUILDER,
@@ -163,4 +163,4 @@ _BUILDERS = (
     zip_cmd.BUILDER,
 )
 
-__all__ = ["_BUILDERS"]
+__all__ = ["BUILDERS"]

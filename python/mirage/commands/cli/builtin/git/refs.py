@@ -17,6 +17,7 @@ from io import BytesIO
 
 from dulwich.refs import DictRefsContainer, Ref, read_packed_refs_with_peeled
 
+from mirage.commands.cli.builtin.git.constants import HEAD_REF
 from mirage.commands.cli.builtin.git.io import (read_file, read_names,
                                                 read_optional, remove_file,
                                                 write_file)
@@ -28,7 +29,6 @@ PACKED_REFS = "packed-refs"
 REFS_DIR = "refs"
 SYMREF_PREFIX = "ref: "
 BRANCH_PREFIX = "refs/heads/"
-HEAD_REF = Ref(b"HEAD")
 
 
 async def read_head(dispatch: DispatchFn, gitdir: str) -> HeadRef:

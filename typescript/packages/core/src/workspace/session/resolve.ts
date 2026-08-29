@@ -15,7 +15,7 @@
 import { checkRules } from './validate.ts'
 import { PolicyError } from '../../policy/errors.ts'
 import type { CommandRule, AdmissionRules, HideReason, ProfileScript } from '../../policy/types.ts'
-import type { ScriptSource } from '../../runtime/policy/types.ts'
+import type { ScriptSource } from '../../runtime/routing/types.ts'
 import type { HiddenPaths, MountMode, ShowEntry, ShownPaths } from '../../types.ts'
 import { weakerMode } from '../../types.ts'
 import { classifyPaths, classifyShows, classifyVars } from '../../utils/hidden.ts'

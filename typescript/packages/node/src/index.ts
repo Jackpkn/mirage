@@ -109,6 +109,7 @@ export {
 } from './nfs/mount.ts'
 export type { DirEntry as NFSDirEntry, NFSAttrs } from './nfs/types.ts'
 export { S3Resource, type S3ResourceState } from './resource/s3/s3.ts'
+export { S3_COMMANDS } from '@struktoai/mirage-core/commands/builtin/s3/index'
 export { GridFSResource, type GridFSResourceState } from './resource/gridfs/gridfs.ts'
 export {
   normalizeGridFSConfig,
@@ -192,6 +193,8 @@ export { HfSpacesResource, type HfSpacesResourceState } from './resource/hf_spac
 export { HF_SPACES_PROMPT } from './resource/hf_spaces/prompt.ts'
 export { HF_COMMANDS } from './commands/builtin/hf/index.ts'
 export { HF_OPS } from './ops/hf/index.ts'
+export { HF_HUB_COMMANDS } from './commands/builtin/hf_hub/index.ts'
+export { HF_HUB_OPS } from './ops/hf_hub/index.ts'
 export { MinIOResource, type MinIOResourceState } from './resource/minio/minio.ts'
 export {
   redactMinIOConfig,
@@ -422,6 +425,7 @@ export {
 } from './resource/email/index.ts'
 export { EmailAccessor } from './accessor/email.ts'
 export { EMAIL_COMMANDS } from './commands/builtin/email/index.ts'
+export { HF } from './commands/cli/builtin/hf/index.ts'
 export { HIMALAYA } from './commands/cli/builtin/himalaya/index.ts'
 export { EMAIL_OPS } from './ops/email/index.ts'
 export { DaytonaRuntime } from './runtime/sandbox/daytona/runtime.ts'

@@ -121,16 +121,31 @@ runs:
         cat /tmp/gws.log
         echo "GWS_URL=http://127.0.0.1:19999" >> "$GITHUB_ENV"
 
-    - name: Start fake Hugging Face hub
+    - name: Start fake Hugging Face hub (Prisma)
+      working-directory: integ
       shell: bash
       run: |
-        nohup ./python/.venv/bin/python integ/server/hf_server.py --port 5099 > /tmp/hfsrv.log 2>&1 &
+        nohup ./node_modules/.bin/tsx server/hf/main.ts --port 5099 > /tmp/hfsrv.log 2>&1 &
         for i in $(seq 1 30); do
-          grep -q "HF_ENDPOINT=" /tmp/hfsrv.log && break
+          grep -q "HF_URL=" /tmp/hfsrv.log && break
           sleep 1
         done
         cat /tmp/hfsrv.log
-        echo "HF_ENDPOINT=http://127.0.0.1:5099" >> "$GITHUB_ENV"
+        echo "HF_URL=http://127.0.0.1:5099" >> "$GITHUB_ENV"
+
+    # A different Hugging Face product from the one above: hf/ is the Xet
+    # object store, hf_hub/ is the git-backed Hub the repo resources mount.
+    - name: Start fake Hugging Face Hub (Prisma)
+      working-directory: integ
+      shell: bash
+      run: |
+        nohup ./node_modules/.bin/tsx server/hf_hub/main.ts --port 5086 > /tmp/hfhubsrv.log 2>&1 &
+        for i in $(seq 1 30); do
+          grep -q "HF_HUB_URL=" /tmp/hfhubsrv.log && break
+          sleep 1
+        done
+        cat /tmp/hfhubsrv.log
+        echo "HF_HUB_URL=http://127.0.0.1:5086" >> "$GITHUB_ENV"
 
     - name: Wait for GreenMail
       shell: bash
@@ -152,16 +167,13 @@ runs:
         cat /tmp/boxsrv.log
         echo "BOX_URL=http://127.0.0.1:5096" >> "$GITHUB_ENV"
 
-    - name: Start fake GitHub API
+    - name: Start fake GitHub API (Prisma)
+      working-directory: integ
       shell: bash
       run: |
-        nohup ./python/.venv/bin/python integ/server/github_server.py \
-          --port 5098 --repo integ/repo-v1=github/repo-v1 \
-          --repo integ/repo-trunc=github/repo-v1:truncated \
-          --repo integ/repo-cli=github/repo-v1 \
-          > /tmp/ghsrv.log 2>&1 &
+        nohup ./node_modules/.bin/tsx server/github/main.ts --port 5098 > /tmp/ghsrv.log 2>&1 &
         for i in $(seq 1 30); do
-          grep -q "GITHUB_ENDPOINT=" /tmp/ghsrv.log && break
+          grep -q "GITHUB_URL=" /tmp/ghsrv.log && break
           sleep 1
         done
         cat /tmp/ghsrv.log
@@ -227,17 +239,6 @@ runs:
         cat /tmp/linearsrv.log
         echo "LINEAR_URL=http://127.0.0.1:5094" >> "$GITHUB_ENV"
 
-    - name: Start fake Dify API
-      shell: bash
-      run: |
-        nohup ./python/.venv/bin/python integ/server/dify_server.py --port 5093 > /tmp/difysrv.log 2>&1 &
-        for i in $(seq 1 30); do
-          grep -q "DIFY_ENDPOINT=" /tmp/difysrv.log && break
-          sleep 1
-        done
-        cat /tmp/difysrv.log
-        echo "DIFY_ENDPOINT=http://127.0.0.1:5093" >> "$GITHUB_ENV"
-
     - name: Start jaeger all-in-one and seed traces over OTLP
       shell: bash
       run: |
@@ -251,14 +252,3 @@ runs:
         ./python/.venv/bin/python integ/server/jaeger_seed.py \
           --host http://localhost:16686 --otlp http://localhost:4318
         echo "JAEGER_URL=http://localhost:16686" >> "$GITHUB_ENV"
-
-    - name: Start fake Databricks API
-      shell: bash
-      run: |
-        nohup ./python/.venv/bin/python integ/server/databricks_server.py --port 5092 > /tmp/databrickssrv.log 2>&1 &
-        for i in $(seq 1 30); do
-          grep -q "DATABRICKS_ENDPOINT=" /tmp/databrickssrv.log && break
-          sleep 1
-        done
-        cat /tmp/databrickssrv.log
-        echo "DATABRICKS_ENDPOINT=http://127.0.0.1:5092" >> "$GITHUB_ENV"

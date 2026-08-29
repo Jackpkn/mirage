@@ -35,14 +35,8 @@ import { readIndex, updateIndex, type StagedEntry } from './index_file.ts'
 import { entryBytes, under } from './io.ts'
 import { matched, repoRelative } from './pathspec.ts'
 import { opened, repoArgs, type Repo } from './repo.ts'
-import {
-  EXECUTABLE,
-  OWNER_EXECUTE,
-  REGULAR,
-  SYMLINK,
-  type RepoLocation,
-  type WorkTree,
-} from './types.ts'
+import { EXECUTABLE, OWNER_EXECUTE, REGULAR, SYMLINK } from './constants.ts'
+import type { RepoLocation, WorkTree } from './types.ts'
 import { checkOperands, fatal, startPoint } from './util.ts'
 import { scan, UNTRACKED_ALL } from './worktree.ts'
 import { compareCodePoints } from '../../../../utils/sort.ts'

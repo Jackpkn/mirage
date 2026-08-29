@@ -243,3 +243,49 @@ async def test_herestring_single_quoted_body_into_redirect():
     ws = await _workspace_at("/data")
     await ws.execute("cat <<< 'hi' > /data/HS")
     assert await _stdout(ws, "cat /data/HS") == "hi\n"
+
+
+# tree-sitter-bash 0.25.1 splits a later unbraced `$var` out of a word
+# when a name-terminating character follows it, so `> /api/$c/$id.json`
+# used to write a file literally named `$` under /api/<c>. parse()
+# repairs the tree; these pin the end-to-end behavior.
+
+
+@pytest.mark.asyncio
+async def test_redirect_second_unbraced_var_with_suffix():
+    ws = await _workspace_at("/data")
+    await ws.execute("c=aa; id=1; mkdir -p /api/$c")
+    io = await ws.execute("echo hi > /api/$c/$id.json")
+    assert io.exit_code == 0
+    assert await _stdout(ws, "cat /api/aa/1.json") == "hi\n"
+    assert await _stdout(ws, "find /api -type f") == "/api/aa/1.json\n"
+
+
+@pytest.mark.asyncio
+async def test_heredoc_into_second_unbraced_var_target():
+    ws = await _workspace_at("/data")
+    await ws.execute("c=aa; id=1; mkdir -p /api/$c")
+    await ws.execute("cat > /api/$c/$id.json <<EOF\nbody\nEOF")
+    assert await _stdout(ws, "cat /api/aa/1.json") == "body\n"
+
+
+@pytest.mark.asyncio
+async def test_redirect_three_unbraced_vars_no_suffix():
+    ws = await _workspace_at("/data")
+    await ws.execute("a=x; b=y; c=z; mkdir -p /w/$a/$b")
+    await ws.execute("echo hi > /w/$a/$b/$c")
+    assert await _stdout(ws, "cat /w/x/y/z") == "hi\n"
+
+
+@pytest.mark.asyncio
+async def test_word_second_unbraced_var_stays_one_argument():
+    ws = await _workspace_at("/data")
+    assert await _stdout(
+        ws, "c=aa; id=1; echo /api/$c/$id.json") == "/api/aa/1.json\n"
+
+
+@pytest.mark.asyncio
+async def test_assignment_second_unbraced_var_stays_assignment():
+    ws = await _workspace_at("/data")
+    assert await _stdout(
+        ws, "c=aa; id=1; p=/api/$c/$id.json; echo $p") == "/api/aa/1.json\n"

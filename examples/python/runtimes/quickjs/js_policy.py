@@ -44,7 +44,7 @@ async def main() -> None:
         },
         mode=MountMode.EXEC,
         runtimes=["quickjs", "vfs"],
-        policy=JS_POLICY,
+        route_policy=JS_POLICY,
     )
     try:
         ok = await ws.execute("echo hello > /data/notes.txt")

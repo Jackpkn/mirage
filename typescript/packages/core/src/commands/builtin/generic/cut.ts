@@ -16,7 +16,7 @@ import { asyncChain } from '../../../io/stream.ts'
 import { IOResult, type ByteSource } from '../../../io/types.ts'
 import type { PathSpec } from '../../../types.ts'
 import type { CommandFnResult, CommandOpts } from '../../config.ts'
-import { cutStream, parseCutRanges, type CutOptions } from '../cut_helper.ts'
+import { cutStream, parseRanges, type CutOptions } from '../cut_ranges.ts'
 import { resolveSource } from '../utils/stream.ts'
 import { operandsIo, readOperands, singleChunk } from '../utils/operands.ts'
 import type { FlagValue } from '../../spec/types.ts'
@@ -63,7 +63,7 @@ function parseFlags(flags: Record<string, FlagValue>): CutOptions | string {
     return 'cut: the delimiter must be a single character\n'
   }
   return {
-    ranges: parseCutRanges(range),
+    ranges: parseRanges(range),
     mode,
     delimiter: explicitDelimiter ?? '\t',
     complement: flags.complement === true,

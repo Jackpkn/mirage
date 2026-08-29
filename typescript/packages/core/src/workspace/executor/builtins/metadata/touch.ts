@@ -14,23 +14,16 @@
 
 import { DEFAULT_UMASK } from '../../../../context/session_context.ts'
 import { IOResult } from '../../../../io/types.ts'
-import type { FileStat } from '../../../../types.ts'
+import type { FileStat, SetAttrFields } from '../../../../types.ts'
 import { FileType, PathSpec } from '../../../../types.ts'
 import { fsStrerror, isEnoent, isFsError, isMissingOp } from '../../../../utils/errors.ts'
 import { CycleError, resolvePath } from '../../../../utils/path.ts'
 import type { DispatchFn } from '../../../../runtime/types.ts'
 import type { Namespace } from '../../../mount/namespace/namespace.ts'
 import type { Session } from '../../../session/session.ts'
-import { expandOperands, fail, finish, splitValueFlags, type Result } from '../shared.ts'
-import {
-  isReadOnlyError,
-  nowIso,
-  parseTouchStamp,
-  readOnlyError,
-  setattrLink,
-  setattrVia,
-} from './metadata.ts'
-import type { SetAttrFields } from '../../../../types.ts'
+import { expandOperands, fail, finish, readOnlyError, splitValueFlags } from '../shared.ts'
+import { isReadOnlyError, nowIso, parseTouchStamp, setattrLink, setattrVia } from './metadata.ts'
+import type { Result } from '../types.ts'
 
 // touch: set access/modification times, creating missing files. GNU flags:
 // -a/-m select which times, -c no-create, -h no-dereference (writes the

@@ -13,13 +13,13 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import type { MountRoot, StatPath } from '../../../../ops/types.ts'
+import { GIT_DIR } from './constants.ts'
 import { FileType } from '../../../../types.ts'
 import { parent, posixNormpath } from '../../../../utils/path.ts'
 import { InvalidGitFileError, NotARepositoryError, NoWorkingDirectoryError } from './errors.ts'
 import { readFile, readOptional, under } from './io.ts'
 import type { Dispatch, RepoLocation } from './types.ts'
 
-const GIT_DIR = '.git'
 const GITDIR_PREFIX = 'gitdir:'
 const COMMON_DIR = 'commondir'
 
