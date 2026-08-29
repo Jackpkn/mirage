@@ -143,7 +143,13 @@ async function getIssue(ctx: Ctx<C>, repo: RepoRow): Promise<Reply> {
   const json = pullJson(repo, pull)
   return {
     status: 200,
-    body: { ...(json as Record<string, JsonValue>), pull_request: { url: ctx.url.pathname } },
+    // A reference the client follows, so it carries the run the request came
+    // in on. Without it, resolving a pull request from a scoped issue read
+    // queries the default run and can answer from another repository state.
+    body: {
+      ...(json as Record<string, JsonValue>),
+      pull_request: { url: `${ctx.runPrefix}${ctx.url.pathname}` },
+    },
   }
 }
 

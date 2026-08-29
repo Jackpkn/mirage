@@ -27,7 +27,10 @@ import {
   emit,
   parseBody,
   parsePort,
+  RUN_PREFIX,
   resolveRun,
+  splitRunPath,
+  withPathRun,
   unroutedLine,
 } from '../kit/typescript/index.ts'
 import type {
@@ -126,12 +129,38 @@ async function answer(
   raw: Buffer,
 ): Promise<Reply> {
   const { service } = rt.fake.config
-  if (url.pathname === HEALTH_PATH && (method === 'GET' || method === 'HEAD')) {
+  // The same `/_run/<id>` prefix the kit strips, and gws has to strip it in
+  // its own copy of this flow or the run axis works everywhere except here.
+  // gws already keeps a separate in-memory world per run; what it lacked was
+  // a way for a mount to ASK for one, since a mount hands its base URL to a
+  // client and never sees the request again.
+  let pathRun: string | undefined
+  let path: string
+  try {
+    const split = splitRunPath(url.pathname)
+    pathRun = split.run
+    path = split.path
+    // The URL a HANDLER reads loses the prefix too, exactly as in the kit.
+    // gws handlers pass ctx.url.pathname to unknownRoute (docs/routes.ts and
+    // several branches of sheets/routes.ts), so a scoped request answered
+    // `Unknown route: POST /_run/<random-id>/v1/...`: the harness's run id in
+    // observable output, which no golden can match twice.
+    url.pathname = path
+  } catch (err: unknown) {
+    if (err instanceof TenantError) {
+      return {
+        status: 400,
+        body: { error: 'bad_run', kind: err.constructor.name, message: err.message },
+      }
+    }
+    throw err
+  }
+  if (path === HEALTH_PATH && (method === 'GET' || method === 'HEAD')) {
     return { status: 200, body: { ok: true, service, runs: rt.runs() } }
   }
-  if (url.pathname === RESET_PATH && method === 'POST') {
+  if (path === RESET_PATH && method === 'POST') {
     try {
-      return { status: 200, body: rt.reset(parseBody(raw)) }
+      return { status: 200, body: rt.reset(withPathRun(parseBody(raw), pathRun)) }
     } catch (err: unknown) {
       if (err instanceof ResetBodyError || err instanceof TenantError) {
         return {
@@ -144,7 +173,7 @@ async function answer(
   }
   let run: string
   try {
-    run = resolveRun(headers, url)
+    run = resolveRun(headers, url, pathRun)
   } catch (err: unknown) {
     // A run name the kit refuses is the caller's mistake, and it is the same
     // mistake /reset already answers 400 for. Letting it reach the google 500
@@ -157,10 +186,10 @@ async function answer(
     }
     throw err
   }
-  const hit = router.match(method, url.pathname)
+  const hit = router.match(method, path)
   if (hit === null) {
-    process.stderr.write(`${unroutedLine(service, method, url.pathname)}\n`)
-    return unknownRoute(method, url.pathname)
+    process.stderr.write(`${unroutedLine(service, method, path)}\n`)
+    return unknownRoute(method, path)
   }
   const st = rt.state(run)
   const ctx: Ctx<GwsState> = {
@@ -169,6 +198,7 @@ async function answer(
     body: raw,
     run,
     tenant: DEFAULT_TENANT,
+    runPrefix: pathRun === undefined ? '' : `/${RUN_PREFIX}/${pathRun}`,
     db: st,
     clock: st.clock,
     minter: st.minter,

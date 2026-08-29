@@ -659,6 +659,54 @@ async function main(): Promise<void> {
       [`${TENANT}/commented`],
     )
 
+    // ---- a tree page's Link header carries the run it was reached through
+    // The request flow strips `/_run/<id>` before a handler sees the path, so
+    // a Link header built from ctx.url alone pointed page two at the DEFAULT
+    // run. Only the path channel can express this, which is the point of it:
+    // a mount hands its base URL to a vendor SDK and never sees the request
+    // again, so a header or a query parameter cannot survive the handoff.
+    const RUN = 'hf-hub-page'
+    const scoped = `${fake.endpoint}/_run/${RUN}`
+    const mkRepo = await fetch(`${scoped}/api/repos/create`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'paged', type: 'model' }),
+    })
+    check('a repo is created inside the run', mkRepo.status === 200, String(mkRepo.status))
+    const three = await fetch(`${scoped}/api/models/${TENANT}/paged/commit/main`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/x-ndjson' },
+      body: [
+        JSON.stringify({ key: 'header', value: { summary: 'three files' } }),
+        JSON.stringify({ key: 'file', value: { path: 'a.txt', content: 'a' } }),
+        JSON.stringify({ key: 'file', value: { path: 'b.txt', content: 'b' } }),
+        JSON.stringify({ key: 'file', value: { path: 'c.txt', content: 'c' } }),
+      ].join('\n'),
+    })
+    check('the run gets three files', three.status === 200, String(three.status))
+    const pageOne = await fetch(`${scoped}/api/models/${TENANT}/paged/tree/main?limit=2`, {
+      headers: { Authorization: `Bearer ${TENANT}` },
+    })
+    const link = pageOne.headers.get('link') ?? ''
+    check(
+      'the next-page Link carries the run prefix',
+      link.includes(`/_run/${RUN}/api/models/`),
+      link,
+    )
+    // Followed rather than only inspected: the prefix is only worth anything
+    // if the URL it produces answers from the same world.
+    const next = await fetch(link.slice(1, link.indexOf('>')), {
+      headers: { Authorization: `Bearer ${TENANT}` },
+    })
+    check('page two is 200', next.status === 200, String(next.status))
+    eq(
+      'page two holds this run rows, not the default run',
+      ((await next.json()) as JsonValue[]).map((r) =>
+        String((r as Record<string, JsonValue>).path ?? ''),
+      ),
+      ['c.txt'],
+    )
+
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))
 

@@ -83,7 +83,10 @@ export function paged(ctx: Ctx<C>, items: JsonValue[]): Page | null {
     query.set('page', String(page + 1))
     query.set('per_page', String(per))
     const host = ctx.headers.host ?? '127.0.0.1'
-    const base = `http://${String(host)}${ctx.url.pathname}`
+    // The prefix goes back on. This URL is handed to the client to follow, so
+    // dropping it sent `gh api --paginate` to the DEFAULT run for page two,
+    // silently answering later pages from another world.
+    const base = `http://${String(host)}${ctx.runPrefix}${ctx.url.pathname}`
     headers.Link = `<${base}?${query.toString()}>; rel="next"`
   }
   return { items: batch, headers }

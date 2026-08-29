@@ -194,17 +194,51 @@ export const selftestFake: Fake<C> = {
   client: PrismaClient,
   dmmf: Prisma.dmmf as unknown as Dmmf,
   defaultTenants: ['default'],
+  // A seed that FAILS, on demand. The failure paths are the ones no ordinary
+  // request reaches, and they are where the interesting bugs were: a tenant
+  // left marked seeded, and a throwaway build client left open and holding
+  // SQLite files. A reserved tenant name is the only way to reach them from
+  // the outside, so the selftest fake grows one.
+  afterSeed: async (_db: C, tenant: string): Promise<void> => {
+    if (tenant === 'boom') throw new Error('selftest fake: afterSeed refused tenant boom')
+    // A seed slow enough to be raced on purpose. The window a request has to
+    // slip into is a few milliseconds otherwise, so a test for it would pass
+    // by luck rather than by holding the invariant.
+    if (tenant === 'slow') await new Promise((ok) => setTimeout(ok, 300))
+  },
   // Opted in, because the refusal is opt-in and this is where it is covered.
   // A fake that says nothing here keeps serving unseeded tenants, which is
   // what dropbox and the other lazily-created accounts need.
-  unknownTenant: (tenant: string) => ({
-    status: 401,
-    body: {
-      error: 'unknown_tenant',
-      message: `selftest fake: no tenant ${tenant}; seed it with /reset`,
-    },
-  }),
+  // The env switch makes this fake stand in for one that opts OUT, which is a
+  // shape that has to be covered separately: without the refusal a request is
+  // not held at it, so it reaches the ctx and creates the run itself.
+  ...(process.env.SELFTEST_LAZY_TENANTS === '1'
+    ? {}
+    : {
+        unknownTenant: (tenant: string) => ({
+          status: 401,
+          body: {
+            error: 'unknown_tenant',
+            message: `selftest fake: no tenant ${tenant}; seed it with /reset`,
+          },
+        }),
+      }),
   routes: (): KitRoute<C>[] => [
+    // Echoes what a HANDLER sees, which is not what the router matched on: the
+    // run prefix has to be gone from ctx.url too, because handlers render this
+    // pathname into responses and one fake looks rows up by it.
+    route('GET', '/whereami', (ctx) => ({
+      status: 200,
+      body: {
+        path: ctx.url.pathname,
+        run: ctx.run,
+        query: ctx.url.search,
+        // What a fake mints for the client to come BACK to. github's Link
+        // header is built this way, and a self URL missing the prefix sends
+        // the client into the default run for page two.
+        self: `${ctx.runPrefix}${ctx.url.pathname}`,
+      },
+    })),
     route('GET', '/boards', listBoards),
     route('GET', '/boards/:board/cards', listCards),
     route('GET', '/boards/:board/cards-naive', listCardsNaive),

@@ -113,7 +113,13 @@ export function repoRoutes(): KitRoute<C>[] {
     // was not sent before.
     route<C>('GET', p === '' ? '/' : `${p}/`, (ctx) => {
       const host = ctx.headers.host ?? '127.0.0.1'
-      const base = `http://${String(host)}`
+      // Every url in this map is one the client is expected to follow, so the
+      // run rides them too. This is the API root: a scoped client that starts
+      // here and follows current_user_repositories_url would otherwise walk
+      // straight into the default run and read another world's repositories.
+      // runPrefix is '' for an unscoped request, so the map is unchanged for
+      // one, which is what the Enterprise-prefix note below is about.
+      const base = `http://${String(host)}${ctx.runPrefix}`
       return {
         status: 200,
         body: {
