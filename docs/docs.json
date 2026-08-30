@@ -180,11 +180,11 @@
           {
             "group": "CLIs",
             "pages": [
+              "home/setup/clis",
               {
                 "group": "CLIs",
                 "icon": "terminal",
                 "pages": [
-                  "home/setup/clis",
                   "home/setup/cli/himalaya",
                   "home/setup/cli/gws",
                   "home/setup/cli/slack",
@@ -368,12 +368,12 @@
           {
             "group": "CLIs",
             "pages": [
+              "python/cli/index",
+              "python/cli/custom",
               {
                 "group": "CLIs",
                 "icon": "terminal",
                 "pages": [
-                  "python/cli/index",
-                  "python/cli/custom",
                   "python/cli/himalaya",
                   "python/cli/gws",
                   "python/cli/slack",
@@ -563,12 +563,12 @@
           {
             "group": "CLIs",
             "pages": [
+              "typescript/cli/index",
+              "typescript/cli/custom",
               {
                 "group": "CLIs",
                 "icon": "terminal",
                 "pages": [
-                  "typescript/cli/index",
-                  "typescript/cli/custom",
                   "typescript/cli/himalaya",
                   "typescript/cli/gws",
                   "typescript/cli/slack",
