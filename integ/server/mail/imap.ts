@@ -559,6 +559,12 @@ function fetchItem(item: string, msg: SearchMsg): string | null {
 
 const BODY_ITEM = /^(BODY(?:\.PEEK)?\[\]|RFC822(?:\.TEXT)?)$/i
 
+// The value a bare `*` in a sequence set resolves to (RFC 3501: the largest
+// number in use), in whichever numbering the command runs under.
+function highest(rows: { seq: number; uid: number }[], uidMode: boolean): number {
+  return rows.reduce((top, one) => Math.max(top, uidMode ? one.uid : one.seq), 0)
+}
+
 async function fetch(
   runtime: Runtime<C>,
   session: Session,
@@ -569,7 +575,8 @@ async function fetch(
   const set = args[0] ?? ''
   const items = args.slice(1).filter((one) => one !== '(' && one !== ')')
   const rows = await loaded(runtime, session)
-  const wanted = rows.filter((one) => inSet(set, uidMode ? one.uid : one.seq))
+  const top = highest(rows, uidMode)
+  const wanted = rows.filter((one) => inSet(set, uidMode ? one.uid : one.seq, top))
   // A UID FETCH always reports the UID even when the client did not ask, which
   // is RFC 3501's own rule and what lets imapflow match a response to a request.
   const asked =
@@ -630,8 +637,9 @@ async function store(
   const given = args.slice(2).filter((one) => one !== '(' && one !== ')')
   await queue.enqueue(session.run, async () => {
     const rows = await loaded(runtime, session)
+    const top = highest(rows, uidMode)
     for (const msg of rows) {
-      if (!inSet(set, uidMode ? msg.uid : msg.seq)) continue
+      if (!inSet(set, uidMode ? msg.uid : msg.seq, top)) continue
       const before = new Set(msg.flags)
       if (op[1] === '+') for (const f of given) before.add(f)
       else if (op[1] === '-') for (const f of given) before.delete(f)
@@ -667,8 +675,9 @@ async function copy(
       return
     }
     const rows = await loaded(runtime, session)
+    const top = highest(rows, uidMode)
     for (const msg of rows) {
-      if (!inSet(set, uidMode ? msg.uid : msg.seq)) continue
+      if (!inSet(set, uidMode ? msg.uid : msg.seq, top)) continue
       await appendMessage(
         db(runtime, session),
         session.tenant,

@@ -87,16 +87,32 @@ class SessionPool:
     def __init__(self, timeout: aiohttp.ClientTimeout | None = None) -> None:
         self._timeout = timeout
         self._session: aiohttp.ClientSession | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def get(self) -> aiohttp.ClientSession:
         """The shared session, created on first use.
 
+        A session is bound to the loop it was created on, so an owner
+        that outlives one ``asyncio.run`` and is asked again under the
+        next gets a fresh session. The superseded one is handed to its
+        own loop to close when that loop still runs, and dropped when
+        that loop is gone, because its transports died with it.
+
         Returns:
             aiohttp.ClientSession: one keep-alive pool for every call
-            routed through this owner; recreated if it was closed.
+            routed through this owner; recreated if it was closed or its
+            loop was replaced.
         """
-        if self._session is None or self._session.closed:
+        loop = asyncio.get_running_loop()
+        stale = self._session
+        if stale is not None and (stale.closed or self._loop is not loop):
+            if (not stale.closed and self._loop is not None
+                    and not self._loop.is_closed()):
+                asyncio.run_coroutine_threadsafe(stale.close(), self._loop)
+            self._session = None
+        if self._session is None:
             self._session = aiohttp.ClientSession(timeout=self._timeout)
+            self._loop = loop
         return self._session
 
     async def close(self) -> None:
@@ -104,6 +120,7 @@ class SessionPool:
         if self._session is not None and not self._session.closed:
             await self._session.close()
         self._session = None
+        self._loop = None
 
 
 SessionArg = aiohttp.ClientSession | SessionPool | None

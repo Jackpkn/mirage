@@ -167,7 +167,7 @@ async function main(): Promise<void> {
     }
     check(
       'another domain is refused',
-      wrongDomain.includes('example.com'),
+      wrongDomain.includes('this server serves @'),
       wrongDomain.slice(0, 100),
     )
 
@@ -222,6 +222,15 @@ async function main(): Promise<void> {
           { uid: true },
         )
         check('fetchOne answers', msg !== false, msg === false ? 'not found' : 'found')
+        // A bare `*` is the highest uid in use, not the whole mailbox; matching
+        // everything turned "touch the latest message" into "touch every one".
+        const star: number[] = []
+        for await (const one of a.fetch('*', { uid: true }, { uid: true })) star.push(one.uid)
+        check(
+          'a bare * selects only the last message',
+          star.length === 1 && star[0] === Math.max(...seeded),
+          JSON.stringify(star),
+        )
         if (msg !== false) {
           const source = msg.source instanceof Buffer ? msg.source.toString('utf8') : ''
           check(

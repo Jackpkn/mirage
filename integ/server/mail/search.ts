@@ -61,7 +61,7 @@ export function parseSource(source: Buffer): {
   const split = /\r?\n\r?\n/.exec(text)
   const head = split === null ? text : text.slice(0, split.index)
   const body = split === null ? '' : text.slice(split.index + split[0].length)
-  const headers: Record<string, string[]> = {}
+  const headers: Record<string, string[]> = Object.create(null) as Record<string, string[]>
   let current = ''
   for (const raw of head.split(/\r?\n/)) {
     if (/^[ \t]/.test(raw) && current !== '') {
@@ -108,7 +108,7 @@ function sentDay(msg: SearchMsg): number {
 }
 
 function headerText(msg: SearchMsg, name: string): string {
-  return (msg.headers[name] ?? []).join(' ')
+  return (own(msg.headers, name) ?? []).join(' ')
 }
 
 function has(msg: SearchMsg, flag: string): boolean {
@@ -117,6 +117,12 @@ function has(msg: SearchMsg, flag: string): boolean {
 
 function contains(haystack: string, needle: string): boolean {
   return haystack.toLowerCase().includes(needle.toLowerCase())
+}
+
+// `constructor` and its Object.prototype kin answer a bare index on an object
+// literal, so a client-typed key must only reach a table's own rows.
+function own<T>(table: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined
 }
 
 type Test = (msg: SearchMsg) => boolean
@@ -167,10 +173,14 @@ const DATE_KEYS: Record<string, { day: (m: SearchMsg) => number; cmp: 'on' | 'be
 
 class Parser {
   private readonly words: string[]
+  private readonly seqMax: number
+  private readonly uidMax: number
   private at = 0
 
-  constructor(words: string[]) {
+  constructor(words: string[], seqMax: number, uidMax: number) {
     this.words = words
+    this.seqMax = seqMax
+    this.uidMax = uidMax
   }
 
   done(): boolean {
@@ -214,14 +224,14 @@ class Parser {
       const right = this.one()
       return (msg) => left(msg) || right(msg)
     }
-    const flag = FLAG_KEYS[key]
+    const flag = own(FLAG_KEYS, key)
     if (flag !== undefined) return flag
-    const text = TEXT_KEYS[key]
+    const text = own(TEXT_KEYS, key)
     if (text !== undefined) {
       const want = this.take()
       return (msg) => contains(text(msg), want)
     }
-    const date = DATE_KEYS[key]
+    const date = own(DATE_KEYS, key)
     if (date !== undefined) {
       const when = parseImapDate(this.take())
       if (date.cmp === 'on') return (msg) => date.day(msg) === when
@@ -235,11 +245,11 @@ class Parser {
     }
     if (key === 'UID') {
       const set = this.take()
-      return (msg) => inSet(set, msg.uid)
+      return (msg) => inSet(set, msg.uid, this.uidMax)
     }
     // A bare number or range is a MESSAGE SEQUENCE set, which is the one key
     // with no keyword in front of it.
-    if (/^[\d,:*]+$/.test(key)) return (msg) => inSet(key, msg.seq)
+    if (/^[\d,:*]+$/.test(key)) return (msg) => inSet(key, msg.seq, this.seqMax)
     throw new SearchError(`unsupported search key ${key}`)
   }
 }
@@ -247,21 +257,19 @@ class Parser {
 /**
  * Whether `n` is in an IMAP sequence set (`2`, `2:4`, `1,3:*`).
  *
- * `*` is the largest number in use, and in a RANGE it means "to the end", so
- * `2:*` is everything from 2 up. It is answered as Infinity here rather than
- * resolved against the mailbox, which is the same thing for a membership test
- * and avoids threading the mailbox size through every caller.
+ * `*` is the largest number in use, so a bare `*` matches only `max` and a
+ * range end of `*` runs to `max`. RFC 3501 reads a range's endpoints in
+ * either order, which is why `4:*` on a two-message mailbox still means 2:4.
  */
-export function inSet(set: string, n: number): boolean {
+export function inSet(set: string, n: number, max: number): boolean {
   for (const part of set.split(',')) {
     const [lo, hi] = part.split(':')
     if (hi === undefined) {
-      if (lo === '*') return true
-      if (Number(lo) === n) return true
+      if (lo === '*' ? n === max : Number(lo) === n) return true
       continue
     }
-    const from = lo === '*' ? Number.POSITIVE_INFINITY : Number(lo)
-    const to = hi === '*' ? Number.POSITIVE_INFINITY : Number(hi)
+    const from = lo === '*' ? max : Number(lo)
+    const to = hi === '*' ? max : Number(hi)
     if (n >= Math.min(from, to) && n <= Math.max(from, to)) return true
   }
   return false
@@ -326,7 +334,9 @@ export function tokenize(raw: string): string[] {
 export function searchMessages(raw: string, messages: SearchMsg[]): SearchMsg[] {
   const words = tokenize(raw)
   if ((words[0] ?? '').toUpperCase() === 'CHARSET') words.splice(0, 2)
-  const parser = new Parser(words)
+  const seqMax = messages.reduce((top, one) => Math.max(top, one.seq), 0)
+  const uidMax = messages.reduce((top, one) => Math.max(top, one.uid), 0)
+  const parser = new Parser(words, seqMax, uidMax)
   const test = parser.all()
   if (!parser.done()) throw new SearchError('trailing input in search key')
   return messages.filter((msg) => test(msg))

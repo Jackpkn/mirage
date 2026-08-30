@@ -377,6 +377,20 @@ async def test_a_pool_is_one_session_reused_and_recreated_after_close():
 
 
 @pytest.mark.asyncio
+async def test_the_pool_replaces_a_session_from_a_dead_loop():
+    pool = SessionPool()
+    first = pool.get()
+    dead = asyncio.new_event_loop()
+    dead.close()
+    pool._loop = dead
+    second = pool.get()
+    assert second is not first
+    assert pool.get() is second
+    await first.close()
+    await pool.close()
+
+
+@pytest.mark.asyncio
 async def test_resolve_session_materializes_a_pool_without_owning_it():
     pool = SessionPool()
     sess, own = resolve_session(pool)
