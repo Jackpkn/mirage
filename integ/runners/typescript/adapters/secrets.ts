@@ -84,6 +84,7 @@ export function buildSecretsEnv(kind: string): {
     FROM_DOTFILE: { from: 'dotenv', ref: dotfile, key: 'DOTFILE_SECRET' },
     FN_TOKEN: { from: 'counter', ref: 'fn', key: 'token' },
     IND_TOKEN: { from: 'counter', ref: 'ind', key: 'token' },
+    ALIAS_TOKEN: { from: 'counter', ref: 'alias', key: 'token' },
   }
   return { env, cleanup }
 }

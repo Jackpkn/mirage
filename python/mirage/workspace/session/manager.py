@@ -91,6 +91,27 @@ class SessionManager:
         return self._has_managed
 
     @property
+    def seed_vars(self) -> dict[str, ShellVar]:
+        """The env template a created session starts from, copied."""
+        return dict(self._seed_vars)
+
+    def restore_seed(self, seed_vars: Mapping[str, ShellVar]) -> None:
+        """Install the env template a snapshot or copy carried over.
+
+        The template is constructor state, so `_from_state` rebuilds a
+        workspace without it; existing sessions recover their own vars,
+        but a session created afterward would start bare while its
+        older siblings still carry every workspace env entry. Sticky on
+        `has_managed_env`, like every other writer of it.
+
+        Args:
+            seed_vars (Mapping[str, ShellVar]): the restored template.
+        """
+        self._seed_vars = dict(seed_vars)
+        self._has_managed = self._has_managed or any(
+            var.managed is not None for var in self._seed_vars.values())
+
+    @property
     def default_profile(self) -> CompiledProfile | None:
         """The document's default profile, as compiled for this workspace."""
         return self._default_profile

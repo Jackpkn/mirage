@@ -26,6 +26,7 @@ from mirage.types import (HiddenPaths, HiddenVars, MountMode, ShowEntry,
                           ShownPaths)
 from mirage.workspace import Workspace
 from mirage.workspace.session import RAMSessionStore, SessionManager
+from mirage.workspace.session.session import vars_from_entries
 from mirage.workspace.session.state import seed_var
 
 
@@ -624,3 +625,21 @@ async def test_manager_default_session_hydrates_its_decisions():
     await again.flush()
     assert (await
             store.load())["default"]["decisions"][0]["scope"] == ("session")
+
+
+def test_restore_seed_templates_later_sessions():
+    mgr = SessionManager("default")
+    assert not mgr.has_managed_env
+    seed = vars_from_entries({
+        "TOKEN": {
+            "from": "aws-sm",
+            "ref": "prod"
+        },
+        "MODE": "x",
+    })
+    mgr.restore_seed(seed)
+    assert mgr.has_managed_env
+    created = mgr.create("later")
+    assert created.vars["MODE"].value == "x"
+    assert created.vars["TOKEN"].managed is not None
+    assert mgr.seed_vars == seed

@@ -23,9 +23,9 @@ from mirage.runtime.routing import RouteDecision
 from mirage.runtime.table import VFSRuntime
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import fetch_secret
+from mirage.shell.constants import SHOPT_DEFAULTS
 from mirage.shell.parse import (command_invocations, command_words, env_reads,
-                                opaque_reads, referenced_names)
-from mirage.shell.types import FunctionBody
+                                opaque_reads, parse, referenced_names)
 from mirage.shell.variable import ManagedRef, with_value
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.lookup.lookup import lookup
@@ -35,6 +35,11 @@ from mirage.workspace.session import Session
 from mirage.workspace.session.state import deref
 
 logger = logging.getLogger(__name__)
+
+# Appended to an alias value before parsing it for the read walk: the
+# rest of the invoking line lands there at dispatch, so the trailing
+# command's arguments are statically unknowable, never absent.
+_ALIAS_REST = ' "$__mirage_alias_rest__"'
 
 
 def _defined_bodies(node: tree_sitter.Node) -> dict[str, tree_sitter.Node]:
@@ -57,25 +62,30 @@ def _defined_bodies(node: tree_sitter.Node) -> dict[str, tree_sitter.Node]:
     return out
 
 
-def line_nodes(
-        node: tree_sitter.Node,
-        functions: Mapping[str, FunctionBody]) -> list[tree_sitter.Node]:
-    """The line's tree plus every function body it can invoke.
+def line_nodes(node: tree_sitter.Node,
+               session: Session) -> list[tree_sitter.Node]:
+    """The line's tree plus every body its command words can run.
 
     A body runs at invocation, not where it is defined, so the read
     walks skip definition subtrees; this is where an invoked body joins
-    back in. An invocation word resolves to the line's own definition
-    first (a same-line redefinition shadows the stored one), then to
-    the session's stored functions, transitively (a body invoking
-    another function pulls that body in too), each name once, so mutual
-    recursion terminates.
+    back in. A command word pulls in every body it could select, all
+    of them rather than the likeliest: the session's stored function
+    AND the line's own redefinition (``f; f() { :; }`` runs the stored
+    body first, so neither may shadow the other), and a stored alias's
+    expansion, parsed here because dispatch reparses it after this pass
+    has already run. Alias values join only under ``expand_aliases``,
+    the same gate ``alias_value`` applies at dispatch. Each name
+    resolves once, so mutual recursion terminates; over-selection only
+    ever over-fetches, under-selection is the bug.
 
     Args:
         node (tree_sitter.Node): the parsed line.
-        functions (Mapping[str, FunctionBody]): the session's stored
-            shell functions.
+        session (Session): the session the line runs in (stored
+            functions, aliases, shopts).
     """
     defined = _defined_bodies(node)
+    expand = session.shopts.get("expand_aliases",
+                                SHOPT_DEFAULTS["expand_aliases"])
     nodes: list[tree_sitter.Node] = [node]
     seen: set[str] = set()
     frontier: list[tree_sitter.Node] = [node]
@@ -85,9 +95,18 @@ def line_nodes(
             if word in seen:
                 continue
             seen.add(word)
+            bodies = list(session.functions.get(word) or ())
             local = defined.get(word)
-            bodies = ([local] if local is not None else list(
-                functions.get(word) or ()))
+            if local is not None:
+                bodies.append(local)
+            if expand and word in session.aliases:
+                # An alias is a textual prefix: dispatch appends the
+                # invocation's rest to the value, so the value's
+                # trailing command is parsed with a dynamic rest-word.
+                # That keeps its argument list honest -- a CLI named in
+                # an alias reads as "verbs unknowable" (whole spec
+                # tree) rather than "no verb selected".
+                bodies.append(parse(session.aliases[word] + _ALIAS_REST))
             nodes.extend(bodies)
             frontier.extend(bodies)
     return nodes
@@ -150,6 +169,8 @@ def cli_env_names(nodes: Sequence[tree_sitter.Node], session: Session,
     out: set[str] = set()
     for node in nodes:
         for head, args in command_invocations(node):
+            if head is None:
+                continue
             install = registry.clis.get(head)
             if install is None:
                 continue
@@ -167,11 +188,13 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
             cli_env_names: frozenset[str]) -> frozenset[str]:
     """The pending names the line's walked set is about to read.
 
-    A whole-environment render or an opaque read (``opaque_reads``)
-    selects everything pending; otherwise the set is the walk's
-    references (nameref targets resolved through the session), the
-    printing forms' explicit targets, the routed CLIs' env names, and
-    the eager-marked entries.
+    A whole-environment render, an opaque read (``opaque_reads``), or a
+    command head no static read can spell (``$tool api ...`` -- the
+    program that runs is not decidable before expansion, so neither is
+    its read set) selects everything pending; otherwise the set is the
+    walk's references (nameref targets resolved through the session),
+    the printing forms' explicit targets, the routed CLIs' env names,
+    and the eager-marked entries.
 
     Args:
         session (Session): the session the line runs in.
@@ -185,6 +208,8 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
     for node in nodes:
         rendered, names = env_reads(node)
         if rendered or opaque_reads(node):
+            return frozenset(pending)
+        if any(head is None for head, _ in command_invocations(node)):
             return frozenset(pending)
         printed |= names
         referenced |= referenced_names(node)

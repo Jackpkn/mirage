@@ -133,5 +133,10 @@ def build_secrets_env(
             "ref": "ind",
             "key": "token"
         },
+        "ALIAS_TOKEN": {
+            "from": "counter",
+            "ref": "alias",
+            "key": "token"
+        },
     }
     return env, cleanup

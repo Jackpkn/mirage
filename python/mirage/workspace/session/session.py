@@ -143,6 +143,66 @@ def vars_from_entries(
     return out
 
 
+def vars_to_fields(table: Mapping[str, ShellVar]) -> dict[str, Any]:
+    """The stored shape of a bare variable table.
+
+    The three keys a stored session writes (`to_dict`): ``env`` holds
+    the plain scalars, ``var_attrs`` the letter clusters, ``managed``
+    the pointers -- and a managed name serializes as its pointer, never
+    its value, the same rule the session codec states. This exists for
+    the workspace env template, a variable table with no session around
+    it, so a snapshot or copy can carry the declaration.
+
+    Args:
+        table (Mapping[str, ShellVar]): the variable table.
+    """
+    managed = {
+        name: var.managed
+        for name, var in table.items() if var.managed is not None
+    }
+    fields: dict[str, Any] = {
+        "env": {
+            name: var.value
+            for name, var in table.items()
+            if isinstance(var.value, str) and name not in managed
+        },
+        "var_attrs": {
+            name: stored_attrs(var)
+            for name, var in table.items() if var.attrs
+        },
+    }
+    if managed:
+        refs: dict[str, dict[str, str]] = {}
+        for name, ref in managed.items():
+            entry = {"from": ref.source, "ref": ref.ref, "key": ref.key}
+            if ref.eager:
+                entry["fetch"] = "eager"
+            refs[name] = entry
+        fields["managed"] = refs
+    return fields
+
+
+def vars_from_fields(data: Mapping[str, Any]) -> dict[str, ShellVar]:
+    """The variable table a `vars_to_fields` payload restores.
+
+    `vars_from_dict` reads the two plain halves; each managed name then
+    restores declared-but-unfetched, its value forced back to None so a
+    payload that smuggles one in is discarded rather than trusted --
+    exactly how `from_dict` restores a stored session's vars.
+
+    Args:
+        data (Mapping[str, Any]): the stored fields.
+    """
+    out = vars_from_dict(data.get("env") or {}, data.get("var_attrs") or {})
+    for name, m in (data.get("managed") or {}).items():
+        var = out.get(name, ShellVar(None, frozenset({VarAttr.EXPORT})))
+        out[name] = replace(var,
+                            value=None,
+                            managed=ManagedRef(m["from"], m["ref"], m["key"],
+                                               m.get("fetch") == "eager"))
+    return out
+
+
 @dataclass
 class Session:
     session_id: str

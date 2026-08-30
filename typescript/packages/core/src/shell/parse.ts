@@ -680,19 +680,23 @@ export function opaqueReads(node: TSNodeLike): boolean {
 /**
  * Every plain command's head word with its argument words.
  *
- * Arguments are reported as their literal text, or null for a word no
- * static read can spell (an expansion, a substitution), so a caller
- * matching verbs (the CLI env-name pruning) can tell "this word is not
- * there" from "this word is unknowable". Assignment prefixes and
- * redirects are not arguments.
+ * Head and arguments are reported as their literal text, or null for a
+ * word no static read can spell (an expansion, a substitution), so a
+ * caller matching names (the CLI env-name pruning) can tell "this word
+ * is not there" from "this word is unknowable". A null head is the
+ * stronger fact: the command that runs is not decidable before
+ * expansion, so the fill pass treats the line as an opaque read.
+ * Assignment prefixes and redirects are not arguments.
  */
-export function commandInvocations(node: TSNodeLike): [string, (string | null)[]][] {
-  const out: [string, (string | null)[]][] = []
+export function commandInvocations(node: TSNodeLike): [string | null, (string | null)[]][] {
+  const out: [string | null, (string | null)[]][] = []
   for (const current of walkNamedOutsideDefs(node)) {
     if (current.type !== 'command') continue
     const nameNode = current.childForFieldName?.('name') ?? null
-    if (nameNode === null || nameNode.text === '') continue
-    out.push([nameNode.text, commandArgs(current).map(literalText)])
+    if (nameNode === null) continue
+    const only = nameNode.namedChildren.length === 1 ? nameNode.namedChildren[0] : undefined
+    const head = only !== undefined ? literalText(only) : null
+    out.push([head, commandArgs(current).map(literalText)])
   }
   return out
 }

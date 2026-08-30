@@ -525,6 +525,10 @@ def test_opaque_reads(command, opaque):
         # A dynamic word arrives as None, distinguishable from absent.
         ("slack msg send --to $u", (("slack",
                                      ("msg", "send", "--to", None)), )),
+        # A dynamic head is None too: the program itself is
+        # undecidable before expansion.
+        ("$tool api get", ((None, ("api", "get")), )),
+        ('"$t"x run', ((None, ("run", )), )),
         ("A=1 mycli run", (("mycli", ("run", )), )),
         ("mycli 'lit arg' \"plain\"", (("mycli", ("lit arg", "plain")), )),
         ("mycli run > out.txt", (("mycli", ("run", )), )),

@@ -444,9 +444,10 @@ async function runParsedLine(
     return new ExecuteResult(new Uint8Array(), prejudged.stderr, prejudged.exitCode)
   }
   if (env.sessions.hasManagedEnv) {
-    // The walked set carries stored function bodies too, so a function
-    // invoked by bare name still fills what its body reads.
-    const nodes = lineNodes(rootNode, effectiveSession.functions)
+    // The walked set carries stored function bodies and alias
+    // expansions too, so a body invoked by bare name still fills what
+    // it reads.
+    const nodes = lineNodes(rootNode, effectiveSession, reparse)
     const filled = await fillManaged(
       nodes,
       guestBound(nodes, deps.routingDecision ?? null, env.runtimes.bindings),

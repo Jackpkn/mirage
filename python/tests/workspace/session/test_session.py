@@ -27,7 +27,8 @@ from mirage.workspace.session import Session
 from mirage.workspace.session.constants import (CHILD_SHELL_FIELDS,
                                                 INHERITED_FIELDS,
                                                 TRANSIENT_FIELDS)
-from mirage.workspace.session.session import vars_from_entries, vars_from_env
+from mirage.workspace.session.session import (vars_from_entries, vars_from_env,
+                                              vars_from_fields, vars_to_fields)
 from mirage.workspace.session.state import seed_var, set_attr
 
 
@@ -521,3 +522,46 @@ def test_a_smuggled_value_for_a_managed_name_is_discarded_on_load():
 def test_a_session_with_no_managed_vars_writes_no_managed_key():
     s = Session(session_id="s2", vars=vars_from_env({"A": "1"}))
     assert "managed" not in s.to_dict()
+
+
+def test_vars_fields_round_trip_keeps_the_pointer_never_a_value():
+    table = vars_from_entries({
+        "TOKEN": {
+            "from": "aws-sm",
+            "ref": "prod",
+            "key": "api"
+        },
+        "MODE": "prod",
+    })
+    fields = vars_to_fields(table)
+    assert "TOKEN" not in fields["env"]
+    assert fields["managed"]["TOKEN"] == {
+        "from": "aws-sm",
+        "ref": "prod",
+        "key": "api"
+    }
+    restored = vars_from_fields(fields)
+    assert restored["TOKEN"].value is None
+    assert restored["TOKEN"].managed == ManagedRef("aws-sm", "prod", "api",
+                                                   False)
+    assert restored["MODE"] == table["MODE"]
+
+
+def test_vars_fields_round_trip_keeps_eager():
+    table = vars_from_entries(
+        {"E": {
+            "from": "aws-sm",
+            "ref": "prod",
+            "fetch": "eager"
+        }})
+    restored = vars_from_fields(vars_to_fields(table))
+    managed = restored["E"].managed
+    assert managed is not None and managed.eager
+
+
+def test_vars_fields_never_writes_a_fetched_value():
+    table = vars_from_entries({"T": {"from": "aws-sm", "ref": "prod"}})
+    table["T"] = dataclasses.replace(table["T"], value="plain")
+    fields = vars_to_fields(table)
+    assert "T" not in fields["env"]
+    assert vars_from_fields(fields)["T"].value is None

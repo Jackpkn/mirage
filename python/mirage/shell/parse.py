@@ -712,27 +712,30 @@ def opaque_reads(node: tree_sitter.Node) -> bool:
 
 
 def command_invocations(
-        node: tree_sitter.Node
-) -> tuple[tuple[str, tuple[str | None, ...]], ...]:
+    node: tree_sitter.Node
+) -> tuple[tuple[str | None, tuple[str | None, ...]], ...]:
     """Every plain command's head word with its argument words.
 
-    Arguments are reported as their literal text, or None for a word no
-    static read can spell (an expansion, a substitution), so a caller
-    matching verbs (the CLI env-name pruning) can tell "this word is
-    not there" from "this word is unknowable". Assignment prefixes and
-    redirects are not arguments.
+    Head and arguments are reported as their literal text, or None for
+    a word no static read can spell (an expansion, a substitution), so
+    a caller matching names (the CLI env-name pruning) can tell "this
+    word is not there" from "this word is unknowable". A None head is
+    the stronger fact: the command that runs is not decidable before
+    expansion, so the fill pass treats the line as an opaque read.
+    Assignment prefixes and redirects are not arguments.
 
     Args:
         node (tree_sitter.Node): root node from parse().
     """
-    out: list[tuple[str, tuple[str | None, ...]]] = []
+    out: list[tuple[str | None, tuple[str | None, ...]]] = []
     for n in _walk_named_outside_defs(node):
         if n.type != "command":
             continue
         name_node = n.child_by_field_name("name")
-        text = name_node.text if name_node is not None else None
-        if not text:
+        if name_node is None:
             continue
+        inner = name_node.named_children
+        head = _literal_text(inner[0]) if len(inner) == 1 else None
         args = tuple(_literal_text(child) for child in _command_args(n))
-        out.append((text.decode(), args))
+        out.append((head, args))
     return tuple(out)

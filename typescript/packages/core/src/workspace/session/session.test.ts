@@ -12,9 +12,9 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { makeVar, VarAttr } from '../../shell/variable.ts'
+import { makeVar, VarAttr, withValue } from '../../shell/variable.ts'
 import { seedVar, setAttr } from './state.ts'
-import { varsFromEntries, varsFromEnv } from './session.ts'
+import { varsFromEntries, varsFromEnv, varsFromFields, varsToFields } from './session.ts'
 import { describe, expect, it } from 'vitest'
 import { Session } from './session.ts'
 import { MountMode } from '../../types.ts'
@@ -433,5 +433,42 @@ describe('managed serialization', () => {
     const restored = Session.fromJSON(data as Parameters<typeof Session.fromJSON>[0])
     expect(restored.vars.TOKEN?.value).toBeNull()
     expect(restored.vars.TOKEN?.managed).not.toBeUndefined()
+  })
+})
+
+describe('varsToFields / varsFromFields', () => {
+  it('round trips the pointer, never a value', () => {
+    const table = varsFromEntries({
+      TOKEN: { from: 'aws-sm', ref: 'prod', key: 'api' },
+      MODE: 'prod',
+    })
+    const fields = varsToFields(table)
+    expect(fields.env).toEqual({ MODE: 'prod' })
+    expect(fields.managed).toEqual({ TOKEN: { from: 'aws-sm', ref: 'prod', key: 'api' } })
+    const restored = varsFromFields(fields)
+    expect(restored.TOKEN?.value).toBeNull()
+    expect(restored.TOKEN?.managed).toEqual({
+      source: 'aws-sm',
+      ref: 'prod',
+      key: 'api',
+      eager: false,
+    })
+    expect(restored.MODE).toEqual(table.MODE)
+  })
+
+  it('round trips eager', () => {
+    const table = varsFromEntries({ E: { from: 'aws-sm', ref: 'prod', fetch: 'eager' } })
+    const restored = varsFromFields(varsToFields(table))
+    expect(restored.E?.managed?.eager).toBe(true)
+  })
+
+  it('never writes a fetched value', () => {
+    const table = varsFromEntries({ T: { from: 'aws-sm', ref: 'prod' } })
+    const seeded = table.T
+    if (seeded === undefined) throw new Error('seeded var missing')
+    table.T = withValue(seeded, 'plain')
+    const fields = varsToFields(table)
+    expect(fields.env).toEqual({})
+    expect(varsFromFields(fields).T?.value).toBeNull()
   })
 })

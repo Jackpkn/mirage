@@ -408,10 +408,14 @@ describe('opaqueReads', () => {
 })
 
 describe('commandInvocations', () => {
-  it.each<[string, [string, (string | null)[]][]]>([
+  it.each<[string, [string | null, (string | null)[]][]]>([
     ['ntn api get PAGE', [['ntn', ['api', 'get', 'PAGE']]]],
     // A dynamic word arrives as null, distinguishable from absent.
     ['slack msg send --to $u', [['slack', ['msg', 'send', '--to', null]]]],
+    // A dynamic head is null too: the program itself is undecidable
+    // before expansion.
+    ['$tool api get', [[null, ['api', 'get']]]],
+    ['"$t"x run', [[null, ['run']]]],
     ['A=1 mycli run', [['mycli', ['run']]]],
     ['mycli \'lit arg\' "plain"', [['mycli', ['lit arg', 'plain']]]],
     ['mycli run > out.txt', [['mycli', ['run']]]],

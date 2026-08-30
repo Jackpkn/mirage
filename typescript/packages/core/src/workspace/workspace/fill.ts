@@ -18,6 +18,7 @@ import type { RouteDecision } from '../../runtime/routing/index.ts'
 import { VFSRuntime } from '../../runtime/table.ts'
 import { SecretsError } from '../../secrets/errors.ts'
 import { fetchSecret } from '../../secrets/registry.ts'
+import { SHOPT_DEFAULTS } from '../../shell/constants.ts'
 import {
   commandInvocations,
   commandWords,
@@ -35,6 +36,11 @@ import { Consumer } from '../lookup/types.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import { setSessionEntry, type Session } from '../session/session.ts'
 import { deref } from '../session/state.ts'
+
+// Appended to an alias value before parsing it for the read walk: the
+// rest of the invoking line lands there at dispatch, so the trailing
+// command's arguments are statically unknowable, never absent.
+const ALIAS_REST = ' "$__mirage_alias_rest__"'
 
 /** Function bodies the line itself defines, by name. */
 function definedBodies(node: TSNodeLike): Map<string, TSNodeLike> {
@@ -56,18 +62,27 @@ function definedBodies(node: TSNodeLike): Map<string, TSNodeLike> {
 }
 
 /**
- * The line's tree plus every function body it can invoke.
+ * The line's tree plus every body its command words can run.
  *
  * A body runs at invocation, not where it is defined, so the read
  * walks skip definition subtrees; this is where an invoked body joins
- * back in. An invocation word resolves to the line's own definition
- * first (a same-line redefinition shadows the stored one), then to the
- * session's stored functions, transitively (a body invoking another
- * function pulls that body in too), each name once, so mutual
- * recursion terminates.
+ * back in. A command word pulls in every body it could select, all of
+ * them rather than the likeliest: the session's stored function AND
+ * the line's own redefinition (`f; f() { :; }` runs the stored body
+ * first, so neither may shadow the other), and a stored alias's
+ * expansion, reparsed here because dispatch reparses it after this
+ * pass has already run. Alias values join only under `expand_aliases`,
+ * the same gate alias expansion applies at dispatch. Each name
+ * resolves once, so mutual recursion terminates; over-selection only
+ * ever over-fetches, under-selection is the bug.
  */
-export function lineNodes(node: TSNodeLike, functions: Record<string, unknown>): TSNodeLike[] {
+export function lineNodes(
+  node: TSNodeLike,
+  session: Session,
+  reparse: (line: string) => TSNodeLike,
+): TSNodeLike[] {
   const defined = definedBodies(node)
+  const expand = session.shopts.expand_aliases ?? SHOPT_DEFAULTS.get('expand_aliases') ?? false
   const nodes: TSNodeLike[] = [node]
   const seen = new Set<string>()
   const frontier: TSNodeLike[] = [node]
@@ -77,10 +92,18 @@ export function lineNodes(node: TSNodeLike, functions: Record<string, unknown>):
     for (const word of commandWords(current)) {
       if (seen.has(word)) continue
       seen.add(word)
+      const stored = Object.hasOwn(session.functions, word) ? session.functions[word] : undefined
+      const bodies = Array.isArray(stored) ? [...(stored as TSNodeLike[])] : []
       const local = defined.get(word)
-      const stored = Object.hasOwn(functions, word) ? functions[word] : undefined
-      const bodies =
-        local !== undefined ? [local] : Array.isArray(stored) ? (stored as TSNodeLike[]) : []
+      if (local !== undefined) bodies.push(local)
+      const aliased = Object.hasOwn(session.aliases, word) ? session.aliases[word] : undefined
+      // An alias is a textual prefix: dispatch appends the
+      // invocation's rest to the value, so the value's trailing
+      // command is parsed with a dynamic rest-word. That keeps its
+      // argument list honest -- a CLI named in an alias reads as
+      // "verbs unknowable" (whole spec tree) rather than "no verb
+      // selected".
+      if (expand && aliased !== undefined) bodies.push(reparse(aliased + ALIAS_REST))
       nodes.push(...bodies)
       frontier.push(...bodies)
     }
@@ -137,6 +160,7 @@ export function cliEnvNames(
   const out = new Set<string>()
   for (const node of nodes) {
     for (const [head, args] of commandInvocations(node)) {
+      if (head === null) continue
       const install = registry.clis.get(head)
       if (install === null) continue
       if (lookup(head, session, registry) !== Consumer.CLI) continue
@@ -168,11 +192,13 @@ function pendingOf(session: Session): Map<string, ManagedRef> {
 /**
  * The pending names the line's walked set is about to read.
  *
- * A whole-environment render or an opaque read (`opaqueReads`) selects
- * everything pending; otherwise the set is the walk's references
- * (nameref targets resolved through the session), the printing forms'
- * explicit targets, the routed CLIs' env names, and the eager-marked
- * entries.
+ * A whole-environment render, an opaque read (`opaqueReads`), or a
+ * command head no static read can spell (`$tool api ...` -- the
+ * program that runs is not decidable before expansion, so neither is
+ * its read set) selects everything pending; otherwise the set is the
+ * walk's references (nameref targets resolved through the session),
+ * the printing forms' explicit targets, the routed CLIs' env names,
+ * and the eager-marked entries.
  */
 function wanted(
   session: Session,
@@ -185,6 +211,9 @@ function wanted(
   for (const node of nodes) {
     const reads = envReads(node)
     if (reads.whole || opaqueReads(node)) return new Set(pending.keys())
+    if (commandInvocations(node).some(([head]) => head === null)) {
+      return new Set(pending.keys())
+    }
     for (const name of reads.names) printed.add(name)
     for (const name of referencedNames(node)) referenced.add(name)
   }

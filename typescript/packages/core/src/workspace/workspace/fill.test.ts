@@ -409,6 +409,81 @@ describe('fillEnv through execute', () => {
     }
   })
 
+  it('an alias body fills on invocation', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-alias', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-alias', ref: 'r' } })
+    try {
+      expect((await ws.execute('shopt -s expand_aliases')).exitCode).toBe(0)
+      expect((await ws.execute('alias show=\'echo "a:$TOKEN"\'')).exitCode).toBe(0)
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('show'))).toBe('a:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an alias never fetches while expansion is off', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-alias-off', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-alias-off', ref: 'r' } })
+    try {
+      await ws.execute("alias show='echo $TOKEN'")
+      expect((await ws.execute('show')).exitCode).not.toBe(0)
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an invocation before a redefinition fills the stored body', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-order', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-order', ref: 'r' } })
+    try {
+      expect((await ws.execute('f() { echo "t:$TOKEN"; }')).exitCode).toBe(0)
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('f; f() { :; }'))).toBe('t:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a dynamic head fetches everything pending', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-dyn', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-dyn', ref: 'r' } })
+    try {
+      expect((await ws.execute('h=echo')).exitCode).toBe(0)
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('$h hi'))).toBe('hi\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a copy carries the env template to new sessions', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-copy', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-copy', ref: 'r' }, MODE: 'prod' })
+    try {
+      const twin = await ws.copy()
+      try {
+        twin.createSession('later')
+        const io = await twin.execute('echo $MODE:$TOKEN', { sessionId: 'later' })
+        expect(stdoutStr(io)).toBe('prod:t0\n')
+        expect(calls).toEqual(['r'])
+      } finally {
+        await twin.close()
+      }
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('a denied literal line never fetches', async () => {
     const { calls, fetch } = countingSource({ TOKEN: 't0' })
     registerSecrets('fake-denied', FakeConfig, fetch)
@@ -458,6 +533,29 @@ describe('fillEnv through execute', () => {
       ws.registerCli('mycli', envCliSpec())
       await ws.execute('mycli alpha')
       expect([...calls].sort()).toEqual(['alpha', 'root'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an alias-invoked cli fetches its env', async () => {
+    // The alias value is a textual prefix, so the verb is unknowable
+    // until dispatch appends the rest; the walk falls back to the
+    // whole spec tree rather than reading "no verb selected".
+    const { calls, fetch } = countingSource({ CLI_ROOT: 'r0', CLI_ALPHA: 'a0' })
+    registerSecrets('fake-cli-alias', FakeConfig, fetch)
+    const ws = await makeWs({
+      CLI_ROOT: { from: 'fake-cli-alias', ref: 'root' },
+      CLI_ALPHA: { from: 'fake-cli-alias', ref: 'alpha' },
+    })
+    try {
+      ws.registerCli('mycli', envCliSpec())
+      await ws.execute('shopt -s expand_aliases')
+      await ws.execute("alias n='mycli'")
+      expect(calls).toEqual([])
+      await ws.execute('n alpha')
+      expect(calls).toContain('alpha')
+      expect(calls).toContain('root')
     } finally {
       await ws.close()
     }

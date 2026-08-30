@@ -403,6 +403,85 @@ async def test_function_calling_function_fills_transitively():
 
 
 @pytest.mark.asyncio
+async def test_alias_body_fills_on_invocation():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute("shopt -s expand_aliases")).exit_code == 0
+        line = "alias show='echo \"a:$TOKEN\"'"
+        assert (await ws.execute(line)).exit_code == 0
+        assert calls == []
+        io = await ws.execute("show")
+        assert (await io.stdout_str()) == "a:t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_alias_never_fetches_while_expansion_is_off():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        await ws.execute("alias show='echo $TOKEN'")
+        io = await ws.execute("show")
+        assert io.exit_code != 0
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_invocation_before_redefinition_fills_the_stored_body():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute('f() { echo "t:$TOKEN"; }')).exit_code == 0
+        assert calls == []
+        io = await ws.execute("f; f() { :; }")
+        assert (await io.stdout_str()) == "t:t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_dynamic_head_fetches_everything_pending():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute("h=echo")).exit_code == 0
+        assert calls == []
+        io = await ws.execute("$h hi")
+        assert (await io.stdout_str()) == "hi\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_copy_carries_the_env_template_to_new_sessions():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}, "MODE": "prod"})
+    try:
+        twin = await ws.copy()
+        try:
+            twin.create_session("later")
+            io = await twin.execute("echo $MODE:$TOKEN", session_id="later")
+            assert (await io.stdout_str()) == "prod:t0\n"
+            assert calls == ["r"]
+        finally:
+            await twin.close()
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_indirect_expansion_fetches_the_target():
     calls, fetch = counting_source({"TOKEN": "t0"})
     register_secrets("fake", FakeConfig, fetch)
@@ -534,6 +613,34 @@ async def test_cli_fetches_only_the_invoked_verb_path():
         ws.register_cli("mycli", _cli_spec())
         await ws.execute("mycli alpha")
         assert sorted(calls) == ["alpha", "root"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_alias_invoked_cli_fetches_its_env():
+    # The alias value is a textual prefix, so the verb is unknowable
+    # until dispatch appends the rest; the walk falls back to the whole
+    # spec tree rather than reading "no verb selected".
+    calls, fetch = counting_source({"CLI_ROOT": "r0", "CLI_ALPHA": "a0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({
+        "CLI_ROOT": {
+            "from": "fake",
+            "ref": "root"
+        },
+        "CLI_ALPHA": {
+            "from": "fake",
+            "ref": "alpha"
+        },
+    })
+    try:
+        ws.register_cli("mycli", _cli_spec())
+        await ws.execute("shopt -s expand_aliases")
+        await ws.execute("alias n='mycli'")
+        assert calls == []
+        await ws.execute("n alpha")
+        assert "alpha" in calls and "root" in calls
     finally:
         await ws.close()
 

@@ -262,7 +262,7 @@ async def execute_line(
             # already denied on its literal words never reaches a
             # source. A deny only the value gate can see still follows
             # the fetch, because expansion is what consumes the values.
-            nodes = line_nodes(ast, effective_session.functions)
+            nodes = line_nodes(ast, effective_session)
             names = fill_names(
                 effective_session,
                 nodes,

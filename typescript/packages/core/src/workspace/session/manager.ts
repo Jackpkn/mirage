@@ -58,17 +58,17 @@ export class SessionManager {
   // session now and copied into every created session as its template.
   // The records are frozen, so sharing them across sessions is safe;
   // each session gets its own record.
-  private readonly seedVars: Record<string, ShellVar>
+  private seedVarsInternal: Record<string, ShellVar>
   private hasManaged: boolean
 
   constructor(defaultSessionId: string, store?: SessionStore, seedVars?: Record<string, ShellVar>) {
     this.defaultIdInternal = defaultSessionId
     this.sessionStore = store ?? new RAMSessionStore()
-    this.seedVars = ownRecord(seedVars)
-    this.hasManaged = Object.values(this.seedVars).some((v) => v.managed !== undefined)
+    this.seedVarsInternal = ownRecord(seedVars)
+    this.hasManaged = Object.values(this.seedVarsInternal).some((v) => v.managed !== undefined)
     this.sessions.set(
       defaultSessionId,
-      new Session({ sessionId: defaultSessionId, vars: ownRecord(this.seedVars) }),
+      new Session({ sessionId: defaultSessionId, vars: ownRecord(this.seedVarsInternal) }),
     )
   }
 
@@ -83,6 +83,26 @@ export class SessionManager {
    */
   get hasManagedEnv(): boolean {
     return this.hasManaged
+  }
+
+  /** The env template a created session starts from, copied. */
+  get seedVars(): Record<string, ShellVar> {
+    return ownRecord(this.seedVarsInternal)
+  }
+
+  /**
+   * Install the env template a snapshot or copy carried over.
+   *
+   * The template is constructor state, so `fromState` rebuilds a
+   * workspace without it; existing sessions recover their own vars,
+   * but a session created afterward would start bare while its older
+   * siblings still carry every workspace env entry. Sticky on
+   * `hasManagedEnv`, like every other writer of it.
+   */
+  restoreSeed(seedVars: Record<string, ShellVar>): void {
+    this.seedVarsInternal = ownRecord(seedVars)
+    this.hasManaged =
+      this.hasManaged || Object.values(this.seedVarsInternal).some((v) => v.managed !== undefined)
   }
 
   /** The document's default profile, as compiled for this workspace. */
@@ -330,7 +350,7 @@ export class SessionManager {
     if (this.sessions.has(sessionId)) {
       throw new Error(`Session ${sessionId} already exists`)
     }
-    const seeded = ownRecord(this.seedVars)
+    const seeded = ownRecord(this.seedVarsInternal)
     if (options.env !== undefined) Object.assign(seeded, varsFromEntries(options.env))
     const session = new Session({
       sessionId,

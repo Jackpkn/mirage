@@ -247,6 +247,63 @@ export function varsFromEntries(entries: EnvEntries): Record<string, ShellVar> {
   return out
 }
 
+/** The wire shape `varsToFields` writes and `varsFromFields` reads. */
+export interface VarFields {
+  env?: Record<string, string>
+  var_attrs?: Record<string, string>
+  managed?: Record<string, { from: string; ref: string; key: string; fetch?: string }>
+}
+
+/**
+ * The stored shape of a bare variable table.
+ *
+ * The three keys a stored session writes (`toJSON`): `env` holds the
+ * plain scalars, `var_attrs` the letter clusters, `managed` the
+ * pointers -- and a managed name serializes as its pointer, never its
+ * value, the same rule the session codec states. This exists for the
+ * workspace env template, a variable table with no session around it,
+ * so a snapshot or copy can carry the declaration.
+ */
+export function varsToFields(table: Record<string, ShellVar>): VarFields {
+  const managed = ownRecord<ManagedRef>()
+  const env = ownRecord<string>()
+  const letters = ownRecord<string>()
+  for (const [name, v] of Object.entries(table)) {
+    if (v.managed !== undefined) managed[name] = v.managed
+    if (v.attrs.size > 0) letters[name] = storedAttrs(v)
+  }
+  for (const [name, v] of Object.entries(table)) {
+    if (typeof v.value === 'string' && !Object.hasOwn(managed, name)) env[name] = v.value
+  }
+  const fields: VarFields = { env, var_attrs: letters }
+  if (Object.keys(managed).length > 0) {
+    const refs = ownRecord<{ from: string; ref: string; key: string; fetch?: string }>()
+    for (const [name, ref] of Object.entries(managed)) {
+      const entry: { from: string; ref: string; key: string; fetch?: string } = {
+        from: ref.source,
+        ref: ref.ref,
+        key: ref.key,
+      }
+      if (ref.eager) entry.fetch = 'eager'
+      refs[name] = entry
+    }
+    fields.managed = refs
+  }
+  return fields
+}
+
+/**
+ * The variable table a `varsToFields` payload restores.
+ *
+ * `varsFromDict` reads the two plain halves; each managed name then
+ * restores declared-but-unfetched, its value forced back to null so a
+ * payload that smuggles one in is discarded rather than trusted --
+ * exactly how `fromJSON` restores a stored session's vars.
+ */
+export function varsFromFields(data: VarFields): Record<string, ShellVar> {
+  return restoredVars(data.env ?? {}, data.var_attrs ?? {}, data.managed)
+}
+
 /**
  * The restore side of `toJSON`'s three env keys. A managed name
  * restores declared-but-unfetched: the value is forced back to null,
