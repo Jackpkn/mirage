@@ -20,7 +20,8 @@ from mirage.shell.helpers import (get_command_name, get_for_parts,
                                   get_if_branches, get_list_parts, get_parts,
                                   get_pipeline_commands, get_redirects,
                                   get_text, get_while_parts)
-from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
+from mirage.shell.parse import (command_words, find_syntax_error,
+                                find_unterminated_backtick, referenced_names,
                                 strip_line_continuation)
 from mirage.shell.types import NodeType as NT
 
@@ -397,3 +398,55 @@ def test_assignment_later_unbraced_var_stays_one_assignment():
 def test_literal_dollar_words_stay_untouched(command, words):
     cmd = parse(command).named_children[0]
     assert [get_text(p) for p in get_parts(cmd)] == words
+
+
+@pytest.mark.parametrize(
+    ("command", "names"),
+    [
+        ("echo $X", {"X"}),
+        ("echo ${X:-d}", {"X"}),
+        ('echo "$X"', {"X"}),
+        # Single quotes tokenize as raw_string with no children, so the
+        # name inside is never a reference.
+        ("echo '$X'", set()),
+        ("echo $((X+1))", {"X"}),
+        # The assignment's own name is a write, not a read; the
+        # substitution body is walked.
+        ("x=$(echo $Y)", {"Y"}),
+        ("cat <$F", {"F"}),
+        # The loop variable is a write; the word list is a read.
+        ("for i in $L; do echo hi; done", {"L"}),
+        # Over-approximation on purpose: the walk is textual over the
+        # whole tree, so a name an eval would read is fetched too.
+        ('x=$(eval "$Z")', {"Z"}),
+        ("echo ${a[i]}", {"a"}),
+        ("(( X=Y+1 ))", {"X", "Y"}),
+        ("export V=$W", {"W"}),
+        # Bare names under a declaring builtin declare or delete.
+        ("readonly R", set()),
+        ("unset X", set()),
+        ("TOKEN=1 printenv", set()),
+        ("cat <<EOF\nhello $H\nEOF", {"H"}),
+        ("echo hi", set()),
+    ])
+def test_referenced_names(command, names):
+    assert referenced_names(parse(command)) == frozenset(names)
+
+
+@pytest.mark.parametrize(
+    ("command", "words"),
+    [
+        ("echo hi", {"echo"}),
+        ("env | grep A", {"env", "grep"}),
+        ("x=$(printenv)", {"printenv"}),
+        ("if env; then ls; fi", {"env", "ls"}),
+        # The declaring builtins parse as their own node types; their
+        # head word is still a command word.
+        ("export X=1", {"export"}),
+        ("declare -p", {"declare"}),
+        ("unset X", {"unset"}),
+        ("set", {"set"}),
+        ("x=1", set()),
+    ])
+def test_command_words(command, words):
+    assert command_words(parse(command)) == frozenset(words)

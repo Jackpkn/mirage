@@ -38,6 +38,8 @@ from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.routing import RouteDecision, RoutePolicy
+from mirage.secrets.registry import source_for
+from mirage.secrets.types import EnvVar
 from mirage.shell import parse
 from mirage.shell.job_table import ConsoleFactory, JobTable
 from mirage.types import (ConsistencyPolicy, DriftPolicy, FileEvent, FileStat,
@@ -53,6 +55,7 @@ from mirage.workspace.node.explain import explain_line
 from mirage.workspace.session import Session, SessionManager, SessionStore
 from mirage.workspace.session.resolve import (apply_profile, compile_profile,
                                               resolve_profile, with_inline)
+from mirage.workspace.session.session import vars_from_entries
 from mirage.workspace.session.validate import check_cli_verbs
 from mirage.workspace.snapshot import (DriftQueue, apply_state_dict,
                                        build_mount_args, install_fingerprints,
@@ -115,6 +118,7 @@ class Workspace:
         on_ask: AskHandler | None = None,
         clis: dict[str, tuple[str | CLISpec, dict[str, Any] | None]]
         | None = None,
+        env: Mapping[str, str | EnvVar | Mapping[str, Any]] | None = None,
     ) -> None:
         self._registry = MountRegistry()
         # The permission profiles: one per name, and the one a session
@@ -156,7 +160,19 @@ class Workspace:
         self._drift = DriftQueue()
         self.job_table = JobTable(console_factory)
         self._default_agent_id = agent_id
-        self._session_mgr = SessionManager(session_id, store=stores.sessions)
+        # The env block, translated once: a literal entry becomes an
+        # exported var, a managed one becomes a pointer the fill step
+        # resolves at command time. Each managed entry's source is
+        # resolved now, so a typo'd name or a missing optional
+        # dependency fails at construction, naming the known sources,
+        # rather than at the first fetch.
+        seed_vars = vars_from_entries(env) if env else None
+        for var in (seed_vars or {}).values():
+            if var.managed is not None:
+                source_for(var.managed.source)
+        self._session_mgr = SessionManager(session_id,
+                                           store=stores.sessions,
+                                           seed_vars=seed_vars)
         # Admission policies, consulted in registration order after the
         # built-ins the registry seeds: the profile's admission rules
         # (PermissionsPolicy, reading each session's compiled rules
@@ -289,6 +305,17 @@ class Workspace:
         session = self.get_session(session_id or self.default_session_id)
         return await explain_line(parse(line), session, self._registry,
                                   self._namespace)
+
+    @property
+    def _has_managed_env(self) -> bool:
+        """True once any session may hold a managed variable.
+
+        The manager owns the fact because sessions are where pointers
+        live: the workspace's env block, a created session's own
+        entries, a hydrated record and a snapshot all land there. The
+        executor skips the fill pass entirely while this is False.
+        """
+        return self._session_mgr.has_managed_env
 
     @property
     def ops(self) -> Ops:

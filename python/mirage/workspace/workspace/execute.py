@@ -36,6 +36,8 @@ from mirage.workspace.session import (get_current_session_for,
                                       set_current_session)
 from mirage.workspace.snapshot import ContentDriftError
 from mirage.workspace.workspace.failure import failure_result
+from mirage.workspace.workspace.fill import (cli_env_names, fill_env,
+                                             guest_bound)
 from mirage.workspace.workspace.line import run_whole_line
 from mirage.workspace.workspace.utils import command_name, fork_for_call
 
@@ -208,6 +210,19 @@ async def execute_line(
                                effective_session,
                                agent_id=agent or ""), timeout, name)
         line_runtime = ws._runtimes.whole_line(ast, decision)
+        if ws._has_managed_env:
+            # The env plane fills before either strategy runs, so a
+            # guest runtime's env snapshot and the tree's expansion
+            # read the same, already-filled vars; a dry run (provision)
+            # returned above and never fetches. A SecretsError raises
+            # through to the generic fold below: the line exits 1 and
+            # never runs.
+            await fill_env(
+                effective_session,
+                ast,
+                whole=line_runtime is not None
+                or guest_bound(ast, decision, ws._registry.runtime_bindings),
+                cli_env_names=cli_env_names(ast, ws._registry.clis.items()))
         if line_runtime is not None:
             # A whole line is a command like any other: the same
             # visibility and admission gate as the tree, per parsed

@@ -434,3 +434,80 @@ def syntax_error_result(offending: str) -> IOResult:
     err = (f"mirage: syntax error near {snippet!r}\n".encode()
            if snippet else b"mirage: syntax error in command\n")
     return IOResult(exit_code=2, stderr=err)
+
+
+# Where a `variable_name` node is a write target rather than a read:
+# the assignment's name and the for loop's variable. Everything else --
+# expansions, arithmetic, subscripts -- reads the name.
+_TARGET_NAME_FIELDS = {
+    "variable_assignment": "name",
+    "for_statement": "variable",
+}
+
+# Nodes whose bare `variable_name` children declare or delete a name
+# (`readonly R`, `export Z`, `unset X`); their assignment children still
+# carry reads and are walked.
+_DECLARING_NODES = frozenset({"declaration_command", "unset_command"})
+
+
+def _collect_names(node: tree_sitter.Node, out: set[str]) -> None:
+    if node.type == "variable_name":
+        text = node.text
+        if text:
+            out.add(text.decode())
+        return
+    if node.type in _DECLARING_NODES:
+        for child in node.children:
+            if child.type != "variable_name":
+                _collect_names(child, out)
+        return
+    field = _TARGET_NAME_FIELDS.get(node.type)
+    target = node.child_by_field_name(field) if field else None
+    for child in node.children:
+        if target is not None and child.id == target.id:
+            continue
+        _collect_names(child, out)
+
+
+def referenced_names(node: tree_sitter.Node) -> frozenset[str]:
+    """Every variable name a parsed program may read.
+
+    A textual over-approximation over the whole tree, which is safe by
+    construction: the worst a spurious name costs is one fetch. Walked
+    everywhere -- command substitution bodies, redirect targets,
+    heredoc bodies, arithmetic -- with two exceptions that are writes,
+    not reads (an assignment's own name, a for loop's variable), and
+    one the grammar gives for free: a single-quoted string tokenizes as
+    `raw_string` with no children, so `'$X'` never reads X.
+
+    Args:
+        node (tree_sitter.Node): root node from parse().
+    """
+    out: set[str] = set()
+    _collect_names(node, out)
+    return frozenset(out)
+
+
+def command_words(node: tree_sitter.Node) -> frozenset[str]:
+    """The first word of every command in a parsed program.
+
+    What the whole-env table and the CLI env-name lookup key on.
+    `command_name` covers ordinary commands wherever they sit; the
+    declaring builtins (`export`, `declare`, `local`, `readonly`,
+    `unset`) parse as their own node types whose head word is the
+    first anonymous token, so those are read directly.
+
+    Args:
+        node (tree_sitter.Node): root node from parse().
+    """
+    out: set[str] = set()
+    for n in _walk_named(node):
+        if n.type == "command_name":
+            text = n.text
+            if text:
+                out.add(text.decode())
+        elif n.type in _DECLARING_NODES and n.children:
+            text = n.children[0].text
+            if text:
+                out.add(text.decode())
+    return frozenset(out)

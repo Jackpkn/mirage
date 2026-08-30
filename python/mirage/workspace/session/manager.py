@@ -15,17 +15,30 @@
 import asyncio
 import copy
 from collections.abc import Mapping
+from typing import Any
 
 from mirage.policy.profile import CompiledProfile
 from mirage.policy.types import (AdmissionRules, Decision, HideReason,
                                  ProfileScript)
+from mirage.secrets.types import EnvVar
+from mirage.shell.variable import ShellVar
 from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of
 from mirage.workspace.session.ram import RAMSessionStore
 from mirage.workspace.session.resolve import apply_profile, narrow
-from mirage.workspace.session.session import Session, vars_from_env
+from mirage.workspace.session.session import (Session, vars_from_entries,
+                                              vars_from_env)
 from mirage.workspace.session.shell_dirs import set_cwd
 from mirage.workspace.session.store import SessionFields, SessionStore
+
+
+def _holds_managed(session: Session) -> bool:
+    """Whether any of the session's variables carries a pointer.
+
+    Args:
+        session (Session): the session to scan.
+    """
+    return any(var.managed is not None for var in session.vars.values())
 
 
 class SessionManager:
@@ -41,7 +54,8 @@ class SessionManager:
 
     def __init__(self,
                  default_session_id: str,
-                 store: SessionStore | None = None) -> None:
+                 store: SessionStore | None = None,
+                 seed_vars: dict[str, ShellVar] | None = None) -> None:
         self._default_id = default_session_id
         self._store = store if store is not None else RAMSessionStore()
         self._sessions: dict[str, Session] = {}
@@ -50,12 +64,31 @@ class SessionManager:
         # compares against this to skip clean sessions without a
         # network read, and to avoid clobbering other writers.
         self._persisted: dict[str, SessionFields] = {}
+        # The workspace's env block, translated: seeded onto the
+        # default session now and copied into every created session as
+        # its template. The records are frozen, so sharing them across
+        # sessions is safe; each session gets its own dict.
+        self._seed_vars = dict(seed_vars) if seed_vars else {}
+        self._has_managed = any(var.managed is not None
+                                for var in self._seed_vars.values())
         self._sessions[default_session_id] = Session(
-            session_id=default_session_id)
+            session_id=default_session_id, vars=dict(self._seed_vars))
         self._locks[default_session_id] = asyncio.Lock()
         self._loaded = False
         self._load_lock = asyncio.Lock()
         self._default_profile: CompiledProfile | None = None
+
+    @property
+    def has_managed_env(self) -> bool:
+        """True once any session may hold a managed variable.
+
+        The fill step is skipped entirely while this is False, so it is
+        sticky-true: set by the workspace's env block, a created
+        session's own entries, a hydrated record, or a snapshot, and
+        never cleared (a detached name costs nothing extra -- the fill
+        pass finds nothing to fetch and returns).
+        """
+        return self._has_managed
 
     @property
     def default_profile(self) -> CompiledProfile | None:
@@ -235,6 +268,8 @@ class SessionManager:
                     default = self._sessions[self._default_id]
                     set_cwd(default, stored.cwd)
                     default.vars = stored.vars
+                    self._has_managed = (self._has_managed
+                                         or _holds_managed(default))
                     default.created_at = stored.created_at
                     default.mount_modes = stored.mount_modes
                     # The hidden shapes are durable restrictions, not
@@ -268,6 +303,8 @@ class SessionManager:
                 self._sessions[sid] = session
                 self._locks[sid] = asyncio.Lock()
                 self._persisted[sid] = copy.deepcopy(session.to_dict())
+                self._has_managed = (self._has_managed
+                                     or _holds_managed(session))
             self._loaded = True
 
     async def flush(self) -> None:
@@ -310,15 +347,34 @@ class SessionManager:
         entries = {s.session_id: s.to_dict() for s in self._sessions.values()}
         for session in sessions:
             entries[session.session_id] = session.to_dict()
+            self._has_managed = self._has_managed or _holds_managed(session)
         await self._store.replace_all(entries)
         self._persisted = copy.deepcopy(entries)
 
-    def create(self,
-               session_id: str,
-               mount_modes: dict[str, MountMode] | None = None) -> Session:
+    def create(
+        self,
+        session_id: str,
+        mount_modes: dict[str, MountMode] | None = None,
+        env: Mapping[str, str | EnvVar | Mapping[str, Any]] | None = None
+    ) -> Session:
+        """Create a session, seeded with the workspace's env template.
+
+        Args:
+            session_id (str): unique id for the session.
+            mount_modes (dict[str, MountMode] | None): per-mount modes.
+            env (Mapping[str, str | EnvVar | Mapping[str, Any]] | None):
+                this session's own env entries, literal or managed,
+                merged over the template (session entries win).
+        """
         if session_id in self._sessions:
             raise ValueError(f"Session {session_id!r} already exists")
-        session = Session(session_id=session_id, mount_modes=mount_modes)
+        seeded = dict(self._seed_vars)
+        if env is not None:
+            seeded.update(vars_from_entries(env))
+        session = Session(session_id=session_id,
+                          mount_modes=mount_modes,
+                          vars=seeded)
+        self._has_managed = self._has_managed or _holds_managed(session)
         self._sessions[session_id] = session
         self._locks[session_id] = asyncio.Lock()
         return session

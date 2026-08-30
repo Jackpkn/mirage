@@ -2910,6 +2910,35 @@
           "runtime": "quickjs"
         }
       }
+    },
+    {
+      "id": "secrets-env",
+      "hosts": [
+        "python"
+      ],
+      "secrets": "healthy",
+      "mounts": [
+        {
+          "path": "/data",
+          "resource": "ram",
+          "backend": "memory",
+          "mode": "exec"
+        }
+      ]
+    },
+    {
+      "id": "secrets-dead",
+      "hosts": [
+        "python"
+      ],
+      "secrets": "dead",
+      "mounts": [
+        {
+          "path": "/data",
+          "resource": "ram",
+          "backend": "memory"
+        }
+      ]
     }
   ]
 }

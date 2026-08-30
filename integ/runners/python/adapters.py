@@ -39,6 +39,7 @@ import chromadb
 import lancedb
 from databricks_client import HttpFilesClient
 from moto.server import ThreadedMotoServer
+from pydantic import BaseModel, ConfigDict
 from pymongo import AsyncMongoClient
 from qdrant_client import AsyncQdrantClient, models
 
@@ -112,6 +113,9 @@ from mirage.resource.tencent import TencentConfig, TencentResource
 from mirage.resource.trello import TrelloConfig, TrelloResource
 from mirage.resource.wasabi import WasabiConfig, WasabiResource
 from mirage.runtime.types import ScriptSource
+from mirage.secrets.errors import SecretsError
+from mirage.secrets.registry import register_secrets
+from mirage.secrets.types import ResolvedSecret
 from mirage.shell.console import JobConsole
 from mirage.shell.console.redis import RedisConsoleStore
 from mirage.shell.job_table import ConsoleFactory
@@ -2622,7 +2626,8 @@ async def build_mounts(
                 pair = await pair
             resource, cleanup = pair
         built[mount["path"]] = resource
-        mode = MountMode.READ if mount.get("mode") == "read" else None
+        mode = (MountMode.READ if mount.get("mode") == "read" else
+                MountMode.EXEC if mount.get("mode") == "exec" else None)
         # A mount states infrastructure only: what it is, where it is,
         # how it is served. Its permissions live in the profile, under
         # `profiles.<name>.mounts.<prefix>`.
@@ -2713,6 +2718,106 @@ def console_factory(target: dict, run_id: str) -> ConsoleFactory | None:
                              f"mirage-integ-console-{run_id}:")
 
 
+class CounterConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class DeadConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+async def fetch_dead(config: DeadConfig, ref: str) -> ResolvedSecret:
+    raise SecretsError("vault sealed")
+
+
+def build_secrets_env(
+        kind: str) -> tuple[dict[str, object], Callable[[], Awaitable[None]]]:
+    """The env plane a secrets target declares, plus its cleanup.
+
+    Registers the counting fake (fresh per-ref counters per open, so the
+    counts inside fetched values are deterministic within one target
+    run and prove how many times each secret was fetched), materializes
+    the dotenv file the `dotenv` entry points at (its path exists only
+    at run time, which is why the block is built here and not spelled
+    in targets.json), and seeds the process variable the `env` entry
+    reads. ``kind`` "dead" is a separate target on purpose: a whole-env
+    command fetches every unfetched name, so one dead source would fail
+    the healthy target's `env` case.
+
+    Args:
+        kind (str): "healthy" or "dead", the target's `secrets` value.
+    """
+    if kind == "dead":
+        register_secrets("dead", DeadConfig, fetch_dead)
+        return {"DEAD": {"from": "dead", "ref": "x"}}, _noop
+    counts: dict[str, int] = {}
+
+    async def fetch_counting(config: CounterConfig,
+                             ref: str) -> ResolvedSecret:
+        counts[ref] = counts.get(ref, 0) + 1
+        n = counts[ref]
+        return ResolvedSecret(fields={
+            "token": f"tok{n}",
+            "user": f"u{n}",
+            "pass": f"p{n}",
+        })
+
+    register_secrets("counter", CounterConfig, fetch_counting)
+    os.environ["MIRAGE_INTEG_ENV_SECRET"] = "from-process-env"
+    dotfile = tempfile.NamedTemporaryFile(mode="w",
+                                          suffix=".env",
+                                          delete=False)
+    dotfile.write("DOTFILE_SECRET=from-dotenv\n")
+    dotfile.close()
+
+    async def cleanup() -> None:
+        os.unlink(dotfile.name)
+
+    env: dict[str, object] = {
+        "APP_NAME": "integ",
+        "EDITOR": {
+            "value": "vi",
+            "readonly": True
+        },
+        "TOKEN": {
+            "from": "counter",
+            "ref": "tok",
+            "key": "token"
+        },
+        "DB_USER": {
+            "from": "counter",
+            "ref": "db",
+            "key": "user"
+        },
+        "DB_PASS": {
+            "from": "counter",
+            "ref": "db",
+            "key": "pass"
+        },
+        "EAGER_PAIR": {
+            "from": "counter",
+            "ref": "pair",
+            "key": "token",
+            "fetch": "eager"
+        },
+        "LAZY_PAIR": {
+            "from": "counter",
+            "ref": "pair",
+            "key": "user"
+        },
+        "FROM_ENV": {
+            "from": "env",
+            "key": "MIRAGE_INTEG_ENV_SECRET"
+        },
+        "FROM_DOTFILE": {
+            "from": "dotenv",
+            "ref": dotfile.name,
+            "key": "DOTFILE_SECRET"
+        },
+    }
+    return env, cleanup
+
+
 async def open_target(
     target: dict,
     consistency: ConsistencyPolicy | None = None
@@ -2720,6 +2825,10 @@ async def open_target(
     run_id = uuid.uuid4().hex[:8]
     service = await make_service(target, run_id)
     mounts, cleanups = await build_mounts(target, run_id, service)
+    env_block = None
+    if target.get("secrets") is not None:
+        env_block, secrets_cleanup = build_secrets_env(target["secrets"])
+        cleanups.append(secrets_cleanup)
     agent_id = target.get("agentId")
     factory = console_factory(target, run_id)
     # The target's profiles, and which one shapes a session that names
@@ -2735,14 +2844,16 @@ async def open_target(
                        agent_id=agent_id,
                        console_factory=factory,
                        profiles=profiles,
-                       profile=default_profile)
+                       profile=default_profile,
+                       env=env_block)
     else:
         ws = Workspace(mounts,
                        mode=MountMode.WRITE,
                        agent_id=agent_id,
                        console_factory=factory,
                        profiles=profiles,
-                       profile=default_profile)
+                       profile=default_profile,
+                       env=env_block)
     for cli_name in target.get("clis", []):
         spec, config = cli_install(service, cli_name)
         ws.register_cli(cli_name, spec, config)
@@ -2753,8 +2864,12 @@ async def open_target(
     # Through the setter, not into the mapping: `ws.env` is a read-only
     # projection of the variable records, and a target's declared
     # environment is exported by definition -- a CLI reads it as a
-    # process environment, which carries exported names only.
-    ws.env = {**ws.env, **target.get("env", {})}
+    # process environment, which carries exported names only. Only when
+    # declared: the setter rebuilds the var table from the projection,
+    # which would drop a secrets target's managed pointers and preset
+    # attributes.
+    if target.get("env"):
+        ws.env = {**ws.env, **target["env"]}
     return ws, functools.partial(teardown_target, [ws], cleanups, service)
 
 

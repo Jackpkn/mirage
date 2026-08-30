@@ -22,7 +22,16 @@ import type { SessionProfile } from '@struktoai/mirage-core/policy/profile'
 
 // integ/runtime holds the runtime suite (its own schema and runners,
 // integ/runtime/run.{py,ts} + cli.sh), not battery cases; keep it out.
-const CASE_DIRS = ['unix', 'bash', 'crossmount', 'resources', 'cli', 'session', 'console']
+const CASE_DIRS = [
+  'unix',
+  'bash',
+  'crossmount',
+  'resources',
+  'cli',
+  'session',
+  'console',
+  'secrets',
+]
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
 

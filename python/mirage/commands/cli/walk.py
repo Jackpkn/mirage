@@ -75,6 +75,22 @@ def find_node(spec: CLISpec,
     return node, path
 
 
+def env_names(node: CLISpec) -> frozenset[str]:
+    """Every ``Option.env`` variable a program tree reads.
+
+    The env-plane fill step asks this per installed head word on the
+    line, so a managed name a CLI reads from the environment joins the
+    fetch set even though no ``$NAME`` appears in the line's text.
+
+    Args:
+        node (CLISpec): the tree's root (or any subtree).
+    """
+    out = {opt.env for opt in node.options if opt.env is not None}
+    for child in node.subcommands:
+        out |= env_names(child)
+    return frozenset(out)
+
+
 def owns_argv(node: CLISpec) -> bool:
     """True when the node parses its own command line instead of mirage.
 
