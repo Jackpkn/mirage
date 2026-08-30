@@ -180,16 +180,22 @@
           {
             "group": "CLIs",
             "pages": [
-              "home/setup/clis",
-              "home/setup/cli/himalaya",
-              "home/setup/cli/gws",
-              "home/setup/cli/slack",
-              "home/setup/cli/discord",
-              "home/setup/cli/ntn",
-              "home/setup/cli/linear",
-              "home/setup/cli/gh",
-                "home/setup/cli/hf",
-              "home/setup/cli/git"
+              {
+                "group": "CLIs",
+                "icon": "terminal",
+                "pages": [
+                  "home/setup/clis",
+                  "home/setup/cli/himalaya",
+                  "home/setup/cli/gws",
+                  "home/setup/cli/slack",
+                  "home/setup/cli/discord",
+                  "home/setup/cli/ntn",
+                  "home/setup/cli/linear",
+                  "home/setup/cli/gh",
+                  "home/setup/cli/hf",
+                  "home/setup/cli/git"
+                ]
+              }
             ]
           },
           {
@@ -362,17 +368,23 @@
           {
             "group": "CLIs",
             "pages": [
-              "python/cli/index",
-              "python/cli/custom",
-              "python/cli/himalaya",
-              "python/cli/gws",
-              "python/cli/slack",
-              "python/cli/discord",
-              "python/cli/ntn",
-              "python/cli/linear",
-              "python/cli/gh",
-                "python/cli/hf",
-              "python/cli/git"
+              {
+                "group": "CLIs",
+                "icon": "terminal",
+                "pages": [
+                  "python/cli/index",
+                  "python/cli/custom",
+                  "python/cli/himalaya",
+                  "python/cli/gws",
+                  "python/cli/slack",
+                  "python/cli/discord",
+                  "python/cli/ntn",
+                  "python/cli/linear",
+                  "python/cli/gh",
+                  "python/cli/hf",
+                  "python/cli/git"
+                ]
+              }
             ]
           },
           {
@@ -551,17 +563,23 @@
           {
             "group": "CLIs",
             "pages": [
-              "typescript/cli/index",
-              "typescript/cli/custom",
-              "typescript/cli/himalaya",
-              "typescript/cli/gws",
-              "typescript/cli/slack",
-              "typescript/cli/discord",
-              "typescript/cli/ntn",
-              "typescript/cli/linear",
-              "typescript/cli/gh",
-                "typescript/cli/hf",
-              "typescript/cli/git"
+              {
+                "group": "CLIs",
+                "icon": "terminal",
+                "pages": [
+                  "typescript/cli/index",
+                  "typescript/cli/custom",
+                  "typescript/cli/himalaya",
+                  "typescript/cli/gws",
+                  "typescript/cli/slack",
+                  "typescript/cli/discord",
+                  "typescript/cli/ntn",
+                  "typescript/cli/linear",
+                  "typescript/cli/gh",
+                  "typescript/cli/hf",
+                  "typescript/cli/git"
+                ]
+              }
             ]
           },
           {
