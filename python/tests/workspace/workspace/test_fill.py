@@ -31,6 +31,7 @@ from mirage.secrets import registry
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import register_secrets
 from mirage.secrets.types import ResolvedSecret
+from mirage.shell.parse import parse
 from mirage.shell.variable import ManagedRef, ShellVar, VarAttr
 from mirage.types import HiddenVars
 
@@ -656,6 +657,157 @@ async def test_asked_literal_line_left_pending_never_fetches():
         again = await ws.execute("printenv TOKEN")
         assert (await again.stdout_str()) == "t0\n"
         assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_denied_function_body_never_fetches():
+    # The refusal walk covers the same nodes the read walk covers, so a
+    # stored body whose one command is denied contributes no read; the
+    # invocation still runs and is refused in place, and the pointer
+    # stays live for an allowed line.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _policed_ws("printenv", {"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute("f() { printenv TOKEN; }")).exit_code == 0
+        io = await ws.execute("f")
+        assert io.exit_code == 126
+        assert b"printenv is off" in io.stderr
+        assert calls == []
+        io = await ws.execute("echo $TOKEN")
+        assert (await io.stdout_str()) == "t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_denied_transitive_body_never_fetches():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _policed_ws("printenv", {"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        await ws.execute("inner() { printenv TOKEN; }")
+        await ws.execute("outer() { inner; }")
+        io = await ws.execute("outer")
+        assert io.exit_code == 126
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_denied_body_statement_keeps_a_sibling_reader_fetching():
+    # A stored body joins the walk one statement per node, so a refusal
+    # drops exactly the denied statement's reads and the sibling still
+    # sees the value. Seeded directly: the prejudge pass refuses
+    # defining such a body under the same policy, while a stored
+    # function can predate it (per-session profiles).
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _policed_ws("printenv", {"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        session = ws.get_session(ws.default_session_id)
+        tree = parse('printenv TOKEN; echo "e:$TOKEN"')
+        session.functions["f"] = [
+            node for node in tree.named_children if node.type == "command"
+        ]
+        io = await ws.execute("f")
+        assert (await io.stdout_str()) == "e:t0\n"
+        assert b"printenv is off" in io.stderr
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_denied_invocation_skips_the_body_reads():
+    # The line's own refusal drops the whole walked set: a body never
+    # runs when its invocation is refused, so nothing fetches.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _policed_ws("f", {"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        await ws.execute("f() { printenv TOKEN; }")
+        io = await ws.execute("f")
+        assert io.exit_code == 126
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_defining_a_denied_body_is_not_judged():
+    # A definition stores text: the command inside it neither reads nor
+    # answers for the line, so the eager name still fills and no gate
+    # question fires for a command that only got stored.
+    calls, fetch = counting_source({"TOKEN": "t0", "E": "ev"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _policed_ws(
+        "printenv", {
+            "TOKEN": {
+                "from": "fake",
+                "ref": "r"
+            },
+            "EAGER": {
+                "from": "fake",
+                "ref": "re",
+                "key": "E",
+                "fetch": "eager"
+            },
+        })
+    try:
+        io = await ws.execute("g() { printenv TOKEN; }")
+        assert io.exit_code == 0
+        assert calls == ["re"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_asked_function_body_fetches_only_after_approval():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+
+    async def approve(record: Decision) -> Decision:
+        calls.append("ask")
+        return dataclasses.replace(record, outcome=Outcome.ALLOW)
+
+    ws = _asking_ws("printenv", {"TOKEN": {
+        "from": "fake",
+        "ref": "r"
+    }}, approve)
+    try:
+        await ws.execute("f() { printenv TOKEN; }")
+        io = await ws.execute("f")
+        assert (await io.stdout_str()) == "t0\n"
+        assert calls == ["ask", "r"]
+        assert ws.decisions.pending() == ()
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_asked_function_body_denied_never_fetches():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+
+    async def refuse(record: Decision) -> Decision:
+        calls.append("ask")
+        return dataclasses.replace(record, outcome=Outcome.DENY)
+
+    ws = _asking_ws("printenv", {"TOKEN": {
+        "from": "fake",
+        "ref": "r"
+    }}, refuse)
+    try:
+        await ws.execute("f() { printenv TOKEN; }")
+        io = await ws.execute("f")
+        assert io.exit_code == 126
+        assert b"printenv needs sign-off" in io.stderr
+        assert calls == ["ask"]
     finally:
         await ws.close()
 

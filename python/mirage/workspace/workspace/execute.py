@@ -14,8 +14,11 @@
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from functools import partial
 from typing import TYPE_CHECKING, Any
+
+import tree_sitter
 
 from mirage.commands.builtin.utils.limit import run_with_timeout
 from mirage.commands.errors import CommandTimeoutError
@@ -30,7 +33,7 @@ from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
 from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.node import provision_node, run_command_tree
 from mirage.workspace.node.admission import admit_line
-from mirage.workspace.node.explain import line_refuses_fetch, prejudge_line
+from mirage.workspace.node.explain import prejudge_line, unrefused_nodes
 from mirage.workspace.session import (get_current_session_for,
                                       reset_current_session,
                                       set_current_session)
@@ -258,27 +261,38 @@ async def execute_line(
             # stored function bodies too, so a function invoked by bare
             # name still fills what its body reads. The prejudge pass
             # leaves single-command lines to the per-command gate, so
-            # the fetch asks the same text-tier question itself: a line
-            # already denied on its literal words never reaches a
-            # source, and a rule that asks is answered before the fetch,
-            # with the approval left for the gate to spend. A deny only
-            # the value gate can see still follows the fetch, because
+            # the fetch asks the same text-tier question itself, over
+            # the same walked set the names came from: a node already
+            # denied on its literal words never reaches a source, and a
+            # rule that asks is answered before the fetch, with the
+            # approval left for the gate to spend. A deny only the
+            # value gate can see still follows the fetch, because
             # expansion is what consumes the values.
             nodes = line_nodes(ast, effective_session)
             policies = ws._registry.policies
-            names = fill_names(
-                effective_session,
-                nodes,
-                whole=guest_bound(nodes, decision,
-                                  ws._registry.runtime_bindings),
-                cli_env_names=cli_env_names(nodes, effective_session,
-                                            ws._registry),
-                writes_gated=policies is not None
-                and policies.wants("pre_session"))
-            if names and not await line_refuses_fetch(
-                    ast, effective_session, ws._registry, ws._namespace, agent
-                    or "", cancel):
-                await fill_env(effective_session, names)
+            writes_gated = (policies is not None
+                            and policies.wants("pre_session"))
+
+            def plan_names(
+                    subset: Sequence[tree_sitter.Node]) -> frozenset[str]:
+                return fill_names(
+                    effective_session,
+                    subset,
+                    whole=guest_bound(subset, decision,
+                                      ws._registry.runtime_bindings),
+                    cli_env_names=cli_env_names(subset, effective_session,
+                                                ws._registry),
+                    writes_gated=writes_gated)
+
+            names = plan_names(nodes)
+            if names:
+                served = await unrefused_nodes(nodes, effective_session,
+                                               ws._registry, ws._namespace,
+                                               agent or "", cancel)
+                if len(served) != len(nodes):
+                    names = plan_names(served) if served else frozenset()
+                if names:
+                    await fill_env(effective_session, names)
         io, _ = await run_command_tree(
             ws.dispatch,
             ws._registry,

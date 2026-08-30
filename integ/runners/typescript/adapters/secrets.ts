@@ -42,7 +42,13 @@ async function fetchDead(_config: DeadConfig, _ref: string): Promise<ResolvedSec
  * targets.json), and seeds the process variable the `env` entry reads.
  * `kind` "dead" is a separate target on purpose: a whole-env command
  * fetches every unfetched name, so one dead source would fail the
- * healthy target's `env` case.
+ * healthy target's `env` case. `kind` "gated" is one pointer on a
+ * source that always fails, behind the target's denying profile: only
+ * a dead source can prove a refused command never fetched, and it
+ * needs its own target so the deny and the extra pending name cannot
+ * leak into the other batteries. The dotenv file carries a `${...}`
+ * value on purpose: values are read verbatim in both languages, and
+ * interpolating hosts would disagree here.
  */
 export function buildSecretsEnv(kind: string): {
   env: EnvEntries
@@ -52,6 +58,13 @@ export function buildSecretsEnv(kind: string): {
     registerSecrets('dead', DeadConfig, fetchDead)
     return {
       env: { DEAD: { from: 'dead', ref: 'x' }, DEAD2: { from: 'dead', ref: 'y' } },
+      cleanup: async () => undefined,
+    }
+  }
+  if (kind === 'gated') {
+    registerSecrets('gated', DeadConfig, fetchDead)
+    return {
+      env: { GATED: { from: 'gated', ref: 'z' } },
       cleanup: async () => undefined,
     }
   }
@@ -71,7 +84,7 @@ export function buildSecretsEnv(kind: string): {
   process.env.MIRAGE_INTEG_ENV_SECRET = 'from-process-env'
   const dir = mkdtempSync(join(tmpdir(), 'mirage-integ-secrets-'))
   const dotfile = join(dir, 'secrets.env')
-  writeFileSync(dotfile, 'DOTFILE_SECRET=from-dotenv\n')
+  writeFileSync(dotfile, 'DOTFILE_SECRET=from-dotenv\nDOTFILE_TEMPLATE=${DOTFILE_SECRET}-lit\n')
   const cleanup = async (): Promise<void> => {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -85,6 +98,7 @@ export function buildSecretsEnv(kind: string): {
     LAZY_PAIR: { from: 'counter', ref: 'pair', key: 'user' },
     FROM_ENV: { from: 'env', key: 'MIRAGE_INTEG_ENV_SECRET' },
     FROM_DOTFILE: { from: 'dotenv', ref: dotfile, key: 'DOTFILE_SECRET' },
+    FROM_DOTFILE_LITERAL: { from: 'dotenv', ref: dotfile, key: 'DOTFILE_TEMPLATE' },
     FN_TOKEN: { from: 'counter', ref: 'fn', key: 'token' },
     IND_TOKEN: { from: 'counter', ref: 'ind', key: 'token' },
     ALIAS_TOKEN: { from: 'counter', ref: 'alias', key: 'token' },

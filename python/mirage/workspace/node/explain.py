@@ -22,6 +22,7 @@ from mirage.policy.match import Outcome, decide
 from mirage.shell import parse
 from mirage.shell.helpers import (get_parts, get_text, literal_word,
                                   split_env_prefix)
+from mirage.shell.parse import opaque_reads, referenced_names
 from mirage.shell.types import NodeType
 from mirage.types import PathSpec
 from mirage.utils.path import resolve_path
@@ -505,38 +506,128 @@ async def _verdict_refuses(
     return action is not None
 
 
-async def line_refuses_fetch(
-    ast: Any,
+def _defines_function(node: Any) -> bool:
+    """Whether the node defines a function anywhere in its tree.
+
+    A definition's body is walked by ``_walked_line`` like any other
+    scope, but it runs at invocation, not here, so a command inside one
+    must not be read as the node's own: judging it would refuse a line
+    that only stores text, and the read walks already charge nothing
+    for it.
+
+    Args:
+        node (Any): the tree-sitter node to scan.
+    """
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "function_definition":
+            return True
+        stack.extend(current.named_children)
+    return False
+
+
+def _sole_literal_command(node: Any, session: Session) -> WalkItem | None:
+    """The node's one fully-literal command, when nothing else in the
+    node can read a name.
+
+    A walked node's reads can be discounted only when the whole node is
+    one command, every word and redirect of it is literal, it defines
+    nothing, and its tree reads no name any other way: such a node
+    reads only what that one command's own grammar reads, so a refusal
+    of the command is a refusal of every read the node contributes.
+    Anything less provable -- a second command, a word only the runtime
+    can expand, a ``$NAME`` anywhere -- returns None, and the caller
+    keeps the node, because some part of it may still run and read.
+
+    Args:
+        node (Any): one walked node (the line's tree or a stored body).
+        session (Session): the session the line runs in.
+    """
+    items = list(_walked_line(node, session))
+    if len(items) != 1:
+        return None
+    words, redirects, _ = items[0]
+    if any(word.text is None for word in (*words, *redirects)):
+        return None
+    if _defines_function(node):
+        return None
+    if referenced_names(node) or opaque_reads(node):
+        return None
+    return items[0]
+
+
+async def _command_refused(
+    item: WalkItem,
+    registry: MountRegistry,
+    namespace: Namespace | None,
+    agent_id: str,
+    cancel: asyncio.Event | None,
+) -> bool:
+    """Whether one walked command is refused on its text, resolving an
+    unanswered ask through the ledger the gate reads.
+
+    Args:
+        item (WalkItem): the command's words, redirect targets and the
+            session it is judged in.
+        registry (MountRegistry): registry holding the policies, the
+            decision ledger and the CLI installs.
+        namespace (Namespace | None): the link table.
+        agent_id (str): the agent the line is attributed to.
+        cancel (asyncio.Event | None): the run's kill channel.
+    """
+    words, redirects, walked = item
+    explained = await explain_words(words, walked, registry, namespace,
+                                    agent_id, redirects)
+    targets = redirect_paths(redirects, registry, walked.cwd)
+    for index, expl in enumerate(explained):
+        if not _is_verdict(expl):
+            continue
+        # explain_words lists the statement's own command first and
+        # the lines it runs after it, so only the first explanation
+        # is the command the redirects belong to.
+        if await _verdict_refuses(expl, targets if index == 0 else (), walked,
+                                  registry, namespace, agent_id, cancel):
+            return True
+    return False
+
+
+async def unrefused_nodes(
+    nodes: Sequence[Any],
     session: Session,
     registry: MountRegistry,
     namespace: Namespace | None,
     agent_id: str = "",
     cancel: asyncio.Event | None = None,
-) -> bool:
-    """Whether the line's env-plane fetch must not happen: some
-    fully-literal command of it is refused on its text, or asks and is
-    not approved.
+) -> list[Any]:
+    """The walked nodes whose reads an env-plane fetch still serves.
 
-    The env-plane fill asks this before fetching: a fetch serves a
-    command that is going to run, and a command whose every word is
-    literal is judged here on exactly the words the gate will read, so
-    a DENY seen here is the run's answer too. A command carrying a word
-    only the runtime can expand is not consulted (the gate may see
-    different words, and skipping a fetch on a guess would run an
-    allowed command against unset values).
+    The fill derives its fetch set from this same list (``line_nodes``:
+    the line's own tree first, then every stored body and alias
+    expansion its words can invoke), and a fetch serves a command that
+    is going to run, so refusals are judged over the same nodes reads
+    are. One rule for every node: when it is one fully-literal command
+    with no other read in it (``_sole_literal_command``), the gate is
+    asked here on exactly the words it will read at run time, and a
+    refusal discounts every read the node contributes. The line's own
+    refusal drops the whole list, because nothing runs at all; a
+    refused body or alias drops just itself, because the invocation
+    still runs and is refused in place. A node this pass cannot prove
+    silent is kept, and over-keeping only ever over-fetches.
 
     An ASK is resolved rather than skipped, because the fetch is itself
     an effect: contacting a secret store for a line the host then
     refuses would do a piece of exactly what was refused. A settled
     answer is read without being spent; an unanswered rule is put to
     the host now, through the same ledger the gate reads, so the answer
-    lands exactly once -- an approval lets the fetch proceed and the
-    gate consume the grant, while a denial or a question left waiting
-    skips the fetch and the line still runs into the gate, which
-    refuses in place with its wording and its redirections.
+    lands exactly once -- an approval keeps the node and the gate
+    consumes the grant, while a denial or a question left waiting drops
+    it, and the line still runs into the gate, which refuses in place
+    with its wording and its redirections.
 
     Args:
-        ast (Any): the parsed tree-sitter root node.
+        nodes (Sequence[Any]): the line's walked set (``line_nodes``),
+            the line's own tree first.
         session (Session): the session running the line.
         registry (MountRegistry): registry holding the policies, the
             decision ledger and the CLI installs.
@@ -545,25 +636,18 @@ async def line_refuses_fetch(
         cancel (asyncio.Event | None): the run's kill channel, carried
             because an unanswered ask is put to the host here.
     """
-    for words, redirects, walked in _walked_line(ast, session):
-        if words[0].text is None:
+    out: list[Any] = []
+    for position, node in enumerate(nodes):
+        item = _sole_literal_command(node, session)
+        if item is None:
+            out.append(node)
             continue
-        if any(word.text is None for word in (*words, *redirects)):
+        if await _command_refused(item, registry, namespace, agent_id, cancel):
+            if position == 0:
+                return []
             continue
-        explained = await explain_words(words, walked, registry, namespace,
-                                        agent_id, redirects)
-        targets = redirect_paths(redirects, registry, walked.cwd)
-        for index, expl in enumerate(explained):
-            if not _is_verdict(expl):
-                continue
-            # explain_words lists the statement's own command first and
-            # the lines it runs after it, so only the first explanation
-            # is the command the redirects belong to.
-            if await _verdict_refuses(expl, targets if index == 0 else (),
-                                      walked, registry, namespace, agent_id,
-                                      cancel):
-                return True
-    return False
+        out.append(node)
+    return out
 
 
 async def explain_line(

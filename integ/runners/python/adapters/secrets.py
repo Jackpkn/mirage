@@ -51,10 +51,17 @@ def build_secrets_env(
     in targets.json), and seeds the process variable the `env` entry
     reads. ``kind`` "dead" is a separate target on purpose: a whole-env
     command fetches every unfetched name, so one dead source would fail
-    the healthy target's `env` case.
+    the healthy target's `env` case. ``kind`` "gated" is one pointer on
+    a source that always fails, behind the target's denying profile:
+    only a dead source can prove a refused command never fetched, and
+    it needs its own target so the deny and the extra pending name
+    cannot leak into the other batteries. The dotenv file carries a
+    ``${...}`` value on purpose: values are read verbatim in both
+    languages, and interpolating hosts would disagree here.
 
     Args:
-        kind (str): "healthy" or "dead", the target's `secrets` value.
+        kind (str): "healthy", "dead" or "gated", the target's
+            `secrets` value.
     """
     if kind == "dead":
         register_secrets("dead", DeadConfig, fetch_dead)
@@ -68,6 +75,9 @@ def build_secrets_env(
                 "ref": "y"
             },
         }, _noop
+    if kind == "gated":
+        register_secrets("gated", DeadConfig, fetch_dead)
+        return {"GATED": {"from": "gated", "ref": "z"}}, _noop
     counts: dict[str, int] = {}
 
     async def fetch_counting(config: CounterConfig,
@@ -85,7 +95,8 @@ def build_secrets_env(
     dotfile = tempfile.NamedTemporaryFile(mode="w",
                                           suffix=".env",
                                           delete=False)
-    dotfile.write("DOTFILE_SECRET=from-dotenv\n")
+    dotfile.write("DOTFILE_SECRET=from-dotenv\n"
+                  "DOTFILE_TEMPLATE=${DOTFILE_SECRET}-lit\n")
     dotfile.close()
 
     async def cleanup() -> None:
@@ -131,6 +142,11 @@ def build_secrets_env(
             "from": "dotenv",
             "ref": dotfile.name,
             "key": "DOTFILE_SECRET"
+        },
+        "FROM_DOTFILE_LITERAL": {
+            "from": "dotenv",
+            "ref": dotfile.name,
+            "key": "DOTFILE_TEMPLATE"
         },
         "FN_TOKEN": {
             "from": "counter",

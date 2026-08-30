@@ -615,6 +615,155 @@ describe('fillEnv through execute', () => {
     }
   })
 
+  it('a denied function body never fetches', async () => {
+    // The refusal walk covers the same nodes the read walk covers, so a
+    // stored body whose one command is denied contributes no read; the
+    // invocation still runs and is refused in place, and the pointer
+    // stays live for an allowed line.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-deny', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-body-deny', ref: 'r' } }, [
+      new DenyNamed('printenv'),
+    ])
+    try {
+      expect((await ws.execute('f() { printenv TOKEN; }')).exitCode).toBe(0)
+      const io = await ws.execute('f')
+      expect(io.exitCode).toBe(126)
+      expect(stderrStr(io)).toContain('printenv is off')
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('echo $TOKEN'))).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a denied transitive body never fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-trans', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-body-trans', ref: 'r' } }, [
+      new DenyNamed('printenv'),
+    ])
+    try {
+      await ws.execute('inner() { printenv TOKEN; }')
+      await ws.execute('outer() { inner; }')
+      const io = await ws.execute('outer')
+      expect(io.exitCode).toBe(126)
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a denied body statement keeps a sibling reader fetching', async () => {
+    // A stored body joins the walk one statement per node, so a refusal
+    // drops exactly the denied statement's reads and the sibling still
+    // sees the value. Seeded directly: the prejudge pass refuses
+    // defining such a body under the same policy, while a stored
+    // function can predate it (per-session profiles).
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-mixed', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-body-mixed', ref: 'r' } }, [
+      new DenyNamed('printenv'),
+    ])
+    try {
+      const parser = await getTestParser()
+      const session = ws.getSession(ws.defaultSessionId)
+      const tree = parser.parse('printenv TOKEN; echo "e:$TOKEN"')
+      session.functions.f = tree.namedChildren.filter((node) => node.type === 'command')
+      const io = await ws.execute('f')
+      expect(stdoutStr(io)).toBe('e:t0\n')
+      expect(stderrStr(io)).toContain('printenv is off')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a denied invocation skips the body reads', async () => {
+    // The line's own refusal drops the whole walked set: a body never
+    // runs when its invocation is refused, so nothing fetches.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-inv-deny', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-inv-deny', ref: 'r' } }, [new DenyNamed('f')])
+    try {
+      await ws.execute('f() { printenv TOKEN; }')
+      const io = await ws.execute('f')
+      expect(io.exitCode).toBe(126)
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('defining a denied body is not judged', async () => {
+    // A definition stores text: the command inside it neither reads nor
+    // answers for the line, so the eager name still fills and no gate
+    // question fires for a command that only got stored.
+    const { calls, fetch } = countingSource({ TOKEN: 't0', E: 'ev' })
+    registerSecrets('fake-def-eager', FakeConfig, fetch)
+    const ws = await makeWs(
+      {
+        TOKEN: { from: 'fake-def-eager', ref: 'r' },
+        EAGER: { from: 'fake-def-eager', ref: 're', key: 'E', fetch: 'eager' },
+      },
+      [new DenyNamed('printenv')],
+    )
+    try {
+      const io = await ws.execute('g() { printenv TOKEN; }')
+      expect(io.exitCode).toBe(0)
+      expect(calls).toEqual(['re'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an asked function body fetches only after approval', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-ask', FakeConfig, fetch)
+    const approve: AskHandler = (record: Decision) => {
+      calls.push('ask')
+      return Promise.resolve({ ...record, outcome: Outcome.ALLOW })
+    }
+    const ws = await makeWs(
+      { TOKEN: { from: 'fake-body-ask', ref: 'r' } },
+      [new AskNamed('printenv')],
+      approve,
+    )
+    try {
+      await ws.execute('f() { printenv TOKEN; }')
+      const io = await ws.execute('f')
+      expect(stdoutStr(io)).toBe('t0\n')
+      expect(calls).toEqual(['ask', 'r'])
+      expect(ws.decisions.pending()).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an asked function body denied never fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-ask-deny', FakeConfig, fetch)
+    const refuse: AskHandler = (record: Decision) => {
+      calls.push('ask')
+      return Promise.resolve({ ...record, outcome: Outcome.DENY })
+    }
+    const ws = await makeWs(
+      { TOKEN: { from: 'fake-body-ask-deny', ref: 'r' } },
+      [new AskNamed('printenv')],
+      refuse,
+    )
+    try {
+      await ws.execute('f() { printenv TOKEN; }')
+      const io = await ws.execute('f')
+      expect(io.exitCode).toBe(126)
+      expect(stderrStr(io)).toContain('printenv needs sign-off')
+      expect(calls).toEqual(['ask'])
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('env ignore-environment never fetches', async () => {
     // `env -i` provably starts empty, so it selects nothing, and the
     // replaced scope drops a pending managed entry too: the inner line

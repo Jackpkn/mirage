@@ -2941,6 +2941,36 @@
           "backend": "memory"
         }
       ]
+    },
+    {
+      "id": "secrets-gated",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "secrets": "gated",
+      "profile": "gated",
+      "profiles": {
+        "gated": {
+          "commands": {
+            "deny": [
+              {
+                "reason": "reading GATED is off here",
+                "commands": [
+                  "printenv GATED"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "mounts": [
+        {
+          "path": "/data",
+          "resource": "ram",
+          "backend": "memory"
+        }
+      ]
     }
   ]
 }

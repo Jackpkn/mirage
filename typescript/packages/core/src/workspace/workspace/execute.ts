@@ -34,7 +34,7 @@ import type { ExecuteFn } from '../expand/node.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { ExecuteNodeDeps } from '../node/execute_node.ts'
-import { lineRefusesFetch, prejudgeLine } from '../node/explain.ts'
+import { prejudgeLine, unrefusedNodes } from '../node/explain.ts'
 import { runCommandTree } from '../node/run_tree.ts'
 import type { DriftQueue } from '../snapshot/drift.ts'
 import type { SessionManager } from '../session/manager.ts'
@@ -332,13 +332,13 @@ async function runParsedLine(
   // line must never reach a secret store) and before expansion or the
   // runtime's env snapshot reads the vars. The prejudge pass leaves
   // single-command lines to the per-command gate, so the tree branch
-  // asks the same text-tier question itself (`probeText`): a line
-  // already denied on its literal words never reaches a source, and a
-  // rule that asks is answered before the fetch, with the approval
-  // left for the gate to spend. A deny only the value gate can see
-  // still follows the fetch, because expansion is what consumes the
-  // values. A SecretsError folds like any failed line: the line exits
-  // 1 and never runs.
+  // asks the same text-tier question itself (`probeText`), over the
+  // same walked set the names came from: a node already denied on its
+  // literal words never reaches a source, and a rule that asks is
+  // answered before the fetch, with the approval left for the gate to
+  // spend. A deny only the value gate can see still follows the fetch,
+  // because expansion is what consumes the values. A SecretsError
+  // folds like any failed line: the line exits 1 and never runs.
   const writesGated = env.registry.policies.wants('preSession')
   const fillManaged = async (
     nodes: TSNodeLike[],
@@ -347,21 +347,31 @@ async function runParsedLine(
     probeText: boolean,
   ): Promise<ExecuteResult | null> => {
     try {
-      const names = fillNames(effectiveSession, nodes, whole, lineCliEnvNames, writesGated)
-      if (names.size > 0) {
-        const doomed =
-          probeText &&
-          (await lineRefusesFetch(
-            rootNode,
-            effectiveSession,
-            env.registry,
-            env.namespace,
-            callAgentId,
-            reparse,
-            killed,
-          ))
-        if (!doomed) await fillEnv(effectiveSession, names)
+      let names = fillNames(effectiveSession, nodes, whole, lineCliEnvNames, writesGated)
+      if (names.size > 0 && probeText) {
+        const served = await unrefusedNodes(
+          nodes,
+          effectiveSession,
+          env.registry,
+          env.namespace,
+          callAgentId,
+          reparse,
+          killed,
+        )
+        if (served.length !== nodes.length) {
+          names =
+            served.length === 0
+              ? new Set<string>()
+              : fillNames(
+                  effectiveSession,
+                  served,
+                  guestBound(served, deps.routingDecision ?? null, env.runtimes.bindings),
+                  cliEnvNames(served, effectiveSession, env.registry),
+                  writesGated,
+                )
+        }
       }
+      if (names.size > 0) await fillEnv(effectiveSession, names)
       return null
     } catch (err) {
       if (isControlFlowError(err)) throw err
