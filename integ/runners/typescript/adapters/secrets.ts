@@ -103,6 +103,7 @@ export function buildSecretsEnv(kind: string): {
     IND_TOKEN: { from: 'counter', ref: 'ind', key: 'token' },
     ALIAS_TOKEN: { from: 'counter', ref: 'alias', key: 'token' },
     CLEAN_TOKEN: { from: 'counter', ref: 'clean', key: 'token' },
+    REDEF_TOKEN: { from: 'counter', ref: 'redef', key: 'token' },
   }
   return { env, cleanup }
 }

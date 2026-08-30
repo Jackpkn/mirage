@@ -472,6 +472,19 @@ describe('fillEnv through execute', () => {
     }
   })
 
+  it('every same-line redefinition body fills', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-redef-multi', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-redef-multi', ref: 'r' } })
+    try {
+      const io = await ws.execute('f() { :; }; f; f() { echo "e:$TOKEN"; }; f')
+      expect(stdoutStr(io)).toBe('e:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('a dynamic head fetches everything pending', async () => {
     const { calls, fetch } = countingSource({ TOKEN: 't0' })
     registerSecrets('fake-dyn', FakeConfig, fetch)

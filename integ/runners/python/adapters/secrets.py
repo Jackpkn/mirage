@@ -168,5 +168,10 @@ def build_secrets_env(
             "ref": "clean",
             "key": "token"
         },
+        "REDEF_TOKEN": {
+            "from": "counter",
+            "ref": "redef",
+            "key": "token"
+        },
     }
     return env, cleanup

@@ -454,6 +454,19 @@ async def test_invocation_before_redefinition_fills_the_stored_body():
 
 
 @pytest.mark.asyncio
+async def test_every_same_line_redefinition_body_fills():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute('f() { :; }; f; f() { echo "e:$TOKEN"; }; f')
+        assert (await io.stdout_str()) == "e:t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_dynamic_head_fetches_everything_pending():
     calls, fetch = counting_source({"TOKEN": "t0"})
     register_secrets("fake", FakeConfig, fetch)

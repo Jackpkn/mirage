@@ -42,13 +42,19 @@ logger = logging.getLogger(__name__)
 _ALIAS_REST = ' "$__mirage_alias_rest__"'
 
 
-def _defined_bodies(node: tree_sitter.Node) -> dict[str, tree_sitter.Node]:
-    """Function bodies the line itself defines, by name.
+def _defined_bodies(
+        node: tree_sitter.Node) -> dict[str, list[tree_sitter.Node]]:
+    """Function bodies the line itself defines, every one per name.
+
+    A name defined more than once on the line keeps every body: which
+    definition an invocation runs depends on where it sits between them
+    (``f() { :; }; f; f() { ...; }; f`` runs both), so all of them may
+    be selected.
 
     Args:
         node (tree_sitter.Node): the parsed line.
     """
-    out: dict[str, tree_sitter.Node] = {}
+    out: dict[str, list[tree_sitter.Node]] = {}
     stack = [node]
     while stack:
         current = stack.pop()
@@ -57,7 +63,7 @@ def _defined_bodies(node: tree_sitter.Node) -> dict[str, tree_sitter.Node]:
             body = current.child_by_field_name("body")
             text = name_node.text if name_node is not None else None
             if text and body is not None:
-                out[text.decode()] = body
+                out.setdefault(text.decode(), []).append(body)
         stack.extend(current.named_children)
     return out
 
@@ -96,9 +102,7 @@ def line_nodes(node: tree_sitter.Node,
                 continue
             seen.add(word)
             bodies = list(session.functions.get(word) or ())
-            local = defined.get(word)
-            if local is not None:
-                bodies.append(local)
+            bodies.extend(defined.get(word) or ())
             if expand and word in session.aliases:
                 # An alias is a textual prefix: dispatch appends the
                 # invocation's rest to the value, so the value's

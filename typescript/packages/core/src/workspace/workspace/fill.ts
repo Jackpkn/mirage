@@ -42,9 +42,16 @@ import { deref } from '../session/state.ts'
 // command's arguments are statically unknowable, never absent.
 const ALIAS_REST = ' "$__mirage_alias_rest__"'
 
-/** Function bodies the line itself defines, by name. */
-function definedBodies(node: TSNodeLike): Map<string, TSNodeLike> {
-  const out = new Map<string, TSNodeLike>()
+/**
+ * Function bodies the line itself defines, every one per name.
+ *
+ * A name defined more than once on the line keeps every body: which
+ * definition an invocation runs depends on where it sits between them
+ * (`f() { :; }; f; f() { ...; }; f` runs both), so all of them may be
+ * selected.
+ */
+function definedBodies(node: TSNodeLike): Map<string, TSNodeLike[]> {
+  const out = new Map<string, TSNodeLike[]>()
   const stack: TSNodeLike[] = [node]
   for (;;) {
     const current = stack.pop()
@@ -53,7 +60,9 @@ function definedBodies(node: TSNodeLike): Map<string, TSNodeLike> {
       const nameNode = current.childForFieldName?.('name') ?? null
       const body = current.childForFieldName?.('body') ?? null
       if (nameNode !== null && nameNode.text !== '' && body !== null) {
-        out.set(nameNode.text, body)
+        const bodies = out.get(nameNode.text)
+        if (bodies === undefined) out.set(nameNode.text, [body])
+        else bodies.push(body)
       }
     }
     stack.push(...current.namedChildren)
@@ -94,8 +103,7 @@ export function lineNodes(
       seen.add(word)
       const stored = Object.hasOwn(session.functions, word) ? session.functions[word] : undefined
       const bodies = Array.isArray(stored) ? [...(stored as TSNodeLike[])] : []
-      const local = defined.get(word)
-      if (local !== undefined) bodies.push(local)
+      bodies.push(...(defined.get(word) ?? []))
       const aliased = Object.hasOwn(session.aliases, word) ? session.aliases[word] : undefined
       // An alias is a textual prefix: dispatch appends the
       // invocation's rest to the value, so the value's trailing
