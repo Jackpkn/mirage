@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from mirage.core.api.client import SessionArg
 from mirage.core.notion.client import (notion_get, notion_patch, notion_post,
                                        paginate_list, paginate_post)
 from mirage.core.notion.config import NotionConfig
@@ -59,13 +60,19 @@ async def search_data_sources(
 
 
 async def get_database(config: NotionConfig,
-                       database_id: str) -> dict[str, Any]:
-    return await notion_get(config, f"/databases/{database_id}")
+                       database_id: str,
+                       session: SessionArg = None) -> dict[str, Any]:
+    return await notion_get(config,
+                            f"/databases/{database_id}",
+                            session=session)
 
 
 async def get_data_source(config: NotionConfig,
-                          data_source_id: str) -> dict[str, Any]:
-    return await notion_get(config, f"/data_sources/{data_source_id}")
+                          data_source_id: str,
+                          session: SessionArg = None) -> dict[str, Any]:
+    return await notion_get(config,
+                            f"/data_sources/{data_source_id}",
+                            session=session)
 
 
 async def query_data_source(
@@ -82,11 +89,10 @@ async def query_data_source(
     )
 
 
-async def query_data_source_page(
-    config: NotionConfig,
-    data_source_id: str,
-    body: dict[str, Any],
-) -> dict[str, Any]:
+async def query_data_source_page(config: NotionConfig,
+                                 data_source_id: str,
+                                 body: dict[str, Any],
+                                 session: SessionArg = None) -> dict[str, Any]:
     """Query one page of rows, cursor envelope intact.
 
     ``ntn datasources query`` is explicitly one page at a time: it
@@ -97,39 +103,48 @@ async def query_data_source_page(
         config (NotionConfig): notion API config.
         data_source_id (str): the data source to query.
         body (dict[str, Any]): the request body, page size included.
+        session (SessionArg): pool or live session to ride.
 
     Returns:
         dict: the raw list response.
     """
-    return await notion_post(config, f"/data_sources/{data_source_id}/query",
-                             body)
+    return await notion_post(config,
+                             f"/data_sources/{data_source_id}/query",
+                             body,
+                             session=session)
 
 
-async def get_page(config: NotionConfig, page_id: str) -> dict[str, Any]:
-    return await notion_get(config, f"/pages/{page_id}")
+async def get_page(config: NotionConfig,
+                   page_id: str,
+                   session: SessionArg = None) -> dict[str, Any]:
+    return await notion_get(config, f"/pages/{page_id}", session=session)
 
 
-async def get_self(config: NotionConfig) -> dict[str, Any]:
-    return await notion_get(config, "/users/me")
+async def get_self(config: NotionConfig,
+                   session: SessionArg = None) -> dict[str, Any]:
+    return await notion_get(config, "/users/me", session=session)
 
 
 async def get_page_markdown(config: NotionConfig,
-                            page_id: str) -> dict[str, Any]:
-    return await notion_get(config, f"/pages/{page_id}/markdown")
+                            page_id: str,
+                            session: SessionArg = None) -> dict[str, Any]:
+    return await notion_get(config,
+                            f"/pages/{page_id}/markdown",
+                            session=session)
 
 
-async def replace_page_markdown(config: NotionConfig, page_id: str,
-                                markdown: str) -> dict[str, Any]:
-    return await notion_patch(
-        config,
-        f"/pages/{page_id}/markdown",
-        {
-            "type": "replace_content",
-            "replace_content": {
-                "new_str": markdown
-            },
-        },
-    )
+async def replace_page_markdown(config: NotionConfig,
+                                page_id: str,
+                                markdown: str,
+                                session: SessionArg = None) -> dict[str, Any]:
+    return await notion_patch(config,
+                              f"/pages/{page_id}/markdown", {
+                                  "type": "replace_content",
+                                  "replace_content": {
+                                      "new_str": markdown
+                                  },
+                              },
+                              session=session)
 
 
 async def list_block_children(
@@ -182,21 +197,33 @@ async def list_block_tree(
     return blocks
 
 
-async def create_page(config: NotionConfig, body: dict[str,
-                                                       Any]) -> dict[str, Any]:
-    return await notion_post(config, "/pages", body)
+async def create_page(config: NotionConfig,
+                      body: dict[str, Any],
+                      session: SessionArg = None) -> dict[str, Any]:
+    return await notion_post(config, "/pages", body, session=session)
 
 
-async def append_blocks(config: NotionConfig, block_id: str,
-                        body: dict[str, Any]) -> dict[str, Any]:
-    return await notion_patch(config, f"/blocks/{block_id}/children", body)
+async def append_blocks(config: NotionConfig,
+                        block_id: str,
+                        body: dict[str, Any],
+                        session: SessionArg = None) -> dict[str, Any]:
+    return await notion_patch(config,
+                              f"/blocks/{block_id}/children",
+                              body,
+                              session=session)
 
 
 async def create_comment(config: NotionConfig,
-                         body: dict[str, Any]) -> dict[str, Any]:
-    return await notion_post(config, "/comments", body)
+                         body: dict[str, Any],
+                         session: SessionArg = None) -> dict[str, Any]:
+    return await notion_post(config, "/comments", body, session=session)
 
 
-async def update_page(config: NotionConfig, page_id: str,
-                      body: dict[str, Any]) -> dict[str, Any]:
-    return await notion_patch(config, f"/pages/{page_id}", body)
+async def update_page(config: NotionConfig,
+                      page_id: str,
+                      body: dict[str, Any],
+                      session: SessionArg = None) -> dict[str, Any]:
+    return await notion_patch(config,
+                              f"/pages/{page_id}",
+                              body,
+                              session=session)

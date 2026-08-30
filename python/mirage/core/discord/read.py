@@ -65,8 +65,10 @@ async def _read_chat(accessor: DiscordAccessor, match: ScopeMatch,
         if channel is None:
             raise enoent(path.virtual)
         channel_id = channel.id
-    return await get_history_jsonl(accessor.config, channel_id,
-                                   match.slots["day"])
+    return await get_history_jsonl(accessor.config,
+                                   channel_id,
+                                   match.slots["day"],
+                                   session=accessor.pool)
 
 
 async def _read_member(accessor: DiscordAccessor, match: ScopeMatch,
@@ -74,7 +76,9 @@ async def _read_member(accessor: DiscordAccessor, match: ScopeMatch,
     entry = await resolve_entry(readdir, accessor, path, index)
     if entry is None:
         raise enoent(path.virtual)
-    members = await list_members(accessor.config, match.slots["guild_id"])
+    members = await list_members(accessor.config,
+                                 match.slots["guild_id"],
+                                 session=accessor.pool)
     for m in members:
         user = m.get("user", {})
         if user.get("id") == entry.id:

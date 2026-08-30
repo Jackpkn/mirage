@@ -60,7 +60,9 @@ async def _list_databases_root(
             seen.append(owner)
     entries = []
     for database_id in seen:
-        database = await get_database(accessor.config, database_id)
+        database = await get_database(accessor.config,
+                                      database_id,
+                                      session=accessor.pool)
         dirname = database_dirname(database)
         entries.append((dirname,
                         IndexEntry(
@@ -110,7 +112,9 @@ async def _list_page(accessor: NotionAccessor,
 async def _list_database(accessor: NotionAccessor,
                          match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     database_id = match.slots["database_id"]
-    database = await get_database(accessor.config, database_id)
+    database = await get_database(accessor.config,
+                                  database_id,
+                                  session=accessor.pool)
     # database.json renders the database object this listing already
     # fetched, so its exact size is free here.
     entries = [("database.json",
@@ -137,7 +141,9 @@ async def _list_database(accessor: NotionAccessor,
 async def _list_data_source(accessor: NotionAccessor,
                             match: ScopeMatch) -> list[tuple[str, IndexEntry]]:
     data_source_id = match.slots["data_source_id"]
-    data_source = await get_data_source(accessor.config, data_source_id)
+    data_source = await get_data_source(accessor.config,
+                                        data_source_id,
+                                        session=accessor.pool)
     rows = await query_data_source(accessor.config, data_source_id)
     entries = [
         ("data_source.json",

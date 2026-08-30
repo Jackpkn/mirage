@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { resolve } from 'node:path'
 import { KitError } from './errors.ts'
 
 // One --port contract, replacing four: argparse-required, argparse default 0,
@@ -41,9 +42,28 @@ export function parseFixture(argv: string[] = process.argv.slice(2)): string | u
   return raw
 }
 
+// Where this fake reads its fixtures from, absolute after resolution. It is a
+// launch argument and not a request field on purpose: a harness pointing a
+// fake at its own fixture tree is the operator, and used to have to bind-mount
+// files into the checkout to say so, one file at a time and then whole
+// directories once fakes began seeding from `sourceDir`. What a REQUEST may
+// choose is unchanged -- a name, matched against NAME_RE and re-checked to
+// resolve inside this root.
+export function parseFixtureRoot(argv: string[] = process.argv.slice(2)): string | undefined {
+  const i = argv.indexOf('--fixture-root')
+  if (i === -1) return undefined
+  const raw = argv[i + 1]
+  if (raw === undefined) throw new KitError('--fixture-root requires a value')
+  return resolve(raw)
+}
+
 // Every flag the kit itself understands. An argument outside this set is a
 // caller asking for something the fake will not do.
-const KNOWN_FLAGS = new Set(['--port', '--fixture'])
+// The flags EVERY fake takes. A fake that serves a second protocol on a second
+// socket declares its own beside these rather than adding them here, because a
+// flag in this set is one every other fake's launcher silently accepts and
+// silently ignores.
+const KNOWN_FLAGS = new Set(['--port', '--fixture', '--fixture-root'])
 
 // Refused, not ignored, and that covers a bare word as well as a flag.
 // `parsePort` and `parseFixture` each scan argv for their own flag and skip
@@ -59,11 +79,12 @@ const KNOWN_FLAGS = new Set(['--port', '--fixture'])
 // skipping it served v1 under a launch line that reads as asking for cli. So
 // the scan consumes a known flag's value by POSITION and treats everything
 // else as unexpected, whatever it looks like.
-export function checkArgv(argv: string[] = process.argv.slice(2)): void {
+export function checkArgv(argv: string[] = process.argv.slice(2), extra: string[] = []): void {
+  const known = new Set([...KNOWN_FLAGS, ...extra])
   const unexpected: string[] = []
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i] ?? ''
-    if (KNOWN_FLAGS.has(arg)) {
+    if (known.has(arg)) {
       i += 1
       continue
     }
@@ -72,8 +93,25 @@ export function checkArgv(argv: string[] = process.argv.slice(2)): void {
   if (unexpected.length > 0) {
     throw new KitError(
       `unexpected argument${unexpected.length > 1 ? 's' : ''}: ${unexpected.join(', ')}. ` +
-        `This fake takes only ${[...KNOWN_FLAGS].sort().join(' and ')}; ` +
+        `This fake takes only ${[...known].sort().join(' and ')}; ` +
         `seed a scenario by naming a fixture under integ/fixtures/<service>/.`,
     )
   }
+}
+
+// A flag's value by position, for a fake reading one of its OWN flags. Same
+// scan `parsePort` does, so a second socket's port is read the way the first
+// one is rather than by a hand-rolled indexOf that misses `--flag` at the end.
+export function parseFlagPort(
+  flag: string,
+  argv: string[] = process.argv.slice(2),
+  fallback = 0,
+): number {
+  const at = argv.indexOf(flag)
+  if (at === -1 || at + 1 >= argv.length) return fallback
+  const value = Number.parseInt(argv[at + 1] ?? '', 10)
+  if (Number.isNaN(value) || value < 0 || value > 65535) {
+    throw new KitError(`${flag} must be a port number, got ${String(argv[at + 1])}`)
+  }
+  return value
 }

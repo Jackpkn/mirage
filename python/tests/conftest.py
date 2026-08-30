@@ -12,10 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import resource
 
+import aiohttp
 import pytest
 
+from mirage.core.api.client import SessionPool
 from mirage.resource.ram import RAMResource
 from mirage.types import MountMode
 from mirage.workspace import Workspace
@@ -23,6 +26,38 @@ from mirage.workspace import Workspace
 _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 if _soft < 8192:
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(8192, _hard), _hard))
+
+
+async def _close_pools(pools: list[SessionPool]) -> None:
+    for pool in pools:
+        await pool.close()
+
+
+@pytest.fixture(autouse=True)
+def _drain_session_pools(monkeypatch):
+    """Close every SessionPool a test materialized.
+
+    A pooled session lives until its owner's ``close``, which unit tests
+    rarely call, so an undrained pool would surface as an aiohttp
+    "Unclosed client session" warning at GC. Draining here hides no bug:
+    the owner close chains have their own dedicated tests. The teardown
+    runs after pytest-asyncio has torn the test's loop down, so
+    ``asyncio.run`` opens a fresh one; that is safe because fixture
+    teardown never executes under a running loop, and a transport-mocked
+    session holds no live connections bound to the old loop.
+    """
+    made: list[SessionPool] = []
+    orig = SessionPool.get
+
+    def tracked(self: SessionPool) -> aiohttp.ClientSession:
+        if self not in made:
+            made.append(self)
+        return orig(self)
+
+    monkeypatch.setattr(SessionPool, "get", tracked)
+    yield
+    if made:
+        asyncio.run(_close_pools(made))
 
 
 @pytest.fixture

@@ -45,7 +45,7 @@ def test_notion_api_error():
 async def test_paginate_post_stops_at_max_results():
     calls = []
 
-    async def fake_notion_post(config, path, body):
+    async def fake_notion_post(config, path, body, session=None):
         calls.append(dict(body))
         return {
             "results": [{
