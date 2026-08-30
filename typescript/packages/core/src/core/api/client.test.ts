@@ -223,7 +223,9 @@ describe('apiRequest', () => {
     const response = jsonResponse({ ok: true })
     const drain = vi.spyOn(response, 'arrayBuffer')
     const fakeFetch: typeof fetch = () => Promise.resolve(response)
-    expect(await apiRequest('POST', TARGET, { errorOf, fetchFn: fakeFetch, read: 'none' })).toBeNull()
+    expect(
+      await apiRequest('POST', TARGET, { errorOf, fetchFn: fakeFetch, read: 'none' }),
+    ).toBeNull()
     expect(drain).toHaveBeenCalledTimes(1)
   })
 
