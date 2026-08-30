@@ -55,6 +55,9 @@ interface Session {
   tenant: string
   run: string
   mailbox: string
+  // EXAMINE's promise: the mailbox was opened READ-ONLY and stays that way
+  // until the next SELECT, so mutating verbs check this bit.
+  readOnly: boolean
   // Set once the current command's literal has been read, so a line arriving
   // while a literal is outstanding is data rather than a command.
   pending: { need: number; chunks: Buffer[]; line: string } | null
@@ -145,6 +148,7 @@ export function startImapServer(
       tenant: '',
       run: '',
       mailbox: '',
+      readOnly: false,
       pending: null,
     }
     write(session, `* OK [CAPABILITY ${CAPABILITIES}] mirage mail fake ready`)
@@ -309,7 +313,11 @@ async function dispatch(
     return
   }
   if (name === 'CLOSE') {
-    if (session.state === 'selected') await expungeDeleted(runtime, session)
+    // RFC 3501: CLOSE after EXAMINE returns to authenticated WITHOUT the
+    // implicit expunge, because read-only means the permanent state holds.
+    if (session.state === 'selected' && !session.readOnly) {
+      await expungeDeleted(runtime, session)
+    }
     session.state = 'auth'
     session.mailbox = ''
     write(session, `${tag} OK CLOSE completed`)
@@ -328,6 +336,13 @@ async function dispatch(
     ['SEARCH', 'FETCH', 'STORE', 'COPY', 'EXPUNGE'].includes(verb)
   ) {
     write(session, `${tag} NO command ${verb} illegal in state AUTH`)
+    return
+  }
+  // EXAMINE announced READ-ONLY, and RFC 3501 means it: no change to the
+  // mailbox's permanent state is permitted. COPY stays legal because it
+  // writes the target mailbox, not the selected one.
+  if (session.state === 'selected' && session.readOnly && ['STORE', 'EXPUNGE'].includes(verb)) {
+    write(session, `${tag} NO ${verb} refused: mailbox is opened READ-ONLY`)
     return
   }
   if (verb === 'SEARCH') {
@@ -517,6 +532,7 @@ async function select(
   write(session, `* OK [UIDNEXT ${String(box.uidNext)}] next uid`)
   session.state = 'selected'
   session.mailbox = name
+  session.readOnly = readOnly
   write(session, `${tag} OK [${readOnly ? 'READ-ONLY' : 'READ-WRITE'}] SELECT completed`)
 }
 

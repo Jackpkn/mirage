@@ -274,6 +274,14 @@ async function main(): Promise<void> {
         sentLock.release()
       }
 
+      // ---- EXAMINE means READ-ONLY, and STORE against it is refused
+      await a.mailboxOpen('INBOX', { readOnly: true })
+      const roStore = await a.messageFlagsAdd('1:*', ['\\Flagged']).then(
+        (ok) => ok,
+        () => false,
+      )
+      check('EXAMINE refuses STORE', roStore === false, JSON.stringify(roStore))
+
       // ---- APPEND, and the UID it reports back
       const appended = await a.append(
         'Sent',
@@ -324,6 +332,44 @@ async function main(): Promise<void> {
       } finally {
         await b.logout()
       }
+
+      // ---- SMTP refuses what LOGIN refuses: an unseeded run, and a name
+      // the grammar rejects, so a typo'd password cannot become an empty
+      // world that swallows sends and `..` never reaches a pool file name.
+      const badPass = createTransport({
+        host: '127.0.0.1',
+        port: fake.smtpPort,
+        secure: false,
+        auth: { user: USER, pass: 'no-such-run' },
+        tls: { rejectUnauthorized: false },
+      })
+      const refusedRun = await badPass.verify().then(
+        () => '',
+        (err: unknown) => detailOf(err),
+      )
+      badPass.close()
+      check(
+        'smtp refuses an unseeded run',
+        refusedRun.includes('no such account'),
+        refusedRun.slice(0, 100),
+      )
+      const badName = createTransport({
+        host: '127.0.0.1',
+        port: fake.smtpPort,
+        secure: false,
+        auth: { user: USER, pass: '../escape' },
+        tls: { rejectUnauthorized: false },
+      })
+      const refusedName = await badName.verify().then(
+        () => '',
+        (err: unknown) => detailOf(err),
+      )
+      badName.close()
+      check(
+        'smtp refuses a name outside the grammar',
+        refusedName.includes('invalid credentials'),
+        refusedName.slice(0, 100),
+      )
 
       // ---- SMTP delivers into the run its password names
       const transport = createTransport({

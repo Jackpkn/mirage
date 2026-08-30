@@ -15,10 +15,10 @@
 import type { Socket } from 'node:net'
 import { SMTPServer } from 'smtp-server'
 import type { SMTPServerSession } from 'smtp-server'
-import { Router, bindHost } from '../kit/typescript/index.ts'
+import { Router, bindHost, checkName } from '../kit/typescript/index.ts'
 import type { Runtime } from '../kit/typescript/index.ts'
 import { INBOX, mailDomain, splitAddress, type C } from './config.ts'
-import { appendMessage, canonicalName, createMailbox, mailboxOf } from './store.ts'
+import { appendMessage, canonicalName, createMailbox, mailboxOf, mailboxesOf } from './store.ts'
 
 // Submission, not relay: a message is accepted, matched to a local account by
 // its RCPT TO, and filed into that account's INBOX. Anything addressed outside
@@ -66,8 +66,30 @@ export function startSmtpServer(
         callback(new Error(`smtp: this server serves @${mailDomain()} only, not ${user}`))
         return
       }
-      sessions.set(session, { run: pass, tenant: address.local })
-      callback(null, { user })
+      let run: string
+      let tenant: string
+      try {
+        run = checkName('run', pass)
+        tenant = checkName('tenant', address.local)
+      } catch {
+        callback(new Error('smtp: invalid credentials'))
+        return
+      }
+      // An account with no mailboxes in this run is refused rather than
+      // provisioned, for LOGIN's reason: a typo'd password must not become
+      // a fresh empty world that accepts every send and delivers none.
+      void mailboxesOf(runtime.pool.client(run), tenant)
+        .then((boxes) => {
+          if (boxes.length === 0) {
+            callback(new Error(`smtp: no such account in this run: ${user}`))
+            return
+          }
+          sessions.set(session, { run, tenant })
+          callback(null, { user })
+        })
+        .catch((err: unknown) => {
+          callback(err instanceof Error ? err : new Error(String(err)))
+        })
     },
     onData: (stream, session, callback) => {
       const chunks: Buffer[] = []
