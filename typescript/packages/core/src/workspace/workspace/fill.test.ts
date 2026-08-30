@@ -485,6 +485,191 @@ describe('fillEnv through execute', () => {
     }
   })
 
+  it('a body local mask never fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-local', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-body-local', ref: 'r' } })
+    try {
+      const io = await ws.execute('f() { local TOKEN=shadow; echo "in:$TOKEN"; }; f')
+      expect(stdoutStr(io)).toBe('in:shadow\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a body mask leaves the line read fetching', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-line', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-body-line', ref: 'r' } })
+    try {
+      const io = await ws.execute('f() { local TOKEN=shadow; }; f; echo "g:$TOKEN"')
+      expect(stdoutStr(io)).toBe('g:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a body read before its mask fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-pre', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-body-pre', ref: 'r' } })
+    try {
+      const io = await ws.execute('f() { echo "pre:$TOKEN"; local TOKEN=shadow; }; f')
+      expect(stdoutStr(io)).toBe('pre:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a body assignment masks its own read', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-assign', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-body-assign', ref: 'r' } })
+    try {
+      const io = await ws.execute('f() { TOKEN=w; echo "in:$TOKEN"; }; f')
+      expect(stdoutStr(io)).toBe('in:w\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a body mask reading the standing value fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-body-pin', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-body-pin', ref: 'r' } })
+    try {
+      const io = await ws.execute('f() { local TOKEN=$TOKEN; echo "in:$TOKEN"; }; f')
+      expect(stdoutStr(io)).toBe('in:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a top-level declaration masks', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-top-decl', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-top-decl', ref: 'r' } })
+    try {
+      const io = await ws.execute('export TOKEN=local; printenv TOKEN')
+      expect(stdoutStr(io)).toBe('local\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a top-level local is not a mask', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-top-local', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-top-local', ref: 'r' } })
+    try {
+      const io = await ws.execute('local TOKEN=x; echo "t:$TOKEN"')
+      expect(stdoutStr(io)).toBe('t:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a tilde expansion fetches HOME', async () => {
+    const { calls, fetch } = countingSource({ HOME: '/hh' })
+    registerSecrets('fake-tilde', FakeConfig, fetch)
+    const ws = await makeWs({ HOME: { from: 'fake-tilde', ref: 'h' } })
+    try {
+      const io = await ws.execute('echo ~/logs')
+      expect(stdoutStr(io)).toBe('/hh/logs\n')
+      expect(calls).toEqual(['h'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a bare cd fetches HOME', async () => {
+    const { calls, fetch } = countingSource({ HOME: '/d' })
+    registerSecrets('fake-cd-home', FakeConfig, fetch)
+    const ws = await makeWs({ HOME: { from: 'fake-cd-home', ref: 'h' } })
+    try {
+      expect((await ws.execute('mkdir /d')).exitCode).toBe(0)
+      const io = await ws.execute('cd; pwd')
+      expect(stdoutStr(io)).toBe('/d\n')
+      expect(calls).toEqual(['h'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('cd dash fetches OLDPWD', async () => {
+    const { calls, fetch } = countingSource({ OLDPWD: '/d' })
+    registerSecrets('fake-cd-old', FakeConfig, fetch)
+    const ws = await makeWs({ OLDPWD: { from: 'fake-cd-old', ref: 'o' } })
+    try {
+      expect((await ws.execute('mkdir /d')).exitCode).toBe(0)
+      const io = await ws.execute('cd -')
+      expect(stdoutStr(io)).toBe('/d\n')
+      expect(calls).toEqual(['o'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a relative cd fetches CDPATH', async () => {
+    const { calls, fetch } = countingSource({ CDPATH: '/pp' })
+    registerSecrets('fake-cd-path', FakeConfig, fetch)
+    const ws = await makeWs({ CDPATH: { from: 'fake-cd-path', ref: 'c' } })
+    try {
+      expect((await ws.execute('mkdir -p /pp/sub')).exitCode).toBe(0)
+      const io = await ws.execute('cd sub')
+      expect(stdoutStr(io)).toBe('/pp/sub\n')
+      expect(calls).toEqual(['c'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('read fetches IFS', async () => {
+    const { calls, fetch } = countingSource({ IFS: ' ' })
+    registerSecrets('fake-read-ifs', FakeConfig, fetch)
+    const ws = await makeWs({ IFS: { from: 'fake-read-ifs', ref: 'i' } })
+    try {
+      const io = await ws.execute("echo 'a b' | read v")
+      expect(io.exitCode).toBe(0)
+      expect(calls).toEqual(['i'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('getopts fetches OPTIND', async () => {
+    const { calls, fetch } = countingSource({ OPTIND: '1' })
+    registerSecrets('fake-getopts', FakeConfig, fetch)
+    const ws = await makeWs({ OPTIND: { from: 'fake-getopts', ref: 'g' } })
+    try {
+      const io = await ws.execute('getopts ab o')
+      expect(io.exitCode).toBe(1)
+      expect(calls).toEqual(['g'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a line mask beats an implicit read', async () => {
+    const { calls, fetch } = countingSource({ HOME: '/hh' })
+    registerSecrets('fake-mask-tilde', FakeConfig, fetch)
+    const ws = await makeWs({ HOME: { from: 'fake-mask-tilde', ref: 'h' } })
+    try {
+      const io = await ws.execute('HOME=/d; echo ~')
+      expect(stdoutStr(io)).toBe('/d\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('a dynamic head fetches everything pending', async () => {
     const { calls, fetch } = countingSource({ TOKEN: 't0' })
     registerSecrets('fake-dyn', FakeConfig, fetch)

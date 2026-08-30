@@ -2971,6 +2971,21 @@
           "backend": "memory"
         }
       ]
+    },
+    {
+      "id": "secrets-implicit",
+      "hosts": [
+        "python",
+        "typescript-node"
+      ],
+      "secrets": "implicit",
+      "mounts": [
+        {
+          "path": "/data",
+          "resource": "ram",
+          "backend": "memory"
+        }
+      ]
     }
   ]
 }

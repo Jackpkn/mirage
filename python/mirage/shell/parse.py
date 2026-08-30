@@ -874,3 +874,76 @@ def command_invocations(
         args = tuple(_literal_text(child) for child in _command_args(n))
         out.append((head, args))
     return tuple(out)
+
+
+# Names a builtin reads with no ``$NAME`` in the text: ``read`` splits
+# its input on ``$IFS`` and ``getopts`` resumes from ``$OPTIND``.
+# ``cd``'s names depend on the operand shape (``_cd_reads``).
+_IMPLICIT_HEAD_READS: dict[str, frozenset[str]] = {
+    "read": frozenset({"IFS"}),
+    "getopts": frozenset({"OPTIND"}),
+}
+
+# A relative ``cd`` operand searches ``$CDPATH`` unless it is anchored
+# (``/``, ``./``, ``../``) or a tilde the expansion anchors first;
+# mirrors ``_cdpath_searchable`` in the cd builtin.
+_CD_ANCHORS = ("/", "./", "../", "~")
+
+
+def _cd_reads(args: tuple[str | None, ...]) -> frozenset[str]:
+    """The names one ``cd`` invocation reads implicitly.
+
+    Bare ``cd`` goes to ``$HOME``, ``cd -`` to ``$OLDPWD``, and a
+    searchable relative operand tries ``$CDPATH`` first. Option words
+    (``-L``/``-P``/``--``) are not operands, and a word no static read
+    can spell may expand to any of the shapes, so it selects all three.
+
+    Args:
+        args (tuple[str | None, ...]): the invocation's argument words
+            (``command_invocations``), None for a dynamic word.
+    """
+    operands: list[str] = []
+    for arg in args:
+        if arg is None:
+            return frozenset({"HOME", "OLDPWD", "CDPATH"})
+        if arg == "-" or not arg.startswith("-"):
+            operands.append(arg)
+    if not operands:
+        return frozenset({"HOME"})
+    target = operands[0]
+    if target == "-":
+        return frozenset({"OLDPWD"})
+    if target.startswith(_CD_ANCHORS) or target in (".", ".."):
+        return frozenset()
+    return frozenset({"CDPATH"})
+
+
+def implicit_reads(node: tree_sitter.Node) -> frozenset[str]:
+    """Names the program reads without a ``$NAME`` in the text.
+
+    Tilde expansion resolves ``~`` and ``~/...`` against ``$HOME``
+    wherever a word expands (patterns and redirect targets included),
+    and the word scan mirrors ``expand_tilde`` exactly: ``~user``, a
+    mid-word tilde and a quoted one stay literal. ``cd`` reads
+    ``$HOME`` bare, ``$OLDPWD`` for ``-`` and ``$CDPATH`` for a
+    searchable relative operand; ``read`` splits on ``$IFS``;
+    ``getopts`` resumes from ``$OPTIND``. These join the fill plan
+    exactly as a spelled reference does, so a managed ``HOME`` fetches
+    for ``echo ~`` the way it does for ``echo $HOME``.
+
+    Args:
+        node (tree_sitter.Node): root node from parse().
+    """
+    out: set[str] = set()
+    for n in _walk_named_outside_defs(node):
+        if n.type == "word":
+            text = n.text
+            if text is not None and (text == b"~" or text.startswith(b"~/")):
+                out.add("HOME")
+    for head, args in command_invocations(node):
+        reads = _IMPLICIT_HEAD_READS.get(head or "")
+        if reads is not None:
+            out |= reads
+        if head == "cd":
+            out |= _cd_reads(args)
+    return frozenset(out)

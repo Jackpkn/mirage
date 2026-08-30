@@ -46,9 +46,14 @@ async function fetchDead(_config: DeadConfig, _ref: string): Promise<ResolvedSec
  * source that always fails, behind the target's denying profile: only
  * a dead source can prove a refused command never fetched, and it
  * needs its own target so the deny and the extra pending name cannot
- * leak into the other batteries. The dotenv file carries a `${...}`
- * value on purpose: values are read verbatim in both languages, and
- * interpolating hosts would disagree here.
+ * leak into the other batteries. `kind` "implicit" is one managed
+ * `HOME` for the reads with no `$NAME` in the text (a tilde, a bare
+ * `cd`); it needs its own target because any whole-env case would
+ * fetch `HOME` first and the tilde case would then prove nothing, and
+ * the value names the target's mount root so `cd` lands on a real
+ * directory. The dotenv file carries a `${...}` value on purpose:
+ * values are read verbatim in both languages, and interpolating hosts
+ * would disagree here.
  */
 export function buildSecretsEnv(kind: string): {
   env: EnvEntries
@@ -65,6 +70,13 @@ export function buildSecretsEnv(kind: string): {
     registerSecrets('gated', DeadConfig, fetchDead)
     return {
       env: { GATED: { from: 'gated', ref: 'z' } },
+      cleanup: async () => undefined,
+    }
+  }
+  if (kind === 'implicit') {
+    process.env['MIRAGE_INTEG_HOME_DIR'] = '/data'
+    return {
+      env: { HOME: { from: 'env', key: 'MIRAGE_INTEG_HOME_DIR' } },
       cleanup: async () => undefined,
     }
   }

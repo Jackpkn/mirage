@@ -23,6 +23,7 @@ import {
   createShellParser,
   findSyntaxError,
   findUnterminatedBacktick,
+  implicitReads,
   opaqueReads,
   referencedNames,
   stripLineContinuation,
@@ -473,5 +474,33 @@ describe('commandInvocations', () => {
   ])('%s invokes %j', (command, invocations) => {
     const root = parser.parse(command) as unknown as TSNodeLike
     expect(commandInvocations(root)).toEqual(invocations)
+  })
+})
+
+describe('implicitReads', () => {
+  it.each<[string, string[]]>([
+    // A leading tilde reads $HOME wherever a word expands; ~user, a
+    // mid-word tilde and a quoted one stay literal.
+    ['echo ~', ['HOME']],
+    ['echo ~/logs', ['HOME']],
+    ['cat < ~/f', ['HOME']],
+    ['echo "~" b~ ~user', []],
+    // cd reads $HOME bare, $OLDPWD for -, $CDPATH for a searchable
+    // relative operand, and everything for a dynamic word.
+    ['cd', ['HOME']],
+    ['cd --', ['HOME']],
+    ['cd -', ['OLDPWD']],
+    ['cd -L sub', ['CDPATH']],
+    ['cd /a; cd ./b; cd ..', []],
+    ['cd ~', ['HOME']],
+    ['cd $d', ['HOME', 'OLDPWD', 'CDPATH']],
+    // read splits on $IFS, getopts resumes from $OPTIND.
+    ['read v', ['IFS']],
+    ['getopts ab o', ['OPTIND']],
+    // A definition's body runs at invocation, not here.
+    ['f() { cd; }', []],
+  ])('%s reads %j', (command, names) => {
+    const root = parser.parse(command) as unknown as TSNodeLike
+    expect(implicitReads(root)).toEqual(new Set(names))
   })
 })

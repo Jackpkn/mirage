@@ -55,13 +55,18 @@ def build_secrets_env(
     a source that always fails, behind the target's denying profile:
     only a dead source can prove a refused command never fetched, and
     it needs its own target so the deny and the extra pending name
-    cannot leak into the other batteries. The dotenv file carries a
+    cannot leak into the other batteries. ``kind`` "implicit" is one
+    managed ``HOME`` for the reads with no ``$NAME`` in the text (a
+    tilde, a bare ``cd``); it needs its own target because any
+    whole-env case would fetch ``HOME`` first and the tilde case would
+    then prove nothing, and the value names the target's mount root so
+    ``cd`` lands on a real directory. The dotenv file carries a
     ``${...}`` value on purpose: values are read verbatim in both
     languages, and interpolating hosts would disagree here.
 
     Args:
-        kind (str): "healthy", "dead" or "gated", the target's
-            `secrets` value.
+        kind (str): "healthy", "dead", "gated" or "implicit", the
+            target's `secrets` value.
     """
     if kind == "dead":
         register_secrets("dead", DeadConfig, fetch_dead)
@@ -78,6 +83,14 @@ def build_secrets_env(
     if kind == "gated":
         register_secrets("gated", DeadConfig, fetch_dead)
         return {"GATED": {"from": "gated", "ref": "z"}}, _noop
+    if kind == "implicit":
+        os.environ["MIRAGE_INTEG_HOME_DIR"] = "/data"
+        return {
+            "HOME": {
+                "from": "env",
+                "key": "MIRAGE_INTEG_HOME_DIR"
+            },
+        }, _noop
     counts: dict[str, int] = {}
 
     async def fetch_counting(config: CounterConfig,

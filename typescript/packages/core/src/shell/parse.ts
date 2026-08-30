@@ -844,3 +844,66 @@ export function commandInvocations(node: TSNodeLike): [string | null, (string | 
   }
   return out
 }
+
+// Names a builtin reads with no `$NAME` in the text: `read` splits its
+// input on `$IFS` and `getopts` resumes from `$OPTIND`. `cd`'s names
+// depend on the operand shape (`cdReads`).
+const IMPLICIT_HEAD_READS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['read', ['IFS']],
+  ['getopts', ['OPTIND']],
+])
+
+// A relative `cd` operand searches `$CDPATH` unless it is anchored
+// (`/`, `./`, `../`) or a tilde the expansion anchors first; mirrors
+// the cd builtin's search rule.
+const CD_ANCHORS = ['/', './', '../', '~']
+
+/**
+ * The names one `cd` invocation reads implicitly.
+ *
+ * Bare `cd` goes to `$HOME`, `cd -` to `$OLDPWD`, and a searchable
+ * relative operand tries `$CDPATH` first. Option words (`-L`/`-P`/
+ * `--`) are not operands, and a word no static read can spell may
+ * expand to any of the shapes, so it selects all three.
+ */
+function cdReads(args: (string | null)[]): ReadonlySet<string> {
+  const operands: string[] = []
+  for (const arg of args) {
+    if (arg === null) return new Set(['HOME', 'OLDPWD', 'CDPATH'])
+    if (arg === '-' || !arg.startsWith('-')) operands.push(arg)
+  }
+  const target = operands[0]
+  if (target === undefined) return new Set(['HOME'])
+  if (target === '-') return new Set(['OLDPWD'])
+  if (CD_ANCHORS.some((anchor) => target.startsWith(anchor)) || target === '.' || target === '..') {
+    return new Set()
+  }
+  return new Set(['CDPATH'])
+}
+
+/**
+ * Names the program reads without a `$NAME` in the text.
+ *
+ * Tilde expansion resolves `~` and `~/...` against `$HOME` wherever a
+ * word expands (patterns and redirect targets included), and the word
+ * scan mirrors the expansion exactly: `~user`, a mid-word tilde and a
+ * quoted one stay literal. `cd` reads `$HOME` bare, `$OLDPWD` for `-`
+ * and `$CDPATH` for a searchable relative operand; `read` splits on
+ * `$IFS`; `getopts` resumes from `$OPTIND`. These join the fill plan
+ * exactly as a spelled reference does, so a managed `HOME` fetches for
+ * `echo ~` the way it does for `echo $HOME`.
+ */
+export function implicitReads(node: TSNodeLike): ReadonlySet<string> {
+  const out = new Set<string>()
+  for (const current of walkNamedOutsideDefs(node)) {
+    if (current.type === 'word' && (current.text === '~' || current.text.startsWith('~/'))) {
+      out.add('HOME')
+    }
+  }
+  for (const [head, args] of commandInvocations(node)) {
+    const reads = head === null ? undefined : IMPLICIT_HEAD_READS.get(head)
+    if (reads !== undefined) for (const name of reads) out.add(name)
+    if (head === 'cd') for (const name of cdReads(args)) out.add(name)
+  }
+  return out
+}

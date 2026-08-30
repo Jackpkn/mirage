@@ -25,7 +25,8 @@ from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import fetch_secret
 from mirage.shell.constants import SHOPT_DEFAULTS
 from mirage.shell.parse import (command_invocations, command_words, env_reads,
-                                opaque_reads, parse, referenced_names)
+                                implicit_reads, opaque_reads, parse,
+                                referenced_names)
 from mirage.shell.variable import ManagedRef, VarAttr, with_value
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.lookup.lookup import lookup
@@ -220,11 +221,14 @@ def _assignment_masks(stmt: tree_sitter.Node) -> frozenset[str] | None:
 
     None when the statement is not a plain replacement: a ``+=`` reads
     the standing value into the result, a subscript writes one element,
-    and a substitution in the value runs code mid-prefix.
+    a substitution in the value runs code mid-prefix, and a declaration
+    operand that is not an assignment (a flag word, a bare name) leaves
+    the statement's effect to the builtin's own rules.
 
     Args:
-        stmt (tree_sitter.Node): a ``variable_assignment`` or
-            ``variable_assignments`` statement node.
+        stmt (tree_sitter.Node): a ``variable_assignment``,
+            ``variable_assignments`` or ``declaration_command``
+            statement node.
     """
     parts = ([stmt] if stmt.type == "variable_assignment" else list(
         stmt.named_children))
@@ -244,6 +248,29 @@ def _assignment_masks(stmt: tree_sitter.Node) -> frozenset[str] | None:
             return None
         names.add(text.decode())
     return frozenset(names)
+
+
+# The declaring builtins whose plain assignments land like ``X=v``:
+# ``declare``/``typeset``/``export``/``readonly`` assign in any
+# context. ``local`` is gated on the body flag because outside a
+# function it refuses without writing, so the standing value stays
+# readable.
+_DECLARATION_MASK_HEADS = frozenset(
+    {b"declare", b"typeset", b"export", b"readonly"})
+
+
+def _declaration_replaces(stmt: tree_sitter.Node, in_body: bool) -> bool:
+    """Whether a declaration statement's assignments land as writes.
+
+    Args:
+        stmt (tree_sitter.Node): a ``declaration_command`` statement.
+        in_body (bool): the statement sits in a function body, where
+            ``local`` writes; at top level it refuses without writing.
+    """
+    head = stmt.children[0].text if stmt.children else None
+    if head == b"local":
+        return in_body
+    return head in _DECLARATION_MASK_HEADS
 
 
 def _unset_masks(stmt: tree_sitter.Node) -> frozenset[str] | None:
@@ -277,14 +304,16 @@ def _unset_masks(stmt: tree_sitter.Node) -> frozenset[str] | None:
     return frozenset(names)
 
 
-def masked_names(node: tree_sitter.Node, session: Session,
-                 writes_gated: bool) -> frozenset[str]:
-    """Names the line definitely replaces before anything can read them.
+def masked_names(node: tree_sitter.Node,
+                 session: Session,
+                 writes_gated: bool,
+                 in_body: bool = False) -> frozenset[str]:
+    """Names one unit definitely replaces before anything can read them.
 
-    The line's leading run of plain top-level statements that only
-    assign or unset masks its names for everything after: expansion
-    writes the assignment before any command runs, invoked bodies and
-    CLIs only run from later statements, and even an opaque read there
+    The unit's leading run of plain statements that only assign,
+    declare-with-value or unset masks its names for everything after:
+    the write lands before any command runs, invoked bodies and CLIs
+    only run from later statements, and even an opaque read there
     observes the replacement. The prefix ends at the first statement
     that is anything else, that runs in the background (``&`` detaches
     it to a subshell, so nothing persists), or that touches a readonly
@@ -292,16 +321,24 @@ def masked_names(node: tree_sitter.Node, session: Session,
     name read while still unmasked (``TOKEN=$TOKEN``) stays fetched:
     within a statement the read precedes the write.
 
+    The unit is the typed line for the top-level prefix, and a defined
+    body for that body's own reads (``_own_masks``); ``in_body`` says
+    which, because ``local`` writes only inside a function and refuses
+    at top level with the standing value still readable.
+
     ``writes_gated`` empties the set: a ``pre_session`` policy may
     refuse a write mid-line while later statements still run, and a
     refused mask would leave the standing value readable, so under such
     a policy nothing masks and the fetch keeps today's shape.
 
     Args:
-        node (tree_sitter.Node): the line's own parsed tree (never a
-            stored body: those run at invocation, after the prefix).
+        node (tree_sitter.Node): the unit's parsed tree -- the line's
+            own, or one defined body's (never a stored statement: those
+            join one at a time).
         session (Session): the session the line runs in.
         writes_gated (bool): a policy hooks ``pre_session``.
+        in_body (bool): the unit is a function body, where ``local``
+            assigns.
     """
     if writes_gated:
         return frozenset()
@@ -313,6 +350,9 @@ def masked_names(node: tree_sitter.Node, session: Session,
             continue
         if stmt.type in ("variable_assignment", "variable_assignments"):
             masks = _assignment_masks(stmt)
+        elif stmt.type == "declaration_command":
+            masks = (_assignment_masks(stmt) if _declaration_replaces(
+                stmt, in_body) else None)
         elif stmt.type == "unset_command":
             masks = _unset_masks(stmt)
         else:
@@ -335,9 +375,39 @@ def masked_names(node: tree_sitter.Node, session: Session,
     return frozenset(masked - needed)
 
 
+# A defined body joins the walk as one of these containers; an alias
+# parses to a program, the shape the typed line has.
+_BODY_CONTAINERS = frozenset({"compound_statement", "subshell"})
+
+
+def _own_masks(node: tree_sitter.Node, session: Session,
+               writes_gated: bool) -> frozenset[str]:
+    """A walked unit's own leading masks, discounting its own reads.
+
+    A defined body's prefix masks the body's later reads exactly as the
+    line's prefix masks the line's: the body runs its statements in
+    order, so ``local TOKEN=x`` shadows before anything after it can
+    read, whatever scope the invocation runs in. An alias expansion is
+    a program run mid-line, where ``local`` refuses without writing, so
+    only the context-free forms mask there. A stored body joins as its
+    statements, one node each, so a mask in one never discounts a
+    sibling's read -- the sound direction, over-fetching only.
+
+    Args:
+        node (tree_sitter.Node): one walked unit past the line itself.
+        session (Session): the session the line runs in.
+        writes_gated (bool): a policy hooks ``pre_session``.
+    """
+    if node.type in _BODY_CONTAINERS:
+        return masked_names(node, session, writes_gated, in_body=True)
+    if node.type == "program":
+        return masked_names(node, session, writes_gated)
+    return frozenset()
+
+
 def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
             pending: Mapping[str, ManagedRef], cli_env_names: frozenset[str],
-            masked: frozenset[str]) -> frozenset[str]:
+            masked: frozenset[str], writes_gated: bool) -> frozenset[str]:
     """The pending names the line's walked set is about to read.
 
     An opaque read (``opaque_reads``) or a command head no static read
@@ -345,14 +415,18 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
     decidable before expansion, so neither is its read set) selects
     everything pending; otherwise the set is the walk's references
     (nameref targets resolved through the session), the printing forms'
-    explicit targets, the routed CLIs' env names, the eager-marked
-    entries, and, when some command renders the whole environment,
-    everything pending except what every such render provably skips
-    (``env -u TOKEN``, an assignment prefix; the ``excluded`` third of
-    ``env_reads``). The line's masked names come off last, the opaque
-    selections included: a masked name is replaced before anything at
-    all runs, so whatever the line turns out to read observes the
-    replacement, eagerness notwithstanding.
+    explicit targets, the implicit reads (``implicit_reads``: a tilde
+    reads ``$HOME``, a bare ``cd`` does too), the routed CLIs' env
+    names, the eager-marked entries, and, when some command renders the
+    whole environment, everything pending except what every such render
+    provably skips (``env -u TOKEN``, an assignment prefix; the
+    ``excluded`` third of ``env_reads``). Each walked unit's reads are
+    discounted by that unit's own leading masks first (``_own_masks``:
+    a body's ``local`` shadows its own later reads), and the line's
+    masked names come off last, the opaque selections included: a
+    masked name is replaced before anything at all runs, so whatever
+    the line turns out to read observes the replacement, eagerness
+    notwithstanding.
 
     Args:
         session (Session): the session the line runs in.
@@ -362,24 +436,30 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
             CLIs read (``cli_env_names``).
         masked (frozenset[str]): names the line replaces before any
             read (``masked_names``).
+        writes_gated (bool): a policy hooks ``pre_session``, so no
+            unit's masks are trusted to land.
     """
     referenced: set[str] = set()
     printed: set[str] = set()
+    implicit: set[str] = set()
     rendered_any = False
     rendered_excluded: frozenset[str] | None = None
-    for node in nodes:
+    for position, node in enumerate(nodes):
         rendered, names, excluded = env_reads(node)
         if opaque_reads(node):
             return frozenset(pending.keys() - masked)
         if any(head is None for head, _ in command_invocations(node)):
             return frozenset(pending.keys() - masked)
+        own = (_own_masks(node, session, writes_gated)
+               if position else frozenset())
         if rendered:
             rendered_any = True
             rendered_excluded = (excluded if rendered_excluded is None else
                                  rendered_excluded & excluded)
-        printed |= names
-        referenced |= referenced_names(node)
-    wanted = printed | cli_env_names | {
+        printed |= names - own
+        implicit |= implicit_reads(node) - own
+        referenced |= referenced_names(node) - own
+    wanted = printed | implicit | cli_env_names | {
         name
         for name, ref in pending.items() if ref.eager
     }
@@ -421,9 +501,10 @@ def fill_names(session: Session,
     Pure planning, split from :func:`fill_env` so the executor can
     consult the admission text-pass between deciding and fetching: a
     line already denied on its literal words never reaches a source.
-    Masks come off the line's own tree, which ``line_nodes`` puts
-    first: a stored body or alias never contributes one, because it
-    runs at an invocation point, after the masking prefix.
+    Masks come off each unit's own leading prefix: the line's, which
+    ``line_nodes`` puts first, masks everything after it (a stored body
+    or alias runs at an invocation point, after the masking prefix),
+    and a defined body's masks only that body's reads (``_own_masks``).
 
     Args:
         session (Session): the session the line runs in.
@@ -443,7 +524,8 @@ def fill_names(session: Session,
         return frozenset(pending)
     masked = (masked_names(nodes[0], session, writes_gated)
               if nodes else frozenset())
-    return _wanted(session, nodes, pending, cli_env_names, masked)
+    return _wanted(session, nodes, pending, cli_env_names, masked,
+                   writes_gated)
 
 
 async def fill_env(session: Session, names: frozenset[str]) -> None:

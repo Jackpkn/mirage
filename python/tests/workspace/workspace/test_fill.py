@@ -467,6 +467,195 @@ async def test_every_same_line_redefinition_body_fills():
 
 
 @pytest.mark.asyncio
+async def test_body_local_mask_never_fetches():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute(
+            'f() { local TOKEN=shadow; echo "in:$TOKEN"; }; f')
+        assert (await io.stdout_str()) == "in:shadow\n"
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_body_mask_leaves_the_line_read_fetching():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute('f() { local TOKEN=shadow; }; f; echo "g:$TOKEN"'
+                              )
+        assert (await io.stdout_str()) == "g:t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_body_read_before_its_mask_fetches():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute(
+            'f() { echo "pre:$TOKEN"; local TOKEN=shadow; }; f')
+        assert (await io.stdout_str()) == "pre:t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_body_assignment_masks_its_own_read():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute('f() { TOKEN=w; echo "in:$TOKEN"; }; f')
+        assert (await io.stdout_str()) == "in:w\n"
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_body_mask_reading_the_standing_value_fetches():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute(
+            'f() { local TOKEN=$TOKEN; echo "in:$TOKEN"; }; f')
+        assert (await io.stdout_str()) == "in:t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_top_level_declaration_masks():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("export TOKEN=local; printenv TOKEN")
+        assert (await io.stdout_str()) == "local\n"
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_top_level_local_is_not_a_mask():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute('local TOKEN=x; echo "t:$TOKEN"')
+        assert (await io.stdout_str()) == "t:t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_tilde_expansion_fetches_home():
+    calls, fetch = counting_source({"HOME": "/hh"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"HOME": {"from": "fake", "ref": "h"}})
+    try:
+        io = await ws.execute("echo ~/logs")
+        assert (await io.stdout_str()) == "/hh/logs\n"
+        assert calls == ["h"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_bare_cd_fetches_home():
+    calls, fetch = counting_source({"HOME": "/d"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"HOME": {"from": "fake", "ref": "h"}})
+    try:
+        assert (await ws.execute("mkdir /d")).exit_code == 0
+        io = await ws.execute("cd; pwd")
+        assert (await io.stdout_str()) == "/d\n"
+        assert calls == ["h"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_cd_dash_fetches_oldpwd():
+    calls, fetch = counting_source({"OLDPWD": "/d"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"OLDPWD": {"from": "fake", "ref": "o"}})
+    try:
+        assert (await ws.execute("mkdir /d")).exit_code == 0
+        io = await ws.execute("cd -")
+        assert (await io.stdout_str()) == "/d\n"
+        assert calls == ["o"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_relative_cd_fetches_cdpath():
+    calls, fetch = counting_source({"CDPATH": "/pp"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"CDPATH": {"from": "fake", "ref": "c"}})
+    try:
+        assert (await ws.execute("mkdir -p /pp/sub")).exit_code == 0
+        io = await ws.execute("cd sub")
+        assert (await io.stdout_str()) == "/pp/sub\n"
+        assert calls == ["c"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_read_fetches_ifs():
+    calls, fetch = counting_source({"IFS": " "})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"IFS": {"from": "fake", "ref": "i"}})
+    try:
+        io = await ws.execute("echo 'a b' | read v")
+        assert io.exit_code == 0
+        assert calls == ["i"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_getopts_fetches_optind():
+    calls, fetch = counting_source({"OPTIND": "1"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"OPTIND": {"from": "fake", "ref": "g"}})
+    try:
+        io = await ws.execute("getopts ab o")
+        assert io.exit_code == 1
+        assert calls == ["g"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_line_mask_beats_an_implicit_read():
+    calls, fetch = counting_source({"HOME": "/hh"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"HOME": {"from": "fake", "ref": "h"}})
+    try:
+        io = await ws.execute("HOME=/d; echo ~")
+        assert (await io.stdout_str()) == "/d\n"
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_dynamic_head_fetches_everything_pending():
     calls, fetch = counting_source({"TOKEN": "t0"})
     register_secrets("fake", FakeConfig, fetch)

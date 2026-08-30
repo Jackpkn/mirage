@@ -22,7 +22,7 @@ from mirage.shell.helpers import (get_command_name, get_for_parts,
                                   get_text, get_while_parts)
 from mirage.shell.parse import (command_invocations, command_words, env_reads,
                                 find_syntax_error, find_unterminated_backtick,
-                                opaque_reads, referenced_names,
+                                implicit_reads, opaque_reads, referenced_names,
                                 strip_line_continuation)
 from mirage.shell.types import NodeType as NT
 
@@ -586,3 +586,31 @@ def test_opaque_reads(command, opaque):
     ])
 def test_command_invocations(command, invocations):
     assert command_invocations(parse(command)) == invocations
+
+
+@pytest.mark.parametrize(
+    "command,names",
+    [
+        # A leading tilde reads $HOME wherever a word expands; ~user,
+        # a mid-word tilde and a quoted one stay literal.
+        ("echo ~", {"HOME"}),
+        ("echo ~/logs", {"HOME"}),
+        ("cat < ~/f", {"HOME"}),
+        ('echo "~" b~ ~user', set()),
+        # cd reads $HOME bare, $OLDPWD for -, $CDPATH for a searchable
+        # relative operand, and everything for a dynamic word.
+        ("cd", {"HOME"}),
+        ("cd --", {"HOME"}),
+        ("cd -", {"OLDPWD"}),
+        ("cd -L sub", {"CDPATH"}),
+        ("cd /a; cd ./b; cd ..", set()),
+        ("cd ~", {"HOME"}),
+        ("cd $d", {"HOME", "OLDPWD", "CDPATH"}),
+        # read splits on $IFS, getopts resumes from $OPTIND.
+        ("read v", {"IFS"}),
+        ("getopts ab o", {"OPTIND"}),
+        # A definition's body runs at invocation, not here.
+        ("f() { cd; }", set()),
+    ])
+def test_implicit_reads(command, names):
+    assert implicit_reads(parse(command)) == frozenset(names)
