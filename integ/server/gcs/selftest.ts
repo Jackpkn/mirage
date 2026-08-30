@@ -214,6 +214,15 @@ async function main(): Promise<void> {
     // which is the whole reason this status exists.
     check('a non-final chunk is 308', partial.status === 308, String(partial.status))
     eq('the 308 reports what arrived', partial.headers.get('range'), 'bytes=0-7')
+    // A client that lost the 308 sends the same chunk again; its bytes must
+    // land at their declared offset, not append a second copy.
+    const repeat = await fetch(session, {
+      method: 'PUT',
+      headers: { ...TENANTED, 'Content-Range': `bytes 0-7/*` },
+      body: first,
+    })
+    check('a retransmitted chunk is still 308', repeat.status === 308, String(repeat.status))
+    eq('and does not double the progress', repeat.headers.get('range'), 'bytes=0-7')
     const done = (await json(session, {
       method: 'PUT',
       headers: { 'Content-Range': `bytes 8-12/13` },

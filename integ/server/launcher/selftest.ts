@@ -149,6 +149,7 @@ async function refusals(): Promise<void> {
     ['a non-integer port is refused', { github: { port: 'ten' } }],
     ['an out-of-range port is refused', { github: { port: 99999 } }],
     ['a bad arm port is refused', { mail: { imapPort: -1 } }],
+    ['a config naming no fakes is refused', { _note: 'prose only' }],
   ]
   for (const [name, cfg] of cases) {
     let threw = ''
@@ -279,10 +280,16 @@ async function spawned(): Promise<void> {
 }
 
 // A config naming no fake at all is a launcher that would announce nothing and
-// sit there, which reads as a hang rather than a mistake.
+// sit there, which reads as a hang rather than a mistake, so it is refused
+// outright instead of started as a healthy empty fleet.
 async function empty(): Promise<void> {
-  const started = await launch({})
-  check('an empty config starts nothing', started.length === 0, '0')
+  let threw = ''
+  try {
+    await launch({})
+  } catch (e) {
+    threw = e instanceof Error ? e.message : String(e)
+  }
+  check('an empty config is refused', threw !== '', threw.slice(0, 60))
 }
 
 await inProcess()

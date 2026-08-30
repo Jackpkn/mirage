@@ -243,6 +243,12 @@ async function launchAll(config: Record<string, JsonValue>, out: Instance[]): Pr
       }),
     )
   }
+  // A config naming nothing is a broken config, not a healthy empty fleet:
+  // returning [] would announce no URL lines and wait for a signal, turning
+  // a malformed file into a startup timeout instead of an error.
+  if (out.length === 0) {
+    throw new KitError('the config names no fakes: every key is prose or the file is empty')
+  }
   return out
 }
 

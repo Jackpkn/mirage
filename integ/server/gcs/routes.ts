@@ -259,9 +259,28 @@ async function resumableChunk(ctx: Ctx<C>): Promise<Reply> {
     where: { tenant_id: { tenant: ctx.tenant, id } },
   })
   if (session === null) return notFound()
-  const merged = Buffer.concat([Buffer.from(session.content), ctx.body])
+  const held = Buffer.from(session.content)
   const range = CONTENT_RANGE_RE.exec(header(ctx, 'content-range'))
   const more = range !== null && range[3] === '*'
+  // A chunk is PLACED at the offset its Content-Range declares, never
+  // appended blind: a client that lost a 308 retransmits from an earlier
+  // offset, and concatenation would store those bytes twice. A chunk
+  // starting beyond what is held is a gap, answered as 308 with the
+  // progress so far, exactly as if it had not arrived.
+  let merged: Buffer<ArrayBuffer>
+  if (range === null) {
+    merged = Buffer.concat([held, ctx.body])
+  } else {
+    const start = Number(range[1])
+    if (start > held.length) {
+      return {
+        status: 308,
+        headers: held.length === 0 ? {} : { Range: `bytes=0-${String(held.length - 1)}` },
+        body: Buffer.alloc(0),
+      }
+    }
+    merged = Buffer.concat([held, ctx.body.subarray(held.length - start)])
+  }
   if (more) {
     await ctx.db.gcsUpload.update({
       where: { tenant_id: { tenant: ctx.tenant, id } },

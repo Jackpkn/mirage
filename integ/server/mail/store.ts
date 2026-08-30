@@ -126,7 +126,7 @@ export function withSequence(rows: MessageRow[]): SearchMsg[] {
       flags: row.flags === '' ? [] : row.flags.split(' '),
       headers: parsed.headers,
       body: parsed.body,
-      source: source.toString('utf8'),
+      source,
       // TEXT is header plus body, and the body half is the DECODED one: a
       // server that matched the transferred octets would answer `TEXT
       // "forecast"` with nothing for a base64 part and would match a search

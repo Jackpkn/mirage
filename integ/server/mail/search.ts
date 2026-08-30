@@ -32,9 +32,11 @@ export interface SearchMsg {
   headers: Record<string, string[]>
   // The DECODED body, which is what BODY matches.
   body: string
-  // The RAW message, exactly as APPENDed. This is what FETCH serves, so it
-  // must stay byte-identical to what arrived; `text` below is the search view.
-  source: string
+  // The RAW message bytes, exactly as APPENDed. This is what FETCH serves,
+  // so it must stay byte-identical to what arrived; a string here replaced
+  // non-UTF-8 octets with U+FFFD and re-encoded them. `text` is the search
+  // view.
+  source: Buffer
   // Header block plus decoded body, which is what TEXT matches. Kept apart
   // from `source` because the two have opposite requirements and sharing one
   // field silently made FETCH serve a decoded message.

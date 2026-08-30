@@ -153,6 +153,10 @@ export function startImapServer(
     }
     write(session, `* OK [CAPABILITY ${CAPABILITIES}] mirage mail fake ready`)
     let buffer = Buffer.alloc(0)
+    // Set after a literal's body is consumed: the command's terminating CRLF
+    // arrives AFTER the body, and left in the buffer it reads as an empty
+    // command line and answers an unsolicited BAD.
+    let swallow = false
     // Commands are serialized per CONNECTION as well as per run: a client that
     // pipelines two commands must not have the second one's reply interleave
     // with the first one's untagged lines.
@@ -167,8 +171,20 @@ export function startImapServer(
           buffer = buffer.subarray(want)
           const held = session.pending
           session.pending = null
+          swallow = true
           const line = held.line
           chain = chain.then(() => handle(runtime, session, line, body))
+          continue
+        }
+        if (swallow) {
+          if (buffer.length === 0) return
+          if (buffer[0] === 0x0a) {
+            buffer = buffer.subarray(1)
+          } else if (buffer[0] === 0x0d) {
+            if (buffer.length < 2) return
+            if (buffer[1] === 0x0a) buffer = buffer.subarray(2)
+          }
+          swallow = false
           continue
         }
         const nl = buffer.indexOf('\n')
@@ -569,7 +585,7 @@ function fetchItem(item: string, msg: SearchMsg): string | null {
   if (key === 'UID') return `UID ${String(msg.uid)}`
   if (key === 'FLAGS') return `FLAGS (${msg.flags.join(' ')})`
   if (key === 'INTERNALDATE') return `INTERNALDATE "${internalDateOf(msg.internalDate)}"`
-  if (key === 'RFC822.SIZE') return `RFC822.SIZE ${String(Buffer.byteLength(msg.source))}`
+  if (key === 'RFC822.SIZE') return `RFC822.SIZE ${String(msg.source.length)}`
   return null
 }
 
@@ -609,7 +625,7 @@ async function fetch(
       }
       if (BODY_ITEM.test(item)) {
         bodyKey = item.toUpperCase().startsWith('RFC822') ? 'RFC822' : 'BODY[]'
-        body = Buffer.from(msg.source, 'utf8')
+        body = msg.source
         continue
       }
       write(session, `${tag} BAD unsupported fetch item ${item}`)
@@ -698,7 +714,7 @@ async function copy(
         db(runtime, session),
         session.tenant,
         target,
-        Buffer.from(msg.source, 'utf8'),
+        msg.source,
         msg.flags,
         msg.internalDate,
       )
