@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import dataclasses
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -22,6 +23,9 @@ from mirage import Action, CommandContext, Deny, MountMode, Policy, Workspace
 from mirage.commands.cli.types import CLISpec
 from mirage.commands.spec.types import Option
 from mirage.io import IOResult
+from mirage.policy import Ask
+from mirage.policy.match import Outcome
+from mirage.policy.types import Decision, Scope
 from mirage.resource.ram import RAMResource
 from mirage.secrets import registry
 from mirage.secrets.errors import SecretsError
@@ -562,6 +566,119 @@ async def test_dynamic_word_deny_fetches_before_the_value_gate():
         io = await ws.execute("echo $TOKEN")
         assert io.exit_code == 126
         assert b"echo is off" in io.stderr
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+class AskNamed(Policy):
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    async def pre_command(self, ctx: CommandContext) -> Action | None:
+        if ctx.command == self.name:
+            return Ask(f"{self.name} needs sign-off")
+        return None
+
+
+def _asking_ws(name: str, env, on_ask=None) -> Workspace:
+    return Workspace({"/": RAMResource()},
+                     mode=MountMode.WRITE,
+                     env=env,
+                     policies=[AskNamed(name)],
+                     on_ask=on_ask)
+
+
+@pytest.mark.asyncio
+async def test_asked_literal_line_fetches_only_after_approval():
+    # The fetch is itself an effect, so an ask is answered before it:
+    # one question, then one fetch, and the gate spends the grant
+    # rather than asking again.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+
+    async def approve(record: Decision) -> Decision:
+        calls.append("ask")
+        return dataclasses.replace(record, outcome=Outcome.ALLOW)
+
+    ws = _asking_ws("printenv", {"TOKEN": {
+        "from": "fake",
+        "ref": "r"
+    }}, approve)
+    try:
+        io = await ws.execute("printenv TOKEN")
+        assert (await io.stdout_str()) == "t0\n"
+        assert calls == ["ask", "r"]
+        assert ws.decisions.pending() == ()
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_asked_literal_line_denied_never_fetches():
+    # A host's no arrives before the source is contacted, and the
+    # refusal still comes from the gate, in the deny voice.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+
+    async def refuse(record: Decision) -> Decision:
+        calls.append("ask")
+        return dataclasses.replace(record, outcome=Outcome.DENY)
+
+    ws = _asking_ws("printenv", {"TOKEN": {
+        "from": "fake",
+        "ref": "r"
+    }}, refuse)
+    try:
+        io = await ws.execute("printenv TOKEN")
+        assert io.exit_code == 126
+        assert b"printenv needs sign-off" in io.stderr
+        assert calls == ["ask"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_asked_literal_line_left_pending_never_fetches():
+    # With no host inline, the question is recorded once and the fetch
+    # is skipped; the answered replay fetches and runs.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _asking_ws("printenv", {"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("printenv TOKEN")
+        assert io.exit_code == 126
+        assert b"requires approval" in io.stderr
+        assert calls == []
+        pending, = ws.decisions.pending()
+        await ws.decisions.answer(pending.id, Outcome.ALLOW, Scope.ONCE)
+        again = await ws.execute("printenv TOKEN")
+        assert (await again.stdout_str()) == "t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_env_ignore_environment_never_fetches():
+    # `env -i` provably starts empty, so it selects nothing, and the
+    # replaced scope drops a pending managed entry too: the inner line
+    # must not fetch a name the flag just cleared. The flagless
+    # invocation keeps the whole-environment read.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("env -i")
+        assert io.exit_code == 0
+        assert (await io.stdout_str()) == ""
+        inner = await ws.execute("env -i printenv TOKEN")
+        assert inner.exit_code == 1
+        assert (await inner.stdout_str()) == ""
+        assert calls == []
+        whole = await ws.execute("env printenv TOKEN")
+        assert (await whole.stdout_str()) == "t0\n"
         assert calls == ["r"]
     finally:
         await ws.close()

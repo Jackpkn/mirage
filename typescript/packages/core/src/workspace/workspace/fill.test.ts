@@ -26,6 +26,8 @@ import { VarAttr } from '../../shell/variable.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { MountMode } from '../../types.ts'
 import type { Action, CommandContext, Policy } from '../../policy/index.ts'
+import type { AskHandler } from '../../policy/decisions.ts'
+import { Outcome, Scope, type Decision } from '../../policy/types.ts'
 import { getTestParser, stderrStr, stdoutStr } from '../fixtures/workspace_fixture.ts'
 import { guestBound } from './fill.ts'
 import { Workspace } from './workspace.ts'
@@ -60,7 +62,24 @@ class DenyNamed implements Policy {
   }
 }
 
-async function makeWs(env: EnvEntries | undefined, policies?: Policy[]): Promise<Workspace> {
+class AskNamed implements Policy {
+  private readonly name: string
+
+  constructor(name: string) {
+    this.name = name
+  }
+
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== this.name) return null
+    return { kind: 'ask', reason: `${this.name} needs sign-off` }
+  }
+}
+
+async function makeWs(
+  env: EnvEntries | undefined,
+  policies?: Policy[],
+  onAsk?: AskHandler,
+): Promise<Workspace> {
   const parser = await getTestParser()
   return new Workspace(
     { '/': new RAMResource() },
@@ -69,6 +88,7 @@ async function makeWs(env: EnvEntries | undefined, policies?: Policy[]): Promise
       shellParser: parser,
       ...(env !== undefined ? { env } : {}),
       ...(policies !== undefined ? { policies } : {}),
+      ...(onAsk !== undefined ? { onAsk } : {}),
     },
   )
 }
@@ -515,6 +535,102 @@ describe('fillEnv through execute', () => {
       const io = await ws.execute('echo $TOKEN')
       expect(io.exitCode).toBe(126)
       expect(stderrStr(io)).toContain('echo is off')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an asked literal line fetches only after approval', async () => {
+    // The fetch is itself an effect, so an ask is answered before it:
+    // one question, then one fetch, and the gate spends the grant
+    // rather than asking again.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-ask-allow', FakeConfig, fetch)
+    const approve: AskHandler = (record: Decision) => {
+      calls.push('ask')
+      return Promise.resolve({ ...record, outcome: Outcome.ALLOW })
+    }
+    const ws = await makeWs(
+      { TOKEN: { from: 'fake-ask-allow', ref: 'r' } },
+      [new AskNamed('printenv')],
+      approve,
+    )
+    try {
+      const io = await ws.execute('printenv TOKEN')
+      expect(stdoutStr(io)).toBe('t0\n')
+      expect(calls).toEqual(['ask', 'r'])
+      expect(ws.decisions.pending()).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an asked literal line denied never fetches', async () => {
+    // A host's no arrives before the source is contacted, and the
+    // refusal still comes from the gate, in the deny voice.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-ask-deny', FakeConfig, fetch)
+    const refuse: AskHandler = (record: Decision) => {
+      calls.push('ask')
+      return Promise.resolve({ ...record, outcome: Outcome.DENY })
+    }
+    const ws = await makeWs(
+      { TOKEN: { from: 'fake-ask-deny', ref: 'r' } },
+      [new AskNamed('printenv')],
+      refuse,
+    )
+    try {
+      const io = await ws.execute('printenv TOKEN')
+      expect(io.exitCode).toBe(126)
+      expect(stderrStr(io)).toContain('printenv needs sign-off')
+      expect(calls).toEqual(['ask'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an asked literal line left pending never fetches', async () => {
+    // With no host inline, the question is recorded once and the fetch
+    // is skipped; the answered replay fetches and runs.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-ask-pending', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-ask-pending', ref: 'r' } }, [
+      new AskNamed('printenv'),
+    ])
+    try {
+      const io = await ws.execute('printenv TOKEN')
+      expect(io.exitCode).toBe(126)
+      expect(stderrStr(io)).toContain('requires approval')
+      expect(calls).toEqual([])
+      const pending = ws.decisions.pending()
+      expect(pending).toHaveLength(1)
+      await ws.decisions.answer(pending[0]?.id ?? '', Outcome.ALLOW, Scope.ONCE)
+      const again = await ws.execute('printenv TOKEN')
+      expect(stdoutStr(again)).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('env ignore-environment never fetches', async () => {
+    // `env -i` provably starts empty, so it selects nothing, and the
+    // replaced scope drops a pending managed entry too: the inner line
+    // must not fetch a name the flag just cleared. The flagless
+    // invocation keeps the whole-environment read.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-env-i', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-env-i', ref: 'r' } })
+    try {
+      const io = await ws.execute('env -i')
+      expect(io.exitCode).toBe(0)
+      expect(stdoutStr(io)).toBe('')
+      const inner = await ws.execute('env -i printenv TOKEN')
+      expect(inner.exitCode).toBe(1)
+      expect(stdoutStr(inner)).toBe('')
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('env printenv TOKEN'))).toBe('t0\n')
       expect(calls).toEqual(['r'])
     } finally {
       await ws.close()

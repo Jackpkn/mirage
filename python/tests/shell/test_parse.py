@@ -467,6 +467,26 @@ def test_command_words(command, words):
         # it hands the snapshot to a child.
         ("env", True, set()),
         ("env FOO=1 mycmd", True, set()),
+        # A literal ignore-environment form proves the start is empty,
+        # so nothing existing is read.
+        ("env -i", False, set()),
+        ("env -i mycmd", False, set()),
+        ("env --ignore-environment mycmd", False, set()),
+        ("env - mycmd", False, set()),
+        ("env -0i", False, set()),
+        ("env -iu X mycmd", False, set()),
+        # -u consumes a value, so `-ui` unsets a variable named i and
+        # `-u -i` one named -i; both still read the whole environment.
+        ("env -ui mycmd", True, set()),
+        ("env -u -i mycmd", True, set()),
+        ("env -u X mycmd", True, set()),
+        # The first operand ends the options, and -- ends them too.
+        ("env X=1 -i mycmd", True, set()),
+        ("env -- -i mycmd", True, set()),
+        # A word no static read can spell keeps the whole read; one
+        # after a proven -i changes nothing.
+        ("env $x mycmd", True, set()),
+        ("env -i $x", False, set()),
         ("set", True, set()),
         ("set -u", False, set()),
         ("set -- a b", False, set()),

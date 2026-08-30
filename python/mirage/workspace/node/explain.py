@@ -13,17 +13,19 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import asyncio
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Sequence
 from typing import Any
 
-from mirage.policy import (Ask, CommandContext, Deny, Explanation, Pending,
-                           render_deny, render_pending)
+from mirage.policy import (Abandoned, Ask, CommandContext, Deny, Explanation,
+                           Pending, render_deny, render_pending)
 from mirage.policy.match import Outcome, decide
 from mirage.shell import parse
 from mirage.shell.helpers import (get_parts, get_text, literal_word,
                                   split_env_prefix)
 from mirage.shell.types import NodeType
+from mirage.types import PathSpec
 from mirage.utils.path import resolve_path
+from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.mount import MountRegistry
 from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.node.admission import (Refusal, admit, classified_words,
@@ -443,15 +445,77 @@ async def prejudge_line(
     return None
 
 
-async def line_denied_on_text(
+async def _verdict_refuses(
+    expl: Explanation,
+    redirects: Sequence[PathSpec],
+    walked: Session,
+    registry: MountRegistry,
+    namespace: Namespace | None,
+    agent_id: str,
+    cancel: asyncio.Event | None,
+) -> bool:
+    """Whether a verdict's answer refuses the command, putting an
+    unanswered ask's question to the host.
+
+    The chain is asked again rather than the explanation re-read,
+    because ``Explanation.outcome`` is the document's answer: a coded
+    policy's ask arrives with whatever the document said, so only the
+    chain's own answer separates a deny from an ask. A deny refuses
+    outright. An ask's settled record is read without being spent
+    (``Decisions.held``), so the gate that then runs the line consumes
+    the same answer, in its own voice and behind the line's
+    redirections; an unanswered rule is raised through the same ledger
+    the gate reads, so the answer lands exactly once and the gate does
+    not ask again.
+
+    Args:
+        expl (Explanation): the verdict's explanation.
+        redirects (Sequence[PathSpec]): the statement's redirect
+            targets, empty for a command that has none.
+        walked (Session): the session the command is judged in.
+        registry (MountRegistry): registry holding the policies and the
+            decision ledger.
+        namespace (Namespace | None): the link table.
+        agent_id (str): the agent the line is attributed to.
+        cancel (asyncio.Event | None): the run's kill channel.
+    """
+    args = list(expl.argv)
+    classified = classified_words(expl.command, args, walked, registry)
+    gated = await gate(expl.command,
+                       args,
+                       classified[1:],
+                       walked,
+                       registry,
+                       namespace,
+                       agent_id,
+                       redirects=redirects)
+    if isinstance(gated, Refusal):
+        return True
+    ctx, asked = gated
+    if not isinstance(asked, Ask):
+        return isinstance(asked, Deny)
+    standing = registry.decisions.held(ctx, asked)
+    if standing is None:
+        return False
+    if isinstance(standing, Deny):
+        return True
+    action = await registry.decisions.resolve(ctx, asked, cancel)
+    if isinstance(action, Abandoned):
+        raise MirageAbortError()
+    return action is not None
+
+
+async def line_refuses_fetch(
     ast: Any,
     session: Session,
     registry: MountRegistry,
     namespace: Namespace | None,
     agent_id: str = "",
+    cancel: asyncio.Event | None = None,
 ) -> bool:
-    """Whether some fully-literal command of the line is already denied
-    on its text, so the line cannot run whatever expansion produces.
+    """Whether the line's env-plane fetch must not happen: some
+    fully-literal command of it is refused on its text, or asks and is
+    not approved.
 
     The env-plane fill asks this before fetching: a fetch serves a
     command that is going to run, and a command whose every word is
@@ -459,11 +523,17 @@ async def line_denied_on_text(
     a DENY seen here is the run's answer too. A command carrying a word
     only the runtime can expand is not consulted (the gate may see
     different words, and skipping a fetch on a guess would run an
-    allowed command against unset values), and an ASK is not a refusal
-    (the host may approve, and the approved command then needs its
-    values). Read-only, like ``explain_line``: no grant is spent and no
-    question is put -- the refusal itself still comes from the gate,
-    with its wording and its redirections.
+    allowed command against unset values).
+
+    An ASK is resolved rather than skipped, because the fetch is itself
+    an effect: contacting a secret store for a line the host then
+    refuses would do a piece of exactly what was refused. A settled
+    answer is read without being spent; an unanswered rule is put to
+    the host now, through the same ledger the gate reads, so the answer
+    lands exactly once -- an approval lets the fetch proceed and the
+    gate consume the grant, while a denial or a question left waiting
+    skips the fetch and the line still runs into the gate, which
+    refuses in place with its wording and its redirections.
 
     Args:
         ast (Any): the parsed tree-sitter root node.
@@ -472,6 +542,8 @@ async def line_denied_on_text(
             decision ledger and the CLI installs.
         namespace (Namespace | None): the link table.
         agent_id (str): the agent the line is attributed to.
+        cancel (asyncio.Event | None): the run's kill channel, carried
+            because an unanswered ask is put to the host here.
     """
     for words, redirects, walked in _walked_line(ast, session):
         if words[0].text is None:
@@ -480,8 +552,16 @@ async def line_denied_on_text(
             continue
         explained = await explain_words(words, walked, registry, namespace,
                                         agent_id, redirects)
-        for expl in explained:
-            if _is_verdict(expl) and expl.outcome is not Outcome.ASK:
+        targets = redirect_paths(redirects, registry, walked.cwd)
+        for index, expl in enumerate(explained):
+            if not _is_verdict(expl):
+                continue
+            # explain_words lists the statement's own command first and
+            # the lines it runs after it, so only the first explanation
+            # is the command the redirects belong to.
+            if await _verdict_refuses(expl, targets if index == 0 else (),
+                                      walked, registry, namespace, agent_id,
+                                      cancel):
                 return True
     return False
 

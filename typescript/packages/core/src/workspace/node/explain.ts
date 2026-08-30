@@ -24,7 +24,9 @@ import {
 } from '../../policy/types.ts'
 import { getParts, getText, literalWord, splitEnvPrefix } from '../../shell/helpers.ts'
 import { NodeType, type TSNodeLike } from '../../shell/types.ts'
+import type { PathSpec } from '../../types.ts'
 import { resolvePath } from '../../utils/path.ts'
+import { makeAbortError } from '../abort.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { Session } from '../session/session.ts'
@@ -408,8 +410,56 @@ export async function prejudgeLine(
 }
 
 /**
- * Whether some fully-literal command of the line is already denied on
- * its text, so the line cannot run whatever expansion produces.
+ * Whether a verdict's answer refuses the command, putting an
+ * unanswered ask's question to the host.
+ *
+ * The chain is asked again rather than the explanation re-read,
+ * because `Explanation.outcome` is the document's answer: a coded
+ * policy's ask arrives with whatever the document said, so only the
+ * chain's own answer separates a deny from an ask. A deny refuses
+ * outright. An ask's settled record is read without being spent
+ * (`Decisions.held`), so the gate that then runs the line consumes the
+ * same answer, in its own voice and behind the line's redirections; an
+ * unanswered rule is raised through the same ledger the gate reads, so
+ * the answer lands exactly once and the gate does not ask again.
+ */
+async function verdictRefuses(
+  expl: Explanation,
+  redirects: readonly PathSpec[],
+  walked: Session,
+  registry: MountRegistry,
+  namespace: Namespace | null,
+  agentId: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const args = [...expl.argv]
+  const classified = classifiedWords(expl.command, args, walked, registry)
+  const gated = await gate(
+    expl.command,
+    args,
+    classified.slice(1),
+    walked,
+    registry,
+    namespace,
+    agentId,
+    null,
+    redirects,
+  )
+  if (!Array.isArray(gated)) return true
+  const [ctx, asked] = gated
+  if (asked?.kind !== 'ask') return asked !== null
+  const standing = await registry.decisions.held(ctx, asked)
+  if (standing === null) return false
+  if (standing.kind === 'deny') return true
+  const action = await registry.decisions.resolve(ctx, asked, signal)
+  if (action !== null && action.kind === 'abandoned') throw makeAbortError()
+  return action !== null
+}
+
+/**
+ * Whether the line's env-plane fetch must not happen: some
+ * fully-literal command of it is refused on its text, or asks and is
+ * not approved.
  *
  * The env-plane fill asks this before fetching: a fetch serves a
  * command that is going to run, and a command whose every word is
@@ -417,19 +467,26 @@ export async function prejudgeLine(
  * DENY seen here is the run's answer too. A command carrying a word
  * only the runtime can expand is not consulted (the gate may see
  * different words, and skipping a fetch on a guess would run an
- * allowed command against unset values), and an ASK is not a refusal
- * (the host may approve, and the approved command then needs its
- * values). Read-only, like `explainLine`: no grant is spent and no
- * question is put -- the refusal itself still comes from the gate,
- * with its wording and its redirections.
+ * allowed command against unset values).
+ *
+ * An ASK is resolved rather than skipped, because the fetch is itself
+ * an effect: contacting a secret store for a line the host then
+ * refuses would do a piece of exactly what was refused. A settled
+ * answer is read without being spent; an unanswered rule is put to the
+ * host now, through the same ledger the gate reads, so the answer
+ * lands exactly once -- an approval lets the fetch proceed and the
+ * gate consume the grant, while a denial or a question left waiting
+ * skips the fetch and the line still runs into the gate, which refuses
+ * in place with its wording and its redirections.
  */
-export async function lineDeniedOnText(
+export async function lineRefusesFetch(
   root: TSNodeLike,
   session: Session,
   registry: MountRegistry,
   namespace: Namespace | null,
   agentId: string,
   reparse: (line: string) => TSNodeLike,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   for (const [words, redirects, walked] of walkedLine(root, session)) {
     if (words[0]?.text === null) continue
@@ -443,8 +500,25 @@ export async function lineDeniedOnText(
       reparse,
       redirects,
     )
-    for (const expl of explained) {
-      if (isVerdict(expl) && expl.outcome !== Outcome.ASK) return true
+    const targets = redirectPaths(redirects, registry, walked.cwd)
+    for (const [index, expl] of explained.entries()) {
+      if (!isVerdict(expl)) continue
+      // explainWords lists the statement's own command first and the
+      // lines it runs after it, so only the first explanation is the
+      // command the redirects belong to.
+      if (
+        await verdictRefuses(
+          expl,
+          index === 0 ? targets : [],
+          walked,
+          registry,
+          namespace,
+          agentId,
+          signal,
+        )
+      ) {
+        return true
+      }
     }
   }
   return false

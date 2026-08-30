@@ -627,6 +627,50 @@ def _command_args(node: tree_sitter.Node) -> list[tree_sitter.Node]:
     ]
 
 
+def _env_ignores_environment(args: list[tree_sitter.Node]) -> bool:
+    """Whether an ``env`` invocation provably starts from an empty
+    environment (``-i``, ``--ignore-environment``, or the lone ``-``),
+    so it reads no existing name.
+
+    Scanned with the builtin's own option grammar: ``--`` ends the
+    options, ``-u``/``--unset`` consume a value (so ``-u -i`` unsets a
+    variable named ``-i`` rather than clearing), and the first operand
+    ends the scan. Anything unprovable -- a word no static read can
+    spell, an option the builtin refuses -- answers False, leaving the
+    whole-environment read standing: over-selection only over-fetches.
+
+    Args:
+        args (list[tree_sitter.Node]): the invocation's argument nodes.
+    """
+    i = 0
+    while i < len(args):
+        literal = _literal_text(args[i])
+        if literal is None or literal == "--":
+            return False
+        if literal in ("-i", "--ignore-environment", "-"):
+            return True
+        if literal == "--unset":
+            i += 2
+            continue
+        if literal in ("-0", "--null") or literal.startswith("--unset="):
+            i += 1
+            continue
+        if not literal.startswith("-") or literal.startswith("--"):
+            return False
+        step = 1
+        for pos, ch in enumerate(literal[1:]):
+            if ch == "i":
+                return True
+            if ch == "u":
+                if pos == len(literal) - 2:
+                    step = 2
+                break
+            if ch != "0":
+                return False
+        i += step
+    return False
+
+
 def env_reads(node: tree_sitter.Node) -> tuple[bool, frozenset[str]]:
     """How the line's environment-rendering commands read names.
 
@@ -634,14 +678,15 @@ def env_reads(node: tree_sitter.Node) -> tuple[bool, frozenset[str]]:
     environment, and the names printing forms read explicitly. Only a
     printing form selects everything: ``env`` on any invocation (bare
     it prints every exported name, and with arguments it hands the
-    snapshot to the command it runs), a bare ``set``, a bare
-    ``printenv``, and a declaring builtin with no operands (``export``,
-    ``declare -p``). ``printenv NAME`` and ``declare -p NAME`` read
-    exactly the named variables, and a mutating form (``export
-    NAME=v``, ``declare -x NAME``, ``set -u``) reads nothing here, so
-    an unavailable source cannot fail the write that would replace its
-    pointer. A print target no static read can spell (``printenv $x``)
-    falls back to the whole environment.
+    snapshot to the command it runs) unless a literal ``-i``,
+    ``--ignore-environment`` or lone ``-`` proves it starts empty, a
+    bare ``set``, a bare ``printenv``, and a declaring builtin with no
+    operands (``export``, ``declare -p``). ``printenv NAME`` and
+    ``declare -p NAME`` read exactly the named variables, and a
+    mutating form (``export NAME=v``, ``declare -x NAME``, ``set -u``)
+    reads nothing here, so an unavailable source cannot fail the write
+    that would replace its pointer. A print target no static read can
+    spell (``printenv $x``) falls back to the whole environment.
 
     Args:
         node (tree_sitter.Node): root node from parse().
@@ -654,7 +699,8 @@ def env_reads(node: tree_sitter.Node) -> tuple[bool, frozenset[str]]:
             text = name_node.text if name_node is not None else None
             head = text.decode() if text else ""
             if head == "env":
-                whole = True
+                if not _env_ignores_environment(_command_args(n)):
+                    whole = True
             elif head == "set":
                 if not _command_args(n):
                     whole = True

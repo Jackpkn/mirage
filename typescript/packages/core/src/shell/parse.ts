@@ -596,19 +596,64 @@ function commandArgs(node: TSNodeLike): TSNodeLike[] {
 }
 
 /**
+ * Whether an `env` invocation provably starts from an empty
+ * environment (`-i`, `--ignore-environment`, or the lone `-`), so it
+ * reads no existing name.
+ *
+ * Scanned with the builtin's own option grammar: `--` ends the
+ * options, `-u`/`--unset` consume a value (so `-u -i` unsets a
+ * variable named `-i` rather than clearing), and the first operand
+ * ends the scan. Anything unprovable -- a word no static read can
+ * spell, an option the builtin refuses -- answers false, leaving the
+ * whole-environment read standing: over-selection only over-fetches.
+ */
+function envIgnoresEnvironment(args: TSNodeLike[]): boolean {
+  let i = 0
+  while (i < args.length) {
+    const arg = args[i]
+    const literal = arg === undefined ? null : literalText(arg)
+    if (literal === null || literal === '--') return false
+    if (literal === '-i' || literal === '--ignore-environment' || literal === '-') return true
+    if (literal === '--unset') {
+      i += 2
+      continue
+    }
+    if (literal === '-0' || literal === '--null' || literal.startsWith('--unset=')) {
+      i += 1
+      continue
+    }
+    if (!literal.startsWith('-') || literal.startsWith('--')) return false
+    let step = 1
+    for (let pos = 1; pos < literal.length; pos += 1) {
+      const ch = literal[pos]
+      if (ch === 'i') return true
+      if (ch === 'u') {
+        if (pos === literal.length - 1) step = 2
+        break
+      }
+      if (ch !== '0') return false
+    }
+    i += step
+  }
+  return false
+}
+
+/**
  * How the line's environment-rendering commands read names.
  *
  * Returns `{whole, names}`: whether some command renders the whole
  * environment, and the names printing forms read explicitly. Only a
  * printing form selects everything: `env` on any invocation (bare it
  * prints every exported name, and with arguments it hands the snapshot
- * to the command it runs), a bare `set`, a bare `printenv`, and a
- * declaring builtin with no operands (`export`, `declare -p`).
- * `printenv NAME` and `declare -p NAME` read exactly the named
- * variables, and a mutating form (`export NAME=v`, `declare -x NAME`,
- * `set -u`) reads nothing here, so an unavailable source cannot fail
- * the write that would replace its pointer. A print target no static
- * read can spell (`printenv $x`) falls back to the whole environment.
+ * to the command it runs) unless a literal `-i`,
+ * `--ignore-environment` or lone `-` proves it starts empty, a bare
+ * `set`, a bare `printenv`, and a declaring builtin with no operands
+ * (`export`, `declare -p`). `printenv NAME` and `declare -p NAME` read
+ * exactly the named variables, and a mutating form (`export NAME=v`,
+ * `declare -x NAME`, `set -u`) reads nothing here, so an unavailable
+ * source cannot fail the write that would replace its pointer. A print
+ * target no static read can spell (`printenv $x`) falls back to the
+ * whole environment.
  */
 export function envReads(node: TSNodeLike): { whole: boolean; names: ReadonlySet<string> } {
   let whole = false
@@ -618,7 +663,7 @@ export function envReads(node: TSNodeLike): { whole: boolean; names: ReadonlySet
       const nameNode = current.childForFieldName?.('name') ?? null
       const head = nameNode !== null ? nameNode.text : ''
       if (head === 'env') {
-        whole = true
+        if (!envIgnoresEnvironment(commandArgs(current))) whole = true
       } else if (head === 'set') {
         if (commandArgs(current).length === 0) whole = true
       } else if (head === 'printenv') {

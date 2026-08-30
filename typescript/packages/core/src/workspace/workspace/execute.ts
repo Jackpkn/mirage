@@ -34,7 +34,7 @@ import type { ExecuteFn } from '../expand/node.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { ExecuteNodeDeps } from '../node/execute_node.ts'
-import { lineDeniedOnText, prejudgeLine } from '../node/explain.ts'
+import { lineRefusesFetch, prejudgeLine } from '../node/explain.ts'
 import { runCommandTree } from '../node/run_tree.ts'
 import type { DriftQueue } from '../snapshot/drift.ts'
 import type { SessionManager } from '../session/manager.ts'
@@ -333,10 +333,12 @@ async function runParsedLine(
   // runtime's env snapshot reads the vars. The prejudge pass leaves
   // single-command lines to the per-command gate, so the tree branch
   // asks the same text-tier question itself (`probeText`): a line
-  // already denied on its literal words never reaches a source. A deny
-  // only the value gate can see still follows the fetch, because
-  // expansion is what consumes the values. A SecretsError folds like
-  // any failed line: the line exits 1 and never runs.
+  // already denied on its literal words never reaches a source, and a
+  // rule that asks is answered before the fetch, with the approval
+  // left for the gate to spend. A deny only the value gate can see
+  // still follows the fetch, because expansion is what consumes the
+  // values. A SecretsError folds like any failed line: the line exits
+  // 1 and never runs.
   const fillManaged = async (
     nodes: TSNodeLike[],
     whole: boolean,
@@ -348,13 +350,14 @@ async function runParsedLine(
       if (names.size > 0) {
         const doomed =
           probeText &&
-          (await lineDeniedOnText(
+          (await lineRefusesFetch(
             rootNode,
             effectiveSession,
             env.registry,
             env.namespace,
             callAgentId,
             reparse,
+            killed,
           ))
         if (!doomed) await fillEnv(effectiveSession, names)
       }

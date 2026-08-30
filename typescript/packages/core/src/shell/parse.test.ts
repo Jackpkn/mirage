@@ -354,6 +354,26 @@ describe('envReads', () => {
     // hands the snapshot to a child.
     ['env', true, []],
     ['env FOO=1 mycmd', true, []],
+    // A literal ignore-environment form proves the start is empty, so
+    // nothing existing is read.
+    ['env -i', false, []],
+    ['env -i mycmd', false, []],
+    ['env --ignore-environment mycmd', false, []],
+    ['env - mycmd', false, []],
+    ['env -0i', false, []],
+    ['env -iu X mycmd', false, []],
+    // -u consumes a value, so `-ui` unsets a variable named i and
+    // `-u -i` one named -i; both still read the whole environment.
+    ['env -ui mycmd', true, []],
+    ['env -u -i mycmd', true, []],
+    ['env -u X mycmd', true, []],
+    // The first operand ends the options, and -- ends them too.
+    ['env X=1 -i mycmd', true, []],
+    ['env -- -i mycmd', true, []],
+    // A word no static read can spell keeps the whole read; one after
+    // a proven -i changes nothing.
+    ['env $x mycmd', true, []],
+    ['env -i $x', false, []],
     ['set', true, []],
     ['set -u', false, []],
     ['set -- a b', false, []],

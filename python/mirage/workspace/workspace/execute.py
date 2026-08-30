@@ -30,7 +30,7 @@ from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
 from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.node import provision_node, run_command_tree
 from mirage.workspace.node.admission import admit_line
-from mirage.workspace.node.explain import line_denied_on_text, prejudge_line
+from mirage.workspace.node.explain import line_refuses_fetch, prejudge_line
 from mirage.workspace.session import (get_current_session_for,
                                       reset_current_session,
                                       set_current_session)
@@ -260,8 +260,10 @@ async def execute_line(
             # leaves single-command lines to the per-command gate, so
             # the fetch asks the same text-tier question itself: a line
             # already denied on its literal words never reaches a
-            # source. A deny only the value gate can see still follows
-            # the fetch, because expansion is what consumes the values.
+            # source, and a rule that asks is answered before the fetch,
+            # with the approval left for the gate to spend. A deny only
+            # the value gate can see still follows the fetch, because
+            # expansion is what consumes the values.
             nodes = line_nodes(ast, effective_session)
             names = fill_names(
                 effective_session,
@@ -270,9 +272,9 @@ async def execute_line(
                                   ws._registry.runtime_bindings),
                 cli_env_names=cli_env_names(nodes, effective_session,
                                             ws._registry))
-            if names and not await line_denied_on_text(
+            if names and not await line_refuses_fetch(
                     ast, effective_session, ws._registry, ws._namespace, agent
-                    or ""):
+                    or "", cancel):
                 await fill_env(effective_session, names)
         io, _ = await run_command_tree(
             ws.dispatch,
