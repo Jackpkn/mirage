@@ -17,10 +17,13 @@ import { createRequire } from 'node:module'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { getParts, getRedirects, getText } from './helpers.ts'
 import {
+  commandInvocations,
   commandWords,
+  envReads,
   createShellParser,
   findSyntaxError,
   findUnterminatedBacktick,
+  opaqueReads,
   referencedNames,
   stripLineContinuation,
   type ShellParser,
@@ -313,6 +316,10 @@ describe('referencedNames', () => {
     ['TOKEN=1 printenv', []],
     ['cat <<EOT\nhello $H\nEOT', ['H']],
     ['echo hi', []],
+    // A definition's body runs at invocation, not here; the fill layer
+    // joins invoked bodies back in through lineNodes.
+    ['f() { echo "$T"; }', []],
+    ['f() { echo "$T"; }; echo $U', ['U']],
   ])('%s reads %j', (command, names) => {
     const root = parser.parse(command) as unknown as TSNodeLike
     expect(referencedNames(root)).toEqual(new Set(names))
@@ -332,8 +339,86 @@ describe('commandWords', () => {
     ['unset X', ['unset']],
     ['set', ['set']],
     ['x=1', []],
+    // A definition's body runs at invocation; only the call is a
+    // command word here.
+    ['f() { python3 x.py; }; f', ['f']],
   ])('%s speaks %j', (command, words) => {
     const root = parser.parse(command) as unknown as TSNodeLike
     expect(commandWords(root)).toEqual(new Set(words))
+  })
+})
+
+describe('envReads', () => {
+  it.each<[string, boolean, string[]]>([
+    // env renders on any invocation: bare it prints, with a command it
+    // hands the snapshot to a child.
+    ['env', true, []],
+    ['env FOO=1 mycmd', true, []],
+    ['set', true, []],
+    ['set -u', false, []],
+    ['set -- a b', false, []],
+    ['printenv', true, []],
+    ['printenv -0', true, []],
+    ['printenv PATH TOKEN', false, ['PATH', 'TOKEN']],
+    // A print target only the runtime can spell selects everything.
+    ['printenv $x', true, []],
+    ['export', true, []],
+    ['export -p', true, []],
+    ['export -p TOKEN', false, ['TOKEN']],
+    // Mutating forms read nothing: the write must not depend on a
+    // source being alive.
+    ['export TOKEN=local', false, []],
+    ['export TOKEN', false, []],
+    ['declare', true, []],
+    ['declare -p A B', false, ['A', 'B']],
+    ['declare -x OTHER=1', false, []],
+    // readonly and local print sets a managed entry can never be in.
+    ['readonly', false, []],
+    ['echo hi', false, []],
+    // Inside a substitution counts; inside a definition does not.
+    ['x=$(env)', true, []],
+    ['f() { env; }', false, []],
+  ])('%s renders whole=%s names=%j', (command, whole, names) => {
+    const root = parser.parse(command) as unknown as TSNodeLike
+    const reads = envReads(root)
+    expect(reads.whole).toBe(whole)
+    expect(reads.names).toEqual(new Set(names))
+  })
+})
+
+describe('opaqueReads', () => {
+  it.each<[string, boolean]>([
+    ['echo ${!name}', true],
+    ['echo ${!prefix@}', true],
+    ['echo ${#name}', false],
+    ['echo ${name:-d}', false],
+    ['declare -n r=TOKEN', true],
+    ['local -n r=TOKEN', true],
+    ['typeset -n r=TOKEN', true],
+    // -n means unexport / unset-the-ref there, not a nameref.
+    ['export -n X', false],
+    ['unset -n r', false],
+    ['echo $T', false],
+    // A definition's body is not read at definition time.
+    ['f() { echo ${!name}; }', false],
+  ])('%s opaque=%s', (command, opaque) => {
+    const root = parser.parse(command) as unknown as TSNodeLike
+    expect(opaqueReads(root)).toBe(opaque)
+  })
+})
+
+describe('commandInvocations', () => {
+  it.each<[string, [string, (string | null)[]][]]>([
+    ['ntn api get PAGE', [['ntn', ['api', 'get', 'PAGE']]]],
+    // A dynamic word arrives as null, distinguishable from absent.
+    ['slack msg send --to $u', [['slack', ['msg', 'send', '--to', null]]]],
+    ['A=1 mycli run', [['mycli', ['run']]]],
+    ['mycli \'lit arg\' "plain"', [['mycli', ['lit arg', 'plain']]]],
+    ['mycli run > out.txt', [['mycli', ['run']]]],
+    ['export X=1', []],
+    ['f() { inner verb; }', []],
+  ])('%s invokes %j', (command, invocations) => {
+    const root = parser.parse(command) as unknown as TSNodeLike
+    expect(commandInvocations(root)).toEqual(invocations)
   })
 })

@@ -54,6 +54,34 @@ export function envNames(node: CLISpec): ReadonlySet<string> {
 }
 
 /**
+ * Env names on the verb paths the line's words could select.
+ *
+ * The words prune the tree: a subcommand joins only when some word
+ * spells its name or an alias, recursively, so a bare head reads the
+ * root's env names and `ntn api get` adds exactly the api and get
+ * nodes. A word doubling as an operand over-selects, which costs one
+ * fetch; a verb can never hide, because dispatch only runs a verb the
+ * line spells. Null means a word no static read can spell (an
+ * expansion), where the whole tree is the only safe answer.
+ */
+export function invokedEnvNames(
+  spec: CLISpec,
+  words: ReadonlySet<string> | null,
+): ReadonlySet<string> {
+  if (words === null) return envNames(spec)
+  const out = new Set<string>()
+  for (const opt of spec.options) {
+    if (opt.env !== null) out.add(opt.env)
+  }
+  for (const child of spec.subcommands) {
+    if (words.has(child.name) || child.aliases.some((alias) => words.has(alias))) {
+      for (const name of invokedEnvNames(child, words)) out.add(name)
+    }
+  }
+  return out
+}
+
+/**
  * Descend a tree by verb words, null if a word names no subcommand.
  *
  * Returns the node and its canonical path, so an alias renders under the

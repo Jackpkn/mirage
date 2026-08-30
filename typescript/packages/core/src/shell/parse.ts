@@ -444,6 +444,7 @@ function sameNode(a: TSNodeLike, b: TSNodeLike): boolean {
 }
 
 function collectNames(node: TSNodeLike, out: Set<string>): void {
+  if (node.type === 'function_definition') return
   if (node.type === 'variable_name') {
     if (node.text !== '') out.add(node.text)
     return
@@ -463,15 +464,33 @@ function collectNames(node: TSNodeLike, out: Set<string>): void {
 }
 
 /**
- * Every variable name a parsed program may read.
+ * Named nodes, skipping function_definition subtrees.
+ *
+ * A definition's body runs at invocation, not where it is defined, so
+ * a read walk that descended into one would charge the defining line
+ * for reads it never performs. The fill layer joins invoked bodies
+ * back in through its own node set (`lineNodes`).
+ */
+function* walkNamedOutsideDefs(node: TSNodeLike): Generator<TSNodeLike> {
+  if (node.type === 'function_definition') return
+  yield node
+  for (const child of node.namedChildren) {
+    yield* walkNamedOutsideDefs(child)
+  }
+}
+
+/**
+ * Every variable name a parsed program may read when it runs.
  *
  * A textual over-approximation over the whole tree, which is safe by
  * construction: the worst a spurious name costs is one fetch. Walked
  * everywhere -- command substitution bodies, redirect targets, heredoc
  * bodies, arithmetic -- with two exceptions that are writes, not reads
- * (an assignment's own name, a for loop's variable), and one the
- * grammar gives for free: a single-quoted string tokenizes as
- * `raw_string` with no children, so `'$X'` never reads X.
+ * (an assignment's own name, a for loop's variable), one that runs
+ * later rather than now (a function definition's body, which the fill
+ * layer joins back in at invocation), and one the grammar gives for
+ * free: a single-quoted string tokenizes as `raw_string` with no
+ * children, so `'$X'` never reads X.
  */
 export function referencedNames(node: TSNodeLike): ReadonlySet<string> {
   const out = new Set<string>()
@@ -480,27 +499,200 @@ export function referencedNames(node: TSNodeLike): ReadonlySet<string> {
 }
 
 /**
- * The first word of every command in a parsed program.
+ * The first word of every command a parsed program runs.
  *
- * What the whole-env table and the CLI env-name lookup key on.
+ * What the whole-env scan and the CLI env-name lookup key on.
  * `command_name` covers ordinary commands wherever they sit; the
  * declaring builtins (`export`, `declare`, `local`, `readonly`,
  * `unset`) parse as their own node types whose head word is the first
- * anonymous token, so those are read directly.
+ * anonymous token, so those are read directly. A function definition's
+ * body is skipped: those commands run at invocation, where the fill
+ * layer walks the stored body instead.
  */
 export function commandWords(node: TSNodeLike): ReadonlySet<string> {
   const out = new Set<string>()
-  const stack: TSNodeLike[] = [node]
-  for (;;) {
-    const current = stack.pop()
-    if (current === undefined) break
+  for (const current of walkNamedOutsideDefs(node)) {
     if (current.type === 'command_name') {
       if (current.text !== '') out.add(current.text)
     } else if (DECLARING_NODES.has(current.type)) {
       const head = current.children[0]
       if (head !== undefined && head.text !== '') out.add(head.text)
     }
-    stack.push(...current.namedChildren)
+  }
+  return out
+}
+
+// The declaring builtins whose bare invocation prints the environment
+// (`export`, `export -p`, `declare`); `local` prints only a function's
+// locals and `readonly` only the read-only set, neither of which a
+// managed entry can be.
+const DECL_PRINTER_HEADS: ReadonlySet<string> = new Set(['export', 'declare', 'typeset'])
+
+// The declaring builtins whose `-n` makes the operand a nameref.
+// `export -n` and `unset -n` mean other things and are not these.
+const NAMEREF_HEADS: ReadonlySet<string> = new Set(['declare', 'typeset', 'local'])
+
+/**
+ * The argument's text when the parser fixed it, else null.
+ *
+ * A plain word, a number, a raw string and a double-quoted string of
+ * plain content each spell one literal; anything carrying an expansion
+ * or a substitution is dynamic and reads as null.
+ */
+function literalText(node: TSNodeLike): string | null {
+  if (node.type === 'word' || node.type === 'number') {
+    return node.text !== '' ? node.text : null
+  }
+  if (node.type === 'raw_string') {
+    return node.text.slice(1, -1)
+  }
+  if (node.type === 'string') {
+    const named = node.namedChildren
+    if (named.length === 0) return ''
+    const only = named[0]
+    if (named.length === 1 && only?.type === 'string_content') {
+      return only.text
+    }
+  }
+  return null
+}
+
+interface DeclarationParts {
+  head: string
+  flags: string[]
+  operands: TSNodeLike[]
+}
+
+function declarationParts(node: TSNodeLike): DeclarationParts {
+  const first = node.children[0]
+  const head = first !== undefined ? first.text : ''
+  const flags: string[] = []
+  const operands: TSNodeLike[] = []
+  for (const child of node.children.slice(1)) {
+    if (child.type === 'word') {
+      if (child.text.startsWith('-')) flags.push(child.text)
+      else operands.push(child)
+    } else if (child.isNamed === true || node.namedChildren.some((n) => sameNode(n, child))) {
+      operands.push(child)
+    }
+  }
+  return { head, flags, operands }
+}
+
+function flagHas(flags: string[], letter: string): boolean {
+  return flags.some(
+    (flag) => flag.startsWith('-') && !flag.startsWith('--') && flag.slice(1).includes(letter),
+  )
+}
+
+function commandArgs(node: TSNodeLike): TSNodeLike[] {
+  const nameNode = node.childForFieldName?.('name') ?? null
+  return node.namedChildren.filter(
+    (child) =>
+      (nameNode === null || !sameNode(child, nameNode)) &&
+      child.type !== 'variable_assignment' &&
+      !child.type.endsWith('_redirect'),
+  )
+}
+
+/**
+ * How the line's environment-rendering commands read names.
+ *
+ * Returns `{whole, names}`: whether some command renders the whole
+ * environment, and the names printing forms read explicitly. Only a
+ * printing form selects everything: `env` on any invocation (bare it
+ * prints every exported name, and with arguments it hands the snapshot
+ * to the command it runs), a bare `set`, a bare `printenv`, and a
+ * declaring builtin with no operands (`export`, `declare -p`).
+ * `printenv NAME` and `declare -p NAME` read exactly the named
+ * variables, and a mutating form (`export NAME=v`, `declare -x NAME`,
+ * `set -u`) reads nothing here, so an unavailable source cannot fail
+ * the write that would replace its pointer. A print target no static
+ * read can spell (`printenv $x`) falls back to the whole environment.
+ */
+export function envReads(node: TSNodeLike): { whole: boolean; names: ReadonlySet<string> } {
+  let whole = false
+  const names = new Set<string>()
+  for (const current of walkNamedOutsideDefs(node)) {
+    if (current.type === 'command') {
+      const nameNode = current.childForFieldName?.('name') ?? null
+      const head = nameNode !== null ? nameNode.text : ''
+      if (head === 'env') {
+        whole = true
+      } else if (head === 'set') {
+        if (commandArgs(current).length === 0) whole = true
+      } else if (head === 'printenv') {
+        let readAny = false
+        for (const child of commandArgs(current)) {
+          const literal = literalText(child)
+          if (literal === null) {
+            whole = true
+            readAny = true
+          } else if (!literal.startsWith('-')) {
+            names.add(literal)
+            readAny = true
+          }
+        }
+        if (!readAny) whole = true
+      }
+    } else if (current.type === 'declaration_command') {
+      const { head, flags, operands } = declarationParts(current)
+      if (!DECL_PRINTER_HEADS.has(head)) continue
+      if (operands.length === 0) {
+        whole = true
+      } else if (flagHas(flags, 'p')) {
+        for (const operand of operands) {
+          if (operand.type === 'variable_name') {
+            if (operand.text !== '') names.add(operand.text)
+          } else if (operand.type !== 'variable_assignment') {
+            whole = true
+          }
+        }
+      }
+    }
+  }
+  return { whole, names }
+}
+
+/**
+ * Whether the line reads names no static walk can spell.
+ *
+ * Two constructs defeat `referencedNames`: an indirect expansion
+ * (`${!name}` reads the variable the *value* of `name` names, and the
+ * `${!p*}`/`${!p@}` forms enumerate by prefix), and a nameref declared
+ * on the line itself (`declare -n r=T; echo $r` reads T before any
+ * session record says so). A nameref from an earlier line is not
+ * opaque: the session records its target, which `deref` resolves.
+ */
+export function opaqueReads(node: TSNodeLike): boolean {
+  for (const current of walkNamedOutsideDefs(node)) {
+    if (current.type === 'expansion' && current.children.some((c) => c.type === '!')) {
+      return true
+    }
+    if (current.type === 'declaration_command') {
+      const { head, flags } = declarationParts(current)
+      if (NAMEREF_HEADS.has(head) && flagHas(flags, 'n')) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Every plain command's head word with its argument words.
+ *
+ * Arguments are reported as their literal text, or null for a word no
+ * static read can spell (an expansion, a substitution), so a caller
+ * matching verbs (the CLI env-name pruning) can tell "this word is not
+ * there" from "this word is unknowable". Assignment prefixes and
+ * redirects are not arguments.
+ */
+export function commandInvocations(node: TSNodeLike): [string, (string | null)[]][] {
+  const out: [string, (string | null)[]][] = []
+  for (const current of walkNamedOutsideDefs(node)) {
+    if (current.type !== 'command') continue
+    const nameNode = current.childForFieldName?.('name') ?? null
+    if (nameNode === null || nameNode.text === '') continue
+    out.push([nameNode.text, commandArgs(current).map(literalText)])
   }
   return out
 }

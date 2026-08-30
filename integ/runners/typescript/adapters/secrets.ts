@@ -82,6 +82,8 @@ export function buildSecretsEnv(kind: string): {
     LAZY_PAIR: { from: 'counter', ref: 'pair', key: 'user' },
     FROM_ENV: { from: 'env', key: 'MIRAGE_INTEG_ENV_SECRET' },
     FROM_DOTFILE: { from: 'dotenv', ref: dotfile, key: 'DOTFILE_SECRET' },
+    FN_TOKEN: { from: 'counter', ref: 'fn', key: 'token' },
+    IND_TOKEN: { from: 'counter', ref: 'ind', key: 'token' },
   }
   return { env, cleanup }
 }

@@ -20,8 +20,9 @@ from mirage.shell.helpers import (get_command_name, get_for_parts,
                                   get_if_branches, get_list_parts, get_parts,
                                   get_pipeline_commands, get_redirects,
                                   get_text, get_while_parts)
-from mirage.shell.parse import (command_words, find_syntax_error,
-                                find_unterminated_backtick, referenced_names,
+from mirage.shell.parse import (command_invocations, command_words, env_reads,
+                                find_syntax_error, find_unterminated_backtick,
+                                opaque_reads, referenced_names,
                                 strip_line_continuation)
 from mirage.shell.types import NodeType as NT
 
@@ -428,6 +429,10 @@ def test_literal_dollar_words_stay_untouched(command, words):
         ("TOKEN=1 printenv", set()),
         ("cat <<EOF\nhello $H\nEOF", {"H"}),
         ("echo hi", set()),
+        # A definition's body runs at invocation, not here; the fill
+        # layer joins invoked bodies back in through line_nodes.
+        ('f() { echo "$T"; }', set()),
+        ('f() { echo "$T"; }; echo $U', {"U"}),
     ])
 def test_referenced_names(command, names):
     assert referenced_names(parse(command)) == frozenset(names)
@@ -447,6 +452,84 @@ def test_referenced_names(command, names):
         ("unset X", {"unset"}),
         ("set", {"set"}),
         ("x=1", set()),
+        # A definition's body runs at invocation; only the call is a
+        # command word here.
+        ("f() { python3 x.py; }; f", {"f"}),
     ])
 def test_command_words(command, words):
     assert command_words(parse(command)) == frozenset(words)
+
+
+@pytest.mark.parametrize(
+    ("command", "whole", "names"),
+    [
+        # env renders on any invocation: bare it prints, with a command
+        # it hands the snapshot to a child.
+        ("env", True, set()),
+        ("env FOO=1 mycmd", True, set()),
+        ("set", True, set()),
+        ("set -u", False, set()),
+        ("set -- a b", False, set()),
+        ("printenv", True, set()),
+        ("printenv -0", True, set()),
+        ("printenv PATH TOKEN", False, {"PATH", "TOKEN"}),
+        # A print target only the runtime can spell selects everything.
+        ("printenv $x", True, set()),
+        ("export", True, set()),
+        ("export -p", True, set()),
+        ("export -p TOKEN", False, {"TOKEN"}),
+        # Mutating forms read nothing: the write must not depend on a
+        # source being alive.
+        ("export TOKEN=local", False, set()),
+        ("export TOKEN", False, set()),
+        ("declare", True, set()),
+        ("declare -p A B", False, {"A", "B"}),
+        ("declare -x OTHER=1", False, set()),
+        # readonly and local print sets a managed entry can never be in.
+        ("readonly", False, set()),
+        ("echo hi", False, set()),
+        # Inside a substitution counts; inside a definition does not.
+        ("x=$(env)", True, set()),
+        ("f() { env; }", False, set()),
+    ])
+def test_env_reads(command, whole, names):
+    got_whole, got_names = env_reads(parse(command))
+    assert (got_whole, got_names) == (whole, frozenset(names))
+
+
+@pytest.mark.parametrize(
+    ("command", "opaque"),
+    [
+        ("echo ${!name}", True),
+        ("echo ${!prefix@}", True),
+        ("echo ${#name}", False),
+        ("echo ${name:-d}", False),
+        ("declare -n r=TOKEN", True),
+        ("local -n r=TOKEN", True),
+        ("typeset -n r=TOKEN", True),
+        # -n means unexport / unset-the-ref there, not a nameref.
+        ("export -n X", False),
+        ("unset -n r", False),
+        ("echo $T", False),
+        # A definition's body is not read at definition time.
+        ("f() { echo ${!name}; }", False),
+    ])
+def test_opaque_reads(command, opaque):
+    assert opaque_reads(parse(command)) == opaque
+
+
+@pytest.mark.parametrize(
+    ("command", "invocations"),
+    [
+        ("ntn api get PAGE", (("ntn", ("api", "get", "PAGE")), )),
+        # A dynamic word arrives as None, distinguishable from absent.
+        ("slack msg send --to $u", (("slack",
+                                     ("msg", "send", "--to", None)), )),
+        ("A=1 mycli run", (("mycli", ("run", )), )),
+        ("mycli 'lit arg' \"plain\"", (("mycli", ("lit arg", "plain")), )),
+        ("mycli run > out.txt", (("mycli", ("run", )), )),
+        ("export X=1", ()),
+        ("f() { inner verb; }", ()),
+    ])
+def test_command_invocations(command, invocations):
+    assert command_invocations(parse(command)) == invocations

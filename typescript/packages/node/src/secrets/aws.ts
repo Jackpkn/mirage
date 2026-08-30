@@ -56,9 +56,8 @@ export async function fetchAwsSm(config: AWSSMConfig, ref: string): Promise<Reso
   if (ref === '') {
     throw new SecretsError("the 'aws-sm' source needs a ref: the SecretId (name or ARN)")
   }
-  const { SecretsManagerClient, GetSecretValueCommand } = await import(
-    '@aws-sdk/client-secrets-manager'
-  )
+  const { SecretsManagerClient, GetSecretValueCommand } =
+    await import('@aws-sdk/client-secrets-manager')
   const client = new SecretsManagerClient({
     ...(config.region !== undefined ? { region: config.region } : {}),
     ...(config.awsProfile !== undefined ? { profile: config.awsProfile } : {}),

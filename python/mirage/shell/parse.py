@@ -451,6 +451,8 @@ _DECLARING_NODES = frozenset({"declaration_command", "unset_command"})
 
 
 def _collect_names(node: tree_sitter.Node, out: set[str]) -> None:
+    if node.type == "function_definition":
+        return
     if node.type == "variable_name":
         text = node.text
         if text:
@@ -469,15 +471,35 @@ def _collect_names(node: tree_sitter.Node, out: set[str]) -> None:
         _collect_names(child, out)
 
 
+def _walk_named_outside_defs(node: tree_sitter.Node):
+    """Named nodes, skipping function_definition subtrees.
+
+    A definition's body runs at invocation, not where it is defined,
+    so a read walk that descended into one would charge the defining
+    line for reads it never performs. The fill layer joins invoked
+    bodies back in through its own node set (``line_nodes``).
+
+    Args:
+        node (tree_sitter.Node): subtree root.
+    """
+    if node.type == "function_definition":
+        return
+    yield node
+    for child in node.named_children:
+        yield from _walk_named_outside_defs(child)
+
+
 def referenced_names(node: tree_sitter.Node) -> frozenset[str]:
-    """Every variable name a parsed program may read.
+    """Every variable name a parsed program may read when it runs.
 
     A textual over-approximation over the whole tree, which is safe by
     construction: the worst a spurious name costs is one fetch. Walked
     everywhere -- command substitution bodies, redirect targets,
     heredoc bodies, arithmetic -- with two exceptions that are writes,
-    not reads (an assignment's own name, a for loop's variable), and
-    one the grammar gives for free: a single-quoted string tokenizes as
+    not reads (an assignment's own name, a for loop's variable), one
+    that runs later rather than now (a function definition's body,
+    which the fill layer joins back in at invocation), and one the
+    grammar gives for free: a single-quoted string tokenizes as
     `raw_string` with no children, so `'$X'` never reads X.
 
     Args:
@@ -489,19 +511,21 @@ def referenced_names(node: tree_sitter.Node) -> frozenset[str]:
 
 
 def command_words(node: tree_sitter.Node) -> frozenset[str]:
-    """The first word of every command in a parsed program.
+    """The first word of every command a parsed program runs.
 
-    What the whole-env table and the CLI env-name lookup key on.
+    What the whole-env scan and the CLI env-name lookup key on.
     `command_name` covers ordinary commands wherever they sit; the
     declaring builtins (`export`, `declare`, `local`, `readonly`,
     `unset`) parse as their own node types whose head word is the
-    first anonymous token, so those are read directly.
+    first anonymous token, so those are read directly. A function
+    definition's body is skipped: those commands run at invocation,
+    where the fill layer walks the stored body instead.
 
     Args:
         node (tree_sitter.Node): root node from parse().
     """
     out: set[str] = set()
-    for n in _walk_named(node):
+    for n in _walk_named_outside_defs(node):
         if n.type == "command_name":
             text = n.text
             if text:
@@ -511,3 +535,204 @@ def command_words(node: tree_sitter.Node) -> frozenset[str]:
             if text:
                 out.add(text.decode())
     return frozenset(out)
+
+
+# The declaring builtins whose bare invocation prints the environment
+# (`export`, `export -p`, `declare`); `local` prints only a function's
+# locals and `readonly` only the read-only set, neither of which a
+# managed entry can be.
+_DECL_PRINTER_HEADS = frozenset({"export", "declare", "typeset"})
+
+# The declaring builtins whose `-n` makes the operand a nameref.
+# `export -n` and `unset -n` mean other things and are not these.
+_NAMEREF_HEADS = frozenset({"declare", "typeset", "local"})
+
+
+def _literal_text(node: tree_sitter.Node) -> str | None:
+    """The argument's text when the parser fixed it, else None.
+
+    A plain word, a number, a raw string and a double-quoted string of
+    plain content each spell one literal; anything carrying an
+    expansion or a substitution is dynamic and reads as None.
+
+    Args:
+        node (tree_sitter.Node): an argument node of a command.
+    """
+    if node.type in ("word", "number"):
+        text = node.text
+        return text.decode() if text else None
+    if node.type == "raw_string":
+        text = node.text
+        return text.decode()[1:-1] if text else None
+    if node.type == "string":
+        named = node.named_children
+        if not named:
+            return ""
+        if len(named) == 1 and named[0].type == "string_content":
+            text = named[0].text
+            return text.decode() if text else ""
+    return None
+
+
+def _declaration_parts(
+        node: tree_sitter.Node
+) -> tuple[str, list[str], list[tree_sitter.Node]]:
+    """Split a declaration_command into head word, flag words, operands.
+
+    Args:
+        node (tree_sitter.Node): a ``declaration_command`` node.
+    """
+    head = ""
+    if node.children:
+        text = node.children[0].text
+        head = text.decode() if text else ""
+    flags: list[str] = []
+    operands: list[tree_sitter.Node] = []
+    for child in node.children[1:]:
+        if child.type == "word":
+            text = child.text
+            word = text.decode() if text else ""
+            if word.startswith("-"):
+                flags.append(word)
+            else:
+                operands.append(child)
+        elif child.is_named:
+            operands.append(child)
+    return head, flags, operands
+
+
+def _flag_has(flags: list[str], letter: str) -> bool:
+    """Whether a single-dash flag word carries the letter.
+
+    Args:
+        flags (list[str]): flag words as typed (``-p``, ``-nr``).
+        letter (str): the option letter looked for.
+    """
+    return any(
+        flag.startswith("-") and not flag.startswith("--")
+        and letter in flag[1:] for flag in flags)
+
+
+def _command_args(node: tree_sitter.Node) -> list[tree_sitter.Node]:
+    """A command node's argument children: no name, prefixes, redirects.
+
+    Args:
+        node (tree_sitter.Node): a ``command`` node.
+    """
+    name_node = node.child_by_field_name("name")
+    return [
+        child for child in node.named_children
+        if (name_node is None or child.id != name_node.id) and child.type !=
+        "variable_assignment" and not child.type.endswith("_redirect")
+    ]
+
+
+def env_reads(node: tree_sitter.Node) -> tuple[bool, frozenset[str]]:
+    """How the line's environment-rendering commands read names.
+
+    Returns ``(whole, names)``: whether some command renders the whole
+    environment, and the names printing forms read explicitly. Only a
+    printing form selects everything: ``env`` on any invocation (bare
+    it prints every exported name, and with arguments it hands the
+    snapshot to the command it runs), a bare ``set``, a bare
+    ``printenv``, and a declaring builtin with no operands (``export``,
+    ``declare -p``). ``printenv NAME`` and ``declare -p NAME`` read
+    exactly the named variables, and a mutating form (``export
+    NAME=v``, ``declare -x NAME``, ``set -u``) reads nothing here, so
+    an unavailable source cannot fail the write that would replace its
+    pointer. A print target no static read can spell (``printenv $x``)
+    falls back to the whole environment.
+
+    Args:
+        node (tree_sitter.Node): root node from parse().
+    """
+    whole = False
+    names: set[str] = set()
+    for n in _walk_named_outside_defs(node):
+        if n.type == "command":
+            name_node = n.child_by_field_name("name")
+            text = name_node.text if name_node is not None else None
+            head = text.decode() if text else ""
+            if head == "env":
+                whole = True
+            elif head == "set":
+                if not _command_args(n):
+                    whole = True
+            elif head == "printenv":
+                read_any = False
+                for child in _command_args(n):
+                    literal = _literal_text(child)
+                    if literal is None:
+                        whole = True
+                        read_any = True
+                    elif not literal.startswith("-"):
+                        names.add(literal)
+                        read_any = True
+                if not read_any:
+                    whole = True
+        elif n.type == "declaration_command":
+            head, flags, operands = _declaration_parts(n)
+            if head not in _DECL_PRINTER_HEADS:
+                continue
+            if not operands:
+                whole = True
+            elif _flag_has(flags, "p"):
+                for operand in operands:
+                    if operand.type == "variable_name":
+                        text = operand.text
+                        if text:
+                            names.add(text.decode())
+                    elif operand.type != "variable_assignment":
+                        whole = True
+    return whole, frozenset(names)
+
+
+def opaque_reads(node: tree_sitter.Node) -> bool:
+    """Whether the line reads names no static walk can spell.
+
+    Two constructs defeat ``referenced_names``: an indirect expansion
+    (``${!name}`` reads the variable the *value* of ``name`` names, and
+    the ``${!p*}``/``${!p@}`` forms enumerate by prefix), and a nameref
+    declared on the line itself (``declare -n r=T; echo $r`` reads T
+    before any session record says so). A nameref from an earlier line
+    is not opaque: the session records its target, which ``deref``
+    resolves.
+
+    Args:
+        node (tree_sitter.Node): root node from parse().
+    """
+    for n in _walk_named_outside_defs(node):
+        if n.type == "expansion" and any(c.type == "!" for c in n.children):
+            return True
+        if n.type == "declaration_command":
+            head, flags, _ = _declaration_parts(n)
+            if head in _NAMEREF_HEADS and _flag_has(flags, "n"):
+                return True
+    return False
+
+
+def command_invocations(
+        node: tree_sitter.Node
+) -> tuple[tuple[str, tuple[str | None, ...]], ...]:
+    """Every plain command's head word with its argument words.
+
+    Arguments are reported as their literal text, or None for a word no
+    static read can spell (an expansion, a substitution), so a caller
+    matching verbs (the CLI env-name pruning) can tell "this word is
+    not there" from "this word is unknowable". Assignment prefixes and
+    redirects are not arguments.
+
+    Args:
+        node (tree_sitter.Node): root node from parse().
+    """
+    out: list[tuple[str, tuple[str | None, ...]]] = []
+    for n in _walk_named_outside_defs(node):
+        if n.type != "command":
+            continue
+        name_node = n.child_by_field_name("name")
+        text = name_node.text if name_node is not None else None
+        if not text:
+            continue
+        args = tuple(_literal_text(child) for child in _command_args(n))
+        out.append((text.decode(), args))
+    return tuple(out)

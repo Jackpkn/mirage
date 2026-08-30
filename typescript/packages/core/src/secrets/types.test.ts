@@ -51,9 +51,7 @@ describe('EnvVarSchema', () => {
 
   it('refuses managed knobs on a literal entry', () => {
     expect(() => EnvVarSchema.parse({ value: 'v', key: 'k' })).toThrowError(/managed entries/)
-    expect(() => EnvVarSchema.parse({ value: 'v', fetch: 'eager' })).toThrowError(
-      /managed entries/,
-    )
+    expect(() => EnvVarSchema.parse({ value: 'v', fetch: 'eager' })).toThrowError(/managed entries/)
   })
 
   it('rejects an unknown key', () => {

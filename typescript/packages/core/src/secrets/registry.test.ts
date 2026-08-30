@@ -24,9 +24,8 @@ type VaultConfig = z.infer<typeof VaultConfig>
 
 describe('secrets registry', () => {
   it('resolves a custom registration', () => {
-    const fetch = async (_config: VaultConfig, _ref: string): Promise<ResolvedSecret> => ({
-      fields: { token: 't' },
-    })
+    const fetch = (_config: VaultConfig, _ref: string): Promise<ResolvedSecret> =>
+      Promise.resolve({ fields: { token: 't' } })
     registerSecrets('vault-resolves', VaultConfig, fetch)
     const entry = sourceFor('vault-resolves')
     expect(entry.configModel).toBe(VaultConfig)
@@ -34,32 +33,32 @@ describe('secrets registry', () => {
   })
 
   it('re-registering a name replaces it', () => {
-    const first = async (): Promise<ResolvedSecret> => ({ fields: {} })
-    const second = async (): Promise<ResolvedSecret> => ({ fields: { a: '1' } })
+    const first = (): Promise<ResolvedSecret> => Promise.resolve({ fields: {} })
+    const second = (): Promise<ResolvedSecret> => Promise.resolve({ fields: { a: '1' } })
     registerSecrets('vault-replaces', VaultConfig, first)
     registerSecrets('vault-replaces', VaultConfig, second)
     expect(sourceFor('vault-replaces').fetch).toBe(second)
   })
 
   it('an unknown source throws naming the known ones', () => {
-    registerSecrets('vault-known', VaultConfig, async () => ({ fields: {} }))
+    registerSecrets('vault-known', VaultConfig, () => Promise.resolve({ fields: {} }))
     expect(() => sourceFor('nope')).toThrowError(SecretsError)
     expect(() => sourceFor('nope')).toThrowError(/nope/)
     expect(() => sourceFor('nope')).toThrowError(/vault-known/)
   })
 
   it('knownSources sorts every registered name', () => {
-    registerSecrets('zz-last', VaultConfig, async () => ({ fields: {} }))
-    registerSecrets('aa-first', VaultConfig, async () => ({ fields: {} }))
+    registerSecrets('zz-last', VaultConfig, () => Promise.resolve({ fields: {} }))
+    registerSecrets('aa-first', VaultConfig, () => Promise.resolve({ fields: {} }))
     const known = knownSources()
     expect(known.indexOf('aa-first')).toBeLessThan(known.indexOf('zz-last'))
   })
 
   it('fetchSecret constructs the config from ambient defaults', async () => {
     const seen: VaultConfig[] = []
-    registerSecrets('vault-fetch', VaultConfig, async (config, ref) => {
+    registerSecrets('vault-fetch', VaultConfig, (config, ref) => {
       seen.push(config)
-      return { fields: { token: `t-${ref}` } }
+      return Promise.resolve({ fields: { token: `t-${ref}` } })
     })
     const secret = await fetchSecret('vault-fetch', 'prod')
     expect(secret.fields).toEqual({ token: 't-prod' })

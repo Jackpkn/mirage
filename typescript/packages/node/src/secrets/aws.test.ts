@@ -23,9 +23,10 @@ interface FakeState {
   configs: Record<string, unknown>[]
   secretIds: string[]
   answer: { SecretString?: string }
+  destroyed: number
 }
 
-const state: FakeState = { configs: [], secretIds: [], answer: {} }
+const state: FakeState = { configs: [], secretIds: [], answer: {}, destroyed: 0 }
 
 vi.mock('@aws-sdk/client-secrets-manager', () => {
   class GetSecretValueCommand {
@@ -42,7 +43,9 @@ vi.mock('@aws-sdk/client-secrets-manager', () => {
       state.secretIds.push(command.input.SecretId)
       return Promise.resolve(state.answer)
     }
-    destroy(): void {}
+    destroy(): void {
+      state.destroyed += 1
+    }
   }
   return { GetSecretValueCommand, SecretsManagerClient }
 })
@@ -67,10 +70,12 @@ describe('fetchAwsSm', () => {
 
   it('passes the ref as SecretId and shapes the SecretString', async () => {
     state.answer = { SecretString: '{"api":"k1"}' }
+    const before = state.destroyed
     const secret = await fetchAwsSm(AWSSMConfig.parse({ region: 'us-east-1' }), 'prod/tokens')
     expect(secret.fields).toEqual({ api: 'k1' })
     expect(state.secretIds.at(-1)).toBe('prod/tokens')
     expect(state.configs.at(-1)).toEqual({ region: 'us-east-1' })
+    expect(state.destroyed).toBe(before + 1)
   })
 
   it('carries explicit credentials into the client', async () => {

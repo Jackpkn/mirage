@@ -23,15 +23,17 @@ import type { EnvConfig } from './config.ts'
  * `ref` must be empty (the process env has no sub-address); a managed
  * entry's `key` selects the variable to read.
  */
-export async function fetchEnv(_config: EnvConfig, ref: string): Promise<ResolvedSecret> {
+export function fetchEnv(_config: EnvConfig, ref: string): Promise<ResolvedSecret> {
   if (ref !== '') {
-    throw new SecretsError(
-      `the 'env' source takes no ref (the process env has no sub-address), got '${ref}'`,
+    return Promise.reject(
+      new SecretsError(
+        `the 'env' source takes no ref (the process env has no sub-address), got '${ref}'`,
+      ),
     )
   }
   const fields: Record<string, string> = {}
   for (const [name, value] of Object.entries(process.env)) {
     if (typeof value === 'string') fields[name] = value
   }
-  return { fields }
+  return Promise.resolve({ fields })
 }

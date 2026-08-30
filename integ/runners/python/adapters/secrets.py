@@ -123,5 +123,15 @@ def build_secrets_env(
             "ref": dotfile.name,
             "key": "DOTFILE_SECRET"
         },
+        "FN_TOKEN": {
+            "from": "counter",
+            "ref": "fn",
+            "key": "token"
+        },
+        "IND_TOKEN": {
+            "from": "counter",
+            "ref": "ind",
+            "key": "token"
+        },
     }
     return env, cleanup

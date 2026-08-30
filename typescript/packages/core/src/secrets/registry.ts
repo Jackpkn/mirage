@@ -14,6 +14,7 @@
 
 import type { z } from 'zod'
 
+import { compareCodePoints } from '../utils/sort.ts'
 import { SecretsError } from './errors.ts'
 import type { ResolvedSecret, SecretFetchFn } from './types.ts'
 
@@ -49,7 +50,7 @@ export function registerSecrets<C>(
 
 /** Every name `sourceFor` can resolve. */
 export function knownSources(): string[] {
-  return [...REGISTERED.keys()].sort()
+  return [...REGISTERED.keys()].sort(compareCodePoints)
 }
 
 /**
@@ -62,7 +63,9 @@ export function knownSources(): string[] {
 export function sourceFor(name: string): SourceEntry {
   const entry = REGISTERED.get(name)
   if (entry === undefined) {
-    throw new SecretsError(`unknown secrets source '${name}'; known: [${knownSources().join(', ')}]`)
+    throw new SecretsError(
+      `unknown secrets source '${name}'; known: [${knownSources().join(', ')}]`,
+    )
   }
   return entry
 }

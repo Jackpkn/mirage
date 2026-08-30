@@ -408,6 +408,49 @@ export async function prejudgeLine(
 }
 
 /**
+ * Whether some fully-literal command of the line is already denied on
+ * its text, so the line cannot run whatever expansion produces.
+ *
+ * The env-plane fill asks this before fetching: a fetch serves a
+ * command that is going to run, and a command whose every word is
+ * literal is judged here on exactly the words the gate will read, so a
+ * DENY seen here is the run's answer too. A command carrying a word
+ * only the runtime can expand is not consulted (the gate may see
+ * different words, and skipping a fetch on a guess would run an
+ * allowed command against unset values), and an ASK is not a refusal
+ * (the host may approve, and the approved command then needs its
+ * values). Read-only, like `explainLine`: no grant is spent and no
+ * question is put -- the refusal itself still comes from the gate,
+ * with its wording and its redirections.
+ */
+export async function lineDeniedOnText(
+  root: TSNodeLike,
+  session: Session,
+  registry: MountRegistry,
+  namespace: Namespace | null,
+  agentId: string,
+  reparse: (line: string) => TSNodeLike,
+): Promise<boolean> {
+  for (const [words, redirects, walked] of walkedLine(root, session)) {
+    if (words[0]?.text === null) continue
+    if ([...words, ...redirects].some((word) => word.text === null)) continue
+    const explained = await explainWords(
+      words,
+      walked,
+      registry,
+      namespace,
+      agentId,
+      reparse,
+      redirects,
+    )
+    for (const expl of explained) {
+      if (isVerdict(expl) && expl.outcome !== Outcome.ASK) return true
+    }
+  }
+  return false
+}
+
+/**
  * What every command of a line would do, in the order the gate reads
  * them, without running any of it.
  *

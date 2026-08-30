@@ -370,7 +370,7 @@ async function openDatabricksVolume(target: Target): Promise<Open> {
   // Imported here rather than at the top of the file, because this module is
   // loaded for every target and a kit fake's module reaches its generated
   // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
-  const { databricksFake } = await import('../../server/databricks/fake.ts')
+  const { databricksFake } = await import('../../../server/databricks/fake.ts')
   const server = await startKitFake(databricksFake)
   const endpoint = server.endpoint
   const id = runId()
@@ -1362,7 +1362,7 @@ async function openMem0(target: Target): Promise<Open> {
   // Prisma client at import time. A static import would make `--target
   // nextcloud` fail on a job that has no reason to generate the mem0 client.
   // Any future in-process fake belongs behind the same lazy import.
-  const { mem0Fake } = await import('../../server/mem0/fake.ts')
+  const { mem0Fake } = await import('../../../server/mem0/fake.ts')
   const server = await startKitFake(mem0Fake)
   const mounts: Record<string, Mem0Resource> = {}
   for (const mount of target.mounts) {
@@ -1819,7 +1819,7 @@ async function openDify(target: Target): Promise<Open> {
   // Imported here rather than at the top of the file, because this module is
   // loaded for every target and a kit fake's module reaches its generated
   // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
-  const { difyFake } = await import('../../server/dify/fake.ts')
+  const { difyFake } = await import('../../../server/dify/fake.ts')
   const server = await startKitFake(difyFake)
   const mounts: Record<string, DifyResource> = {}
   for (const m of target.mounts) {
@@ -2003,7 +2003,7 @@ async function openHttp(target: Target): Promise<Open> {
   // Imported here rather than at the top of the file, because this module is
   // loaded for every target and a kit fake's module reaches its generated
   // Prisma client at import time. See the eslint rule in integ/eslint.config.js.
-  const { httpFake } = await import('../../server/http/fake.ts')
+  const { httpFake } = await import('../../../server/http/fake.ts')
   const server = await startKitFake(httpFake)
   process.env.HTTP_ENDPOINT = server.endpoint
   const mounts: Record<string, RAMResource | [RAMResource, MountMode]> = {}

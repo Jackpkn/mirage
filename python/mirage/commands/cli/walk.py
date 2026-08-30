@@ -91,6 +91,33 @@ def env_names(node: CLISpec) -> frozenset[str]:
     return frozenset(out)
 
 
+def invoked_env_names(spec: CLISpec,
+                      words: frozenset[str] | None) -> frozenset[str]:
+    """Env names on the verb paths the line's words could select.
+
+    The words prune the tree: a subcommand joins only when some word
+    spells its name or an alias, recursively, so a bare head reads the
+    root's env names and ``ntn api get`` adds exactly the api and get
+    nodes. A word doubling as an operand over-selects, which costs one
+    fetch; a verb can never hide, because dispatch only runs a verb the
+    line spells. None means a word no static read can spell (an
+    expansion), where the whole tree is the only safe answer.
+
+    Args:
+        spec (CLISpec): the tree's root (or any subtree).
+        words (frozenset[str] | None): the invocation's literal
+            argument words, None when one was dynamic.
+    """
+    if words is None:
+        return env_names(spec)
+    out = {opt.env for opt in spec.options if opt.env is not None}
+    for child in spec.subcommands:
+        if child.name in words or any(alias in words
+                                      for alias in child.aliases):
+            out |= invoked_env_names(child, words)
+    return frozenset(out)
+
+
 def owns_argv(node: CLISpec) -> bool:
     """True when the node parses its own command line instead of mirage.
 

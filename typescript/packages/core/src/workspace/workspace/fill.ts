@@ -12,28 +12,81 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { envNames } from '../../commands/cli/walk.ts'
+import { invokedEnvNames } from '../../commands/cli/walk.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { RouteDecision } from '../../runtime/routing/index.ts'
 import { VFSRuntime } from '../../runtime/table.ts'
 import { SecretsError } from '../../secrets/errors.ts'
 import { fetchSecret } from '../../secrets/registry.ts'
-import { commandWords, referencedNames } from '../../shell/parse.ts'
+import {
+  commandInvocations,
+  commandWords,
+  envReads,
+  opaqueReads,
+  referencedNames,
+} from '../../shell/parse.ts'
 import type { ManagedRef, ShellVar } from '../../shell/variable.ts'
 import { withValue } from '../../shell/variable.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
-import type { CLIInstall } from '../cli/types.ts'
+import { compareCodePoints } from '../../utils/sort.ts'
+import { varHidden } from '../../utils/hidden.ts'
+import { lookup } from '../lookup/lookup.ts'
+import { Consumer } from '../lookup/types.ts'
+import type { MountRegistry } from '../mount/registry.ts'
 import { setSessionEntry, type Session } from '../session/session.ts'
+import { deref } from '../session/state.ts'
 
-// Commands that render the whole environment, so every managed name is
-// about to be read whether or not the line spells one.
-export const WHOLE_ENV_COMMANDS: ReadonlySet<string> = new Set([
-  'env',
-  'printenv',
-  'export',
-  'declare',
-  'set',
-])
+/** Function bodies the line itself defines, by name. */
+function definedBodies(node: TSNodeLike): Map<string, TSNodeLike> {
+  const out = new Map<string, TSNodeLike>()
+  const stack: TSNodeLike[] = [node]
+  for (;;) {
+    const current = stack.pop()
+    if (current === undefined) break
+    if (current.type === 'function_definition') {
+      const nameNode = current.childForFieldName?.('name') ?? null
+      const body = current.childForFieldName?.('body') ?? null
+      if (nameNode !== null && nameNode.text !== '' && body !== null) {
+        out.set(nameNode.text, body)
+      }
+    }
+    stack.push(...current.namedChildren)
+  }
+  return out
+}
+
+/**
+ * The line's tree plus every function body it can invoke.
+ *
+ * A body runs at invocation, not where it is defined, so the read
+ * walks skip definition subtrees; this is where an invoked body joins
+ * back in. An invocation word resolves to the line's own definition
+ * first (a same-line redefinition shadows the stored one), then to the
+ * session's stored functions, transitively (a body invoking another
+ * function pulls that body in too), each name once, so mutual
+ * recursion terminates.
+ */
+export function lineNodes(node: TSNodeLike, functions: Record<string, unknown>): TSNodeLike[] {
+  const defined = definedBodies(node)
+  const nodes: TSNodeLike[] = [node]
+  const seen = new Set<string>()
+  const frontier: TSNodeLike[] = [node]
+  for (;;) {
+    const current = frontier.pop()
+    if (current === undefined) break
+    for (const word of commandWords(current)) {
+      if (seen.has(word)) continue
+      seen.add(word)
+      const local = defined.get(word)
+      const stored = Object.hasOwn(functions, word) ? functions[word] : undefined
+      const bodies =
+        local !== undefined ? [local] : Array.isArray(stored) ? (stored as TSNodeLike[]) : []
+      nodes.push(...bodies)
+      frontier.push(...bodies)
+    }
+  }
+  return nodes
+}
 
 /**
  * Whether any of the line's commands runs on a guest runtime.
@@ -42,18 +95,22 @@ export const WHOLE_ENV_COMMANDS: ReadonlySet<string> = new Set([
  * managed name may be read whatever the line spells --
  * `python3 -c 'os.environ[...]'` never writes a `$NAME` the walk could
  * see. The vfs runtime is the executor itself, whose commands read
- * vars one at a time, so it does not count. Keyed on the line's own
- * command words because the static table binds every captured command
- * in the workspace, not this line's.
+ * vars one at a time, so it does not count. Keyed on the walked set's
+ * own command words (stored function bodies included) because the
+ * static table binds every captured command in the workspace, not this
+ * line's.
  */
 export function guestBound(
-  node: TSNodeLike,
+  nodes: TSNodeLike[],
   decision: RouteDecision | null,
   staticBindings: Record<string, Runtime | null>,
 ): boolean {
   const bindings = decision !== null ? decision.bindings : staticBindings
-  const words = commandWords(node)
-  for (const word of [...words, '*']) {
+  const words = new Set<string>(['*'])
+  for (const node of nodes) {
+    for (const word of commandWords(node)) words.add(word)
+  }
+  for (const word of words) {
     const runtime = Object.hasOwn(bindings, word) ? bindings[word] : undefined
     if (runtime != null && !(runtime instanceof VFSRuntime)) return true
   }
@@ -61,32 +118,108 @@ export function guestBound(
 }
 
 /**
- * Env names the line's installed CLIs read.
+ * Env names the line's installed CLIs are about to read.
  *
  * An installed CLI reads a managed name through `Option.env` with no
- * `$NAME` in the line's text, so the fill set has to be told: for each
- * command word that is an installed head word, every env name its
- * program tree declares.
+ * `$NAME` in the line's text, so the fill set has to be told. A head
+ * word counts only when dispatch would actually run the CLI (`lookup`):
+ * a function, builtin or namespace command shadowing the name wins
+ * routing, and a head the session's profile hides never runs at all.
+ * The invocation's literal words then prune the tree
+ * (`invokedEnvNames`), so `ntn api get` contributes the api and get
+ * chain rather than every sibling verb's options.
  */
-export function cliEnvNames(node: TSNodeLike, clis: Map<string, CLIInstall>): ReadonlySet<string> {
-  if (clis.size === 0) return new Set()
-  const words = commandWords(node)
+export function cliEnvNames(
+  nodes: TSNodeLike[],
+  session: Session,
+  registry: MountRegistry,
+): ReadonlySet<string> {
   const out = new Set<string>()
-  for (const [head, install] of clis) {
-    if (words.has(head)) {
-      for (const name of envNames(install.spec)) out.add(name)
+  for (const node of nodes) {
+    for (const [head, args] of commandInvocations(node)) {
+      const install = registry.clis.get(head)
+      if (install === null) continue
+      if (lookup(head, session, registry) !== Consumer.CLI) continue
+      const words = args.includes(null)
+        ? null
+        : new Set(args.filter((arg): arg is string => arg !== null && !arg.startsWith('-')))
+      for (const name of invokedEnvNames(install.spec, words)) out.add(name)
     }
   }
   return out
 }
 
-function intersects(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  for (const item of a) if (b.has(item)) return true
-  return false
+/**
+ * The session's unfetched managed names, hidden ones excluded.
+ *
+ * A hidden name never fetches at all: the snapshot filters it and
+ * expansion reads it as unset, so no fetch could ever be visible.
+ */
+function pendingOf(session: Session): Map<string, ManagedRef> {
+  const out = new Map<string, ManagedRef>()
+  for (const [name, v] of Object.entries(session.vars)) {
+    if (v.managed === undefined || v.value !== null) continue
+    if (varHidden(session.hiddenVars, name)) continue
+    out.set(name, v.managed)
+  }
+  return out
 }
 
 /**
- * Fetch the managed values one line is about to read.
+ * The pending names the line's walked set is about to read.
+ *
+ * A whole-environment render or an opaque read (`opaqueReads`) selects
+ * everything pending; otherwise the set is the walk's references
+ * (nameref targets resolved through the session), the printing forms'
+ * explicit targets, the routed CLIs' env names, and the eager-marked
+ * entries.
+ */
+function wanted(
+  session: Session,
+  nodes: TSNodeLike[],
+  pending: Map<string, ManagedRef>,
+  lineCliEnvNames: ReadonlySet<string>,
+): Set<string> {
+  const referenced = new Set<string>()
+  const printed = new Set<string>()
+  for (const node of nodes) {
+    const reads = envReads(node)
+    if (reads.whole || opaqueReads(node)) return new Set(pending.keys())
+    for (const name of reads.names) printed.add(name)
+    for (const name of referencedNames(node)) referenced.add(name)
+  }
+  const out = new Set<string>([...printed, ...lineCliEnvNames])
+  for (const [name, ref] of pending) {
+    if (ref.eager) out.add(name)
+  }
+  for (const name of referenced) {
+    out.add(name)
+    out.add(deref(session, name))
+  }
+  return new Set([...out].filter((name) => pending.has(name)))
+}
+
+/**
+ * The managed names one line is about to read, without fetching.
+ *
+ * Pure planning, split from `fillEnv` so the executor can consult the
+ * admission text-pass between deciding and fetching: a line already
+ * denied on its literal words never reaches a source.
+ */
+export function fillNames(
+  session: Session,
+  nodes: TSNodeLike[],
+  whole: boolean,
+  lineCliEnvNames: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const pending = pendingOf(session)
+  if (pending.size === 0) return new Set()
+  if (whole) return new Set(pending.keys())
+  return wanted(session, nodes, pending, lineCliEnvNames)
+}
+
+/**
+ * Fetch the named managed values into the session.
  *
  * The session is the truth, not the workspace's declaration: it may
  * carry entries the workspace never declared (per-session env, a
@@ -98,69 +231,51 @@ function intersects(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
  * agent's gated door.
  *
  * A failed fetch, or a secret without the wanted field, throws
- * SecretsError naming the variable and the source -- never the ref and
- * never any value -- and the executor folds it into the line's result
- * (exit 1), so a dead source fails exactly the commands that need it.
- *
- * `whole` says the line runs as one opaque program (a whole-line
- * runtime), so every managed name may be read.
+ * SecretsError naming the variable and the source -- never the ref,
+ * never any value, and never the source's own words, which go to the
+ * host log instead (an SDK error can spell paths or identifiers, and
+ * stderr is the agent's to read). The executor folds it into the
+ * line's result (exit 1), so a dead source fails exactly the commands
+ * that need it.
  */
-export async function fillEnv(
-  session: Session,
-  node: TSNodeLike,
-  whole: boolean,
-  lineCliEnvNames: ReadonlySet<string>,
-): Promise<void> {
-  const pending = new Map<string, ManagedRef>()
-  const records = new Map<string, ShellVar>()
-  for (const [name, v] of Object.entries(session.vars)) {
-    if (v.managed === undefined || v.value !== null) continue
-    pending.set(name, v.managed)
-    records.set(name, v)
+export async function fillEnv(session: Session, names: ReadonlySet<string>): Promise<void> {
+  if (names.size === 0) return
+  const pending = pendingOf(session)
+  interface Member {
+    name: string
+    key: string
+    record: ShellVar
   }
-  if (pending.size === 0) return
-  let names: string[]
-  if (whole || intersects(WHOLE_ENV_COMMANDS, commandWords(node))) {
-    names = [...pending.keys()]
-  } else {
-    const wanted = new Set([...referencedNames(node), ...lineCliEnvNames])
-    for (const [name, ref] of pending) {
-      if (ref.eager) wanted.add(name)
-    }
-    names = [...pending.keys()].filter((name) => wanted.has(name))
-  }
-  if (names.length === 0) return
-  const groups = new Map<string, string[]>()
-  const pointers = new Map<string, ManagedRef>()
-  for (const name of names.sort()) {
-    const pointer = pending.get(name) as ManagedRef
+  const groups = new Map<string, { source: string; ref: string; members: Member[] }>()
+  for (const name of [...names].sort(compareCodePoints)) {
+    const pointer = pending.get(name)
+    const record = Object.hasOwn(session.vars, name) ? session.vars[name] : undefined
+    if (pointer === undefined || record === undefined) continue
     const groupKey = JSON.stringify([pointer.source, pointer.ref])
-    pointers.set(groupKey, pointer)
+    const member = { name, key: pointer.key, record }
     const group = groups.get(groupKey)
-    if (group === undefined) groups.set(groupKey, [name])
-    else group.push(name)
+    if (group === undefined) {
+      groups.set(groupKey, { source: pointer.source, ref: pointer.ref, members: [member] })
+    } else {
+      group.members.push(member)
+    }
   }
-  for (const [groupKey, group] of groups) {
-    const pointer = pointers.get(groupKey) as ManagedRef
+  for (const { source, ref, members } of groups.values()) {
+    const listed = members.map((m) => m.name).join(', ')
     let secret
     try {
-      secret = await fetchSecret(pointer.source, pointer.ref)
+      secret = await fetchSecret(source, ref)
     } catch (caught) {
-      const detail = caught instanceof Error ? caught.message : String(caught)
-      throw new SecretsError(`${group.join(', ')}: cannot fetch from ${pointer.source}: ${detail}`, {
-        cause: caught,
-      })
+      console.warn(`secret fetch for ${listed} from ${source} failed: ${String(caught)}`)
+      throw new SecretsError(`${listed}: cannot fetch from ${source}`, { cause: caught })
     }
-    for (const name of group) {
-      const key = (pending.get(name) as ManagedRef).key
+    for (const { name, key, record } of members) {
       const value = Object.hasOwn(secret.fields, key) ? secret.fields[key] : undefined
       if (value === undefined) {
-        const had = Object.keys(secret.fields).sort().join(', ')
-        throw new SecretsError(
-          `${name}: wanted field '${key}', the ${pointer.source} secret has {${had}}`,
-        )
+        const had = Object.keys(secret.fields).sort(compareCodePoints).join(', ')
+        throw new SecretsError(`${name}: wanted field '${key}', the ${source} secret has {${had}}`)
       }
-      setSessionEntry(session.vars, name, withValue(records.get(name) as ShellVar, value))
+      setSessionEntry(session.vars, name, withValue(record, value))
     }
   }
 }

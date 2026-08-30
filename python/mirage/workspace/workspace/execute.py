@@ -30,14 +30,15 @@ from mirage.shell.parse import (find_syntax_error, find_unterminated_backtick,
 from mirage.workspace.abort import MirageAbortError
 from mirage.workspace.node import provision_node, run_command_tree
 from mirage.workspace.node.admission import admit_line
-from mirage.workspace.node.explain import prejudge_line
+from mirage.workspace.node.explain import line_denied_on_text, prejudge_line
 from mirage.workspace.session import (get_current_session_for,
                                       reset_current_session,
                                       set_current_session)
 from mirage.workspace.snapshot import ContentDriftError
 from mirage.workspace.workspace.failure import failure_result
 from mirage.workspace.workspace.fill import (cli_env_names, fill_env,
-                                             guest_bound)
+                                             fill_names, guest_bound,
+                                             line_nodes)
 from mirage.workspace.workspace.line import run_whole_line
 from mirage.workspace.workspace.utils import command_name, fork_for_call
 
@@ -210,19 +211,6 @@ async def execute_line(
                                effective_session,
                                agent_id=agent or ""), timeout, name)
         line_runtime = ws._runtimes.whole_line(ast, decision)
-        if ws._has_managed_env:
-            # The env plane fills before either strategy runs, so a
-            # guest runtime's env snapshot and the tree's expansion
-            # read the same, already-filled vars; a dry run (provision)
-            # returned above and never fetches. A SecretsError raises
-            # through to the generic fold below: the line exits 1 and
-            # never runs.
-            await fill_env(
-                effective_session,
-                ast,
-                whole=line_runtime is not None
-                or guest_bound(ast, decision, ws._registry.runtime_bindings),
-                cli_env_names=cli_env_names(ast, ws._registry.clis.items()))
         if line_runtime is not None:
             # A whole line is a command like any other: the same
             # visibility and admission gate as the tree, per parsed
@@ -234,6 +222,19 @@ async def execute_line(
                               stderr=refusal.stderr)
                 session.last_exit_code = io.exit_code
                 return io
+            if ws._has_managed_env:
+                # Filled only after the line is admitted (a refused
+                # line must never reach a secret store) and before the
+                # runtime snapshots the env; a whole-line program may
+                # read any name, so the walk is not consulted. A dry
+                # run (provision) returned above and never fetches. A
+                # SecretsError raises through to the generic fold
+                # below: the line exits 1 and never runs.
+                await fill_env(
+                    effective_session,
+                    fill_names(effective_session, [ast],
+                               whole=True,
+                               cli_env_names=frozenset()))
             io = await run_whole_line(
                 line_runtime, command, stdin, effective_session,
                 ws._registry.mounts(), ws._registry.policies,
@@ -251,6 +252,28 @@ async def execute_line(
             io = IOResult(exit_code=refusal.exit_code, stderr=refusal.stderr)
             session.last_exit_code = io.exit_code
             return io
+        if ws._has_managed_env:
+            # Filled only after the line-tier admission and before the
+            # tree's expansion reads the vars. The walked set carries
+            # stored function bodies too, so a function invoked by bare
+            # name still fills what its body reads. The prejudge pass
+            # leaves single-command lines to the per-command gate, so
+            # the fetch asks the same text-tier question itself: a line
+            # already denied on its literal words never reaches a
+            # source. A deny only the value gate can see still follows
+            # the fetch, because expansion is what consumes the values.
+            nodes = line_nodes(ast, effective_session.functions)
+            names = fill_names(
+                effective_session,
+                nodes,
+                whole=guest_bound(nodes, decision,
+                                  ws._registry.runtime_bindings),
+                cli_env_names=cli_env_names(nodes, effective_session,
+                                            ws._registry))
+            if names and not await line_denied_on_text(
+                    ast, effective_session, ws._registry, ws._namespace, agent
+                    or ""):
+                await fill_env(effective_session, names)
         io, _ = await run_command_tree(
             ws.dispatch,
             ws._registry,

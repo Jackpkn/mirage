@@ -15,8 +15,8 @@
 from dataclasses import replace
 
 from mirage.commands.cli import CLISpec, walk
-from mirage.commands.cli.walk import (find_child, find_node, node_help,
-                                      owns_argv)
+from mirage.commands.cli.walk import (env_names, find_child, find_node,
+                                      invoked_env_names, node_help, owns_argv)
 from mirage.commands.spec.types import Option, UsageStyle
 from mirage.runtime.types import ScriptSource
 
@@ -434,3 +434,43 @@ def test_repeated_path_group_option_resolves_every_value():
     )
     result = walk("tool", tree, ["--dir", "a", "--dir", "/b", "run"], "/w")
     assert result.group_flags == {"--dir": ["/w/a", "/b"]}
+
+
+def _env_tree() -> CLISpec:
+    return CLISpec(
+        name="tool",
+        options=(Option(long="--token", type="str", env="ROOT_T"), ),
+        subcommands=(
+            CLISpec(name="alpha",
+                    options=(Option(long="--a", type="str", env="ALPHA_T"), ),
+                    subcommands=(CLISpec(name="deep",
+                                         fn=_verb,
+                                         options=(Option(long="--d",
+                                                         type="str",
+                                                         env="DEEP_T"), )), )),
+            CLISpec(name="beta",
+                    fn=_verb,
+                    aliases=("b", ),
+                    options=(Option(long="--b", type="str", env="BETA_T"), )),
+        ),
+    )
+
+
+def test_env_names_covers_the_whole_tree():
+    assert env_names(_env_tree()) == {"ROOT_T", "ALPHA_T", "DEEP_T", "BETA_T"}
+
+
+def test_invoked_env_names_prunes_to_the_selected_path():
+    tree = _env_tree()
+    assert invoked_env_names(tree, frozenset()) == {"ROOT_T"}
+    assert invoked_env_names(tree,
+                             frozenset({"alpha"})) == {"ROOT_T", "ALPHA_T"}
+    assert invoked_env_names(tree,
+                             frozenset({"alpha", "deep"
+                                        })) == {"ROOT_T", "ALPHA_T", "DEEP_T"}
+    # A verb word selects its node wherever it sits in the line, and an
+    # alias selects the same node its canonical name does.
+    assert invoked_env_names(tree, frozenset({"b"})) == {"ROOT_T", "BETA_T"}
+    # None means a word only the runtime can spell: the whole tree is
+    # the only safe answer.
+    assert invoked_env_names(tree, None) == env_names(tree)

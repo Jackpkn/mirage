@@ -357,7 +357,7 @@ async def start_kit_fake(
     Returns:
         tuple[str, asyncio.subprocess.Process]: the endpoint and the process.
     """
-    integ = Path(__file__).resolve().parents[2]
+    integ = Path(__file__).resolve().parents[3]
     process = await asyncio.create_subprocess_exec(
         str(integ / "node_modules" / ".bin" / "tsx"),
         str(integ / "server" / service / "main.ts"),
@@ -401,7 +401,7 @@ def _load_module(path: Path) -> ModuleType:
 
 def _load_ssh_server() -> ModuleType:
     return _load_module(
-        Path(__file__).resolve().parents[2] / "server" / "ssh_server.py")
+        Path(__file__).resolve().parents[3] / "server" / "ssh_server.py")
 
 
 async def _admin_exec(ws: Workspace, command: str) -> None:
@@ -598,7 +598,7 @@ class GwsService:
         if not name:
             return None
         path = Path(
-            __file__).resolve().parents[2] / "fixtures" / f"{name}.json"
+            __file__).resolve().parents[3] / "fixtures" / f"{name}.json"
         return json.loads(path.read_text())
 
     @staticmethod
@@ -786,7 +786,7 @@ class EmailService:
         mail = target.get("mail")
         if mail:
             manifest = Path(
-                __file__).resolve().parents[2] / "fixtures" / f"{mail}.json"
+                __file__).resolve().parents[3] / "fixtures" / f"{mail}.json"
             entries = json.loads(manifest.read_text())
             for user, password in ((EMAIL_USERNAME, EMAIL_PASSWORD), *extras):
                 rows = [
@@ -1214,7 +1214,7 @@ class BoxService:
             folder_id = await self._folder(session, "0", mount["folder"])
             seed = mount.get("seed")
             if seed:
-                base = (Path(__file__).resolve().parents[2] / "fixtures" /
+                base = (Path(__file__).resolve().parents[3] / "fixtures" /
                         seed)
                 for src in sorted(base.rglob("*")):
                     if not src.is_file():
@@ -1928,7 +1928,7 @@ class ChromaService:
         host = os.environ.get("CHROMA_HOST", "localhost")
         port = int(os.environ.get("CHROMA_PORT", "8000"))
         collection_name = f"mirage-integ-{uuid.uuid4().hex[:8]}"
-        seed_path = (Path(__file__).resolve().parents[2] / "server" /
+        seed_path = (Path(__file__).resolve().parents[3] / "server" /
                      "chroma_seed.json")
         seed = json.loads(seed_path.read_text())
         encoded = base64.b64encode(

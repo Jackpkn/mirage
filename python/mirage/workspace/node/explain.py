@@ -443,6 +443,49 @@ async def prejudge_line(
     return None
 
 
+async def line_denied_on_text(
+    ast: Any,
+    session: Session,
+    registry: MountRegistry,
+    namespace: Namespace | None,
+    agent_id: str = "",
+) -> bool:
+    """Whether some fully-literal command of the line is already denied
+    on its text, so the line cannot run whatever expansion produces.
+
+    The env-plane fill asks this before fetching: a fetch serves a
+    command that is going to run, and a command whose every word is
+    literal is judged here on exactly the words the gate will read, so
+    a DENY seen here is the run's answer too. A command carrying a word
+    only the runtime can expand is not consulted (the gate may see
+    different words, and skipping a fetch on a guess would run an
+    allowed command against unset values), and an ASK is not a refusal
+    (the host may approve, and the approved command then needs its
+    values). Read-only, like ``explain_line``: no grant is spent and no
+    question is put -- the refusal itself still comes from the gate,
+    with its wording and its redirections.
+
+    Args:
+        ast (Any): the parsed tree-sitter root node.
+        session (Session): the session running the line.
+        registry (MountRegistry): registry holding the policies, the
+            decision ledger and the CLI installs.
+        namespace (Namespace | None): the link table.
+        agent_id (str): the agent the line is attributed to.
+    """
+    for words, redirects, walked in _walked_line(ast, session):
+        if words[0].text is None:
+            continue
+        if any(word.text is None for word in (*words, *redirects)):
+            continue
+        explained = await explain_words(words, walked, registry, namespace,
+                                        agent_id, redirects)
+        for expl in explained:
+            if _is_verdict(expl) and expl.outcome is not Outcome.ASK:
+                return True
+    return False
+
+
 async def explain_line(
     ast: Any,
     session: Session,

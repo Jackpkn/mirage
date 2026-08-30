@@ -25,9 +25,9 @@ import type { EnvEntries, ResolvedSecret } from '../../secrets/types.ts'
 import { VarAttr } from '../../shell/variable.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { MountMode } from '../../types.ts'
-import type { CLIInstall } from '../cli/types.ts'
+import type { Action, CommandContext, Policy } from '../../policy/index.ts'
 import { getTestParser, stderrStr, stdoutStr } from '../fixtures/workspace_fixture.ts'
-import { cliEnvNames, guestBound } from './fill.ts'
+import { guestBound } from './fill.ts'
 import { Workspace } from './workspace.ts'
 
 const FakeConfig = z.strictObject({})
@@ -40,19 +40,57 @@ function countingSource(fields: Record<string, string>): {
   const calls: string[] = []
   return {
     calls,
-    fetch: async (_config, ref) => {
+    fetch: (_config, ref) => {
       calls.push(ref)
-      return { fields: { ...fields } }
+      return Promise.resolve({ fields: { ...fields } })
     },
   }
 }
 
-async function makeWs(env: EnvEntries | undefined): Promise<Workspace> {
+class DenyNamed implements Policy {
+  private readonly name: string
+
+  constructor(name: string) {
+    this.name = name
+  }
+
+  preCommand(ctx: CommandContext): Action | null {
+    if (ctx.command !== this.name) return null
+    return { kind: 'deny', reason: `${this.name} is off`, scope: 'command' }
+  }
+}
+
+async function makeWs(env: EnvEntries | undefined, policies?: Policy[]): Promise<Workspace> {
   const parser = await getTestParser()
   return new Workspace(
     { '/': new RAMResource() },
-    { mode: MountMode.WRITE, shellParser: parser, ...(env !== undefined ? { env } : {}) },
+    {
+      mode: MountMode.WRITE,
+      shellParser: parser,
+      ...(env !== undefined ? { env } : {}),
+      ...(policies !== undefined ? { policies } : {}),
+    },
   )
+}
+
+function envCliSpec(): CLISpec {
+  const leaf: CLIVerbFn = () => null
+  return new CLISpec({
+    name: 'mycli',
+    options: [new Option({ long: '--token', type: 'str', env: 'CLI_ROOT' })],
+    subcommands: [
+      new CLISpec({
+        name: 'alpha',
+        fn: leaf,
+        options: [new Option({ long: '--a', type: 'str', env: 'CLI_ALPHA' })],
+      }),
+      new CLISpec({
+        name: 'beta',
+        fn: leaf,
+        options: [new Option({ long: '--b', type: 'str', env: 'CLI_BETA' })],
+      }),
+    ],
+  })
 }
 
 describe('fillEnv through execute', () => {
@@ -236,14 +274,14 @@ describe('fillEnv through execute', () => {
   })
 
   it('a dead source fails only the command that needs it', async () => {
-    registerSecrets('fake-dead', FakeConfig, async () => {
-      throw new Error('connection refused')
-    })
+    registerSecrets('fake-dead', FakeConfig, () => Promise.reject(new Error('connection refused')))
     const ws = await makeWs({ TOKEN: { from: 'fake-dead', ref: 'r' } })
     try {
       const io = await ws.execute('echo $TOKEN')
       expect(io.exitCode).toBe(1)
-      expect(stderrStr(io)).toBe('TOKEN: cannot fetch from fake-dead: connection refused\n')
+      // The source's own words stay host-side: the agent learns the
+      // variable and the source name, never the exception text.
+      expect(stderrStr(io)).toBe('TOKEN: cannot fetch from fake-dead\n')
       expect((await ws.execute('ls /')).exitCode).toBe(0)
     } finally {
       await ws.close()
@@ -255,6 +293,192 @@ describe('fillEnv through execute', () => {
       /unknown secrets source/,
     )
   })
+
+  it('a mutating export detaches without fetching', async () => {
+    registerSecrets('fake-detach', FakeConfig, () => Promise.reject(new Error('sealed')))
+    const ws = await makeWs({ TOKEN: { from: 'fake-detach', ref: 'r' } })
+    try {
+      expect((await ws.execute('export TOKEN=local')).exitCode).toBe(0)
+      expect(stdoutStr(await ws.execute('echo $TOKEN'))).toBe('local\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('mutating forms do not render the environment', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-mutate', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-mutate', ref: 'r' } })
+    try {
+      for (const line of ['set -u', 'set +u', 'declare -x OTHER=1', 'export OTHER=2']) {
+        await ws.execute(line)
+      }
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('declare -p TOKEN'))).toContain('t0')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('printenv of the name fetches it', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-printenv', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-printenv', ref: 'r' } })
+    try {
+      expect(stdoutStr(await ws.execute('printenv TOKEN'))).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a hidden managed name never fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-hidden', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-hidden', ref: 'r', fetch: 'eager' } })
+    try {
+      const session = ws.getSession(ws.defaultSessionId)
+      session.hiddenVars = { names: ['TOKEN'] }
+      const io = await ws.execute('env')
+      expect(io.exitCode).toBe(0)
+      expect(stdoutStr(io)).not.toContain('TOKEN')
+      expect(stdoutStr(await ws.execute('echo [$TOKEN]'))).toBe('[]\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a stored function body fills across lines', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-fn', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-fn', ref: 'r' } })
+    try {
+      expect((await ws.execute('f() { echo "t:$TOKEN"; }')).exitCode).toBe(0)
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('f'))).toBe('t:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a function calling a function fills transitively', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-fn2', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-fn2', ref: 'r' } })
+    try {
+      await ws.execute('inner() { echo "i:$TOKEN"; }')
+      await ws.execute('outer() { inner; }')
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('outer'))).toBe('i:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an indirect expansion fetches the target', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-indirect', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-indirect', ref: 'r' } })
+    try {
+      expect((await ws.execute('name=TOKEN')).exitCode).toBe(0)
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('echo ${!name}'))).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a prior-line nameref fetches its target', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-nameref', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-nameref', ref: 'r' } })
+    try {
+      const session = ws.getSession(ws.defaultSessionId)
+      // Written straight into the session so the declaring line's own
+      // opaque-read fetch cannot mask the deref path.
+      session.vars.r2 = { value: 'TOKEN', attrs: new Set([VarAttr.Nameref]) }
+      expect(stdoutStr(await ws.execute('echo $r2'))).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a denied literal line never fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-denied', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-denied', ref: 'r' } }, [
+      new DenyNamed('printenv'),
+    ])
+    try {
+      const io = await ws.execute('printenv TOKEN')
+      expect(io.exitCode).toBe(126)
+      expect(stderrStr(io)).toContain('printenv is off')
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('echo $TOKEN'))).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a dynamic-word deny fetches before the value gate', async () => {
+    // The pre-pass reads a line's text; a command carrying a word only
+    // expansion can produce is judged at the per-command gate, which
+    // reads values. Expansion is what consumes the fetched value, so
+    // for such a line the fetch precedes the verdict, the same way the
+    // line's earlier commands would already have run.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-dynamic', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-dynamic', ref: 'r' } }, [new DenyNamed('echo')])
+    try {
+      const io = await ws.execute('echo $TOKEN')
+      expect(io.exitCode).toBe(126)
+      expect(stderrStr(io)).toContain('echo is off')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a cli fetches only the invoked verb path', async () => {
+    const { calls, fetch } = countingSource({ CLI_ROOT: 'r0', CLI_ALPHA: 'a0', CLI_BETA: 'b0' })
+    registerSecrets('fake-cli-path', FakeConfig, fetch)
+    const ws = await makeWs({
+      CLI_ROOT: { from: 'fake-cli-path', ref: 'root' },
+      CLI_ALPHA: { from: 'fake-cli-path', ref: 'alpha' },
+      CLI_BETA: { from: 'fake-cli-path', ref: 'beta' },
+    })
+    try {
+      ws.registerCli('mycli', envCliSpec())
+      await ws.execute('mycli alpha')
+      expect([...calls].sort()).toEqual(['alpha', 'root'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a shadowed cli head does not fetch', async () => {
+    const { calls, fetch } = countingSource({ CLI_ROOT: 'r0' })
+    registerSecrets('fake-cli-shadow', FakeConfig, fetch)
+    const ws = await makeWs({ CLI_ROOT: { from: 'fake-cli-shadow', ref: 'root' } })
+    try {
+      ws.registerCli('mycli', envCliSpec())
+      await ws.execute('mycli() { echo shadowed; }')
+      expect(stdoutStr(await ws.execute('mycli'))).toBe('shadowed\n')
+      expect(calls).toEqual([])
+      await ws.execute('unset -f mycli')
+      await ws.execute('mycli')
+      expect(calls).toEqual(['root'])
+    } finally {
+      await ws.close()
+    }
+  })
 })
 
 describe('guestBound', () => {
@@ -262,10 +486,10 @@ describe('guestBound', () => {
     const parser = await getTestParser()
     const node = parser.parse('python3 -c "print()"') as unknown as TSNodeLike
     const guest = { name: 'monty' } as unknown as Runtime
-    expect(guestBound(node, null, { python3: guest })).toBe(true)
-    expect(guestBound(node, null, { python3: new VFSRuntime() })).toBe(false)
-    expect(guestBound(node, null, { other: guest })).toBe(false)
-    expect(guestBound(node, null, { '*': guest })).toBe(true)
+    expect(guestBound([node], null, { python3: guest })).toBe(true)
+    expect(guestBound([node], null, { python3: new VFSRuntime() })).toBe(false)
+    expect(guestBound([node], null, { other: guest })).toBe(false)
+    expect(guestBound([node], null, { '*': guest })).toBe(true)
   })
 
   it('a decision replaces the static table', async () => {
@@ -273,30 +497,7 @@ describe('guestBound', () => {
     const node = parser.parse('echo hi') as unknown as TSNodeLike
     const guest = { name: 'monty' } as unknown as Runtime
     const decision = { bindings: { echo: guest }, fallback: null } as never
-    expect(guestBound(node, decision, {})).toBe(true)
-    expect(guestBound(node, null, { echo: null })).toBe(false)
-  })
-})
-
-describe('cliEnvNames', () => {
-  it('reads env names off installed head words on the line', async () => {
-    const parser = await getTestParser()
-    const leaf: CLIVerbFn = () => null
-    const spec = new CLISpec({
-      name: 'ntn',
-      subcommands: [
-        new CLISpec({
-          name: 'api',
-          fn: leaf,
-          options: [new Option({ long: '--notion-version', type: 'str', env: 'NOTION_VERSION' })],
-        }),
-      ],
-    })
-    const installs = new Map<string, CLIInstall>([['ntn', { name: 'ntn', spec, config: null }]])
-    const onLine = parser.parse('ntn api /v1/users/me') as unknown as TSNodeLike
-    expect(cliEnvNames(onLine, installs)).toEqual(new Set(['NOTION_VERSION']))
-    const offLine = parser.parse('echo ntnish') as unknown as TSNodeLike
-    expect(cliEnvNames(offLine, installs)).toEqual(new Set())
-    expect(cliEnvNames(onLine, new Map())).toEqual(new Set())
+    expect(guestBound([node], decision, {})).toBe(true)
+    expect(guestBound([node], null, { echo: null })).toBe(false)
   })
 })

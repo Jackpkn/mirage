@@ -34,14 +34,14 @@ import type { ExecuteFn } from '../expand/node.ts'
 import type { MountRegistry } from '../mount/registry.ts'
 import type { Namespace } from '../mount/namespace/namespace.ts'
 import type { ExecuteNodeDeps } from '../node/execute_node.ts'
-import { prejudgeLine } from '../node/explain.ts'
+import { lineDeniedOnText, prejudgeLine } from '../node/explain.ts'
 import { runCommandTree } from '../node/run_tree.ts'
 import type { DriftQueue } from '../snapshot/drift.ts'
 import type { SessionManager } from '../session/manager.ts'
 import type { Session } from '../session/session.ts'
 import type { ExecutionNode } from '../types.ts'
 import { failureResult, isControlFlowError } from './failure.ts'
-import { cliEnvNames, fillEnv, guestBound } from './fill.ts'
+import { cliEnvNames, fillEnv, fillNames, guestBound, lineNodes } from './fill.ts'
 import { admitLine } from '../node/admission.ts'
 import { runWholeLine } from './line.ts'
 import type { WorkspaceMeta } from './meta.ts'
@@ -328,20 +328,37 @@ async function runParsedLine(
   // both admission passes below can put one.
   const killed = mergeSignals(deps.signal, effectiveSession.abortSignal)
   const lineRuntime = env.runtimes.wholeLineFor(rootNode, deps.routingDecision ?? null)
-  if (env.sessions.hasManagedEnv) {
-    // The env plane fills before either strategy runs, so a guest
-    // runtime's env snapshot and the tree's expansion read the same,
-    // already-filled vars; a dry run (provision) returned above and
-    // never fetches. A SecretsError folds like any failed line: the
-    // line exits 1 and never runs.
+  // Filled only after the applicable line-tier admission (a refused
+  // line must never reach a secret store) and before expansion or the
+  // runtime's env snapshot reads the vars. The prejudge pass leaves
+  // single-command lines to the per-command gate, so the tree branch
+  // asks the same text-tier question itself (`probeText`): a line
+  // already denied on its literal words never reaches a source. A deny
+  // only the value gate can see still follows the fetch, because
+  // expansion is what consumes the values. A SecretsError folds like
+  // any failed line: the line exits 1 and never runs.
+  const fillManaged = async (
+    nodes: TSNodeLike[],
+    whole: boolean,
+    lineCliEnvNames: ReadonlySet<string>,
+    probeText: boolean,
+  ): Promise<ExecuteResult | null> => {
     try {
-      await fillEnv(
-        effectiveSession,
-        rootNode,
-        lineRuntime !== null ||
-          guestBound(rootNode, deps.routingDecision ?? null, env.runtimes.bindings),
-        cliEnvNames(rootNode, env.registry.clis.items()),
-      )
+      const names = fillNames(effectiveSession, nodes, whole, lineCliEnvNames)
+      if (names.size > 0) {
+        const doomed =
+          probeText &&
+          (await lineDeniedOnText(
+            rootNode,
+            effectiveSession,
+            env.registry,
+            env.namespace,
+            callAgentId,
+            reparse,
+          ))
+        if (!doomed) await fillEnv(effectiveSession, names)
+      }
+      return null
     } catch (err) {
       if (isControlFlowError(err)) throw err
       const failed = failureResult(err)
@@ -375,6 +392,12 @@ async function runParsedLine(
         )
       }
       return new ExecuteResult(new Uint8Array(), refusal.stderr, refusal.exitCode)
+    }
+    if (env.sessions.hasManagedEnv) {
+      // A whole-line program may read any name, so the walk is not
+      // consulted, and admitLine above already ran the real gate.
+      const filled = await fillManaged([rootNode], true, new Set(), false)
+      if (filled !== null) return filled
     }
     const result = await runWholeLine(
       lineRuntime,
@@ -419,6 +442,18 @@ async function runParsedLine(
   if (prejudged !== null) {
     targetSession.lastExitCode = prejudged.exitCode
     return new ExecuteResult(new Uint8Array(), prejudged.stderr, prejudged.exitCode)
+  }
+  if (env.sessions.hasManagedEnv) {
+    // The walked set carries stored function bodies too, so a function
+    // invoked by bare name still fills what its body reads.
+    const nodes = lineNodes(rootNode, effectiveSession.functions)
+    const filled = await fillManaged(
+      nodes,
+      guestBound(nodes, deps.routingDecision ?? null, env.runtimes.bindings),
+      cliEnvNames(nodes, effectiveSession, env.registry),
+      true,
+    )
+    if (filled !== null) return filled
   }
   const runBody = (): Promise<[ByteSource | null, IOResult, ExecutionNode]> =>
     runWithSession(
