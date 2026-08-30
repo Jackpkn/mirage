@@ -58,7 +58,16 @@ def build_secrets_env(
     """
     if kind == "dead":
         register_secrets("dead", DeadConfig, fetch_dead)
-        return {"DEAD": {"from": "dead", "ref": "x"}}, _noop
+        return {
+            "DEAD": {
+                "from": "dead",
+                "ref": "x"
+            },
+            "DEAD2": {
+                "from": "dead",
+                "ref": "y"
+            },
+        }, _noop
     counts: dict[str, int] = {}
 
     async def fetch_counting(config: CounterConfig,

@@ -22,7 +22,7 @@ from mirage.io.async_line_iterator import AsyncLineIterator
 from mirage.io.types import ByteSource
 from mirage.policy.types import (AdmissionRules, Decision, HideReason,
                                  ProfileScript)
-from mirage.secrets.types import EnvVar
+from mirage.secrets.config import EnvVar
 from mirage.shell.array import ShellArray
 from mirage.shell.constants import SHELL_ARGV0
 from mirage.shell.types import FunctionBody

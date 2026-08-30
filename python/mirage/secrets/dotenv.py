@@ -26,7 +26,12 @@ async def fetch_dotenv(config: DotenvConfig, ref: str) -> ResolvedSecret:
     """Read one dotenv file as one secret.
 
     A key declared without a value (a bare ``NAME`` line) parses as
-    None and is dropped: an unset entry is not a secret field.
+    None and is dropped: an unset entry is not a secret field. Values
+    are taken verbatim, never interpolated: python-dotenv's default
+    would resolve ``${NAME}`` against the host process environment,
+    silently copying a host variable into a secret value, and the
+    TypeScript twin's parser keeps the literal text -- so the literal
+    is both the safe reading and the shared one.
 
     Args:
         config (DotenvConfig): holds the default ``path``.
@@ -45,7 +50,7 @@ async def fetch_dotenv(config: DotenvConfig, ref: str) -> ResolvedSecret:
             text = await handle.read()
     except FileNotFoundError as exc:
         raise SecretsError(f"dotenv file not found: {path}") from exc
-    values = dotenv_values(stream=io.StringIO(text))
+    values = dotenv_values(stream=io.StringIO(text), interpolate=False)
     return ResolvedSecret(fields={
         name: value
         for name, value in values.items() if value is not None

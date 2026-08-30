@@ -12,10 +12,11 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from mirage.secrets.config import AWSAuth, AWSSMConfig, DotenvConfig, EnvConfig
+from mirage.secrets.config import (AWSAuth, AWSSMConfig, DotenvConfig,
+                                   EnvConfig, EnvVar)
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import known_sources, register_secrets, source_for
-from mirage.secrets.types import EnvVar, ResolvedSecret, SecretFetchFn
+from mirage.secrets.types import ResolvedSecret, SecretFetchFn
 
 __all__ = [
     "AWSAuth",

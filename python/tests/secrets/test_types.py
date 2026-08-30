@@ -13,9 +13,8 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import pytest
-from pydantic import ValidationError
 
-from mirage.secrets.types import EnvVar, ResolvedSecret
+from mirage.secrets.types import ResolvedSecret
 
 
 def test_resolved_secret_defaults():
@@ -28,74 +27,3 @@ def test_resolved_secret_is_frozen():
     secret = ResolvedSecret(fields={})
     with pytest.raises(Exception):
         secret.expires_at = 1.0  # type: ignore[misc]
-
-
-def test_literal_short_and_long_defaults():
-    entry = EnvVar(value="vim")
-    assert entry.readonly is False
-    assert entry.export is True
-    assert entry.provider is None
-
-
-def test_from_alias_and_provider_spelling_agree():
-    # YAML spells `from` (a python keyword); code spells `provider=`.
-    yaml_side = EnvVar.model_validate({"from": "aws-sm", "ref": "prod/agent"})
-    code_side = EnvVar(provider="aws-sm", ref="prod/agent")
-    assert yaml_side == code_side
-    assert yaml_side.provider == "aws-sm"
-
-
-def test_managed_defaults():
-    entry = EnvVar.model_validate({"from": "env"})
-    assert entry.ref == ""
-    assert entry.key is None
-    assert entry.fetch == "lazy"
-
-
-def test_value_and_from_are_mutually_exclusive():
-    with pytest.raises(ValidationError, match="not both"):
-        EnvVar.model_validate({"value": "x", "from": "env"})
-
-
-def test_one_of_value_or_from_is_required():
-    with pytest.raises(ValidationError, match="'value' or 'from'"):
-        EnvVar()
-
-
-def test_readonly_on_a_managed_entry_is_refused():
-    # A readonly managed variable would print `-r` beside a value that
-    # changes under refresh, which is a lie.
-    with pytest.raises(ValidationError, match="readonly"):
-        EnvVar.model_validate({"from": "env", "readonly": True})
-
-
-def test_unexporting_a_managed_entry_is_refused():
-    with pytest.raises(ValidationError, match="export"):
-        EnvVar.model_validate({"from": "env", "export": False})
-
-
-@pytest.mark.parametrize("extra", [
-    {
-        "ref": "prod/agent"
-    },
-    {
-        "key": "TOKEN"
-    },
-    {
-        "fetch": "eager"
-    },
-])
-def test_managed_keys_on_a_literal_entry_are_refused(extra):
-    with pytest.raises(ValidationError, match="managed entries"):
-        EnvVar.model_validate({"value": "x", **extra})
-
-
-def test_unknown_keys_are_refused():
-    with pytest.raises(ValidationError):
-        EnvVar.model_validate({"value": "x", "sticky": True})
-
-
-def test_entry_is_frozen():
-    entry = EnvVar(value="x")
-    with pytest.raises(ValidationError):
-        entry.value = "y"  # type: ignore[misc]

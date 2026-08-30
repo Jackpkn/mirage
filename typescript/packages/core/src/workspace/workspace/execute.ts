@@ -339,6 +339,7 @@ async function runParsedLine(
   // still follows the fetch, because expansion is what consumes the
   // values. A SecretsError folds like any failed line: the line exits
   // 1 and never runs.
+  const writesGated = env.registry.policies.wants('preSession')
   const fillManaged = async (
     nodes: TSNodeLike[],
     whole: boolean,
@@ -346,7 +347,7 @@ async function runParsedLine(
     probeText: boolean,
   ): Promise<ExecuteResult | null> => {
     try {
-      const names = fillNames(effectiveSession, nodes, whole, lineCliEnvNames)
+      const names = fillNames(effectiveSession, nodes, whole, lineCliEnvNames, writesGated)
       if (names.size > 0) {
         const doomed =
           probeText &&

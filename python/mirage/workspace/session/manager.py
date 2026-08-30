@@ -20,7 +20,7 @@ from typing import Any
 from mirage.policy.profile import CompiledProfile
 from mirage.policy.types import (AdmissionRules, Decision, HideReason,
                                  ProfileScript)
-from mirage.secrets.types import EnvVar
+from mirage.secrets.config import EnvVar
 from mirage.shell.variable import ShellVar
 from mirage.types import MountMode
 from mirage.workspace.record.types import CAS_MAX_RETRIES, generation_of

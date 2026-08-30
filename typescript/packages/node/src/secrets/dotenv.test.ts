@@ -51,4 +51,21 @@ describe('fetchDotenv', () => {
       /dotenv file not found/,
     )
   })
+
+  it('never interpolates: a ${NAME} in a value stays literal', async () => {
+    process.env.HOST_TOKEN = 'host-secret'
+    try {
+      const path = join(dir, 'literal.env')
+      writeFileSync(path, 'API_TOKEN=${HOST_TOKEN}\nA=x\nB=${A}-y\nC=$A\n')
+      const secret = await fetchDotenv(DotenvConfig.parse({}), path)
+      expect(secret.fields).toEqual({
+        API_TOKEN: '${HOST_TOKEN}',
+        A: 'x',
+        B: '${A}-y',
+        C: '$A',
+      })
+    } finally {
+      delete process.env.HOST_TOKEN
+    }
+  })
 })

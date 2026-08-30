@@ -26,7 +26,7 @@ from mirage.secrets.registry import fetch_secret
 from mirage.shell.constants import SHOPT_DEFAULTS
 from mirage.shell.parse import (command_invocations, command_words, env_reads,
                                 opaque_reads, parse, referenced_names)
-from mirage.shell.variable import ManagedRef, with_value
+from mirage.shell.variable import ManagedRef, VarAttr, with_value
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.lookup.lookup import lookup
 from mirage.workspace.lookup.types import Consumer
@@ -183,18 +183,172 @@ def cli_env_names(nodes: Sequence[tree_sitter.Node], session: Session,
     return frozenset(out)
 
 
+# A prefix assignment's value may carry expansions (the walk reads
+# them), but a substitution runs commands of its own, which is exactly
+# the "nothing runs before the masks land" premise the prefix trades on.
+_MASK_VALUE_BLOCKERS = frozenset(
+    {"command_substitution", "process_substitution"})
+
+
+def _replacement_blocked(part: tree_sitter.Node) -> bool:
+    """Whether an assignment's subtree defeats the masking premise.
+
+    A command or process substitution runs code before the prefix is
+    over, and an opaque read (``${!name}``) reads a name no walk can
+    spell, so neither may sit inside a masking statement.
+
+    Args:
+        part (tree_sitter.Node): one ``variable_assignment`` node.
+    """
+    if opaque_reads(part):
+        return True
+    stack = list(part.named_children)
+    while stack:
+        current = stack.pop()
+        if current.type in _MASK_VALUE_BLOCKERS:
+            return True
+        stack.extend(current.named_children)
+    return False
+
+
+def _assignment_masks(stmt: tree_sitter.Node) -> frozenset[str] | None:
+    """The names a standalone assignment statement definitely replaces.
+
+    None when the statement is not a plain replacement: a ``+=`` reads
+    the standing value into the result, a subscript writes one element,
+    and a substitution in the value runs code mid-prefix.
+
+    Args:
+        stmt (tree_sitter.Node): a ``variable_assignment`` or
+            ``variable_assignments`` statement node.
+    """
+    parts = ([stmt] if stmt.type == "variable_assignment" else list(
+        stmt.named_children))
+    names: set[str] = set()
+    for part in parts:
+        if part.type != "variable_assignment":
+            return None
+        if any(child.type == "+=" for child in part.children):
+            return None
+        name_node = part.child_by_field_name("name")
+        if name_node is None or name_node.type != "variable_name":
+            return None
+        text = name_node.text
+        if not text:
+            return None
+        if _replacement_blocked(part):
+            return None
+        names.add(text.decode())
+    return frozenset(names)
+
+
+def _unset_masks(stmt: tree_sitter.Node) -> frozenset[str] | None:
+    """The names a plain ``unset`` statement definitely removes.
+
+    None when anything is unprovable: a flag other than ``-v``/``--``
+    (``-f`` touches functions, ``-n`` the nameref itself), an operand
+    no static read can spell, or a head that is not ``unset`` at all
+    (the grammar parses ``unsetenv`` into the same node type, and no
+    builtin answers it).
+
+    Args:
+        stmt (tree_sitter.Node): an ``unset_command`` statement node.
+    """
+    head = stmt.children[0].text if stmt.children else None
+    if head != b"unset":
+        return None
+    names: set[str] = set()
+    for child in stmt.named_children:
+        if child.type == "word":
+            text = child.text
+            if not text or text.decode() not in ("-v", "--"):
+                return None
+        elif child.type == "variable_name":
+            text = child.text
+            if not text:
+                return None
+            names.add(text.decode())
+        else:
+            return None
+    return frozenset(names)
+
+
+def masked_names(node: tree_sitter.Node, session: Session,
+                 writes_gated: bool) -> frozenset[str]:
+    """Names the line definitely replaces before anything can read them.
+
+    The line's leading run of plain top-level statements that only
+    assign or unset masks its names for everything after: expansion
+    writes the assignment before any command runs, invoked bodies and
+    CLIs only run from later statements, and even an opaque read there
+    observes the replacement. The prefix ends at the first statement
+    that is anything else, that runs in the background (``&`` detaches
+    it to a subshell, so nothing persists), or that touches a readonly
+    name (the write fails and the standing value stays observable). A
+    name read while still unmasked (``TOKEN=$TOKEN``) stays fetched:
+    within a statement the read precedes the write.
+
+    ``writes_gated`` empties the set: a ``pre_session`` policy may
+    refuse a write mid-line while later statements still run, and a
+    refused mask would leave the standing value readable, so under such
+    a policy nothing masks and the fetch keeps today's shape.
+
+    Args:
+        node (tree_sitter.Node): the line's own parsed tree (never a
+            stored body: those run at invocation, after the prefix).
+        session (Session): the session the line runs in.
+        writes_gated (bool): a policy hooks ``pre_session``.
+    """
+    if writes_gated:
+        return frozenset()
+    masked: set[str] = set()
+    needed: set[str] = set()
+    children = node.children
+    for idx, stmt in enumerate(children):
+        if not stmt.is_named or stmt.type == "comment":
+            continue
+        if stmt.type in ("variable_assignment", "variable_assignments"):
+            masks = _assignment_masks(stmt)
+        elif stmt.type == "unset_command":
+            masks = _unset_masks(stmt)
+        else:
+            break
+        if masks is None:
+            break
+        following = children[idx + 1] if idx + 1 < len(children) else None
+        if following is not None and following.type == "&":
+            break
+        readonly = any(name in session.vars
+                       and VarAttr.READONLY in session.vars[name].attrs
+                       for name in masks)
+        if readonly:
+            break
+        for name in referenced_names(stmt):
+            for target in (name, deref(session, name)):
+                if target not in masked:
+                    needed.add(target)
+        masked |= masks
+    return frozenset(masked - needed)
+
+
 def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
-            pending: Mapping[str, ManagedRef],
-            cli_env_names: frozenset[str]) -> frozenset[str]:
+            pending: Mapping[str, ManagedRef], cli_env_names: frozenset[str],
+            masked: frozenset[str]) -> frozenset[str]:
     """The pending names the line's walked set is about to read.
 
-    A whole-environment render, an opaque read (``opaque_reads``), or a
-    command head no static read can spell (``$tool api ...`` -- the
-    program that runs is not decidable before expansion, so neither is
-    its read set) selects everything pending; otherwise the set is the
-    walk's references (nameref targets resolved through the session),
-    the printing forms' explicit targets, the routed CLIs' env names,
-    and the eager-marked entries.
+    An opaque read (``opaque_reads``) or a command head no static read
+    can spell (``$tool api ...`` -- the program that runs is not
+    decidable before expansion, so neither is its read set) selects
+    everything pending; otherwise the set is the walk's references
+    (nameref targets resolved through the session), the printing forms'
+    explicit targets, the routed CLIs' env names, the eager-marked
+    entries, and, when some command renders the whole environment,
+    everything pending except what every such render provably skips
+    (``env -u TOKEN``, an assignment prefix; the ``excluded`` third of
+    ``env_reads``). The line's masked names come off last, the opaque
+    selections included: a masked name is replaced before anything at
+    all runs, so whatever the line turns out to read observes the
+    replacement, eagerness notwithstanding.
 
     Args:
         session (Session): the session the line runs in.
@@ -202,15 +356,23 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
         pending (Mapping[str, ManagedRef]): unfetched managed vars.
         cli_env_names (frozenset[str]): env names the line's installed
             CLIs read (``cli_env_names``).
+        masked (frozenset[str]): names the line replaces before any
+            read (``masked_names``).
     """
     referenced: set[str] = set()
     printed: set[str] = set()
+    rendered_any = False
+    rendered_excluded: frozenset[str] | None = None
     for node in nodes:
-        rendered, names = env_reads(node)
-        if rendered or opaque_reads(node):
-            return frozenset(pending)
+        rendered, names, excluded = env_reads(node)
+        if opaque_reads(node):
+            return frozenset(pending.keys() - masked)
         if any(head is None for head, _ in command_invocations(node)):
-            return frozenset(pending)
+            return frozenset(pending.keys() - masked)
+        if rendered:
+            rendered_any = True
+            rendered_excluded = (excluded if rendered_excluded is None else
+                                 rendered_excluded & excluded)
         printed |= names
         referenced |= referenced_names(node)
     wanted = printed | cli_env_names | {
@@ -220,7 +382,9 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
     for name in referenced:
         wanted.add(name)
         wanted.add(deref(session, name))
-    return frozenset(wanted & pending.keys())
+    if rendered_any:
+        wanted |= pending.keys() - (rendered_excluded or frozenset())
+    return frozenset((wanted & pending.keys()) - masked)
 
 
 def _pending(session: Session) -> dict[str, ManagedRef]:
@@ -242,13 +406,20 @@ def _pending(session: Session) -> dict[str, ManagedRef]:
     return out
 
 
-def fill_names(session: Session, nodes: Sequence[tree_sitter.Node], *,
-               whole: bool, cli_env_names: frozenset[str]) -> frozenset[str]:
+def fill_names(session: Session,
+               nodes: Sequence[tree_sitter.Node],
+               *,
+               whole: bool,
+               cli_env_names: frozenset[str],
+               writes_gated: bool = False) -> frozenset[str]:
     """The managed names one line is about to read, without fetching.
 
     Pure planning, split from :func:`fill_env` so the executor can
     consult the admission text-pass between deciding and fetching: a
     line already denied on its literal words never reaches a source.
+    Masks come off the line's own tree, which ``line_nodes`` puts
+    first: a stored body or alias never contributes one, because it
+    runs at an invocation point, after the masking prefix.
 
     Args:
         session (Session): the session the line runs in.
@@ -258,13 +429,17 @@ def fill_names(session: Session, nodes: Sequence[tree_sitter.Node], *,
             runtime), so every managed name may be read.
         cli_env_names (frozenset[str]): env names the line's installed
             CLIs read (``cli_env_names``).
+        writes_gated (bool): a policy hooks ``pre_session``, so no
+            assignment or unset is trusted to land (``masked_names``).
     """
     pending = _pending(session)
     if not pending:
         return frozenset()
     if whole:
         return frozenset(pending)
-    return _wanted(session, nodes, pending, cli_env_names)
+    masked = (masked_names(nodes[0], session, writes_gated)
+              if nodes else frozenset())
+    return _wanted(session, nodes, pending, cli_env_names, masked)
 
 
 async def fill_env(session: Session, names: frozenset[str]) -> None:

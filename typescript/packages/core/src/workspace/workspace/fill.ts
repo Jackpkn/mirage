@@ -27,7 +27,7 @@ import {
   referencedNames,
 } from '../../shell/parse.ts'
 import type { ManagedRef, ShellVar } from '../../shell/variable.ts'
-import { withValue } from '../../shell/variable.ts'
+import { VarAttr, withValue } from '../../shell/variable.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { compareCodePoints } from '../../utils/sort.ts'
 import { varHidden } from '../../utils/hidden.ts'
@@ -189,30 +189,184 @@ function pendingOf(session: Session): Map<string, ManagedRef> {
   return out
 }
 
+// A prefix assignment's value may carry expansions (the walk reads
+// them), but a substitution runs commands of its own, which is exactly
+// the "nothing runs before the masks land" premise the prefix trades on.
+const MASK_VALUE_BLOCKERS: ReadonlySet<string> = new Set([
+  'command_substitution',
+  'process_substitution',
+])
+
+/**
+ * Whether an assignment's subtree defeats the masking premise.
+ *
+ * A command or process substitution runs code before the prefix is
+ * over, and an opaque read (`${!name}`) reads a name no walk can
+ * spell, so neither may sit inside a masking statement.
+ */
+function replacementBlocked(part: TSNodeLike): boolean {
+  if (opaqueReads(part)) return true
+  const stack = [...part.namedChildren]
+  for (;;) {
+    const current = stack.pop()
+    if (current === undefined) break
+    if (MASK_VALUE_BLOCKERS.has(current.type)) return true
+    stack.push(...current.namedChildren)
+  }
+  return false
+}
+
+/**
+ * The names a standalone assignment statement definitely replaces.
+ *
+ * Null when the statement is not a plain replacement: a `+=` reads the
+ * standing value into the result, a subscript writes one element, and
+ * a substitution in the value runs code mid-prefix.
+ */
+function assignmentMasks(stmt: TSNodeLike): ReadonlySet<string> | null {
+  const parts = stmt.type === 'variable_assignment' ? [stmt] : [...stmt.namedChildren]
+  const names = new Set<string>()
+  for (const part of parts) {
+    if (part.type !== 'variable_assignment') return null
+    if (part.children.some((child) => child.type === '+=')) return null
+    const nameNode = part.childForFieldName?.('name') ?? null
+    if (nameNode?.type !== 'variable_name') return null
+    if (nameNode.text === '') return null
+    if (replacementBlocked(part)) return null
+    names.add(nameNode.text)
+  }
+  return names
+}
+
+/**
+ * The names a plain `unset` statement definitely removes.
+ *
+ * Null when anything is unprovable: a flag other than `-v`/`--` (`-f`
+ * touches functions, `-n` the nameref itself), an operand no static
+ * read can spell, or a head that is not `unset` at all (the grammar
+ * parses `unsetenv` into the same node type, and no builtin answers
+ * it).
+ */
+function unsetMasks(stmt: TSNodeLike): ReadonlySet<string> | null {
+  const head = stmt.children[0]
+  if (head?.text !== 'unset') return null
+  const names = new Set<string>()
+  for (const child of stmt.namedChildren) {
+    if (child.type === 'word') {
+      if (child.text !== '-v' && child.text !== '--') return null
+    } else if (child.type === 'variable_name') {
+      if (child.text === '') return null
+      names.add(child.text)
+    } else {
+      return null
+    }
+  }
+  return names
+}
+
+/**
+ * Names the line definitely replaces before anything can read them.
+ *
+ * The line's leading run of plain top-level statements that only
+ * assign or unset masks its names for everything after: expansion
+ * writes the assignment before any command runs, invoked bodies and
+ * CLIs only run from later statements, and even an opaque read there
+ * observes the replacement. The prefix ends at the first statement
+ * that is anything else, that runs in the background (`&` detaches it
+ * to a subshell, so nothing persists), or that touches a readonly name
+ * (the write fails and the standing value stays observable). A name
+ * read while still unmasked (`TOKEN=$TOKEN`) stays fetched: within a
+ * statement the read precedes the write.
+ *
+ * `writesGated` empties the set: a `preSession` policy may refuse a
+ * write mid-line while later statements still run, and a refused mask
+ * would leave the standing value readable, so under such a policy
+ * nothing masks and the fetch keeps today's shape.
+ */
+export function maskedNames(
+  node: TSNodeLike,
+  session: Session,
+  writesGated: boolean,
+): ReadonlySet<string> {
+  if (writesGated) return new Set()
+  const masked = new Set<string>()
+  const needed = new Set<string>()
+  const children = node.children
+  for (let idx = 0; idx < children.length; idx += 1) {
+    const stmt = children[idx]
+    if (stmt === undefined) break
+    if (stmt.type === ';' || stmt.type === '\n' || stmt.type === 'comment') continue
+    let masks: ReadonlySet<string> | null
+    if (stmt.type === 'variable_assignment' || stmt.type === 'variable_assignments') {
+      masks = assignmentMasks(stmt)
+    } else if (stmt.type === 'unset_command') {
+      masks = unsetMasks(stmt)
+    } else {
+      break
+    }
+    if (masks === null) break
+    const following = children[idx + 1]
+    if (following?.type === '&') break
+    const readonlyHit = [...masks].some((name) => {
+      const record = Object.hasOwn(session.vars, name) ? session.vars[name] : undefined
+      return record?.attrs.has(VarAttr.Readonly) ?? false
+    })
+    if (readonlyHit) break
+    for (const name of referencedNames(stmt)) {
+      for (const target of [name, deref(session, name)]) {
+        if (!masked.has(target)) needed.add(target)
+      }
+    }
+    for (const name of masks) masked.add(name)
+  }
+  return new Set([...masked].filter((name) => !needed.has(name)))
+}
+
 /**
  * The pending names the line's walked set is about to read.
  *
- * A whole-environment render, an opaque read (`opaqueReads`), or a
- * command head no static read can spell (`$tool api ...` -- the
- * program that runs is not decidable before expansion, so neither is
- * its read set) selects everything pending; otherwise the set is the
- * walk's references (nameref targets resolved through the session),
- * the printing forms' explicit targets, the routed CLIs' env names,
- * and the eager-marked entries.
+ * An opaque read (`opaqueReads`) or a command head no static read can
+ * spell (`$tool api ...` -- the program that runs is not decidable
+ * before expansion, so neither is its read set) selects everything
+ * pending; otherwise the set is the walk's references (nameref targets
+ * resolved through the session), the printing forms' explicit targets,
+ * the routed CLIs' env names, the eager-marked entries, and, when some
+ * command renders the whole environment, everything pending except
+ * what every such render provably skips (`env -u TOKEN`, an assignment
+ * prefix; the `excluded` third of `envReads`). The line's masked names
+ * come off last, the opaque selections included: a masked name is
+ * replaced before anything at all runs, so whatever the line turns out
+ * to read observes the replacement, eagerness notwithstanding.
  */
 function wanted(
   session: Session,
   nodes: TSNodeLike[],
   pending: Map<string, ManagedRef>,
   lineCliEnvNames: ReadonlySet<string>,
+  masked: ReadonlySet<string>,
 ): Set<string> {
+  const unmaskedPending = (): Set<string> =>
+    new Set([...pending.keys()].filter((name) => !masked.has(name)))
   const referenced = new Set<string>()
   const printed = new Set<string>()
+  let renderedAny = false
+  let renderedExcluded: ReadonlySet<string> | null = null
   for (const node of nodes) {
     const reads = envReads(node)
-    if (reads.whole || opaqueReads(node)) return new Set(pending.keys())
+    if (opaqueReads(node)) return unmaskedPending()
     if (commandInvocations(node).some(([head]) => head === null)) {
-      return new Set(pending.keys())
+      return unmaskedPending()
+    }
+    if (reads.whole) {
+      renderedAny = true
+      const prior: ReadonlySet<string> | null = renderedExcluded
+      // The parameter annotation breaks tsc's circular inference:
+      // `renderedExcluded` is assigned from an arrow whose context is
+      // itself.
+      renderedExcluded =
+        prior === null
+          ? reads.excluded
+          : new Set([...prior].filter((name: string) => reads.excluded.has(name)))
     }
     for (const name of reads.names) printed.add(name)
     for (const name of referencedNames(node)) referenced.add(name)
@@ -225,7 +379,13 @@ function wanted(
     out.add(name)
     out.add(deref(session, name))
   }
-  return new Set([...out].filter((name) => pending.has(name)))
+  if (renderedAny) {
+    const skipped = renderedExcluded ?? new Set<string>()
+    for (const name of pending.keys()) {
+      if (!skipped.has(name)) out.add(name)
+    }
+  }
+  return new Set([...out].filter((name) => pending.has(name) && !masked.has(name)))
 }
 
 /**
@@ -233,18 +393,26 @@ function wanted(
  *
  * Pure planning, split from `fillEnv` so the executor can consult the
  * admission text-pass between deciding and fetching: a line already
- * denied on its literal words never reaches a source.
+ * denied on its literal words never reaches a source. Masks come off
+ * the line's own tree, which `lineNodes` puts first: a stored body or
+ * alias never contributes one, because it runs at an invocation point,
+ * after the masking prefix. `writesGated` says a policy hooks
+ * `preSession`, so no assignment or unset is trusted to land
+ * (`maskedNames`).
  */
 export function fillNames(
   session: Session,
   nodes: TSNodeLike[],
   whole: boolean,
   lineCliEnvNames: ReadonlySet<string>,
+  writesGated = false,
 ): ReadonlySet<string> {
   const pending = pendingOf(session)
   if (pending.size === 0) return new Set()
   if (whole) return new Set(pending.keys())
-  return wanted(session, nodes, pending, lineCliEnvNames)
+  const first = nodes[0]
+  const masked = first === undefined ? new Set<string>() : maskedNames(first, session, writesGated)
+  return wanted(session, nodes, pending, lineCliEnvNames, masked)
 }
 
 /**

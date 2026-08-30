@@ -21,13 +21,14 @@ import { RAMResource } from '../../resource/ram/ram.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import { VFSRuntime } from '../../runtime/table.ts'
 import { registerSecrets } from '../../secrets/registry.ts'
-import type { EnvEntries, ResolvedSecret } from '../../secrets/types.ts'
+import type { EnvEntries } from '../../secrets/config.ts'
+import type { ResolvedSecret } from '../../secrets/types.ts'
 import { VarAttr } from '../../shell/variable.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
 import { MountMode } from '../../types.ts'
 import type { Action, CommandContext, Policy } from '../../policy/index.ts'
 import type { AskHandler } from '../../policy/decisions.ts'
-import { Outcome, Scope, type Decision } from '../../policy/types.ts'
+import { Outcome, Scope, type Decision, type SessionContext } from '../../policy/types.ts'
 import { getTestParser, stderrStr, stdoutStr } from '../fixtures/workspace_fixture.ts'
 import { guestBound } from './fill.ts'
 import { Workspace } from './workspace.ts'
@@ -631,6 +632,145 @@ describe('fillEnv through execute', () => {
       expect(stdoutStr(inner)).toBe('')
       expect(calls).toEqual([])
       expect(stdoutStr(await ws.execute('env printenv TOKEN'))).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a masked assignment never fetches', async () => {
+    // The line replaces the name before anything can read it, so no
+    // source is contacted, and the replacement persists.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-mask-assign', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-mask-assign', ref: 'r' } })
+    try {
+      const io = await ws.execute('TOKEN=local; printenv TOKEN')
+      expect(stdoutStr(io)).toBe('local\n')
+      expect(calls).toEqual([])
+      const later = await ws.execute('printenv TOKEN')
+      expect(stdoutStr(later)).toBe('local\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a masked unset never fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-mask-unset', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-mask-unset', ref: 'r' } })
+    try {
+      const io = await ws.execute('unset TOKEN; printenv TOKEN')
+      expect(io.exitCode).toBe(1)
+      expect(stdoutStr(io)).toBe('')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('env removal and override never fetch', async () => {
+    // `env -u TOKEN` and `env TOKEN=local` both hand the child an
+    // environment that cannot observe the standing value, so neither
+    // invocation selects the name; the pointer stays pending for a
+    // later line that really reads it.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-env-excl', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-env-excl', ref: 'r' } })
+    try {
+      const removed = await ws.execute('env -u TOKEN printenv TOKEN')
+      expect(removed.exitCode).toBe(1)
+      expect(stdoutStr(removed)).toBe('')
+      const overridden = await ws.execute('env TOKEN=local printenv TOKEN')
+      expect(stdoutStr(overridden)).toBe('local\n')
+      expect(calls).toEqual([])
+      const real = await ws.execute('printenv TOKEN')
+      expect(stdoutStr(real)).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a prefix override never fetches and keeps the pointer', async () => {
+    // `TOKEN=local printenv TOKEN` overrides for that invocation only:
+    // no fetch, "local" printed, and the pointer still fetches on the
+    // next real read.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-prefix', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-prefix', ref: 'r' } })
+    try {
+      const io = await ws.execute('TOKEN=local printenv TOKEN')
+      expect(stdoutStr(io)).toBe('local\n')
+      expect(calls).toEqual([])
+      const real = await ws.execute('echo $TOKEN')
+      expect(stdoutStr(real)).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('conditional and background masks do not hold', async () => {
+    // `A=1 && read` runs the read conditionally and `TOKEN=local &`
+    // detaches to a subshell where nothing persists: neither position
+    // proves a replacement, so the fetch stands.
+    const first = countingSource({ TOKEN: 't0', A: 'a0' })
+    registerSecrets('fake-cond', FakeConfig, first.fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-cond', ref: 'r' } })
+    try {
+      const io = await ws.execute('A=1 && printenv TOKEN')
+      expect(stdoutStr(io)).toBe('t0\n')
+      expect(first.calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+    const second = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-bg', FakeConfig, second.fetch)
+    const ws2 = await makeWs({ TOKEN: { from: 'fake-bg', ref: 'r' } })
+    try {
+      await ws2.execute('TOKEN=local & printenv TOKEN')
+      expect(second.calls).toEqual(['r'])
+    } finally {
+      await ws2.close()
+    }
+  })
+
+  it('a self read in the prefix keeps the fetch', async () => {
+    // `TOKEN=$TOKEN` reads before it writes, so the mask may not spend
+    // the name.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-selfread', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-selfread', ref: 'r' } })
+    try {
+      const io = await ws.execute('TOKEN=$TOKEN; printenv TOKEN')
+      expect(stdoutStr(io)).toBe('t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a session-write policy disables masking', async () => {
+    // A preSession rule may refuse a write mid-line while later
+    // statements still run, so under one no assignment or unset is
+    // trusted to land: the fetch keeps today's shape and the output is
+    // unchanged.
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-gated', FakeConfig, fetch)
+    const gate: Policy = {
+      preSession(ctx: SessionContext): Action | null {
+        if (ctx.key === 'UNRELATED') {
+          return { kind: 'deny', reason: `no writing ${ctx.key}`, scope: 'command' }
+        }
+        return null
+      },
+    }
+    const ws = await makeWs({ TOKEN: { from: 'fake-gated', ref: 'r' } }, [gate])
+    try {
+      const io = await ws.execute('TOKEN=local; printenv TOKEN')
+      expect(stdoutStr(io)).toBe('local\n')
       expect(calls).toEqual(['r'])
     } finally {
       await ws.close()

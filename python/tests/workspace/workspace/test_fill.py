@@ -778,3 +778,145 @@ async def test_shadowed_cli_head_does_not_fetch():
         assert calls == ["root"]
     finally:
         await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_masked_assignment_never_fetches():
+    # The line replaces the name before anything can read it, so no
+    # source is contacted, and the replacement persists.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("TOKEN=local; printenv TOKEN")
+        assert (await io.stdout_str()) == "local\n"
+        assert calls == []
+        later = await ws.execute("printenv TOKEN")
+        assert (await later.stdout_str()) == "local\n"
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_masked_unset_never_fetches():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("unset TOKEN; printenv TOKEN")
+        assert io.exit_code == 1
+        assert (await io.stdout_str()) == ""
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_env_removal_and_override_never_fetch():
+    # `env -u TOKEN` and `env TOKEN=local` both hand the child an
+    # environment that cannot observe the standing value, so neither
+    # invocation selects the name; the pointer stays pending for a
+    # later line that really reads it.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        removed = await ws.execute("env -u TOKEN printenv TOKEN")
+        assert removed.exit_code == 1
+        assert (await removed.stdout_str()) == ""
+        overridden = await ws.execute("env TOKEN=local printenv TOKEN")
+        assert (await overridden.stdout_str()) == "local\n"
+        assert calls == []
+        real = await ws.execute("printenv TOKEN")
+        assert (await real.stdout_str()) == "t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_prefix_override_never_fetches_and_keeps_the_pointer():
+    # `TOKEN=local printenv TOKEN` overrides for that invocation only:
+    # no fetch, "local" printed, and the pointer still fetches on the
+    # next real read.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("TOKEN=local printenv TOKEN")
+        assert (await io.stdout_str()) == "local\n"
+        assert calls == []
+        real = await ws.execute("echo $TOKEN")
+        assert (await real.stdout_str()) == "t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_conditional_and_background_masks_do_not_hold():
+    # `A=1 && read` runs the read conditionally and `TOKEN=local &`
+    # detaches to a subshell where nothing persists: neither position
+    # proves a replacement, so the fetch stands.
+    calls, fetch = counting_source({"TOKEN": "t0", "A": "a0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("A=1 && printenv TOKEN")
+        assert (await io.stdout_str()) == "t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+    calls2, fetch2 = counting_source({"TOKEN": "t0"})
+    register_secrets("fake2", FakeConfig, fetch2)
+    ws2 = _ws({"TOKEN": {"from": "fake2", "ref": "r"}})
+    try:
+        await ws2.execute("TOKEN=local & printenv TOKEN")
+        assert calls2 == ["r"]
+    finally:
+        await ws2.close()
+
+
+@pytest.mark.asyncio
+async def test_self_read_in_the_prefix_keeps_the_fetch():
+    # `TOKEN=$TOKEN` reads before it writes, so the mask may not spend
+    # the name.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("TOKEN=$TOKEN; printenv TOKEN")
+        assert (await io.stdout_str()) == "t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+class DenyUnrelatedWrite(Policy):
+
+    async def pre_session(self, ctx) -> Action | None:
+        if ctx.key == "UNRELATED":
+            return Deny(f"no writing {ctx.key}")
+        return None
+
+
+@pytest.mark.asyncio
+async def test_session_write_policy_disables_masking():
+    # A pre_session rule may refuse a write mid-line while later
+    # statements still run, so under one no assignment or unset is
+    # trusted to land: the fetch keeps today's shape and the output is
+    # unchanged.
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {
+        "from": "fake",
+        "ref": "r"
+    }},
+             policies=[DenyUnrelatedWrite()])
+    try:
+        io = await ws.execute("TOKEN=local; printenv TOKEN")
+        assert (await io.stdout_str()) == "local\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()

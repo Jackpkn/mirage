@@ -23,7 +23,7 @@ import type { Resource } from '@struktoai/mirage-core/resource/base'
 import type { RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
 import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/index'
 import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
-import { EnvVarSchema, type EnvEntries } from '@struktoai/mirage-core/secrets/types'
+import { EnvVarSchema, type EnvEntries } from '@struktoai/mirage-core/secrets/config'
 import {
   ConsistencyPolicy,
   KERNEL_BACKENDS,

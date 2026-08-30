@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { EnvVarSchema } from './types.ts'
+import { EnvVarSchema } from './config.ts'
 
 describe('EnvVarSchema', () => {
   it('parses a literal entry with defaults', () => {

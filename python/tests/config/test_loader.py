@@ -26,7 +26,7 @@ from mirage.policy import DEFAULT_DENY_REASON, CommandRule
 from mirage.resource.ram import RAMResource
 from mirage.resource.s3 import S3Resource
 from mirage.runtime.types import ScriptSource
-from mirage.secrets.types import EnvVar
+from mirage.secrets.config import EnvVar
 from mirage.shell.console import JobConsole
 from mirage.shell.console.redis import RedisConsoleStore
 from mirage.types import ConsistencyPolicy

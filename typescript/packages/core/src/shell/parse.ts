@@ -596,107 +596,206 @@ function commandArgs(node: TSNodeLike): TSNodeLike[] {
 }
 
 /**
- * Whether an `env` invocation provably starts from an empty
- * environment (`-i`, `--ignore-environment`, or the lone `-`), so it
- * reads no existing name.
+ * Names an `env` invocation provably keeps from the environment it
+ * hands on: null when it reads no existing name at all, else the set a
+ * whole-environment read may skip.
  *
  * Scanned with the builtin's own option grammar: `--` ends the
  * options, `-u`/`--unset` consume a value (so `-u -i` unsets a
- * variable named `-i` rather than clearing), and the first operand
- * ends the scan. Anything unprovable -- a word no static read can
- * spell, an option the builtin refuses -- answers false, leaving the
- * whole-environment read standing: over-selection only over-fetches.
+ * variable named `-i` rather than clearing) and add it to the
+ * exclusions, the leading `NAME=VALUE` operands override and exclude
+ * their names, and the first other operand ends the scan. `-i`,
+ * `--ignore-environment` or the lone `-` empties the start entirely,
+ * and an option the builtin refuses stops it from running at all; both
+ * answer null. The scan is left to right like the builtin's, so
+ * everything consumed before the first word no static read can spell
+ * keeps its effect whatever that word turns out to be, and nothing
+ * after it is claimed: a dynamic word may be the command, demoting
+ * every later word to an argument.
  */
-function envIgnoresEnvironment(args: TSNodeLike[]): boolean {
+function envExclusions(args: TSNodeLike[]): ReadonlySet<string> | null {
+  const excluded = new Set<string>()
   let i = 0
   while (i < args.length) {
     const arg = args[i]
     const literal = arg === undefined ? null : literalText(arg)
-    if (literal === null || literal === '--') return false
-    if (literal === '-i' || literal === '--ignore-environment' || literal === '-') return true
+    if (literal === null) return excluded
+    if (literal === '--') {
+      i += 1
+      break
+    }
+    if (literal === '-i' || literal === '--ignore-environment' || literal === '-') return null
     if (literal === '--unset') {
+      if (i + 1 >= args.length) return null
+      const next = args[i + 1]
+      const value = next === undefined ? null : literalText(next)
+      if (value !== null) excluded.add(value)
       i += 2
       continue
     }
-    if (literal === '-0' || literal === '--null' || literal.startsWith('--unset=')) {
+    if (literal.startsWith('--unset=')) {
+      excluded.add(literal.slice('--unset='.length))
       i += 1
       continue
     }
-    if (!literal.startsWith('-') || literal.startsWith('--')) return false
-    let step = 1
-    for (let pos = 1; pos < literal.length; pos += 1) {
-      const ch = literal[pos]
-      if (ch === 'i') return true
-      if (ch === 'u') {
-        if (pos === literal.length - 1) step = 2
-        break
-      }
-      if (ch !== '0') return false
+    if (literal === '-0' || literal === '--null') {
+      i += 1
+      continue
     }
-    i += step
+    if (literal.startsWith('--')) return null
+    if (literal.startsWith('-') && literal.length > 1) {
+      let step = 1
+      let bad = false
+      for (let pos = 1; pos < literal.length; pos += 1) {
+        const ch = literal[pos]
+        if (ch === 'i') return null
+        if (ch === 'u') {
+          const rest = literal.slice(pos + 1)
+          if (rest !== '') {
+            excluded.add(rest)
+          } else if (i + 1 < args.length) {
+            const next = args[i + 1]
+            const value = next === undefined ? null : literalText(next)
+            if (value !== null) excluded.add(value)
+            step = 2
+          } else {
+            return null
+          }
+          break
+        }
+        if (ch !== '0') {
+          bad = true
+          break
+        }
+      }
+      if (bad) return null
+      i += step
+      continue
+    }
+    break
   }
-  return false
+  while (i < args.length) {
+    const arg = args[i]
+    const literal = arg === undefined ? null : literalText(arg)
+    if (literal === null) return excluded
+    if (!literal.includes('=') || literal.startsWith('=')) break
+    excluded.add(literal.split('=', 1)[0] ?? '')
+    i += 1
+  }
+  return excluded
+}
+
+/**
+ * Names a command's assignment prefixes provably override.
+ *
+ * `TOKEN=local printenv TOKEN` hands the command an environment whose
+ * TOKEN is the override, so an environment read through that
+ * invocation cannot observe the standing value whatever the override
+ * expands to; the value's own reads are the walk's business. `+=`
+ * appends to the standing value and proves nothing.
+ */
+function prefixAssignmentNames(node: TSNodeLike): Set<string> {
+  const out = new Set<string>()
+  for (const child of node.namedChildren) {
+    if (child.type !== 'variable_assignment') continue
+    if (child.children.some((part) => part.type === '+=')) continue
+    const nameNode = child.childForFieldName?.('name') ?? null
+    if (nameNode?.type !== 'variable_name') continue
+    if (nameNode.text !== '') out.add(nameNode.text)
+  }
+  return out
 }
 
 /**
  * How the line's environment-rendering commands read names.
  *
- * Returns `{whole, names}`: whether some command renders the whole
- * environment, and the names printing forms read explicitly. Only a
- * printing form selects everything: `env` on any invocation (bare it
- * prints every exported name, and with arguments it hands the snapshot
- * to the command it runs) unless a literal `-i`,
- * `--ignore-environment` or lone `-` proves it starts empty, a bare
- * `set`, a bare `printenv`, and a declaring builtin with no operands
- * (`export`, `declare -p`). `printenv NAME` and `declare -p NAME` read
- * exactly the named variables, and a mutating form (`export NAME=v`,
- * `declare -x NAME`, `set -u`) reads nothing here, so an unavailable
- * source cannot fail the write that would replace its pointer. A print
- * target no static read can spell (`printenv $x`) falls back to the
- * whole environment.
+ * Returns `{whole, names, excluded}`: whether some command renders the
+ * whole environment, the names printing forms read explicitly, and the
+ * names every whole-environment read provably skips. Only a printing
+ * form selects everything: `env` on any invocation (bare it prints
+ * every exported name, and with arguments it hands the snapshot to the
+ * command it runs) unless a literal `-i`, `--ignore-environment` or
+ * lone `-` proves it starts empty, a bare `set`, a bare `printenv`,
+ * and a declaring builtin with no operands (`export`, `declare -p`).
+ * `printenv NAME` and `declare -p NAME` read exactly the named
+ * variables, and a mutating form (`export NAME=v`, `declare -x NAME`,
+ * `set -u`) reads nothing here, so an unavailable source cannot fail
+ * the write that would replace its pointer. A print target no static
+ * read can spell (`printenv $x`) falls back to the whole environment.
+ *
+ * Exclusions are per invocation: an assignment prefix overrides its
+ * name for exactly that command's environment, and `env`'s `-u`,
+ * `--unset` and `NAME=VALUE` words remove or override theirs
+ * (`envExclusions`), so `env -u TOKEN printenv TOKEN` cannot observe
+ * TOKEN however the whole snapshot is handed on. A print target so
+ * excluded is dropped rather than reported. `excluded` is the
+ * intersection across the node's whole-environment reads, because a
+ * name is skippable only when every such read skips it.
  */
-export function envReads(node: TSNodeLike): { whole: boolean; names: ReadonlySet<string> } {
+export function envReads(node: TSNodeLike): {
+  whole: boolean
+  names: ReadonlySet<string>
+  excluded: ReadonlySet<string>
+} {
   let whole = false
+  let excluded: ReadonlySet<string> | null = null
   const names = new Set<string>()
   for (const current of walkNamedOutsideDefs(node)) {
     if (current.type === 'command') {
       const nameNode = current.childForFieldName?.('name') ?? null
       const head = nameNode !== null ? nameNode.text : ''
+      const prefix = prefixAssignmentNames(current)
+      let skipped: ReadonlySet<string> | null = null
       if (head === 'env') {
-        if (!envIgnoresEnvironment(commandArgs(current))) whole = true
+        const scanned = envExclusions(commandArgs(current))
+        if (scanned !== null) skipped = new Set([...prefix, ...scanned])
       } else if (head === 'set') {
-        if (commandArgs(current).length === 0) whole = true
+        if (commandArgs(current).length === 0) skipped = prefix
       } else if (head === 'printenv') {
         let readAny = false
         for (const child of commandArgs(current)) {
           const literal = literalText(child)
           if (literal === null) {
-            whole = true
+            skipped = prefix
             readAny = true
           } else if (!literal.startsWith('-')) {
-            names.add(literal)
+            if (!prefix.has(literal)) names.add(literal)
             readAny = true
           }
         }
-        if (!readAny) whole = true
+        if (!readAny) skipped = prefix
+      }
+      if (skipped !== null) {
+        whole = true
+        const skip = skipped
+        const prior: ReadonlySet<string> | null = excluded
+        // The parameter annotation breaks tsc's circular inference:
+        // `excluded` is assigned from an arrow whose context is itself.
+        excluded =
+          prior === null ? skip : new Set([...prior].filter((name: string) => skip.has(name)))
       }
     } else if (current.type === 'declaration_command') {
       const { head, flags, operands } = declarationParts(current)
       if (!DECL_PRINTER_HEADS.has(head)) continue
+      let selected = false
       if (operands.length === 0) {
-        whole = true
+        selected = true
       } else if (flagHas(flags, 'p')) {
         for (const operand of operands) {
           if (operand.type === 'variable_name') {
             if (operand.text !== '') names.add(operand.text)
           } else if (operand.type !== 'variable_assignment') {
-            whole = true
+            selected = true
           }
         }
       }
+      if (selected) {
+        whole = true
+        excluded = new Set()
+      }
     }
   }
-  return { whole, names }
+  return { whole, names, excluded: excluded ?? new Set() }
 }
 
 /**

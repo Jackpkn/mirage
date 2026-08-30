@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from mirage.policy.match import Outcome
 from mirage.policy.types import AdmissionRules, CommandRule, Decision, Scope
-from mirage.secrets.types import EnvVar
+from mirage.secrets.config import EnvVar
 from mirage.shell.variable import ManagedRef, ShellVar, VarAttr
 from mirage.types import MountMode
 from mirage.workspace.session import Session

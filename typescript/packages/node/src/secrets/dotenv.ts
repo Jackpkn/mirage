@@ -25,7 +25,10 @@ import type { DotenvConfig } from './config.ts'
  * Read one dotenv file as one secret: the file's key=value pairs as
  * fields. `ref` is the host filesystem path of the file; empty falls
  * back to `config.path`. A missing file is a SecretsError naming the
- * path.
+ * path. Values are taken verbatim: `dotenv.parse` never interpolates,
+ * and Python passes `interpolate=False` to match, so a `${NAME}` in a
+ * value stays literal in both languages instead of copying a host
+ * variable into a secret.
  */
 export async function fetchDotenv(config: DotenvConfig, ref: string): Promise<ResolvedSecret> {
   const path = ref !== '' ? ref : config.path

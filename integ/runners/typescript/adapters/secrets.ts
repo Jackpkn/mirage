@@ -50,7 +50,10 @@ export function buildSecretsEnv(kind: string): {
 } {
   if (kind === 'dead') {
     registerSecrets('dead', DeadConfig, fetchDead)
-    return { env: { DEAD: { from: 'dead', ref: 'x' } }, cleanup: async () => undefined }
+    return {
+      env: { DEAD: { from: 'dead', ref: 'x' }, DEAD2: { from: 'dead', ref: 'y' } },
+      cleanup: async () => undefined,
+    }
   }
   const counts = new Map<string, number>()
   const fetchCounting = async (_config: CounterConfig, ref: string): Promise<ResolvedSecret> => {

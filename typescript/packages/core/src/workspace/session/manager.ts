@@ -19,7 +19,7 @@ import { RAMSessionStore } from './ram.ts'
 import { applyProfile, narrow } from './resolve.ts'
 import { CAS_MAX_RETRIES, generationOf, type SessionFields, type SessionStore } from './store.ts'
 import type { AdmissionRules, Decision, HideReason, ProfileScript } from '../../policy/types.ts'
-import type { EnvEntries } from '../../secrets/types.ts'
+import type { EnvEntries } from '../../secrets/config.ts'
 import type { ShellVar } from '../../shell/variable.ts'
 import type { MountMode } from '../../types.ts'
 

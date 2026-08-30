@@ -461,60 +461,89 @@ def test_command_words(command, words):
 
 
 @pytest.mark.parametrize(
-    ("command", "whole", "names"),
+    ("command", "whole", "names", "excluded"),
     [
         # env renders on any invocation: bare it prints, with a command
         # it hands the snapshot to a child.
-        ("env", True, set()),
-        ("env FOO=1 mycmd", True, set()),
+        ("env", True, set(), set()),
+        # An override or removal excludes exactly its name from the
+        # whole read: the child cannot observe the standing value.
+        ("env FOO=1 mycmd", True, set(), {"FOO"}),
+        ("env -u TOKEN mycmd", True, set(), {"TOKEN"}),
+        ("env --unset=TOKEN mycmd", True, set(), {"TOKEN"}),
+        ("env --unset TOKEN mycmd", True, set(), {"TOKEN"}),
+        ("env -uTOKEN mycmd", True, set(), {"TOKEN"}),
+        ("env -u A B=2 mycmd", True, set(), {"A", "B"}),
         # A literal ignore-environment form proves the start is empty,
         # so nothing existing is read.
-        ("env -i", False, set()),
-        ("env -i mycmd", False, set()),
-        ("env --ignore-environment mycmd", False, set()),
-        ("env - mycmd", False, set()),
-        ("env -0i", False, set()),
-        ("env -iu X mycmd", False, set()),
+        ("env -i", False, set(), set()),
+        ("env -i mycmd", False, set(), set()),
+        ("env --ignore-environment mycmd", False, set(), set()),
+        ("env - mycmd", False, set(), set()),
+        ("env -0i", False, set(), set()),
+        ("env -iu X mycmd", False, set(), set()),
         # -u consumes a value, so `-ui` unsets a variable named i and
         # `-u -i` one named -i; both still read the whole environment.
-        ("env -ui mycmd", True, set()),
-        ("env -u -i mycmd", True, set()),
-        ("env -u X mycmd", True, set()),
+        ("env -ui mycmd", True, set(), {"i"}),
+        ("env -u -i mycmd", True, set(), {"-i"}),
+        ("env -u X mycmd", True, set(), {"X"}),
         # The first operand ends the options, and -- ends them too.
-        ("env X=1 -i mycmd", True, set()),
-        ("env -- -i mycmd", True, set()),
-        # A word no static read can spell keeps the whole read; one
-        # after a proven -i changes nothing.
-        ("env $x mycmd", True, set()),
-        ("env -i $x", False, set()),
-        ("set", True, set()),
-        ("set -u", False, set()),
-        ("set -- a b", False, set()),
-        ("printenv", True, set()),
-        ("printenv -0", True, set()),
-        ("printenv PATH TOKEN", False, {"PATH", "TOKEN"}),
+        ("env X=1 -i mycmd", True, set(), {"X"}),
+        ("env -- -i mycmd", True, set(), set()),
+        # A word no static read can spell ends the claim: it may be the
+        # command, demoting later words to arguments. What was consumed
+        # before it keeps its effect; after a proven -i it changes
+        # nothing.
+        ("env $x mycmd", True, set(), set()),
+        ("env -u A $x -u B mycmd", True, set(), {"A"}),
+        ("env A=1 $x B=2 mycmd", True, set(), {"A"}),
+        ("env -i $x", False, set(), set()),
+        # An option the builtin refuses stops it from running at all,
+        # so nothing is read.
+        ("env --bogus mycmd", False, set(), set()),
+        ("env --unset", False, set(), set()),
+        # An assignment prefix overrides its name for the invocation's
+        # environment, whoever renders it; += proves nothing.
+        ("TOKEN=local env", True, set(), {"TOKEN"}),
+        ("TOKEN=local set", True, set(), {"TOKEN"}),
+        ("TOKEN=local printenv", True, set(), {"TOKEN"}),
+        ("TOKEN=local printenv TOKEN", False, set(), set()),
+        ("TOKEN=local printenv TOKEN OTHER", False, {"OTHER"}, set()),
+        ("TOKEN+=x printenv TOKEN", False, {"TOKEN"}, set()),
+        ("TOKEN=local env -u OTHER mycmd", True, set(), {"TOKEN", "OTHER"}),
+        # Exclusions fold by intersection: a name is skippable only
+        # when every whole read skips it.
+        ("env -u A mycmd; env -u B mycmd", True, set(), set()),
+        ("env -u A mycmd; env -u A other", True, set(), {"A"}),
+        ("env -u A mycmd; export", True, set(), set()),
+        ("set", True, set(), set()),
+        ("set -u", False, set(), set()),
+        ("set -- a b", False, set(), set()),
+        ("printenv", True, set(), set()),
+        ("printenv -0", True, set(), set()),
+        ("printenv PATH TOKEN", False, {"PATH", "TOKEN"}, set()),
         # A print target only the runtime can spell selects everything.
-        ("printenv $x", True, set()),
-        ("export", True, set()),
-        ("export -p", True, set()),
-        ("export -p TOKEN", False, {"TOKEN"}),
+        ("printenv $x", True, set(), set()),
+        ("export", True, set(), set()),
+        ("export -p", True, set(), set()),
+        ("export -p TOKEN", False, {"TOKEN"}, set()),
         # Mutating forms read nothing: the write must not depend on a
         # source being alive.
-        ("export TOKEN=local", False, set()),
-        ("export TOKEN", False, set()),
-        ("declare", True, set()),
-        ("declare -p A B", False, {"A", "B"}),
-        ("declare -x OTHER=1", False, set()),
+        ("export TOKEN=local", False, set(), set()),
+        ("export TOKEN", False, set(), set()),
+        ("declare", True, set(), set()),
+        ("declare -p A B", False, {"A", "B"}, set()),
+        ("declare -x OTHER=1", False, set(), set()),
         # readonly and local print sets a managed entry can never be in.
-        ("readonly", False, set()),
-        ("echo hi", False, set()),
+        ("readonly", False, set(), set()),
+        ("echo hi", False, set(), set()),
         # Inside a substitution counts; inside a definition does not.
-        ("x=$(env)", True, set()),
-        ("f() { env; }", False, set()),
+        ("x=$(env)", True, set(), set()),
+        ("f() { env; }", False, set(), set()),
     ])
-def test_env_reads(command, whole, names):
-    got_whole, got_names = env_reads(parse(command))
-    assert (got_whole, got_names) == (whole, frozenset(names))
+def test_env_reads(command, whole, names, excluded):
+    got = env_reads(parse(command))
+    assert got == (whole, frozenset(names), frozenset(excluded))
 
 
 @pytest.mark.parametrize(

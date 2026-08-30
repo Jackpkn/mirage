@@ -349,60 +349,89 @@ describe('commandWords', () => {
 })
 
 describe('envReads', () => {
-  it.each<[string, boolean, string[]]>([
+  it.each<[string, boolean, string[], string[]]>([
     // env renders on any invocation: bare it prints, with a command it
     // hands the snapshot to a child.
-    ['env', true, []],
-    ['env FOO=1 mycmd', true, []],
+    ['env', true, [], []],
+    // An override or removal excludes exactly its name from the whole
+    // read: the child cannot observe the standing value.
+    ['env FOO=1 mycmd', true, [], ['FOO']],
+    ['env -u TOKEN mycmd', true, [], ['TOKEN']],
+    ['env --unset=TOKEN mycmd', true, [], ['TOKEN']],
+    ['env --unset TOKEN mycmd', true, [], ['TOKEN']],
+    ['env -uTOKEN mycmd', true, [], ['TOKEN']],
+    ['env -u A B=2 mycmd', true, [], ['A', 'B']],
     // A literal ignore-environment form proves the start is empty, so
     // nothing existing is read.
-    ['env -i', false, []],
-    ['env -i mycmd', false, []],
-    ['env --ignore-environment mycmd', false, []],
-    ['env - mycmd', false, []],
-    ['env -0i', false, []],
-    ['env -iu X mycmd', false, []],
+    ['env -i', false, [], []],
+    ['env -i mycmd', false, [], []],
+    ['env --ignore-environment mycmd', false, [], []],
+    ['env - mycmd', false, [], []],
+    ['env -0i', false, [], []],
+    ['env -iu X mycmd', false, [], []],
     // -u consumes a value, so `-ui` unsets a variable named i and
     // `-u -i` one named -i; both still read the whole environment.
-    ['env -ui mycmd', true, []],
-    ['env -u -i mycmd', true, []],
-    ['env -u X mycmd', true, []],
+    ['env -ui mycmd', true, [], ['i']],
+    ['env -u -i mycmd', true, [], ['-i']],
+    ['env -u X mycmd', true, [], ['X']],
     // The first operand ends the options, and -- ends them too.
-    ['env X=1 -i mycmd', true, []],
-    ['env -- -i mycmd', true, []],
-    // A word no static read can spell keeps the whole read; one after
-    // a proven -i changes nothing.
-    ['env $x mycmd', true, []],
-    ['env -i $x', false, []],
-    ['set', true, []],
-    ['set -u', false, []],
-    ['set -- a b', false, []],
-    ['printenv', true, []],
-    ['printenv -0', true, []],
-    ['printenv PATH TOKEN', false, ['PATH', 'TOKEN']],
+    ['env X=1 -i mycmd', true, [], ['X']],
+    ['env -- -i mycmd', true, [], []],
+    // A word no static read can spell ends the claim: it may be the
+    // command, demoting later words to arguments. What was consumed
+    // before it keeps its effect; after a proven -i it changes nothing.
+    ['env $x mycmd', true, [], []],
+    ['env -u A $x -u B mycmd', true, [], ['A']],
+    ['env A=1 $x B=2 mycmd', true, [], ['A']],
+    ['env -i $x', false, [], []],
+    // An option the builtin refuses stops it from running at all, so
+    // nothing is read.
+    ['env --bogus mycmd', false, [], []],
+    ['env --unset', false, [], []],
+    // An assignment prefix overrides its name for the invocation's
+    // environment, whoever renders it; += proves nothing.
+    ['TOKEN=local env', true, [], ['TOKEN']],
+    ['TOKEN=local set', true, [], ['TOKEN']],
+    ['TOKEN=local printenv', true, [], ['TOKEN']],
+    ['TOKEN=local printenv TOKEN', false, [], []],
+    ['TOKEN=local printenv TOKEN OTHER', false, ['OTHER'], []],
+    ['TOKEN+=x printenv TOKEN', false, ['TOKEN'], []],
+    ['TOKEN=local env -u OTHER mycmd', true, [], ['TOKEN', 'OTHER']],
+    // Exclusions fold by intersection: a name is skippable only when
+    // every whole read skips it.
+    ['env -u A mycmd; env -u B mycmd', true, [], []],
+    ['env -u A mycmd; env -u A other', true, [], ['A']],
+    ['env -u A mycmd; export', true, [], []],
+    ['set', true, [], []],
+    ['set -u', false, [], []],
+    ['set -- a b', false, [], []],
+    ['printenv', true, [], []],
+    ['printenv -0', true, [], []],
+    ['printenv PATH TOKEN', false, ['PATH', 'TOKEN'], []],
     // A print target only the runtime can spell selects everything.
-    ['printenv $x', true, []],
-    ['export', true, []],
-    ['export -p', true, []],
-    ['export -p TOKEN', false, ['TOKEN']],
+    ['printenv $x', true, [], []],
+    ['export', true, [], []],
+    ['export -p', true, [], []],
+    ['export -p TOKEN', false, ['TOKEN'], []],
     // Mutating forms read nothing: the write must not depend on a
     // source being alive.
-    ['export TOKEN=local', false, []],
-    ['export TOKEN', false, []],
-    ['declare', true, []],
-    ['declare -p A B', false, ['A', 'B']],
-    ['declare -x OTHER=1', false, []],
+    ['export TOKEN=local', false, [], []],
+    ['export TOKEN', false, [], []],
+    ['declare', true, [], []],
+    ['declare -p A B', false, ['A', 'B'], []],
+    ['declare -x OTHER=1', false, [], []],
     // readonly and local print sets a managed entry can never be in.
-    ['readonly', false, []],
-    ['echo hi', false, []],
+    ['readonly', false, [], []],
+    ['echo hi', false, [], []],
     // Inside a substitution counts; inside a definition does not.
-    ['x=$(env)', true, []],
-    ['f() { env; }', false, []],
-  ])('%s renders whole=%s names=%j', (command, whole, names) => {
+    ['x=$(env)', true, [], []],
+    ['f() { env; }', false, [], []],
+  ])('%s renders whole=%s names=%j excluded=%j', (command, whole, names, excluded) => {
     const root = parser.parse(command) as unknown as TSNodeLike
     const reads = envReads(root)
     expect(reads.whole).toBe(whole)
     expect(reads.names).toEqual(new Set(names))
+    expect(reads.excluded).toEqual(new Set(excluded))
   })
 })
 

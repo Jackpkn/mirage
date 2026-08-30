@@ -627,55 +627,122 @@ def _command_args(node: tree_sitter.Node) -> list[tree_sitter.Node]:
     ]
 
 
-def _env_ignores_environment(args: list[tree_sitter.Node]) -> bool:
-    """Whether an ``env`` invocation provably starts from an empty
-    environment (``-i``, ``--ignore-environment``, or the lone ``-``),
-    so it reads no existing name.
+def _env_exclusions(args: list[tree_sitter.Node]) -> frozenset[str] | None:
+    """Names an ``env`` invocation provably keeps from the environment
+    it hands on: None when it reads no existing name at all, else the
+    set a whole-environment read may skip.
 
     Scanned with the builtin's own option grammar: ``--`` ends the
     options, ``-u``/``--unset`` consume a value (so ``-u -i`` unsets a
-    variable named ``-i`` rather than clearing), and the first operand
-    ends the scan. Anything unprovable -- a word no static read can
-    spell, an option the builtin refuses -- answers False, leaving the
-    whole-environment read standing: over-selection only over-fetches.
+    variable named ``-i`` rather than clearing) and add it to the
+    exclusions, the leading ``NAME=VALUE`` operands override and
+    exclude their names, and the first other operand ends the scan.
+    ``-i``, ``--ignore-environment`` or the lone ``-`` empties the
+    start entirely, and an option the builtin refuses stops it from
+    running at all; both answer None. The scan is left to right like
+    the builtin's, so everything consumed before the first word no
+    static read can spell keeps its effect whatever that word turns
+    out to be, and nothing after it is claimed: a dynamic word may be
+    the command, demoting every later word to an argument.
 
     Args:
         args (list[tree_sitter.Node]): the invocation's argument nodes.
     """
+    excluded: set[str] = set()
     i = 0
     while i < len(args):
         literal = _literal_text(args[i])
-        if literal is None or literal == "--":
-            return False
+        if literal is None:
+            return frozenset(excluded)
+        if literal == "--":
+            i += 1
+            break
         if literal in ("-i", "--ignore-environment", "-"):
-            return True
+            return None
         if literal == "--unset":
+            if i + 1 >= len(args):
+                return None
+            value = _literal_text(args[i + 1])
+            if value is not None:
+                excluded.add(value)
             i += 2
             continue
-        if literal in ("-0", "--null") or literal.startswith("--unset="):
+        if literal.startswith("--unset="):
+            excluded.add(literal[len("--unset="):])
             i += 1
             continue
-        if not literal.startswith("-") or literal.startswith("--"):
-            return False
-        step = 1
-        for pos, ch in enumerate(literal[1:]):
-            if ch == "i":
-                return True
-            if ch == "u":
-                if pos == len(literal) - 2:
-                    step = 2
-                break
-            if ch != "0":
-                return False
-        i += step
-    return False
+        if literal in ("-0", "--null"):
+            i += 1
+            continue
+        if literal.startswith("--"):
+            return None
+        if literal.startswith("-") and len(literal) > 1:
+            step = 1
+            for pos, ch in enumerate(literal[1:]):
+                if ch == "i":
+                    return None
+                if ch == "u":
+                    rest = literal[pos + 2:]
+                    if rest:
+                        excluded.add(rest)
+                    elif i + 1 < len(args):
+                        value = _literal_text(args[i + 1])
+                        if value is not None:
+                            excluded.add(value)
+                        step = 2
+                    else:
+                        return None
+                    break
+                if ch != "0":
+                    return None
+            i += step
+            continue
+        break
+    while i < len(args):
+        literal = _literal_text(args[i])
+        if literal is None:
+            return frozenset(excluded)
+        if "=" not in literal or literal.startswith("="):
+            break
+        excluded.add(literal.partition("=")[0])
+        i += 1
+    return frozenset(excluded)
 
 
-def env_reads(node: tree_sitter.Node) -> tuple[bool, frozenset[str]]:
+def _prefix_assignment_names(node: tree_sitter.Node) -> frozenset[str]:
+    """Names a command's assignment prefixes provably override.
+
+    ``TOKEN=local printenv TOKEN`` hands the command an environment
+    whose TOKEN is the override, so an environment read through that
+    invocation cannot observe the standing value whatever the override
+    expands to; the value's own reads are the walk's business. ``+=``
+    appends to the standing value and proves nothing.
+
+    Args:
+        node (tree_sitter.Node): a ``command`` node.
+    """
+    out: set[str] = set()
+    for child in node.named_children:
+        if child.type != "variable_assignment":
+            continue
+        if any(part.type == "+=" for part in child.children):
+            continue
+        name_node = child.child_by_field_name("name")
+        if name_node is None or name_node.type != "variable_name":
+            continue
+        text = name_node.text
+        if text:
+            out.add(text.decode())
+    return frozenset(out)
+
+
+def env_reads(
+        node: tree_sitter.Node) -> tuple[bool, frozenset[str], frozenset[str]]:
     """How the line's environment-rendering commands read names.
 
-    Returns ``(whole, names)``: whether some command renders the whole
-    environment, and the names printing forms read explicitly. Only a
+    Returns ``(whole, names, excluded)``: whether some command renders
+    the whole environment, the names printing forms read explicitly,
+    and the names every whole-environment read provably skips. Only a
     printing form selects everything: ``env`` on any invocation (bare
     it prints every exported name, and with arguments it hands the
     snapshot to the command it runs) unless a literal ``-i``,
@@ -688,40 +755,59 @@ def env_reads(node: tree_sitter.Node) -> tuple[bool, frozenset[str]]:
     that would replace its pointer. A print target no static read can
     spell (``printenv $x``) falls back to the whole environment.
 
+    Exclusions are per invocation: an assignment prefix overrides its
+    name for exactly that command's environment, and ``env``'s ``-u``,
+    ``--unset`` and ``NAME=VALUE`` words remove or override theirs
+    (``_env_exclusions``), so ``env -u TOKEN printenv TOKEN`` cannot
+    observe TOKEN however the whole snapshot is handed on. A print
+    target so excluded is dropped rather than reported. ``excluded``
+    is the intersection across the node's whole-environment reads,
+    because a name is skippable only when every such read skips it.
+
     Args:
         node (tree_sitter.Node): root node from parse().
     """
     whole = False
+    excluded: frozenset[str] | None = None
     names: set[str] = set()
     for n in _walk_named_outside_defs(node):
         if n.type == "command":
             name_node = n.child_by_field_name("name")
             text = name_node.text if name_node is not None else None
             head = text.decode() if text else ""
+            prefix = _prefix_assignment_names(n)
+            skipped: frozenset[str] | None = None
             if head == "env":
-                if not _env_ignores_environment(_command_args(n)):
-                    whole = True
+                scanned = _env_exclusions(_command_args(n))
+                if scanned is not None:
+                    skipped = prefix | scanned
             elif head == "set":
                 if not _command_args(n):
-                    whole = True
+                    skipped = prefix
             elif head == "printenv":
                 read_any = False
                 for child in _command_args(n):
                     literal = _literal_text(child)
                     if literal is None:
-                        whole = True
+                        skipped = prefix
                         read_any = True
                     elif not literal.startswith("-"):
-                        names.add(literal)
+                        if literal not in prefix:
+                            names.add(literal)
                         read_any = True
                 if not read_any:
-                    whole = True
+                    skipped = prefix
+            if skipped is not None:
+                whole = True
+                excluded = (skipped if excluded is None else excluded
+                            & skipped)
         elif n.type == "declaration_command":
             head, flags, operands = _declaration_parts(n)
             if head not in _DECL_PRINTER_HEADS:
                 continue
+            selected = False
             if not operands:
-                whole = True
+                selected = True
             elif _flag_has(flags, "p"):
                 for operand in operands:
                     if operand.type == "variable_name":
@@ -729,8 +815,11 @@ def env_reads(node: tree_sitter.Node) -> tuple[bool, frozenset[str]]:
                         if text:
                             names.add(text.decode())
                     elif operand.type != "variable_assignment":
-                        whole = True
-    return whole, frozenset(names)
+                        selected = True
+            if selected:
+                whole = True
+                excluded = frozenset()
+    return whole, frozenset(names), excluded or frozenset()
 
 
 def opaque_reads(node: tree_sitter.Node) -> bool:
