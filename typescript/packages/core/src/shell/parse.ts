@@ -14,6 +14,8 @@
 
 import { Language, type Node, Parser } from 'web-tree-sitter'
 
+import type { TSNodeLike } from './types.ts'
+
 export interface ShellParserConfig {
   engineWasm: Uint8Array | ArrayBuffer
   grammarWasm: Uint8Array | ArrayBuffer
@@ -416,4 +418,89 @@ export function findSyntaxError(node: Node): string | null {
     if (child.isNamed) previous = child
   }
   return null
+}
+
+// Where a `variable_name` node is a write target rather than a read:
+// the assignment's name and the for loop's variable. Everything else --
+// expansions, arithmetic, subscripts -- reads the name.
+const TARGET_NAME_FIELDS: Record<string, string> = {
+  variable_assignment: 'name',
+  for_statement: 'variable',
+}
+
+// Nodes whose bare `variable_name` children declare or delete a name
+// (`readonly R`, `export Z`, `unset X`); their assignment children still
+// carry reads and are walked.
+const DECLARING_NODES: ReadonlySet<string> = new Set(['declaration_command', 'unset_command'])
+
+/**
+ * Whether two facade nodes name the same tree node. Web-tree-sitter
+ * hands out a fresh wrapper per lookup, so `===` alone cannot tell a
+ * node from a re-read of it; identity rides `id` when the facade has
+ * one.
+ */
+function sameNode(a: TSNodeLike, b: TSNodeLike): boolean {
+  return a === b || (a.id !== undefined && a.id === b.id)
+}
+
+function collectNames(node: TSNodeLike, out: Set<string>): void {
+  if (node.type === 'variable_name') {
+    if (node.text !== '') out.add(node.text)
+    return
+  }
+  if (DECLARING_NODES.has(node.type)) {
+    for (const child of node.children) {
+      if (child.type !== 'variable_name') collectNames(child, out)
+    }
+    return
+  }
+  const field = TARGET_NAME_FIELDS[node.type]
+  const target = field !== undefined ? (node.childForFieldName?.(field) ?? null) : null
+  for (const child of node.children) {
+    if (target !== null && sameNode(child, target)) continue
+    collectNames(child, out)
+  }
+}
+
+/**
+ * Every variable name a parsed program may read.
+ *
+ * A textual over-approximation over the whole tree, which is safe by
+ * construction: the worst a spurious name costs is one fetch. Walked
+ * everywhere -- command substitution bodies, redirect targets, heredoc
+ * bodies, arithmetic -- with two exceptions that are writes, not reads
+ * (an assignment's own name, a for loop's variable), and one the
+ * grammar gives for free: a single-quoted string tokenizes as
+ * `raw_string` with no children, so `'$X'` never reads X.
+ */
+export function referencedNames(node: TSNodeLike): ReadonlySet<string> {
+  const out = new Set<string>()
+  collectNames(node, out)
+  return out
+}
+
+/**
+ * The first word of every command in a parsed program.
+ *
+ * What the whole-env table and the CLI env-name lookup key on.
+ * `command_name` covers ordinary commands wherever they sit; the
+ * declaring builtins (`export`, `declare`, `local`, `readonly`,
+ * `unset`) parse as their own node types whose head word is the first
+ * anonymous token, so those are read directly.
+ */
+export function commandWords(node: TSNodeLike): ReadonlySet<string> {
+  const out = new Set<string>()
+  const stack: TSNodeLike[] = [node]
+  for (;;) {
+    const current = stack.pop()
+    if (current === undefined) break
+    if (current.type === 'command_name') {
+      if (current.text !== '') out.add(current.text)
+    } else if (DECLARING_NODES.has(current.type)) {
+      const head = current.children[0]
+      if (head !== undefined && head.text !== '') out.add(head.text)
+    }
+    stack.push(...current.namedChildren)
+  }
+  return out
 }

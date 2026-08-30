@@ -23,6 +23,7 @@ import type { Resource } from '@struktoai/mirage-core/resource/base'
 import type { RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
 import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/index'
 import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
+import { EnvVarSchema, type EnvEntries } from '@struktoai/mirage-core/secrets/types'
 import {
   ConsistencyPolicy,
   KERNEL_BACKENDS,
@@ -40,6 +41,10 @@ import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3
 import type { WorkspaceOptions } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import { normalizeS3Config } from './resource/s3/config.ts'
 import { isModulePath, loadAttr, splitRef } from './resource/loader.ts'
+// The config door is a workspace entry point of its own (the daemon
+// builds from here), so it arms the builtin secrets sources like the
+// node Workspace module does.
+import './secrets/constants.ts'
 import { buildResource } from './resource/registry.ts'
 import { RedisConsoleStore } from './shell/console/redis/index.ts'
 import { DiskWorkspaceStateStore } from './workspace/store/disk.ts'
@@ -155,6 +160,7 @@ const TOP_LEVEL_KEYS = [
   'index',
   'store',
   'console',
+  'env',
 ] as const
 const MOUNT_KEYS = [
   'resource',
@@ -351,6 +357,30 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
   validateTypedBlock(raw.console, CONSOLE_KEYS, 'console')
   validateConsoleValues(raw.console)
   validateStoreBlock(raw.store)
+  validateEnvBlock(raw.env)
+}
+
+/**
+ * The env block: one map, name -> entry. Entries validate through the
+ * core schema (the same one `varsFromEntries` applies at build), so a
+ * bad entry fails at load naming the variable, and the block travels
+ * raw -- variable names must not be camelized and a literal's text must
+ * arrive verbatim.
+ */
+function validateEnvBlock(value: unknown): void {
+  if (value === undefined || value === null) return
+  if (!isPlainObject(value)) throw new Error('config `env` must be a mapping')
+  for (const [name, entry] of Object.entries(value)) {
+    if (typeof entry === 'string') continue
+    if (!isPlainObject(entry)) {
+      throw new Error(`config \`env.${name}\` must be a string or a mapping`)
+    }
+    const parsed = EnvVarSchema.safeParse(entry)
+    if (!parsed.success) {
+      const detail = parsed.error.issues[0]?.message ?? parsed.error.message
+      throw new Error(`config \`env.${name}\`: ${detail}`)
+    }
+  }
 }
 
 // Workspace YAML uses Python's snake_case keys (default_session_id, the
@@ -626,6 +656,14 @@ export interface WorkspaceConfigRaw {
    * ConsoleBlock.
    */
   console?: RamConsoleBlock | RedisConsoleBlock | null
+  /**
+   * The environment plane: one map, name -> entry. A bare string is
+   * the literal short form; a mapping is an env entry, either a
+   * literal with attrs or a managed pointer (`from`/`ref`/`key`/
+   * `fetch`). Validated by `validateEnvBlock`, translated by the
+   * workspace.
+   */
+  env?: Record<string, unknown> | null
 }
 
 function readProcessEnv(): Record<string, string> {
@@ -914,6 +952,10 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
         ? { profile: cfg.profile as string }
         : {}),
       ...(cliEntries !== undefined ? { clis: cliEntries } : {}),
+      // Passed through as-is: this door resolves resources, and
+      // env-plane fetching is async at command time, so no fetching
+      // here (the workspace translates and validates sources).
+      ...(cfg.env !== undefined && cfg.env !== null ? { env: cfg.env as EnvEntries } : {}),
     },
     kernelMounts,
   }

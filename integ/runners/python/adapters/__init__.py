@@ -39,7 +39,6 @@ import chromadb
 import lancedb
 from databricks_client import HttpFilesClient
 from moto.server import ThreadedMotoServer
-from pydantic import BaseModel, ConfigDict
 from pymongo import AsyncMongoClient
 from qdrant_client import AsyncQdrantClient, models
 
@@ -113,13 +112,12 @@ from mirage.resource.tencent import TencentConfig, TencentResource
 from mirage.resource.trello import TrelloConfig, TrelloResource
 from mirage.resource.wasabi import WasabiConfig, WasabiResource
 from mirage.runtime.types import ScriptSource
-from mirage.secrets.errors import SecretsError
-from mirage.secrets.registry import register_secrets
-from mirage.secrets.types import ResolvedSecret
 from mirage.shell.console import JobConsole
 from mirage.shell.console.redis import RedisConsoleStore
 from mirage.shell.job_table import ConsoleFactory
 from mirage.types import ConsistencyPolicy
+
+from .secrets import build_secrets_env
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 EMAIL_IMAP_PORT = int(os.environ.get("EMAIL_IMAP_PORT", "3143"))
@@ -2716,106 +2714,6 @@ def console_factory(target: dict, run_id: str) -> ConsoleFactory | None:
     url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     return functools.partial(_redis_console, url,
                              f"mirage-integ-console-{run_id}:")
-
-
-class CounterConfig(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class DeadConfig(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-async def fetch_dead(config: DeadConfig, ref: str) -> ResolvedSecret:
-    raise SecretsError("vault sealed")
-
-
-def build_secrets_env(
-        kind: str) -> tuple[dict[str, object], Callable[[], Awaitable[None]]]:
-    """The env plane a secrets target declares, plus its cleanup.
-
-    Registers the counting fake (fresh per-ref counters per open, so the
-    counts inside fetched values are deterministic within one target
-    run and prove how many times each secret was fetched), materializes
-    the dotenv file the `dotenv` entry points at (its path exists only
-    at run time, which is why the block is built here and not spelled
-    in targets.json), and seeds the process variable the `env` entry
-    reads. ``kind`` "dead" is a separate target on purpose: a whole-env
-    command fetches every unfetched name, so one dead source would fail
-    the healthy target's `env` case.
-
-    Args:
-        kind (str): "healthy" or "dead", the target's `secrets` value.
-    """
-    if kind == "dead":
-        register_secrets("dead", DeadConfig, fetch_dead)
-        return {"DEAD": {"from": "dead", "ref": "x"}}, _noop
-    counts: dict[str, int] = {}
-
-    async def fetch_counting(config: CounterConfig,
-                             ref: str) -> ResolvedSecret:
-        counts[ref] = counts.get(ref, 0) + 1
-        n = counts[ref]
-        return ResolvedSecret(fields={
-            "token": f"tok{n}",
-            "user": f"u{n}",
-            "pass": f"p{n}",
-        })
-
-    register_secrets("counter", CounterConfig, fetch_counting)
-    os.environ["MIRAGE_INTEG_ENV_SECRET"] = "from-process-env"
-    dotfile = tempfile.NamedTemporaryFile(mode="w",
-                                          suffix=".env",
-                                          delete=False)
-    dotfile.write("DOTFILE_SECRET=from-dotenv\n")
-    dotfile.close()
-
-    async def cleanup() -> None:
-        os.unlink(dotfile.name)
-
-    env: dict[str, object] = {
-        "APP_NAME": "integ",
-        "EDITOR": {
-            "value": "vi",
-            "readonly": True
-        },
-        "TOKEN": {
-            "from": "counter",
-            "ref": "tok",
-            "key": "token"
-        },
-        "DB_USER": {
-            "from": "counter",
-            "ref": "db",
-            "key": "user"
-        },
-        "DB_PASS": {
-            "from": "counter",
-            "ref": "db",
-            "key": "pass"
-        },
-        "EAGER_PAIR": {
-            "from": "counter",
-            "ref": "pair",
-            "key": "token",
-            "fetch": "eager"
-        },
-        "LAZY_PAIR": {
-            "from": "counter",
-            "ref": "pair",
-            "key": "user"
-        },
-        "FROM_ENV": {
-            "from": "env",
-            "key": "MIRAGE_INTEG_ENV_SECRET"
-        },
-        "FROM_DOTFILE": {
-            "from": "dotenv",
-            "ref": dotfile.name,
-            "key": "DOTFILE_SECRET"
-        },
-    }
-    return env, cleanup
 
 
 async def open_target(

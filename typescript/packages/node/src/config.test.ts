@@ -1066,3 +1066,59 @@ describe.each(ACCEPTED_FIXTURES)('shared acceptance fixture: %s', (fixture) => {
     expect(() => loadWorkspaceConfig(config)).not.toThrow()
   })
 })
+
+describe('env block', () => {
+  it('parses literal and managed entries, ${VAR} interpolated', () => {
+    const cfg = loadWorkspaceConfig(
+      {
+        mounts: { '/data': { resource: 'ram' } },
+        env: {
+          GREETING: 'hello ${WHO}',
+          EDITOR: { value: 'vim', readonly: true, export: false },
+          TOKEN: { from: 'aws-sm', ref: 'prod/tokens', key: 'api', fetch: 'eager' },
+          HOME_DIR: { from: 'env' },
+        },
+      },
+      { WHO: 'world' },
+    )
+    expect(cfg.env).toEqual({
+      GREETING: 'hello world',
+      EDITOR: { value: 'vim', readonly: true, export: false },
+      TOKEN: { from: 'aws-sm', ref: 'prod/tokens', key: 'api', fetch: 'eager' },
+      HOME_DIR: { from: 'env' },
+    })
+  })
+
+  it('is absent by default and absent from the workspace args', async () => {
+    const cfg = loadWorkspaceConfig({ mounts: { '/': { resource: 'ram' } } })
+    expect(cfg.env).toBeUndefined()
+    const args = await configToWorkspaceArgs(cfg)
+    expect('env' in args.options).toBe(false)
+  })
+
+  it('passes the block through to the workspace options', async () => {
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/': { resource: 'ram' } },
+      env: { APP: 'integ', T: { from: 'env' } },
+    })
+    const args = await configToWorkspaceArgs(cfg)
+    expect(args.options.env).toEqual({ APP: 'integ', T: { from: 'env' } })
+  })
+
+  it('surfaces entry refusals as config errors naming the variable', () => {
+    const base = { mounts: { '/': { resource: 'ram' } } }
+    expect(() => loadWorkspaceConfig({ ...base, env: { X: { value: 'v', from: 'env' } } })).toThrow(
+      /env\.X.*not both/,
+    )
+    expect(() =>
+      loadWorkspaceConfig({ ...base, env: { X: { from: 'env', readonly: true } } }),
+    ).toThrow(/readonly/)
+    expect(() => loadWorkspaceConfig({ ...base, env: { X: { value: 'v', key: 'k' } } })).toThrow(
+      /managed entries/,
+    )
+    expect(() => loadWorkspaceConfig({ ...base, env: { X: 5 } })).toThrow(
+      /env\.X.*string or a mapping/,
+    )
+    expect(() => loadWorkspaceConfig({ ...base, env: 'nope' })).toThrow(/must be a mapping/)
+  })
+})

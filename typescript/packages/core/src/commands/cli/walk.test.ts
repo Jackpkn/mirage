@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { ScriptSource } from '../../runtime/routing/types.ts'
 import { Option, UsageStyle } from '../spec/types.ts'
 import { CLISpec, type CLIVerbFn } from './types.ts'
-import { findChild, findNode, nodeHelp, ownsArgv, walk } from './walk.ts'
+import { envNames, findChild, findNode, nodeHelp, ownsArgv, walk } from './walk.ts'
 
 const verb: CLIVerbFn = () => null
 
@@ -471,5 +471,30 @@ describe('walk path-typed group options', () => {
     })
     const result = walk('tool', spec, ['--dir', 'a', '--dir', '/b', 'run'], '/w')
     expect(result.groupFlags).toEqual({ '--dir': ['/w/a', '/b'] })
+  })
+})
+
+describe('envNames', () => {
+  it('unions Option.env over the whole tree', () => {
+    const tree = new CLISpec({
+      name: 'ntn',
+      options: [
+        new Option({ long: '--token', type: 'str', env: 'NOTION_TOKEN' }),
+        new Option({ long: '--plain', type: 'str' }),
+      ],
+      subcommands: [
+        new CLISpec({
+          name: 'api',
+          fn: verb,
+          options: [new Option({ long: '--notion-version', type: 'str', env: 'NOTION_VERSION' })],
+        }),
+      ],
+    })
+    expect(envNames(tree)).toEqual(new Set(['NOTION_TOKEN', 'NOTION_VERSION']))
+  })
+
+  it('a tree with no env options reads nothing', () => {
+    const tree = new CLISpec({ name: 'x', fn: verb })
+    expect(envNames(tree)).toEqual(new Set())
   })
 })

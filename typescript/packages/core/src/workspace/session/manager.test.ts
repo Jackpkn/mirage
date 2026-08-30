@@ -20,6 +20,9 @@ import { ScriptSource } from '../../runtime/routing/types.ts'
 import { MountMode } from '../../types.ts'
 import { SessionManager } from './manager.ts'
 import { RAMSessionStore } from './ram.ts'
+import { Session } from './session.ts'
+import type { SessionFields } from './store.ts'
+import { VarAttr, type ShellVar } from '../../shell/variable.ts'
 
 describe('SessionManager', () => {
   it('seeds the default session on construction', () => {
@@ -488,5 +491,64 @@ describe('SessionManager decision ledger', () => {
     await again.flush()
     const stored = (await store.load()).get('def') as { decisions: { scope: string }[] }
     expect(stored.decisions[0]?.scope).toBe('session')
+  })
+})
+
+describe('hasManagedEnv', () => {
+  const managed: ShellVar = {
+    value: null,
+    attrs: new Set([VarAttr.Export]),
+    managed: { source: 'env', ref: '', key: 'TOKEN', eager: false },
+  }
+
+  it('is false for a plain manager and sticky-true once seeded', () => {
+    expect(new SessionManager('s').hasManagedEnv).toBe(false)
+    const mgr = new SessionManager('s', undefined, { TOKEN: managed })
+    expect(mgr.hasManagedEnv).toBe(true)
+  })
+
+  it('a created session with its own managed entry flips it', () => {
+    const mgr = new SessionManager('s')
+    expect(mgr.hasManagedEnv).toBe(false)
+    mgr.create('s2', { env: { TOKEN: { from: 'env' } } })
+    expect(mgr.hasManagedEnv).toBe(true)
+  })
+
+  it('create seeds the workspace template and session entries win', () => {
+    const mgr = new SessionManager('s', undefined, { TOKEN: managed })
+    const session = mgr.create('s2', { env: { TOKEN: 'literal', OWN: { from: 'env' } } })
+    expect(session.vars.TOKEN?.managed).toBeUndefined()
+    expect(session.vars.TOKEN?.value).toBe('literal')
+    expect(session.vars.OWN?.managed?.source).toBe('env')
+    // The template itself is untouched: a third session still gets the
+    // managed TOKEN.
+    expect(mgr.create('s3', {}).vars.TOKEN?.managed).not.toBeUndefined()
+  })
+
+  it('a snapshot carrying a pointer flips it', async () => {
+    const mgr = new SessionManager('s')
+    const snap = new Session({ sessionId: 'restored', vars: { TOKEN: managed } })
+    await mgr.replaceFromSnapshot([snap])
+    expect(mgr.hasManagedEnv).toBe(true)
+  })
+
+  it('a hydrated record carrying a pointer flips it', async () => {
+    const store = new RAMSessionStore()
+    await store.casSet(
+      'other',
+      {
+        session_id: 'other',
+        cwd: '/',
+        env: {},
+        var_attrs: { TOKEN: 'x' },
+        managed: { TOKEN: { from: 'env', ref: '', key: 'TOKEN' } },
+        generation: 1,
+      } as unknown as SessionFields,
+      0,
+    )
+    const mgr = new SessionManager('s', store)
+    await mgr.ensureLoaded()
+    expect(mgr.hasManagedEnv).toBe(true)
+    expect(mgr.get('other').vars.TOKEN?.managed?.source).toBe('env')
   })
 })

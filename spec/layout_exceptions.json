@@ -13,8 +13,7 @@
    "agents/pydantic_ai": "Ecosystem split: pydantic-ai is a python-only framework.",
    "commands/builtin/hf_buckets": "hf_buckets is python's name for the backend typescript calls hf; the alias is already declared in spec/parity_exceptions.json under command_io_aliases.",
    "core/hf_buckets": "Same hf_buckets/hf alias as above.",
-   "core/hf_buckets/du": "Same hf_buckets/hf alias as above.",
-   "secrets": "Secrets env plane v1 is python-only; the TS twin lands next PR (secrets env plane) and removes this entry."
+   "core/hf_buckets/du": "Same hf_buckets/hf alias as above."
   },
   "typescript_only": {
    "resource/opfs": "OPFS is the one typescript-only backend, declared in spec/parity_exceptions.json. There is no browser filesystem API for python to mirror.",
@@ -31,11 +30,6 @@
   }
  },
  "modules": {
-  "workspace/workspace": {
-   "python_only": {
-    "fill": "The pre-command secret fill step, part of the python-only secrets env plane v1; the TS twin lands next PR (secrets env plane) and removes this entry."
-   }
-  },
   "ops": {
    "python_only": {
     "file": "MirageFile: a sync file object over the Ops facade for embedding python code (with open-style usage). An npm consumer holds promises, not file objects, so there is nothing to mirror.",

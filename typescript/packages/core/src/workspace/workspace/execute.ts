@@ -41,6 +41,7 @@ import type { SessionManager } from '../session/manager.ts'
 import type { Session } from '../session/session.ts'
 import type { ExecutionNode } from '../types.ts'
 import { failureResult, isControlFlowError } from './failure.ts'
+import { cliEnvNames, fillEnv, guestBound } from './fill.ts'
 import { admitLine } from '../node/admission.ts'
 import { runWholeLine } from './line.ts'
 import type { WorkspaceMeta } from './meta.ts'
@@ -327,6 +328,27 @@ async function runParsedLine(
   // both admission passes below can put one.
   const killed = mergeSignals(deps.signal, effectiveSession.abortSignal)
   const lineRuntime = env.runtimes.wholeLineFor(rootNode, deps.routingDecision ?? null)
+  if (env.sessions.hasManagedEnv) {
+    // The env plane fills before either strategy runs, so a guest
+    // runtime's env snapshot and the tree's expansion read the same,
+    // already-filled vars; a dry run (provision) returned above and
+    // never fetches. A SecretsError folds like any failed line: the
+    // line exits 1 and never runs.
+    try {
+      await fillEnv(
+        effectiveSession,
+        rootNode,
+        lineRuntime !== null ||
+          guestBound(rootNode, deps.routingDecision ?? null, env.runtimes.bindings),
+        cliEnvNames(rootNode, env.registry.clis.items()),
+      )
+    } catch (err) {
+      if (isControlFlowError(err)) throw err
+      const failed = failureResult(err)
+      targetSession.lastExitCode = failed.exitCode
+      return new ExecuteResult(new Uint8Array(), failed.stderr, failed.exitCode)
+    }
+  }
   if (lineRuntime?.runLine !== undefined) {
     // A whole line is a command like any other: the same visibility and
     // admission gate as the tree, per parsed command, before the

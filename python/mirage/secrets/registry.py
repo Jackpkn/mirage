@@ -17,7 +17,7 @@ from typing import NamedTuple
 
 from pydantic import BaseModel
 
-from mirage.secrets.config import AWSSMConfig, DotenvConfig, EnvConfig
+from mirage.secrets.constants import BUILTINS
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.types import ResolvedSecret, SecretFetchFn
 
@@ -27,16 +27,6 @@ class SourceEntry(NamedTuple):
     config_model: type[BaseModel]
     fetch: SecretFetchFn
 
-
-# Builtin fetchers are import paths, not imports, so a source's SDK
-# loads only when a workspace actually uses it (`build_resource`'s
-# trick: aws.py imports aioboto3, which is an extra). The config models
-# are imported eagerly because config.py costs only pydantic.
-_BUILTINS: dict[str, tuple[type[BaseModel], str]] = {
-    "env": (EnvConfig, "mirage.secrets.env:fetch_env"),
-    "dotenv": (DotenvConfig, "mirage.secrets.dotenv:fetch_dotenv"),
-    "aws-sm": (AWSSMConfig, "mirage.secrets.aws:fetch_aws_sm"),
-}
 
 _CUSTOM: dict[str, SourceEntry] = {}
 
@@ -62,7 +52,7 @@ def register_secrets(name: str, config_model: type[BaseModel],
 
 def known_sources() -> list[str]:
     """Every name ``source_for`` can resolve, builtin and registered."""
-    return sorted({*_BUILTINS, *_CUSTOM})
+    return sorted({*BUILTINS, *_CUSTOM})
 
 
 def source_for(name: str) -> SourceEntry:
@@ -82,7 +72,7 @@ def source_for(name: str) -> SourceEntry:
     entry = _CUSTOM.get(name)
     if entry is not None:
         return entry
-    builtin = _BUILTINS.get(name)
+    builtin = BUILTINS.get(name)
     if builtin is None:
         raise SecretsError(
             f"unknown secrets source {name!r}; known: {known_sources()}")

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 
 from mirage.secrets import registry
 from mirage.secrets.config import AWSSMConfig, DotenvConfig, EnvConfig
+from mirage.secrets.constants import BUILTINS
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import (fetch_secret, known_sources,
                                      register_secrets, source_for)
@@ -78,13 +79,13 @@ def test_builtin_resolves_lazily_through_the_table(monkeypatch):
     module = types.ModuleType("fake_secrets_source")
     module.fetch = fetch_vault
     monkeypatch.setitem(sys.modules, "fake_secrets_source", module)
-    monkeypatch.setitem(registry._BUILTINS, "dotenv",
+    monkeypatch.setitem(BUILTINS, "dotenv",
                         (DotenvConfig, "fake_secrets_source:fetch"))
     assert source_for("dotenv") == (DotenvConfig, fetch_vault)
 
 
 def test_missing_optional_dependency_names_the_extra(monkeypatch):
-    monkeypatch.setitem(registry._BUILTINS, "dotenv",
+    monkeypatch.setitem(BUILTINS, "dotenv",
                         (DotenvConfig, "mirage_no_such_module:fetch"))
     with pytest.raises(SecretsError, match=r"mirage-ai\[dotenv\]"):
         source_for("dotenv")

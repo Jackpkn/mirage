@@ -17,9 +17,11 @@ import { createRequire } from 'node:module'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { getParts, getRedirects, getText } from './helpers.ts'
 import {
+  commandWords,
   createShellParser,
   findSyntaxError,
   findUnterminatedBacktick,
+  referencedNames,
   stripLineContinuation,
   type ShellParser,
 } from './parse.ts'
@@ -281,5 +283,57 @@ describe('findUnterminatedBacktick', () => {
     'cat <<EOF\nplain\nEOF',
   ])('accepts balanced %j', (command) => {
     expect(findUnterminatedBacktick(command)).toBeNull()
+  })
+})
+
+describe('referencedNames', () => {
+  it.each<[string, string[]]>([
+    ['echo $X', ['X']],
+    ['echo ${X:-d}', ['X']],
+    ['echo "$X"', ['X']],
+    // Single quotes tokenize as raw_string with no children, so the
+    // name inside is never a reference.
+    ["echo '$X'", []],
+    ['echo $((X+1))', ['X']],
+    // The assignment's own name is a write, not a read; the
+    // substitution body is walked.
+    ['x=$(echo $Y)', ['Y']],
+    ['cat <$F', ['F']],
+    // The loop variable is a write; the word list is a read.
+    ['for i in $L; do echo hi; done', ['L']],
+    // Over-approximation on purpose: the walk is textual over the
+    // whole tree, so a name an eval would read is fetched too.
+    ['x=$(eval "$Z")', ['Z']],
+    ['echo ${a[i]}', ['a']],
+    ['(( X=Y+1 ))', ['X', 'Y']],
+    ['export V=$W', ['W']],
+    // Bare names under a declaring builtin declare or delete.
+    ['readonly R', []],
+    ['unset X', []],
+    ['TOKEN=1 printenv', []],
+    ['cat <<EOT\nhello $H\nEOT', ['H']],
+    ['echo hi', []],
+  ])('%s reads %j', (command, names) => {
+    const root = parser.parse(command) as unknown as TSNodeLike
+    expect(referencedNames(root)).toEqual(new Set(names))
+  })
+})
+
+describe('commandWords', () => {
+  it.each<[string, string[]]>([
+    ['echo hi', ['echo']],
+    ['env | grep A', ['env', 'grep']],
+    ['x=$(printenv)', ['printenv']],
+    ['if env; then ls; fi', ['env', 'ls']],
+    // The declaring builtins parse as their own node types; their
+    // head word is still a command word.
+    ['export X=1', ['export']],
+    ['declare -p', ['declare']],
+    ['unset X', ['unset']],
+    ['set', ['set']],
+    ['x=1', []],
+  ])('%s speaks %j', (command, words) => {
+    const root = parser.parse(command) as unknown as TSNodeLike
+    expect(commandWords(root)).toEqual(new Set(words))
   })
 })

@@ -69,9 +69,10 @@ import { explainLine } from '../node/explain.ts'
 import { provisionNode } from '../node/provision_node.ts'
 import { buildFilePrompt } from '../file_prompt.ts'
 import { getCurrentSessionFor } from '../../context/session_context.ts'
+import { sourceFor } from '../../secrets/registry.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
-import type { Session } from '../session/session.ts'
+import { varsFromEntries, type Session } from '../session/session.ts'
 import { parseProfileMounts, type SessionProfile } from '../../policy/profile.ts'
 import { applyProfile, compileProfile, resolveProfile, withInline } from '../session/resolve.ts'
 import { ScriptPolicy } from '../../policy/script.ts'
@@ -166,7 +167,21 @@ export class Workspace {
     const stores = resolveControlStores(this.wsId, options)
     this.ownsStateStore = stores.owned
     this.stateStoreInternal = stores.stateStore
-    this.sessionManager = new SessionManager(options.sessionId ?? newSessionId(), stores.sessions)
+    // The env block, translated once: a literal entry becomes an
+    // exported var, a managed one becomes a pointer the fill step
+    // resolves at command time. Each managed entry's source is
+    // resolved now, so a typo'd name (or a source nothing registered)
+    // fails at construction, naming the known sources, rather than at
+    // the first fetch.
+    const seedVars = options.env !== undefined ? varsFromEntries(options.env) : undefined
+    for (const seeded of Object.values(seedVars ?? {})) {
+      if (seeded.managed !== undefined) sourceFor(seeded.managed.source)
+    }
+    this.sessionManager = new SessionManager(
+      options.sessionId ?? newSessionId(),
+      stores.sessions,
+      seedVars,
+    )
     this.meta = new WorkspaceMeta(
       this.wsId,
       this.stateStoreInternal,

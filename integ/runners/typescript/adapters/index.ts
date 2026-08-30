@@ -106,10 +106,11 @@ import pg from 'pg'
 import {
   installFakeNavigator,
   makeMockRoot,
-} from '../../../typescript/packages/browser/src/test-utils.ts'
-import { integRoot, walkFiles } from './harness.ts'
-import type { ExecWorkspace, Mount, Target } from './harness.ts'
-import { start as startKitFake } from '../../server/kit/typescript/index.ts'
+} from '../../../../typescript/packages/browser/src/test-utils.ts'
+import { integRoot, walkFiles } from '../harness.ts'
+import type { ExecWorkspace, Mount, Target } from '../harness.ts'
+import { buildSecretsEnv } from './secrets.ts'
+import { start as startKitFake } from '../../../server/kit/typescript/index.ts'
 
 export interface Open {
   ws: ExecWorkspace
@@ -265,17 +266,28 @@ async function openRam(target: Target): Promise<Open> {
     }
     const resource = existing ?? new RAMResource()
     built[m.path] = resource
-    mounts[m.path] = m.mode === 'read' ? [resource, MountMode.READ] : resource
+    mounts[m.path] =
+      m.mode === 'read'
+        ? [resource, MountMode.READ]
+        : m.mode === 'exec'
+          ? [resource, MountMode.EXEC]
+          : resource
   }
+  const secretsEnv = target.secrets !== undefined ? buildSecretsEnv(target.secrets) : null
   const consoleFactory = consoleFactoryFor(target)
   const ws = new Workspace(mounts, {
     mode: MountMode.WRITE,
     ...(target.agentId !== undefined ? { agentId: target.agentId } : {}),
     ...(consoleFactory !== undefined ? { consoleFactory } : {}),
+    ...(secretsEnv !== null ? { env: secretsEnv.env } : {}),
     ...permissionOptions(target),
   })
   installLocalClis(ws, target)
-  return { ws: ws as unknown as ExecWorkspace, cleanup: () => ws.close() }
+  const cleanup = async (): Promise<void> => {
+    await ws.close()
+    await secretsEnv?.cleanup()
+  }
+  return { ws: ws as unknown as ExecWorkspace, cleanup }
 }
 
 async function openDisk(target: Target): Promise<Open> {

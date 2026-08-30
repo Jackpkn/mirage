@@ -2914,7 +2914,8 @@
     {
       "id": "secrets-env",
       "hosts": [
-        "python"
+        "python",
+        "typescript-node"
       ],
       "secrets": "healthy",
       "mounts": [
@@ -2929,7 +2930,8 @@
     {
       "id": "secrets-dead",
       "hosts": [
-        "python"
+        "python",
+        "typescript-node"
       ],
       "secrets": "dead",
       "mounts": [

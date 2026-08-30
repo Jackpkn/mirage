@@ -82,6 +82,11 @@ export interface Target {
   // job's console on its own Redis stream (REDIS_URL). Only the ram
   // opener consults it; main.ts refuses it on any other resource.
   console?: { type?: string }
+  // The env plane fixture this target declares: 'healthy' registers the
+  // counting fake source and builds the managed env block, 'dead' a
+  // source whose every fetch fails. Only the ram opener consults it;
+  // main.ts refuses it on any other resource.
+  secrets?: string
   clis?: string[]
   // Scope an installed account CLI to this mount's folder, so the CLI and
   // the mount are pointed at the same place.

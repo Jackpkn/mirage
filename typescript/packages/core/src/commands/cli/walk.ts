@@ -36,6 +36,24 @@ export function findChild(node: CLISpec, word: string): CLISpec | null {
 }
 
 /**
+ * Every `Option.env` variable a program tree reads.
+ *
+ * The env-plane fill step asks this per installed head word on the
+ * line, so a managed name a CLI reads from the environment joins the
+ * fetch set even though no `$NAME` appears in the line's text.
+ */
+export function envNames(node: CLISpec): ReadonlySet<string> {
+  const out = new Set<string>()
+  for (const opt of node.options) {
+    if (opt.env !== null) out.add(opt.env)
+  }
+  for (const child of node.subcommands) {
+    for (const name of envNames(child)) out.add(name)
+  }
+  return out
+}
+
+/**
  * Descend a tree by verb words, null if a word names no subcommand.
  *
  * Returns the node and its canonical path, so an alias renders under the
