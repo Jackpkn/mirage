@@ -206,6 +206,25 @@ async function main(): Promise<void> {
     })
     check('a non-object committer is 422', badc.status === 422, String(badc.status))
 
+    // ---- a committer without an author keeps the committer, and the author
+    // fills with the endpoint's default identity rather than vanishing
+    const tSolo = await stage(at, 'tasks/solo.md', '# solo\n')
+    const solo = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add solo',
+      tree: tSolo,
+      committer: { name: 'Sam Iyer', email: 'sam@example.com', date: '2025-09-05T09:15:00+08:00' },
+    })
+    eq('a committer alone is kept', field(solo.body, 'committer'), {
+      name: 'Sam Iyer',
+      email: 'sam@example.com',
+      date: '2025-09-05T09:15:00+08:00',
+    })
+    eq('and the author fills with the default identity', field(solo.body, 'author'), {
+      name: 'integ-user',
+      email: 'integ-user@users.noreply.github.com',
+      date: '2026-01-01T00:00:00Z',
+    })
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

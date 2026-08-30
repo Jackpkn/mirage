@@ -57,11 +57,24 @@ export async function mailboxesOf(db: C, tenant: string): Promise<MailboxRow[]> 
   })
 }
 
+// UIDVALIDITY a DELETE reserved for whatever CREATE remakes the name. Keyed
+// by the run's client, which the kit pool caches per run and whose database
+// file lives in a per-process temp root, so the reservation is exactly as
+// durable as the rows it protects.
+const reservedValidity = new WeakMap<C, Map<string, number>>()
+
+function validityKey(tenant: string, name: string): string {
+  return `${tenant}\u0000${name}`
+}
+
 export async function createMailbox(db: C, tenant: string, name: string): Promise<MailboxRow> {
+  const canonical = canonicalName(name)
+  const reserved = reservedValidity.get(db)?.get(validityKey(tenant, canonical))
   return db.mailMailbox.create({
     data: {
       tenant,
-      name: canonicalName(name),
+      name: canonical,
+      ...(reserved === undefined ? {} : { uidValidity: reserved }),
       seq: await db.mailMailbox.count({ where: { tenant } }),
     },
   })
@@ -73,14 +86,22 @@ export async function createMailbox(db: C, tenant: string, name: string): Promis
  * The UIDVALIDITY of a mailbox later recreated under the same name must not
  * repeat, or a client caching by (mailbox, uid) serves the dead mailbox's
  * messages for the new one's. The counter is kept on the row that is about to
- * disappear, so it is read here and carried into whatever CREATE makes next.
+ * disappear, so it is read here and parked in `reservedValidity` for whatever
+ * CREATE makes next under this name.
  */
 export async function deleteMailbox(db: C, tenant: string, name: string): Promise<number> {
   const canonical = canonicalName(name)
   const row = await mailboxOf(db, tenant, canonical)
   await db.mailMessage.deleteMany({ where: { tenant, mailbox: canonical } })
   await db.mailMailbox.delete({ where: { tenant_name: { tenant, name: canonical } } })
-  return (row?.uidValidity ?? 0) + 1
+  const next = (row?.uidValidity ?? 0) + 1
+  let byName = reservedValidity.get(db)
+  if (byName === undefined) {
+    byName = new Map()
+    reservedValidity.set(db, byName)
+  }
+  byName.set(validityKey(tenant, canonical), next)
+  return next
 }
 
 export async function messagesOf(db: C, tenant: string, mailbox: string): Promise<MessageRow[]> {

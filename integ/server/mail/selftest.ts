@@ -282,6 +282,22 @@ async function main(): Promise<void> {
       )
       check('EXAMINE refuses STORE', roStore === false, JSON.stringify(roStore))
 
+      // ---- UIDVALIDITY moves forward when a name is remade, so a client
+      // caching by (mailbox, uid) throws the dead mailbox's cache away
+      await a.mailboxCreate('Scratch')
+      const v1 = (await a.mailboxOpen('Scratch')).uidValidity
+      await a.mailboxClose()
+      await a.mailboxDelete('Scratch')
+      await a.mailboxCreate('Scratch')
+      const v2 = (await a.mailboxOpen('Scratch')).uidValidity
+      await a.mailboxClose()
+      await a.mailboxDelete('Scratch')
+      check(
+        'a remade mailbox moves UIDVALIDITY forward',
+        v2 !== undefined && v1 !== undefined && v2 > v1,
+        `${String(v1)} -> ${String(v2)}`,
+      )
+
       // ---- APPEND, and the UID it reports back
       const appended = await a.append(
         'Sent',

@@ -76,6 +76,17 @@ export function bodyPerson(
   }
 }
 
+// The identity the vendor fills in when a body names no author at all: the
+// authenticated user, carrying the same pinned stamp a partial person gets,
+// so the answer stays deterministic.
+export function defaultPerson(): GitPerson {
+  return {
+    name: DEFAULT_LOGIN,
+    email: `${DEFAULT_LOGIN}@users.noreply.github.com`,
+    date: WRITE_COMMIT_DATE,
+  }
+}
+
 export function personJson(person: GitPerson | null): string {
   return person === null ? '' : JSON.stringify(person)
 }
@@ -92,17 +103,19 @@ export function parsePerson(raw: string): GitPerson | null {
 }
 
 // A commit's `commit.author`/`commit.committer` pair, or null when it carries
-// none. A missing committer reads as the author, which is the vendor's own
-// default for the field and keeps a one-sided fixture from rendering half a
+// none. A missing committer reads as the author, and a missing author beside
+// a supplied committer reads as the endpoint's default identity: both are the
+// vendor's own defaults, and both keep a one-sided body from rendering half a
 // commit.
 export function commitPeople(row: {
   authorJson: string
   committerJson: string
 }): { author: JsonValue; committer: JsonValue } | null {
   const author = parsePerson(row.authorJson)
-  if (author === null) return null
-  const committer = parsePerson(row.committerJson) ?? author
-  return { author: { ...author }, committer: { ...committer } }
+  const committer = parsePerson(row.committerJson)
+  if (author === null && committer === null) return null
+  const named = author ?? defaultPerson()
+  return { author: { ...named }, committer: { ...(committer ?? named) } }
 }
 
 // The store keeps a commit's paths as strings, because that is all a write
