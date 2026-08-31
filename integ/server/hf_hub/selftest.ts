@@ -1213,6 +1213,117 @@ async function main(): Promise<void> {
       ['c.txt'],
     )
 
+    // ---- card validation
+    //
+    // upload_folder posts every README.md it is about to send here first, and
+    // a 404 aborts the upload rather than skipping the check, so the endpoint
+    // is exercised for each of the three answers the client tells apart.
+    const validate = async (content: string): Promise<Response> =>
+      await fetch(`${fake.endpoint}/api/validate-yaml`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, repoType: 'model' }),
+      })
+
+    const fenced = await validate('---\nlicense: mit\n---\n\n# Card\n')
+    const fencedBody = (await fenced.json()) as Record<string, JsonValue>
+    check('a fenced card validates', fenced.status === 200, String(fenced.status))
+    eq('a fenced card raises nothing', fencedBody.errors ?? null, [])
+    eq('and warns about nothing either', fencedBody.warnings ?? null, [])
+
+    // A card with no frontmatter is legal and uploads; the client surfaces the
+    // warning and carries on.
+    const bareCard = await validate('# Card\n')
+    const bareCardBody = (await bareCard.json()) as Record<string, JsonValue>
+    check(
+      'a card without metadata still validates',
+      bareCard.status === 200,
+      String(bareCard.status),
+    )
+    check(
+      'and warns that the metadata is missing',
+      JSON.stringify(bareCardBody.warnings ?? []).includes('empty or missing yaml metadata'),
+      JSON.stringify(bareCardBody.warnings ?? []),
+    )
+
+    // A block that never closes is NOT an error upstream, and neither is one
+    // whose closing line merely starts with three hyphens. Both are simply not
+    // metadata, and a card without metadata uploads with a warning. This file
+    // asserted 400 for both until the live endpoint was asked.
+    const unclosed = await validate('---\nlicense: mit\n')
+    check(
+      'an unclosed metadata block is not an error',
+      unclosed.status === 200,
+      String(unclosed.status),
+    )
+    const ragged = await validate('---\nlicense: mit\n---oops\n')
+    const raggedBody = (await ragged.json()) as Record<string, JsonValue>
+    check('nor is a ragged closing fence', ragged.status === 200, String(ragged.status))
+    check(
+      'and both warn rather than refuse',
+      JSON.stringify(raggedBody.warnings ?? []).includes('empty or missing yaml metadata'),
+      JSON.stringify(raggedBody.warnings ?? []),
+    )
+
+    // What IS an error is a block that closes and does not parse. This is the
+    // failure the route exists to reproduce: upload_folder turns the 400 into
+    // `ValueError: Invalid metadata in README.md` and never uploads.
+    const malformed = await validate('---\nlicense: [\n---\n')
+    const malformedBody = (await malformed.json()) as Record<string, JsonValue>
+    check('malformed metadata is refused', malformed.status === 400, String(malformed.status))
+    // Read off the error itself rather than a stringified blob: the help link
+    // is compared whole, because half a URL is not the assertion -- upstream
+    // hands back this sentence and nothing near it.
+    const malformedError = ((malformedBody.errors ?? []) as Record<string, JsonValue>[])[0] ?? {}
+    check(
+      'and names README.md the way upstream does',
+      String(malformedError.message ?? '').startsWith('Invalid YAML in README.md: '),
+      JSON.stringify(malformedError),
+    )
+    eq(
+      'and hands back the help link upstream sends',
+      malformedError.help ?? null,
+      'You can use a tool like http://www.yamllint.com/ to check it',
+    )
+    eq('and marks it an error', malformedError.type ?? null, 'error')
+
+    // Parses, but is not a mapping. Upstream separates the two shapes.
+    const nullBody = await validate('---\n\n---\n')
+    const nullBodyJson = (await nullBody.json()) as Record<string, JsonValue>
+    check('an empty block is refused', nullBody.status === 400, String(nullBody.status))
+    check(
+      'as metadata that is invalid rather than unparseable',
+      JSON.stringify(nullBodyJson.errors ?? []).includes(
+        'The YAML metadata of your README.md is invalid.',
+      ),
+      JSON.stringify(nullBodyJson.errors ?? []),
+    )
+    const listBody = await validate('---\n- a\n- b\n---\n')
+    const listBodyJson = (await listBody.json()) as Record<string, JsonValue>
+    check('a list is refused', listBody.status === 400, String(listBody.status))
+    check(
+      'with the schema error upstream answers',
+      JSON.stringify(listBodyJson.errors ?? []).includes('must be of type object'),
+      JSON.stringify(listBodyJson.errors ?? []),
+    )
+
+    // Unknown keys are ACCEPTED upstream, so nothing here may reject them.
+    const unknownKey = await validate('---\nbogus_key: 1\n---\n')
+    const unknownKeyBody = (await unknownKey.json()) as Record<string, JsonValue>
+    check('an unknown key is accepted', unknownKey.status === 200, String(unknownKey.status))
+    eq('and raises nothing', unknownKeyBody.errors ?? null, [])
+
+    const anonCard = await fetch(`${fake.endpoint}/api/validate-yaml`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: '# Card\n', repoType: 'model' }),
+    })
+    check(
+      'an unauthenticated validation is refused',
+      anonCard.status === 401,
+      String(anonCard.status),
+    )
+
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))
 
