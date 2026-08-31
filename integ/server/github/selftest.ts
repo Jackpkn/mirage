@@ -147,7 +147,25 @@ async function main(): Promise<void> {
     eq('GET /git/commits/:sha reports the author', field(read, 'author'), AUTHOR)
     eq('and the committer', field(read, 'committer'), AUTHOR)
 
-    // ---- the list endpoint, which is what "most recent commits" reads
+    // ---- a commit exists before any ref names it, and until one does it is
+    // on no branch's history, which is what "dangling" means: readable by sha,
+    // absent from every list.
+    const beforeAttach = await get(`${at}/repos/${REPO}/commits`)
+    check(
+      'a commit no ref names is not on a branch',
+      Array.isArray(beforeAttach) && !beforeAttach.some((c) => String(field(c, 'sha')) === sha),
+      sha,
+    )
+
+    // ---- the list endpoint, which is what "most recent commits" reads, once
+    // the ref has been pointed at the commit
+    const trunk = String(field(await get(`${at}/repos/${REPO}`), 'default_branch'))
+    const attach = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha }),
+    })
+    check('the default ref takes the commit', attach.status === 200, String(attach.status))
     const listed = await get(`${at}/repos/${REPO}/commits`)
     const top = Array.isArray(listed) ? (listed[0] ?? null) : null
     eq('the commit list carries the author', field(field(top, 'commit'), 'author'), AUTHOR)
@@ -323,13 +341,19 @@ async function main(): Promise<void> {
     const eight = await post(`${at}/repos/${REPO}/git/commits`, {
       message: 'Add task eight',
       tree: t8,
+      parents: [sha6],
     })
     const sha8 = String(field(eight.body, 'sha') ?? '')
-    await fetch(`${at}/repos/${REPO}/git/refs/heads/task-1`, {
+    const advance = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-1`, {
       method: 'PATCH',
       headers: HEADERS,
       body: JSON.stringify({ sha: sha8 }),
     })
+    check(
+      'a commit stating its parent advances the ref unforced',
+      advance.status === 200,
+      String(advance.status),
+    )
     const soft = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-1`, {
       method: 'PATCH',
       headers: HEADERS,
@@ -352,6 +376,10 @@ async function main(): Promise<void> {
       Array.isArray(resetList) && !resetList.some((c) => String(field(c, 'sha')) === sha8),
       sha8,
     )
+    // Abandoned, not destroyed: nothing points at it, and it still answers,
+    // which is what the vendor does with a dangling commit.
+    const dangling = await get(`${at}/repos/${REPO}/git/commits/${sha8}`)
+    eq('the abandoned commit is still readable by sha', field(dangling, 'sha'), sha8)
 
     // ---- two commits telling the same tree and message apart only by their
     // author are two commits, even when a move freed the first one's sequence.
@@ -430,21 +458,24 @@ async function main(): Promise<void> {
       String(field((Array.isArray(donorList) ? donorList[0] : null) ?? null, 'sha')),
     )
 
-    // ---- a client may prepare several commits before touching any ref, and
-    // attaching one of the parked ones is a fast forward: the others were
-    // never the ref's position, so they must not make the update forced.
-    const repoInfo = await get(`${at}/repos/${REPO}`)
-    const trunk = String(field(repoInfo, 'default_branch'))
+    // ---- a client may prepare several commits before touching any ref. Each
+    // states the one it builds on, so the two form a chain and attaching them
+    // in turn is an ordinary fast forward, however long the ref sat still.
+    const trunkHead = String(
+      field(field(await get(`${at}/repos/${REPO}/git/ref/heads/${trunk}`), 'object'), 'sha'),
+    )
     const tw = await stage(at, 'tasks/twelve.md', '# twelve\n')
     const twelve = await post(`${at}/repos/${REPO}/git/commits`, {
       message: 'Add task twelve',
       tree: tw,
+      parents: [trunkHead],
     })
     const shaTw = String(field(twelve.body, 'sha') ?? '')
     const th = await stage(at, 'tasks/thirteen.md', '# thirteen\n')
     const thirteen = await post(`${at}/repos/${REPO}/git/commits`, {
       message: 'Add task thirteen',
       tree: th,
+      parents: [shaTw],
     })
     const shaTh = String(field(thirteen.body, 'sha') ?? '')
     const parked1 = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
@@ -453,7 +484,7 @@ async function main(): Promise<void> {
       body: JSON.stringify({ sha: shaTw }),
     })
     check(
-      'attaching a parked commit needs no force with another parked above',
+      'attaching a prepared commit needs no force with another prepared above',
       parked1.status === 200,
       String(parked1.status),
     )
@@ -465,12 +496,44 @@ async function main(): Promise<void> {
       body: JSON.stringify({ sha: shaTh }),
     })
     check(
-      'attaching the second parked commit advances',
+      'attaching the second prepared commit advances',
       parked2.status === 200,
       String(parked2.status),
     )
     const trunkRef2 = await get(`${at}/repos/${REPO}/git/ref/heads/${trunk}`)
     eq('and the ref reports the advance', field(field(trunkRef2, 'object'), 'sha'), shaTh)
+    const wholeChain = await get(`${at}/repos/${REPO}/commits`)
+    check(
+      'the branch lists the whole chain it was walked onto',
+      Array.isArray(wholeChain) &&
+        wholeChain.some((c) => String(field(c, 'sha')) === shaTh) &&
+        wholeChain.some((c) => String(field(c, 'sha')) === shaTw),
+      String(Array.isArray(wholeChain) ? wholeChain.length : -1),
+    )
+
+    // ---- a commit that does NOT build on the head is a divergence, not an
+    // advance, so pointing the ref at it is forced even though it is the
+    // newest thing in the repository. This is the difference stated parents
+    // buy: order of creation is not ancestry.
+    const ts = await stage(at, 'tasks/sibling.md', '# sibling\n')
+    const sibling = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add a sibling',
+      tree: ts,
+      parents: [shaTw],
+    })
+    const shaSib = String(field(sibling.body, 'sha') ?? '')
+    const diverge = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaSib }),
+    })
+    check('a divergent sibling is refused unforced', diverge.status === 422, String(diverge.status))
+    const forcedSib = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaSib, force: true }),
+    })
+    check('and lands when forced', forcedSib.status === 200, String(forcedSib.status))
 
     // ---- a /contents write advanced its ref the moment it landed, so it is
     // attached history: a backward PATCH past it is forced, and forcing
@@ -524,6 +587,86 @@ async function main(): Promise<void> {
         ),
       'Add fifteen via contents',
     )
+
+    // ---- a /contents write after a forced reset cannot reproduce the sha of
+    // the commit the reset abandoned: the address covers the bytes, so the
+    // same message on the same parent with different content is a different
+    // commit.
+    await post(`${at}/repos/${REPO}/git/refs`, { ref: 'refs/heads/task-6', sha: '' })
+    const base6 = String(
+      field(field(await get(`${at}/repos/${REPO}/git/ref/heads/task-6`), 'object'), 'sha'),
+    )
+    const w1 = await fetch(`${at}/repos/${REPO}/contents/tasks/reused.md`, {
+      method: 'PUT',
+      headers: HEADERS,
+      body: JSON.stringify({
+        message: 'One message',
+        content: Buffer.from('first\n').toString('base64'),
+        branch: 'task-6',
+      }),
+    })
+    const firstSha = String(field(field(await w1.json(), 'commit'), 'sha'))
+    if (base6 !== '') {
+      await fetch(`${at}/repos/${REPO}/git/refs/heads/task-6`, {
+        method: 'PATCH',
+        headers: HEADERS,
+        body: JSON.stringify({ sha: base6, force: true }),
+      })
+    }
+    const w2 = await fetch(`${at}/repos/${REPO}/contents/tasks/reused.md`, {
+      method: 'PUT',
+      headers: HEADERS,
+      body: JSON.stringify({
+        message: 'One message',
+        content: Buffer.from('second, different bytes\n').toString('base64'),
+        branch: 'task-6',
+      }),
+    })
+    const secondSha = String(field(field(await w2.json(), 'commit'), 'sha'))
+    check(
+      'a contents commit after a reset cannot reuse an abandoned sha',
+      firstSha !== secondSha && secondSha !== '',
+      `${firstSha} vs ${secondSha}`,
+    )
+
+    // ---- a commit prepared before the branch moved on is stale: the ref has
+    // advanced through /contents since, so pointing back at it is a reset and
+    // needs force, whatever order the two were created in.
+    const tStale = await stage(at, 'tasks/stale.md', '# stale\n')
+    const staleHead = String(
+      field(field(await get(`${at}/repos/${REPO}/git/ref/heads/task-6`), 'object'), 'sha'),
+    )
+    const stale = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Prepared before the write',
+      tree: tStale,
+      parents: [staleHead],
+    })
+    const shaStale = String(field(stale.body, 'sha') ?? '')
+    await fetch(`${at}/repos/${REPO}/contents/tasks/after.md`, {
+      method: 'PUT',
+      headers: HEADERS,
+      body: JSON.stringify({
+        message: 'Written after the commit was prepared',
+        content: Buffer.from('after\n').toString('base64'),
+        branch: 'task-6',
+      }),
+    })
+    const staleSoft = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-6`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaStale }),
+    })
+    check(
+      'a stale prepared commit is refused once a contents write moved the ref',
+      staleSoft.status === 422,
+      String(staleSoft.status),
+    )
+    const staleForced = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-6`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaStale, force: true }),
+    })
+    check('and lands when forced', staleForced.status === 200, String(staleForced.status))
 
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {

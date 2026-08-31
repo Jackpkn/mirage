@@ -182,10 +182,67 @@ export async function treeOf(
   return branch === null ? null : await treeOfBranch(db, tenant, repo, branch)
 }
 
-// One branch's commits, newest first, with a synthetic root derived from the
-// branch's CONTENT rather than the repository's name, so that a mirror of a
-// repository has the same root sha as its source. Two branches differ here
-// exactly when their trees differ.
+// Every commit in one repository, keyed by sha, for walking a chain without a
+// query per hop.
+export async function commitsBySha(
+  db: C,
+  tenant: string,
+  repo: RepoRow,
+): Promise<Map<string, CommitRow>> {
+  const rows = (await db.githubCommit.findMany({
+    where: { ...scope(tenant), repo: repo.fullName },
+    orderBy: { seq: 'asc' },
+  })) as CommitRow[]
+  const out = new Map<string, CommitRow>()
+  for (const row of rows) out.set(row.sha, row)
+  return out
+}
+
+// Walk first parents from a sha, newest first. Bounded by the map's size
+// because a chain cannot visit a commit twice: `seen` is what stops a cycle,
+// which a hand-built parent can always describe.
+export function chainFrom(head: string, byId: Map<string, CommitRow>): CommitRow[] {
+  const out: CommitRow[] = []
+  const seen = new Set<string>()
+  let at = head
+  while (at !== '' && !seen.has(at)) {
+    seen.add(at)
+    const row = byId.get(at)
+    if (row === undefined) break
+    out.push(row)
+    at = row.parentSha
+  }
+  return out
+}
+
+// Whether `ancestor` is reachable from `head` by first parents, which is the
+// exact question a fast-forward asks. The empty sha is every commit's
+// ancestor, since that is where a chain ends.
+export function reaches(head: string, ancestor: string, byId: Map<string, CommitRow>): boolean {
+  if (ancestor === '') return true
+  if (head === ancestor) return true
+  return chainFrom(head, byId).some((c) => c.sha === ancestor)
+}
+
+export async function headOf(
+  db: C,
+  tenant: string,
+  repo: RepoRow,
+  branch: string,
+): Promise<string> {
+  const row = await db.githubBranch.findFirst({
+    where: { ...scope(tenant), repo: repo.fullName, name: branch },
+  })
+  return row?.headSha ?? ''
+}
+
+// One branch's commits, newest first: the chain its ref points at, then a
+// synthetic root derived from the branch's CONTENT rather than the
+// repository's name, so that a mirror of a repository has the same root sha as
+// its source. Two branches differ in that root exactly when their trees
+// differ. The chain is walked rather than filtered by a column, so a commit
+// two refs share is on both lists and a commit a reset abandoned is on
+// neither, without either case being written down anywhere.
 export async function commitList(
   db: C,
   tenant: string,
@@ -194,11 +251,9 @@ export async function commitList(
 ): Promise<CommitRow[]> {
   const tree = await treeOfBranch(db, tenant, repo, branch)
   const pairs: Array<[string, string]> = [...tree.entries()].map(([p, d]) => [p, blobSha(d)])
-  const written = (await db.githubCommit.findMany({
-    where: { ...scope(tenant), repo: repo.fullName, branch },
-    orderBy: { seq: 'asc' },
-  })) as CommitRow[]
-  return [...[...written].reverse(), rootCommit(pairs)]
+  const head = await headOf(db, tenant, repo, branch)
+  const walked = head === '' ? [] : chainFrom(head, await commitsBySha(db, tenant, repo))
+  return [...walked, rootCommit(pairs)]
 }
 
 export function directoriesOf(files: Tree): Set<string> {

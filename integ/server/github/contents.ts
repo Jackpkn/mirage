@@ -31,6 +31,7 @@ import {
   branchNames,
   commitList,
   directoriesOf,
+  headOf,
   submodulesOf,
   treeItems,
   treeOf,
@@ -85,14 +86,9 @@ function dirJson(files: Tree, at: string): JsonValue[] | null {
   return [...entries.keys()].sort().map((k) => entries.get(k) as JsonValue)
 }
 
-export async function nextCommitSeq(
-  db: Client,
-  tenant: string,
-  repo: string,
-  branch: string,
-): Promise<number> {
+async function nextCommitSeq(db: Client, tenant: string, repo: string): Promise<number> {
   const rows = await db.githubCommit.findMany({
-    where: { tenant, repo, branch },
+    where: { tenant, repo },
     orderBy: { seq: 'desc' },
     take: 1,
   })
@@ -100,9 +96,17 @@ export async function nextCommitSeq(
   return top === undefined ? 0 : top.seq + 1
 }
 
-// Append a commit for a write to one branch. Its sha is derived from the
-// position in the branch's history, which is what makes a replayed fixture
-// answer the same shas.
+// Record one commit. Its sha is content-addressed the way git's is: the
+// parent, the tree, the people and the message decide it, and nothing about
+// where it sits does. That is the whole reason a sha cannot be reproduced by a
+// later commit landing in a freed slot, which is what a position-derived sha
+// allowed every time a move or a reset released one. `seq` survives only as
+// insertion order for a stable listing; no identity or history reads it.
+//
+// `advance` moves the branch's ref onto the new commit, which is what a
+// /contents write does: the write IS the ref update. A plumbing commit passes
+// false and is born dangling, reachable by sha but on no branch until a ref
+// update points at it.
 export async function recordCommit(
   db: Client,
   tenant: string,
@@ -115,24 +119,35 @@ export async function recordCommit(
     author: null,
     committer: null,
   },
+  parent: string | null = null,
+  advance = true,
 ): Promise<{ sha: string; message: string }> {
-  const seq = await nextCommitSeq(db, tenant, repo.fullName, branch)
+  const seq = await nextCommitSeq(db, tenant, repo.fullName)
   const authorJson = personJson(people.author)
   const committerJson = personJson(people.committer)
-  // A plumbing commit's sha also covers its tree and its people: a ref update
-  // can move a commit off this branch, which frees its sequence, and a later
-  // commit reusing the sequence and the message would otherwise reproduce the
-  // sha for a different tree or a different author, both of which git tells
-  // apart. A /contents commit has no tree and cannot move, so its derivation
-  // is unchanged and the goldens keep their shas.
-  const salt = tree === '' ? '' : `${tree}:${authorJson}:${committerJson}:`
-  const sha = commitSha(`${repo.fullName}@${branch}:${String(seq)}:${salt}${message}`)
+  const parentSha = parent ?? (await headOf(db, tenant, repo, branch))
+  // A plumbing commit names its tree, and a /contents commit is the tree the
+  // write just produced, fingerprinted the way the synthesized root is. Both
+  // have to be in the sha or the address is not the content's: two writes of
+  // different bytes under one message onto one parent would otherwise be one
+  // commit, which is what a reset freeing a slot used to expose.
+  const state =
+    tree === ''
+      ? [...(await treeOfBranch(db, tenant, repo, branch)).entries()]
+          .map(([p, d]): [string, string] => [p, blobSha(d)])
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([p, b]) => `${p}:${b}`)
+          .join('\0')
+      : tree
+  const sha = commitSha(
+    [repo.fullName, parentSha, state, authorJson, committerJson, message].join('\0'),
+  )
   await db.githubCommit.create({
     data: {
       tenant,
       repo: repo.fullName,
-      branch,
       sha,
+      parentSha,
       message,
       authorLogin: '',
       date: '',
@@ -140,13 +155,15 @@ export async function recordCommit(
       treeSha: tree,
       authorJson,
       committerJson,
-      // A /contents write moves its ref the moment it lands, so its commit is
-      // attached history from birth; only a plumbing commit (tree present)
-      // parks and waits for a ref update to claim it.
-      attached: tree === '',
       seq,
     },
   })
+  if (advance) {
+    await db.githubBranch.updateMany({
+      where: { tenant, repo: repo.fullName, name: branch },
+      data: { headSha: sha },
+    })
+  }
   return { sha, message }
 }
 
