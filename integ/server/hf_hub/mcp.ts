@@ -23,6 +23,9 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   DEFAULT_RUN,
   DEFAULT_TENANT,
+  resolveRun,
+  resolveTenant,
+  splitRunPath,
   DEFAULT_FIXTURE_ROOT,
   Router,
   bindHost,
@@ -524,22 +527,39 @@ export const MCP_PATH = '/mcp'
 // a tool call and a REST read in the same run must see the same rows, and two
 // runtimes would be two SQLite files that silently diverge.
 export function mcpServerFor(runtime: Runtime<C>): Server {
-  const tenant = (hfHubFake.defaultTenants ?? [])[0] ?? DEFAULT_TENANT
-  const state = runtime.state(DEFAULT_RUN).of(tenant)
-  const at: Dispatch = {
-    db: runtime.pool.client(DEFAULT_RUN),
-    tenant,
-    clock: state.clock,
-    minter: state.minter,
-  }
+  const fallback = (hfHubFake.defaultTenants ?? [])[0] ?? DEFAULT_TENANT
+  const { tenantKind, tenantFromBearer, tenantTokenPattern } = hfHubFake.config
   const doc = loadToolDoc()
   return createServer((req, res) => {
     void (async () => {
-      const path = new URL(req.url ?? '/', 'http://mcp.invalid').pathname
-      if (path !== MCP_PATH) {
+      const url = new URL(req.url ?? '/', 'http://mcp.invalid')
+      // The run and tenant are the REQUEST'S, resolved exactly as the REST arm
+      // resolves them, because both arms answer one store: an MCP call pinned
+      // to the default world while REST seeded `/_run/<id>` would compare two
+      // different sets of repositories without ever looking wrong. A caller
+      // naming nothing keeps the seeded default tenant, which is what the
+      // announced bare `/mcp` URL has always meant.
+      const split = splitRunPath(url.pathname)
+      if (split.path !== MCP_PATH) {
         res.writeHead(404, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ error: 'not_found', path, expected: MCP_PATH }))
+        res.end(JSON.stringify({ error: 'not_found', path: url.pathname, expected: MCP_PATH }))
         return
+      }
+      const run = resolveRun(req.headers, url, split.run)
+      const named = resolveTenant(
+        req.headers,
+        url,
+        tenantKind,
+        tenantFromBearer,
+        tenantTokenPattern,
+      )
+      const tenant = named === DEFAULT_TENANT ? fallback : named
+      const state = runtime.state(run).of(tenant)
+      const at: Dispatch = {
+        db: runtime.pool.client(run),
+        tenant,
+        clock: state.clock,
+        minter: state.minter,
       }
       const mcp = buildMcpServer(at, doc)
       const transport = new StreamableHTTPServerTransport({

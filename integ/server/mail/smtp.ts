@@ -15,9 +15,10 @@
 import type { Socket } from 'node:net'
 import { SMTPServer } from 'smtp-server'
 import type { SMTPServerSession } from 'smtp-server'
-import { Router, bindHost, checkName } from '../kit/typescript/index.ts'
+import { bindHost, checkName } from '../kit/typescript/index.ts'
 import type { Runtime } from '../kit/typescript/index.ts'
 import { INBOX, mailDomain, splitAddress, type C } from './config.ts'
+import { queue } from './queue.ts'
 import { appendMessage, canonicalName, createMailbox, mailboxOf, mailboxesOf } from './store.ts'
 
 // Submission, not relay: a message is accepted, matched to a local account by
@@ -28,8 +29,6 @@ import { appendMessage, canonicalName, createMailbox, mailboxOf, mailboxesOf } f
 //
 // The run comes from the SMTP PASSWORD, exactly as it does on the IMAP side, so
 // a send and the read that checks for it land in one world.
-
-const queue = new Router<C>([])
 
 function addressUser(raw: string): string {
   const at = raw.indexOf('<')

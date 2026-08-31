@@ -223,6 +223,15 @@ async function main(): Promise<void> {
     })
     check('a retransmitted chunk is still 308', repeat.status === 308, String(repeat.status))
     eq('and does not double the progress', repeat.headers.get('range'), 'bytes=0-7')
+    // The recovery probe: an empty PUT with `bytes */*` asks where the upload
+    // stands and must not finalize the partial bytes as an object.
+    const probe = await fetch(session, {
+      method: 'PUT',
+      headers: { ...TENANTED, 'Content-Range': `bytes */*` },
+      body: Buffer.alloc(0),
+    })
+    check('a status probe answers 308', probe.status === 308, String(probe.status))
+    eq('and reports the accepted range', probe.headers.get('range'), 'bytes=0-7')
     const done = (await json(session, {
       method: 'PUT',
       headers: { 'Content-Range': `bytes 8-12/13` },

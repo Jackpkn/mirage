@@ -203,6 +203,31 @@ async function mcpChecks(): Promise<void> {
     )
     check('search renders a hf.co link', search.includes('[https://hf.co/integ/card-model]'), '')
 
+    // A run-scoped endpoint answers THAT run's world. `/_run/scoped/mcp` is a
+    // fresh empty run, so the repo seeded into the default run must not leak
+    // into it; the default-path client above keeps finding it.
+    const scopedClient = new Client(
+      { name: 'hf-hub-selftest-run', version: '0' },
+      { capabilities: {} },
+    )
+    const scopedTransport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${String(mcp.port)}/_run/scoped/mcp`),
+    )
+    await scopedClient.connect(scopedTransport as Parameters<typeof scopedClient.connect>[0])
+    const scopedOut = await scopedClient.callTool({
+      name: 'hub_repo_search',
+      arguments: { query: 'card-model', repo_types: ['model'], limit: 5 },
+    })
+    const scopedText = (scopedOut.content as { type: string; text?: string }[])
+      .map((one) => one.text ?? '')
+      .join('')
+    check(
+      'a run-scoped MCP call answers that run, not the default world',
+      !scopedText.includes('integ/card-model'),
+      scopedText.slice(0, 80),
+    )
+    await scopedClient.close()
+
     const details = await text('hub_repo_details', { repo_ids: ['integ/card-model'] })
     check('details name the type', details.startsWith('**Type: Model**'), details.slice(0, 40))
     check('details lift the card task', details.includes('- **Task:** summarization'), '')

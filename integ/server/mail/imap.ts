@@ -14,7 +14,8 @@
 
 import { createServer } from 'node:net'
 import type { Server, Socket } from 'node:net'
-import { Router, bindHost, checkName } from '../kit/typescript/index.ts'
+import { bindHost, checkName } from '../kit/typescript/index.ts'
+import { queue } from './queue.ts'
 import type { Runtime } from '../kit/typescript/index.ts'
 import { DEFAULT_MAILBOXES, INBOX, mailDomain, splitAddress, type C } from './config.ts'
 import { SearchError, inSet, searchMessages, tokenize, type SearchMsg } from './search.ts'
@@ -41,11 +42,6 @@ const CAPABILITIES = 'IMAP4rev1 LITERAL+ UIDPLUS ENABLE ID NAMESPACE'
 // The flags a mailbox advertises. \Recent is advertised but never set: this
 // fake has no session-scoped arrival state and every consumer reads \Seen.
 const FLAGS = '\\Answered \\Flagged \\Deleted \\Seen \\Draft'
-
-// Writes take the kit's per-run queue, the same one every HTTP fake's mutating
-// route takes. An empty Router is that queue with no routes attached; a second
-// private copy of the same six lines could drift from it.
-const queue = new Router<C>([])
 
 type State = 'unauth' | 'auth' | 'selected'
 

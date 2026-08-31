@@ -260,6 +260,18 @@ async function resumableChunk(ctx: Ctx<C>): Promise<Reply> {
   })
   if (session === null) return notFound()
   const held = Buffer.from(session.content)
+  // A client that lost a response asks where the upload stands with an empty
+  // PUT whose Content-Range is `bytes */*` (or `bytes */<total>`). That is a
+  // question, not a chunk: answer 308 with the accepted range and touch
+  // nothing, because reading it as a range-less final chunk stored the
+  // partial bytes as the completed object.
+  if (/^bytes \*\/(\d+|\*)$/.test(header(ctx, 'content-range'))) {
+    return {
+      status: 308,
+      headers: held.length === 0 ? {} : { Range: `bytes=0-${String(held.length - 1)}` },
+      body: Buffer.alloc(0),
+    }
+  }
   const range = CONTENT_RANGE_RE.exec(header(ctx, 'content-range'))
   const more = range !== null && range[3] === '*'
   // A chunk is PLACED at the offset its Content-Range declares, never
