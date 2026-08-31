@@ -279,6 +279,80 @@ async function main(): Promise<void> {
     const read6 = await get(`${at}/repos/${REPO}/git/commits/${sha6}`)
     eq('GET /git/commits/:sha still answers after the move', field(read6, 'sha'), sha6)
 
+    // ---- the moved commit freed its sequence on the default branch, so a
+    // later commit reusing that sequence AND the message must still get its
+    // own sha, or a ref update resolving the sha publishes the wrong tree.
+    const t7 = await stage(at, 'tasks/seven.md', '# seven\n')
+    const seven = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task six',
+      tree: t7,
+    })
+    check(
+      'a same-message commit after the move gets its own sha',
+      String(field(seven.body, 'sha')) !== sha6,
+      sha6,
+    )
+
+    // ---- a second ref pointing at the same commit shares it: git commits
+    // are reachable from many refs, so attaching one to another branch copies
+    // it onto that history rather than stealing it from the first.
+    await post(`${at}/repos/${REPO}/git/refs`, { ref: 'refs/heads/task-2', sha: '' })
+    const shared = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-2`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: sha6 }),
+    })
+    check('a second ref takes the same commit', shared.status === 200, String(shared.status))
+    const firstList = await get(`${at}/repos/${REPO}/commits?sha=task-1`)
+    check(
+      'the first branch keeps it',
+      Array.isArray(firstList) && String(field(firstList[0] ?? null, 'sha')) === sha6,
+      String(field((Array.isArray(firstList) ? firstList[0] : null) ?? null, 'sha')),
+    )
+    const secondList = await get(`${at}/repos/${REPO}/commits?sha=task-2`)
+    check(
+      'and the second branch gains it',
+      Array.isArray(secondList) && String(field(secondList[0] ?? null, 'sha')) === sha6,
+      String(field((Array.isArray(secondList) ? secondList[0] : null) ?? null, 'sha')),
+    )
+
+    // ---- resetting a branch to an older commit is a forced update: refused
+    // without `force`, and with it the requested commit becomes the head and
+    // the discarded one leaves the branch's history.
+    const t8 = await stage(at, 'tasks/eight.md', '# eight\n')
+    const eight = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task eight',
+      tree: t8,
+    })
+    const sha8 = String(field(eight.body, 'sha') ?? '')
+    await fetch(`${at}/repos/${REPO}/git/refs/heads/task-1`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: sha8 }),
+    })
+    const soft = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-1`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: sha6 }),
+    })
+    check('a backward update without force is refused', soft.status === 422, String(soft.status))
+    const heldRef = await get(`${at}/repos/${REPO}/git/ref/heads/task-1`)
+    eq('and the head is unchanged', field(field(heldRef, 'object'), 'sha'), sha8)
+    const forced = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-1`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: sha6, force: true }),
+    })
+    check('a forced backward update lands', forced.status === 200, String(forced.status))
+    const resetRef = await get(`${at}/repos/${REPO}/git/ref/heads/task-1`)
+    eq('the head is the requested commit', field(field(resetRef, 'object'), 'sha'), sha6)
+    const resetList = await get(`${at}/repos/${REPO}/commits?sha=task-1`)
+    check(
+      'and the discarded commit left the history',
+      Array.isArray(resetList) && !resetList.some((c) => String(field(c, 'sha')) === sha8),
+      sha8,
+    )
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

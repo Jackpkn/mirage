@@ -190,9 +190,14 @@ const createRef = withRepo(async (ctx, repo) => {
 // Moving a branch is what makes a staged tree visible, and it is also what
 // puts the commit on that branch's history: `POST /git/commits` parks the row
 // on the default branch (which is where the touched set is computed, and what
-// a golden that never moves a ref records), so a ref pointed anywhere else has
-// to take the row with it. A move, not a copy, because a row belongs to one
-// branch's history and a dangling commit was never on the default branch's.
+// a golden that never moves a ref records), so the first ref pointed at it
+// takes the row along, because a dangling commit was never on the default
+// branch's history. Once a ref has attached it, a further ref copies it
+// instead: a git commit is reachable from many refs and stays on each
+// history. Pointing a branch below its own head is a forced update, refused
+// as the vendor refuses it unless the body says `force`, and the discarded
+// commits leave the branch (deliberate divergence: their rows are deleted, so
+// a discarded sha stops resolving, where the vendor keeps dangling commits).
 const updateRef = withRepo(async (ctx, repo) => {
   const ref = param(ctx, 'ref').replace(/^\/+|\/+$/g, '')
   const name = ref.startsWith('heads/') ? ref.slice('heads/'.length) : ''
@@ -200,14 +205,25 @@ const updateRef = withRepo(async (ctx, repo) => {
   if (name === '' || !names.includes(name)) return fail(422, 'Reference does not exist')
   const body = jsonBodyOf(ctx)
   const sha = str(body, 'sha')
-  const commit = await ctx.db.githubCommit.findFirst({
-    where: { tenant: ctx.tenant, repo: repo.fullName, sha },
-  })
+  // The row already on this branch wins when copies exist, so a same-branch
+  // update reasons about its own history rather than another ref's copy.
+  const commit =
+    (await ctx.db.githubCommit.findFirst({
+      where: { tenant: ctx.tenant, repo: repo.fullName, sha, branch: name },
+    })) ??
+    (await ctx.db.githubCommit.findFirst({
+      where: { tenant: ctx.tenant, repo: repo.fullName, sha },
+    }))
   if (commit === null || commit.treeSha === '') {
     return fail(422, 'Invalid request.\n\n"sha" is invalid.')
   }
   const staged = await stagedTree(ctx.db, ctx.tenant, repo, commit.treeSha)
   if (staged === null) return fail(422, 'Invalid request.\n\n"sha" is invalid.')
+  // Refused before anything is written, so a refused update changes nothing.
+  const head = (await commitList(ctx.db, ctx.tenant, repo, name))[0]?.sha ?? ''
+  if (commit.branch === name && sha !== head && body.force !== true) {
+    return fail(422, 'Update is not a fast forward')
+  }
   await ctx.db.githubFile.deleteMany({
     where: { tenant: ctx.tenant, repo: repo.fullName, branch: name },
   })
@@ -216,7 +232,41 @@ const updateRef = withRepo(async (ctx, repo) => {
   }
   if (commit.branch !== name) {
     const seq = await nextCommitSeq(ctx.db, ctx.tenant, repo.fullName, name)
-    await ctx.db.githubCommit.update({ where: { pk: commit.pk }, data: { branch: name, seq } })
+    if (commit.attached) {
+      // Already on some branch's history by a ref's choice, so this ref gets
+      // a copy: a git commit is reachable from many refs at once.
+      await ctx.db.githubCommit.create({
+        data: {
+          tenant: ctx.tenant,
+          repo: repo.fullName,
+          branch: name,
+          sha: commit.sha,
+          message: commit.message,
+          authorLogin: commit.authorLogin,
+          date: commit.date,
+          filesJson: commit.filesJson,
+          treeSha: commit.treeSha,
+          authorJson: commit.authorJson,
+          committerJson: commit.committerJson,
+          attached: true,
+          seq,
+        },
+      })
+    } else {
+      await ctx.db.githubCommit.update({
+        where: { pk: commit.pk },
+        data: { branch: name, seq, attached: true },
+      })
+    }
+  } else {
+    if (sha !== head) {
+      await ctx.db.githubCommit.deleteMany({
+        where: { tenant: ctx.tenant, repo: repo.fullName, branch: name, seq: { gt: commit.seq } },
+      })
+    }
+    if (!commit.attached) {
+      await ctx.db.githubCommit.update({ where: { pk: commit.pk }, data: { attached: true } })
+    }
   }
   return { status: 200, body: { ref: `refs/${ref}`, object: { sha, type: 'commit' } } }
 })

@@ -117,7 +117,13 @@ export async function recordCommit(
   },
 ): Promise<{ sha: string; message: string }> {
   const seq = await nextCommitSeq(db, tenant, repo.fullName, branch)
-  const sha = commitSha(`${repo.fullName}@${branch}:${String(seq)}:${message}`)
+  // A plumbing commit's sha also covers its tree: a ref update can move a
+  // commit off this branch, which frees its sequence, and a later commit
+  // reusing the sequence and the message would otherwise reproduce the sha
+  // for a different tree. A /contents commit has no tree and cannot move, so
+  // its derivation is unchanged and the goldens keep their shas.
+  const salt = tree === '' ? '' : `${tree}:`
+  const sha = commitSha(`${repo.fullName}@${branch}:${String(seq)}:${salt}${message}`)
   await db.githubCommit.create({
     data: {
       tenant,
