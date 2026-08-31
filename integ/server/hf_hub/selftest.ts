@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { ANNOUNCE_RE } from '../kit/typescript/announce.ts'
+import { DEFAULT_TENANT } from '../kit/typescript/tenant.ts'
 import type { JsonValue } from '../kit/typescript/types.ts'
 import { loadToolDoc, startHfMcpServer } from './mcp.ts'
 
@@ -261,6 +262,239 @@ async function mcpChecks(): Promise<void> {
       operations: [{ cmd: 'cat', args: ['hf://models/integ/card-model/config.json'] }],
     })
     check('cat reports the byte count', /Bytes: \d+/.test(cat), cat.slice(0, 200))
+
+    // A bare cat is bounded, and the two flags that move the bound are the
+    // ones the captured tool document advertises. Without this a caller has
+    // no way to read the head of a large file, and no way to learn that the
+    // bytes stopped early -- which on a repository holding one 20MB file is
+    // the difference between a tool result and a context window.
+    const bounded = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/README.md', '--max-bytes', '16'] },
+      ],
+    })
+    check('--max-bytes bounds the read', bounded.includes('Bytes: 16'), bounded.slice(0, 240))
+    check(
+      'and a bounded read says where it stopped',
+      bounded.includes('Content truncated. Resume with offset 16.'),
+      bounded.slice(0, 240),
+    )
+    const offset = await text('hf_fs', {
+      operations: [
+        {
+          cmd: 'cat',
+          args: ['hf://models/integ/card-model/README.md', '--offset', '8', '--max-bytes', '8'],
+        },
+      ],
+    })
+    check('--offset moves the window', offset.includes('Bytes: 8'), offset.slice(0, 240))
+    // Upstream prints no `Offset:` line even when one was asked for, and never
+    // names the file's total size. A caller learns that there is more and
+    // where to resume, and nothing else.
+    check('and the window is not announced', !offset.includes('Offset:'), offset.slice(0, 240))
+    check(
+      'and the resume point counts from the file, not the window',
+      offset.includes('Content truncated. Resume with offset 16.'),
+      offset.slice(0, 240),
+    )
+    const past = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/README.md', '--offset', '99999'] },
+      ],
+    })
+    check('an offset past the end reads nothing', past.includes('Bytes: 0'), past.slice(0, 240))
+
+    // Zero is the MAXIMUM upstream, not an empty read: the documented range is
+    // "between 0 and 80000", and `--max-bytes 0` against a 466KB file on the
+    // live server answers 80,000 bytes. On a README that fits, it is the whole
+    // file -- so a zero-bound read and a default read agree exactly.
+    const plain = await text('hf_fs', {
+      operations: [{ cmd: 'cat', args: ['hf://models/integ/card-model/README.md'] }],
+    })
+    const zero = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/README.md', '--max-bytes', '0'] },
+      ],
+    })
+    check('a zero bound reads the maximum, not nothing', zero === plain, zero.slice(0, 200))
+    const over = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/README.md', '--max-bytes', '80001'] },
+      ],
+    })
+    check(
+      'a bound above the ceiling is refused rather than clamped',
+      over.includes('[HF_FS_INVALID_ARGUMENT]') &&
+        over.includes('max_bytes must be between 0 and 80000'),
+      over.slice(0, 200),
+    )
+    const negative = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/README.md', '--max-bytes', '-1'] },
+      ],
+    })
+    // A sign parses and then fails the RANGE test, which is the order upstream
+    // answers in: the caller learns which rule it broke, not merely that it
+    // typed something wrong.
+    check(
+      'a negative bound is out of range rather than unparsable',
+      negative.includes('max_bytes must be between 0 and 80000'),
+      negative.slice(0, 200),
+    )
+    const negOffset = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/README.md', '--offset', '-1'] },
+      ],
+    })
+    check(
+      'and a negative offset has its own sentence',
+      negOffset.includes('offset must be non-negative'),
+      negOffset.slice(0, 200),
+    )
+    const junk = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/README.md', '--max-bytes', 'lots'] },
+      ],
+    })
+    check(
+      'a non-numeric bound is refused rather than guessed at',
+      junk.includes('[HF_FS_INVALID_ARGUMENT]') && junk.includes('--max-bytes requires an integer'),
+      junk.slice(0, 200),
+    )
+    const unknown = await text('hf_fs', {
+      operations: [{ cmd: 'cat', args: ['hf://models/integ/card-model/README.md', '--recursive'] }],
+    })
+    check(
+      'and a flag cat does not have is still refused',
+      unknown.includes('[HF_FS_INVALID_ARGUMENT]'),
+      unknown.slice(0, 200),
+    )
+
+    // A bound that lands INSIDE a multi-byte character. Cut there, both halves
+    // come back as U+FFFD and `next_offset` names a byte the caller never got
+    // whole, so no sequence of pages reassembles the file. Pushed through the
+    // REST arm of the same server the tool reads, under the tenant an
+    // unauthenticated MCP call resolves to.
+    //
+    // `a\u00e9bc` is 5 bytes -- 0x61, then 0xC3 0xA9, then 0x62 0x63 -- so a
+    // 2-byte bound falls between the two bytes of the second character.
+    const pushedUtf8 = await fetch(`${mcp.rest.endpoint}/api/models/integ/card-model/commit/main`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEFAULT_TENANT}`,
+        'Content-Type': 'application/x-ndjson',
+      },
+      body: [
+        JSON.stringify({ key: 'header', value: { summary: 'add a multi-byte file' } }),
+        JSON.stringify({ key: 'file', value: { path: 'utf8.txt', content: 'a\u00e9bc' } }),
+        // 300 bytes that are all continuation bytes, which no UTF-8 sequence
+        // can be. Pushed twice under two names, because upstream decides by
+        // the NAME: `.bin` is refused unread, while the same bytes under a
+        // text extension are served and have to be bounded instead.
+        ...['binary.bin', 'invalid.txt'].map((path) =>
+          JSON.stringify({
+            key: 'file',
+            value: {
+              path,
+              encoding: 'base64',
+              content: Buffer.alloc(300, 0x80).toString('base64'),
+            },
+          }),
+        ),
+      ].join('\n'),
+    })
+    check(
+      'a multi-byte file and two non-text blobs are pushed',
+      pushedUtf8.status === 200,
+      String(pushedUtf8.status),
+    )
+    const cut = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/utf8.txt', '--max-bytes', '2'] },
+      ],
+    })
+    check(
+      'a bound inside a character does not split it',
+      !cut.includes('\ufffd'),
+      cut.slice(0, 240),
+    )
+    check(
+      'the read stops on the character boundary instead',
+      cut.includes('Bytes: 3') && cut.includes('Content truncated. Resume with offset 3.'),
+      cut.slice(0, 240),
+    )
+    const rest2 = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/utf8.txt', '--offset', '3'] },
+      ],
+    })
+    // The two pages concatenate back into the file, which is the whole point
+    // of reporting an offset to continue from. A rendered page is a header, a
+    // blank line, the file's own bytes, and -- only when there is more -- a
+    // blank line and the resume notice, so peel both ends.
+    const catBody = (rendered: string): string => {
+      const body = rendered.slice(rendered.indexOf('\n\n', rendered.indexOf('Bytes: ')) + 2)
+      const notice = body.lastIndexOf('\n\nContent truncated.')
+      return (notice === -1 ? body : body.slice(0, notice)).trimEnd()
+    }
+    check(
+      'and the next offset returns the remainder',
+      `${catBody(cut)}${catBody(rest2)}` === 'a\u00e9bc',
+      JSON.stringify(`${catBody(cut)}|${catBody(rest2)}`),
+    )
+
+    // An offset the CALLER picked, landing inside the second character. It
+    // retreats to that character's start rather than decoding half of it, so
+    // the page begins `\u00e9` and carries no U+FFFD.
+    const inside = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/utf8.txt', '--offset', '2'] },
+      ],
+    })
+    check(
+      'an offset inside a character retreats to its start',
+      catBody(inside) === '\u00e9bc' && !inside.includes('\ufffd'),
+      JSON.stringify(catBody(inside)),
+    )
+    check(
+      'and the page counts the whole character',
+      inside.includes('Bytes: 4'),
+      inside.slice(0, 240),
+    )
+
+    // `cat` is text-only upstream, and refuses on the extension without
+    // reading the blob. The task fixtures carry pytorch_model.bin, so a fake
+    // that served these bytes would hand an agent a page the live server
+    // never would.
+    const refused = await text('hf_fs', {
+      operations: [{ cmd: 'cat', args: ['hf://models/integ/card-model/binary.bin'] }],
+    })
+    check(
+      'cat refuses a binary name outright',
+      refused.includes('[HF_FS_TEXT_ONLY]') &&
+        refused.includes('Refusing to cat non-text file: binary.bin'),
+      refused.slice(0, 240),
+    )
+    check(
+      'and says what to use instead',
+      refused.includes('Use stat for metadata or ls on the parent directory.'),
+      refused.slice(0, 300),
+    )
+
+    // The boundary walk is CAPPED, and the cap is what keeps the bound a
+    // bound. A text extension is not a promise of text: every byte of this
+    // file is a continuation byte, so an uncapped walk would run to the end
+    // and return all 300.
+    const blob = await text('hf_fs', {
+      operations: [
+        { cmd: 'cat', args: ['hf://models/integ/card-model/invalid.txt', '--max-bytes', '8'] },
+      ],
+    })
+    check(
+      'a run of continuation bytes does not carry the read past the bound',
+      blob.includes('Bytes: 11') && blob.includes('Content truncated. Resume with offset 11.'),
+      blob.slice(0, 260),
+    )
 
     const stat = await text('hf_fs', {
       operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/README.md'] }],

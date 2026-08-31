@@ -284,8 +284,30 @@ export function statMarkdown(uri: string, entry: FsEntry | null, path: string): 
  *
  *   {content}
  */
-export function catMarkdown(uri: string, path: string, content: Uint8Array): string {
+// What a bounded read has to say about its own bounds. A reader who cannot see
+// that the bytes stopped early has no way to ask for the rest, and the captured
+// output schema carries `truncated`, `truncation_reason` and `next_offset`
+// precisely because the live server tells them.
+export interface CatBounds {
+  offset: number
+  total: number
+  next: number
+}
+
+export function catMarkdown(
+  uri: string,
+  path: string,
+  content: Uint8Array,
+  bounds: CatBounds,
+): string {
   const text = Buffer.from(content).toString('utf8')
+  const more = bounds.next < bounds.total
+  // Captured from the live server, down to the placement. The notice follows
+  // the CONTENT rather than joining the header, there is no `Offset:` line
+  // even when one was asked for, and the file's total size is never named --
+  // a caller learns only that there is more and where to resume. Each of
+  // those was ours to get wrong, and each is bytes the model is charged for
+  // on every cat, so the wording is upstream's rather than clearer.
   return [
     `# hf_fs cat`,
     '',
@@ -294,6 +316,7 @@ export function catMarkdown(uri: string, path: string, content: Uint8Array): str
     `Bytes: ${String(content.length)}`,
     '',
     text,
+    ...(more ? ['', `Content truncated. Resume with offset ${String(bounds.next)}.`] : []),
   ].join('\n')
 }
 
@@ -302,12 +325,15 @@ export function catMarkdown(uri: string, path: string, content: Uint8Array): str
 // matters because an agent may branch on the code.
 export const FS_NOT_FOUND = 'HF_FS_NOT_FOUND'
 export const FS_INVALID = 'HF_FS_INVALID_ARGUMENT'
+export const FS_TEXT_ONLY = 'HF_FS_TEXT_ONLY'
 
 const RECOVERY: Record<string, string> = {
   [FS_NOT_FOUND]:
     'Use stat to verify the target or ls/find to discover a returned URI before retrying.',
   [FS_INVALID]:
     'Correct the URI or flags using the operation grammar and route-specific option guidance.',
+  [FS_TEXT_ONLY]:
+    'Use stat for metadata or ls on the parent directory. Do not use cat for binary or non-UTF-8 content.',
 }
 
 export function fsRecovery(code: string): string {
