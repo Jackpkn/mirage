@@ -290,9 +290,18 @@ async def execute_line(
                                                ws._registry, ws._namespace,
                                                agent or "", cancel)
                 if len(served) != len(nodes):
+                    nodes = served
                     names = plan_names(served) if served else frozenset()
-                if names:
+                # A fetched value can name another managed variable
+                # (the arithmetic chase recurses through values), and
+                # what a value spells is unknowable before its fetch,
+                # so the plan reruns over the same admitted nodes until
+                # it reaches nothing new. fill_names returns pending
+                # names only, so every pass fetches names the last one
+                # could not see and the loop settles.
+                while names:
                     await fill_env(effective_session, names)
+                    names = plan_names(nodes)
         io, _ = await run_command_tree(
             ws.dispatch,
             ws._registry,
@@ -326,7 +335,10 @@ async def execute_line(
         # drift it must reconcile, a policy it misconfigured.
         raise
     except Exception as exc:
+        # The fold is a failed command like any other (a SecretsError
+        # folds here), so $? must report it, mirroring the TS catch.
         io = failure_result(exc, command)
+        session.last_exit_code = io.exit_code
         return io
     finally:
         # One rule on every path: an op that happened is always

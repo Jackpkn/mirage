@@ -43,8 +43,11 @@ import { deref } from '../session/state.ts'
 
 // Appended to an alias value before parsing it for the read walk: the
 // rest of the invoking line lands there at dispatch, so the trailing
-// command's arguments are statically unknowable, never absent.
-const ALIAS_REST = ' "$__mirage_alias_rest__"'
+// command's arguments are statically unknowable, never absent. "$@" is
+// bash's own spelling for those words, and it parses as a special
+// variable no read walk collects -- a synthetic *name* here would be a
+// real variable a workspace could manage, and every alias would read it.
+const ALIAS_REST = ' "$@"'
 
 /**
  * Function bodies the line itself defines, every one per name.
@@ -428,8 +431,9 @@ function assignedReach(nodes: TSNodeLike[]): Map<string, [Set<string>, Set<strin
  * nameref target, and the line's own assignments (`assignedReach`),
  * tokenizing values with `identifierNames`. A pending managed name has
  * no value yet, so the chase adds it and stops there: what its fetched
- * value may spell is unknowable before the fetch, the same accepted
- * bound a stored body's cross-statement masks live under.
+ * value may spell is unknowable before the fetch. The executor closes
+ * that hole by planning again once the values land, so a fetched value
+ * naming another managed variable is reached on the next pass.
  */
 function arithTargets(
   session: Session,

@@ -59,7 +59,9 @@ def build_secrets_env(
     the names read with no ``$NAME`` in the text (``HOME`` for a tilde
     and a bare ``cd``, ``OLDPWD`` for ``cd -``, ``CDPATH`` for a
     relative ``cd``, ``OPTIND`` for ``getopts``) plus ``ARITH_BOUND``
-    for the arithmetic value chase; they need their own target because
+    for the arithmetic value chase and the ``ARITH_HOP``/``ARITH_END``
+    pair, whose first value names the second so only a replan after
+    the fetch can reach it; they need their own target because
     any whole-env case would fetch them first and each case would then
     prove nothing, and the directory values name the target's mount
     root so ``cd`` lands on a real directory. The dotenv file carries a
@@ -91,6 +93,8 @@ def build_secrets_env(
         os.environ["MIRAGE_INTEG_CDPATH_DIR"] = "/data"
         os.environ["MIRAGE_INTEG_OPTIND_START"] = "1"
         os.environ["MIRAGE_INTEG_ARITH_BOUND"] = "7"
+        os.environ["MIRAGE_INTEG_ARITH_HOP"] = "ARITH_END"
+        os.environ["MIRAGE_INTEG_ARITH_END"] = "9"
         return {
             "HOME": {
                 "from": "env",
@@ -111,6 +115,14 @@ def build_secrets_env(
             "ARITH_BOUND": {
                 "from": "env",
                 "key": "MIRAGE_INTEG_ARITH_BOUND"
+            },
+            "ARITH_HOP": {
+                "from": "env",
+                "key": "MIRAGE_INTEG_ARITH_HOP"
+            },
+            "ARITH_END": {
+                "from": "env",
+                "key": "MIRAGE_INTEG_ARITH_END"
             },
         }, _noop
     counts: dict[str, int] = {}

@@ -40,8 +40,11 @@ logger = logging.getLogger(__name__)
 
 # Appended to an alias value before parsing it for the read walk: the
 # rest of the invoking line lands there at dispatch, so the trailing
-# command's arguments are statically unknowable, never absent.
-_ALIAS_REST = ' "$__mirage_alias_rest__"'
+# command's arguments are statically unknowable, never absent. "$@" is
+# bash's own spelling for those words, and it parses as a special
+# variable no read walk collects -- a synthetic *name* here would be a
+# real variable a workspace could manage, and every alias would read it.
+_ALIAS_REST = ' "$@"'
 
 
 def _defined_bodies(
@@ -442,8 +445,9 @@ def _arith_targets(
     (``_assigned_reach``), tokenizing values with ``identifier_names``.
     A pending managed name has no value yet, so the chase adds it and
     stops there: what its fetched value may spell is unknowable before
-    the fetch, the same accepted bound a stored body's cross-statement
-    masks live under.
+    the fetch. The executor closes that hole by planning again once the
+    values land, so a fetched value naming another managed variable is
+    reached on the next pass.
 
     Args:
         session (Session): the session the line runs in.

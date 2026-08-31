@@ -309,6 +309,18 @@ describe('fillEnv through execute', () => {
     }
   })
 
+  it('a failed fetch sets the exit status', async () => {
+    registerSecrets('fake-exit', FakeConfig, () => Promise.reject(new Error('connection refused')))
+    const ws = await makeWs({ TOKEN: { from: 'fake-exit', ref: 'r' } })
+    try {
+      expect((await ws.execute('true')).exitCode).toBe(0)
+      expect((await ws.execute('echo $TOKEN')).exitCode).toBe(1)
+      expect(stdoutStr(await ws.execute('echo $?'))).toBe('1\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('an unknown source fails at construction', async () => {
     await expect(makeWs({ T: { from: 'nope-never', ref: 'r' } })).rejects.toThrowError(
       /unknown secrets source/,
@@ -440,6 +452,22 @@ describe('fillEnv through execute', () => {
       expect(calls).toEqual([])
       expect(stdoutStr(await ws.execute('show'))).toBe('a:t0\n')
       expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('the alias rest word is not a managed read', async () => {
+    const { calls, fetch } = countingSource({ token: 'v' })
+    registerSecrets('fake-alias-rest', FakeConfig, fetch)
+    const ws = await makeWs({
+      __mirage_alias_rest__: { from: 'fake-alias-rest', ref: 'r', key: 'token' },
+    })
+    try {
+      await ws.execute('shopt -s expand_aliases')
+      await ws.execute("alias ll='echo hi'")
+      expect(stdoutStr(await ws.execute('ll'))).toBe('hi\n')
+      expect(calls).toEqual([])
     } finally {
       await ws.close()
     }
@@ -761,6 +789,24 @@ describe('fillEnv through execute', () => {
       const io = await ws.execute('n=$other; echo $((n))')
       expect(stdoutStr(io)).toBe('7\n')
       expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('the arithmetic chase replans after a fetch', async () => {
+    const { calls, fetch } = countingSource({ A: 'B', B: '7' })
+    registerSecrets('fake-arith-replan', FakeConfig, fetch)
+    const ws = await makeWs({
+      A: { from: 'fake-arith-replan', ref: 'ra', key: 'A' },
+      B: { from: 'fake-arith-replan', ref: 'rb', key: 'B' },
+    })
+    try {
+      // A's fetched value names B, unknowable before the fetch: the
+      // second planning pass is what reaches B.
+      const io = await ws.execute('echo $((A + 1))')
+      expect(stdoutStr(io)).toBe('8\n')
+      expect(calls).toEqual(['ra', 'rb'])
     } finally {
       await ws.close()
     }

@@ -351,7 +351,10 @@ async function runParsedLine(
     probeText: boolean,
   ): Promise<ExecuteResult | null> => {
     try {
-      let names = fillNames(effectiveSession, nodes, whole, lineCliEnvNames, writesGated)
+      let planNodes = nodes
+      let planWhole = whole
+      let planCli = lineCliEnvNames
+      let names = fillNames(effectiveSession, planNodes, planWhole, planCli, writesGated)
       if (names.size > 0 && probeText) {
         const served = await unrefusedNodes(
           nodes,
@@ -363,19 +366,25 @@ async function runParsedLine(
           killed,
         )
         if (served.length !== nodes.length) {
+          planNodes = served
+          planWhole = guestBound(served, deps.routingDecision ?? null, env.runtimes.bindings)
+          planCli = cliEnvNames(served, effectiveSession, env.registry)
           names =
             served.length === 0
               ? new Set<string>()
-              : fillNames(
-                  effectiveSession,
-                  served,
-                  guestBound(served, deps.routingDecision ?? null, env.runtimes.bindings),
-                  cliEnvNames(served, effectiveSession, env.registry),
-                  writesGated,
-                )
+              : fillNames(effectiveSession, planNodes, planWhole, planCli, writesGated)
         }
       }
-      if (names.size > 0) await fillEnv(effectiveSession, names)
+      // A fetched value can name another managed variable (the
+      // arithmetic chase recurses through values), and what a value
+      // spells is unknowable before its fetch, so the plan reruns
+      // over the same admitted nodes until it reaches nothing new.
+      // fillNames returns pending names only, so every pass fetches
+      // names the last one could not see and the loop settles.
+      while (names.size > 0) {
+        await fillEnv(effectiveSession, names)
+        names = fillNames(effectiveSession, planNodes, planWhole, planCli, writesGated)
+      }
       return null
     } catch (err) {
       if (isControlFlowError(err)) throw err

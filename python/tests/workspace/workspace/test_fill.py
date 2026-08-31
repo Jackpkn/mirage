@@ -310,6 +310,19 @@ async def test_dead_source_fails_only_the_command_that_needs_it():
         await ws.close()
 
 
+@pytest.mark.asyncio
+async def test_failed_fetch_sets_the_exit_status():
+    register_secrets("fake", FakeConfig, dead_source())
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute("true")).exit_code == 0
+        assert (await ws.execute("echo $TOKEN")).exit_code == 1
+        io = await ws.execute("echo $?")
+        assert (await io.stdout_str()) == "1\n"
+    finally:
+        await ws.close()
+
+
 def test_an_unknown_source_fails_at_construction():
     with pytest.raises(SecretsError, match="unknown secrets source"):
         _ws({"T": {"from": "nope", "ref": "r"}})
@@ -420,6 +433,27 @@ async def test_alias_body_fills_on_invocation():
         io = await ws.execute("show")
         assert (await io.stdout_str()) == "a:t0\n"
         assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_alias_rest_is_not_a_managed_read():
+    calls, fetch = counting_source({"token": "v"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({
+        "__mirage_alias_rest__": {
+            "from": "fake",
+            "ref": "r",
+            "key": "token"
+        },
+    })
+    try:
+        await ws.execute("shopt -s expand_aliases")
+        await ws.execute("alias ll='echo hi'")
+        io = await ws.execute("ll")
+        assert (await io.stdout_str()) == "hi\n"
+        assert calls == []
     finally:
         await ws.close()
 
@@ -747,6 +781,32 @@ async def test_arith_chase_follows_a_dynamic_assignment():
         io = await ws.execute("n=$other; echo $((n))")
         assert (await io.stdout_str()) == "7\n"
         assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_arith_chase_replans_after_a_fetch():
+    calls, fetch = counting_source({"A": "B", "B": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({
+        "A": {
+            "from": "fake",
+            "ref": "ra",
+            "key": "A"
+        },
+        "B": {
+            "from": "fake",
+            "ref": "rb",
+            "key": "B"
+        },
+    })
+    try:
+        # A's fetched value names B, unknowable before the fetch: the
+        # second planning pass is what reaches B.
+        io = await ws.execute("echo $((A + 1))")
+        assert (await io.stdout_str()) == "8\n"
+        assert calls == ["ra", "rb"]
     finally:
         await ws.close()
 
