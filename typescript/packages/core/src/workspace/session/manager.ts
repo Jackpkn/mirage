@@ -31,6 +31,23 @@ function holdsManaged(session: Session): boolean {
 }
 
 /**
+ * Fill in template names a stored record predates.
+ *
+ * A record written before the workspace's env block gained an entry
+ * holds no var for the new name, so a session hydrated from the record
+ * alone could never reach the credential the deployment just
+ * configured. The record's own entries win per name -- an overwrite, a
+ * re-export, a stored pointer all round-trip untouched -- and only an
+ * absent name gains the seed. The records are frozen, so sharing them
+ * across sessions is safe.
+ */
+function mergeSeedVars(session: Session, seedVars: Record<string, ShellVar>): void {
+  for (const [name, seeded] of Object.entries(seedVars)) {
+    if (!(name in session.vars)) session.vars[name] = seeded
+  }
+}
+
+/**
  * Owns the live session table over a storage-agnostic SessionStore.
  *
  * Mirrors the Namespace/NamespaceStore split: sessions are worked on in
@@ -252,7 +269,6 @@ export class SessionManager {
         const dflt = this.defaultSession()
         setCwd(dflt, stored.cwd)
         dflt.vars = stored.vars
-        this.hasManaged = this.hasManaged || holdsManaged(dflt)
         dflt.createdAt = stored.createdAt
         dflt.mountModes = stored.mountModes
         // The hidden shapes are durable restrictions, not scratch
@@ -278,11 +294,16 @@ export class SessionManager {
         // edit; stamped after the baseline so a stale record is
         // rewritten on the next flush.
         if (this.defaultProfileInternal !== null) narrow(dflt, this.defaultProfileInternal)
+        // Same order for the same reason: an env entry the record
+        // predates lands durably on the next flush.
+        mergeSeedVars(dflt, this.seedVarsInternal)
+        this.hasManaged = this.hasManaged || holdsManaged(dflt)
         continue
       }
       if (this.sessions.has(sid)) continue
       this.sessions.set(sid, stored)
       this.persisted.set(sid, JSON.stringify(stored.toJSON()))
+      mergeSeedVars(stored, this.seedVarsInternal)
       this.hasManaged = this.hasManaged || holdsManaged(stored)
     }
     this.loaded = true

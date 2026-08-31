@@ -24,9 +24,10 @@ from mirage.runtime.table import VFSRuntime
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import fetch_secret
 from mirage.shell.constants import SHOPT_DEFAULTS
-from mirage.shell.parse import (command_invocations, command_words, env_reads,
-                                implicit_reads, opaque_reads, parse,
-                                referenced_names)
+from mirage.shell.parse import (arith_reads, assignment_values,
+                                command_invocations, command_words, env_reads,
+                                identifier_names, implicit_reads, opaque_reads,
+                                parse, referenced_names)
 from mirage.shell.variable import ManagedRef, VarAttr, with_value
 from mirage.utils.hidden import var_hidden
 from mirage.workspace.lookup.lookup import lookup
@@ -405,6 +406,82 @@ def _own_masks(node: tree_sitter.Node, session: Session,
     return frozenset()
 
 
+def _assigned_reach(
+        nodes: Sequence[tree_sitter.Node]
+) -> dict[str, tuple[set[str], set[str]]]:
+    """What the line's own assignments may leave in each target.
+
+    Per target name, the literal values assigned anywhere in the walked
+    set and, for dynamic values, the names those values read. Both feed
+    the arithmetic chase: an arithmetic read of the target recurses
+    into whichever value lands, and ordering is not modelled -- every
+    candidate counts, which only over-fetches.
+
+    Args:
+        nodes (Sequence[tree_sitter.Node]): the line's walked set.
+    """
+    out: dict[str, tuple[set[str], set[str]]] = {}
+    for node in nodes:
+        for name, literal, reads in assignment_values(node):
+            values, names = out.setdefault(name, (set(), set()))
+            if literal is not None:
+                values.add(literal)
+            names.update(reads)
+    return out
+
+
+def _arith_targets(
+        session: Session, names: frozenset[str],
+        assigned: Mapping[str, tuple[set[str], set[str]]]) -> frozenset[str]:
+    """Every name an arithmetic read may reach through stored values.
+
+    Arithmetic resolution recurses: a name's value is evaluated as an
+    expression of its own, so ``name=TOKEN; echo $((name))`` reads
+    TOKEN. The chase follows each read name through its session value,
+    its nameref target, and the line's own assignments
+    (``_assigned_reach``), tokenizing values with ``identifier_names``.
+    A pending managed name has no value yet, so the chase adds it and
+    stops there: what its fetched value may spell is unknowable before
+    the fetch, the same accepted bound a stored body's cross-statement
+    masks live under.
+
+    Args:
+        session (Session): the session the line runs in.
+        names (frozenset[str]): the unit's arithmetic reads.
+        assigned (Mapping[str, tuple[set[str], set[str]]]): the line's
+            assignment candidates per target.
+    """
+    out: set[str] = set()
+    frontier = list(names)
+    while frontier:
+        name = frontier.pop()
+        if name in out:
+            continue
+        out.add(name)
+        target = deref(session, name)
+        if target not in out:
+            frontier.append(target)
+        var = session.vars.get(name)
+        value = var.value if var is not None else None
+        # Any element of an array or map value may be the one the
+        # recursion lands on (`arr=(TOKEN); $((arr))` reads arr[0]),
+        # so every string in the structure is chased.
+        if isinstance(value, str):
+            frontier.extend(identifier_names(value))
+        elif isinstance(value, dict):
+            for item in value.values():
+                frontier.extend(identifier_names(item))
+        elif value is not None:
+            for element in value:
+                if element is not None:
+                    frontier.extend(identifier_names(element))
+        values, reads = assigned.get(name, (set(), set()))
+        for literal in values:
+            frontier.extend(identifier_names(literal))
+        frontier.extend(reads)
+    return frozenset(out)
+
+
 def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
             pending: Mapping[str, ManagedRef], cli_env_names: frozenset[str],
             masked: frozenset[str], writes_gated: bool) -> frozenset[str]:
@@ -416,7 +493,9 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
     everything pending; otherwise the set is the walk's references
     (nameref targets resolved through the session), the printing forms'
     explicit targets, the implicit reads (``implicit_reads``: a tilde
-    reads ``$HOME``, a bare ``cd`` does too), the routed CLIs' env
+    reads ``$HOME``, a bare ``cd`` does too), the names an arithmetic
+    read reaches through stored values (``_arith_targets``:
+    ``name=TOKEN; echo $((name))`` reads TOKEN), the routed CLIs' env
     names, the eager-marked entries, and, when some command renders the
     whole environment, everything pending except what every such render
     provably skips (``env -u TOKEN``, an assignment prefix; the
@@ -444,6 +523,7 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
     implicit: set[str] = set()
     rendered_any = False
     rendered_excluded: frozenset[str] | None = None
+    assigned = _assigned_reach(nodes)
     for position, node in enumerate(nodes):
         rendered, names, excluded = env_reads(node)
         if opaque_reads(node):
@@ -456,6 +536,9 @@ def _wanted(session: Session, nodes: Sequence[tree_sitter.Node],
             rendered_any = True
             rendered_excluded = (excluded if rendered_excluded is None else
                                  rendered_excluded & excluded)
+        arith = arith_reads(node)
+        if arith:
+            referenced |= _arith_targets(session, arith, assigned) - own
         printed |= names - own
         implicit |= implicit_reads(node) - own
         referenced |= referenced_names(node) - own

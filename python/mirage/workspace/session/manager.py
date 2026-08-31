@@ -41,6 +41,27 @@ def _holds_managed(session: Session) -> bool:
     return any(var.managed is not None for var in session.vars.values())
 
 
+def _merge_seed_vars(session: Session, seed_vars: Mapping[str,
+                                                          ShellVar]) -> None:
+    """Fill in template names a stored record predates.
+
+    A record written before the workspace's env block gained an entry
+    holds no var for the new name, so a session hydrated from the
+    record alone could never reach the credential the deployment just
+    configured. The record's own entries win per name -- an overwrite,
+    a re-export, a stored pointer all round-trip untouched -- and only
+    an absent name gains the seed. The records are frozen, so sharing
+    them across sessions is safe.
+
+    Args:
+        session (Session): a session hydrated from the store.
+        seed_vars (Mapping[str, ShellVar]): the workspace's template.
+    """
+    for name, var in seed_vars.items():
+        if name not in session.vars:
+            session.vars[name] = var
+
+
 class SessionManager:
     """Owns the live session table over a storage-agnostic SessionStore.
 
@@ -289,8 +310,6 @@ class SessionManager:
                     default = self._sessions[self._default_id]
                     set_cwd(default, stored.cwd)
                     default.vars = stored.vars
-                    self._has_managed = (self._has_managed
-                                         or _holds_managed(default))
                     default.created_at = stored.created_at
                     default.mount_modes = stored.mount_modes
                     # The hidden shapes are durable restrictions, not
@@ -317,6 +336,11 @@ class SessionManager:
                     # stale record is rewritten on the next flush.
                     if self._default_profile is not None:
                         narrow(default, self._default_profile)
+                    # Same order for the same reason: an env entry the
+                    # record predates lands durably on the next flush.
+                    _merge_seed_vars(default, self._seed_vars)
+                    self._has_managed = (self._has_managed
+                                         or _holds_managed(default))
                     continue
                 if sid in self._sessions:
                     continue
@@ -324,6 +348,7 @@ class SessionManager:
                 self._sessions[sid] = session
                 self._locks[sid] = asyncio.Lock()
                 self._persisted[sid] = copy.deepcopy(session.to_dict())
+                _merge_seed_vars(session, self._seed_vars)
                 self._has_managed = (self._has_managed
                                      or _holds_managed(session))
             self._loaded = True

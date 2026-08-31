@@ -23,7 +23,7 @@ import {
   type Pending,
 } from '../../policy/types.ts'
 import { getParts, getText, literalWord, splitEnvPrefix } from '../../shell/helpers.ts'
-import { opaqueReads, referencedNames } from '../../shell/parse.ts'
+import { opaqueReads, referencedNames } from '../../shell/parse/index.ts'
 import { NodeType, type TSNodeLike } from '../../shell/types.ts'
 import type { PathSpec } from '../../types.ts'
 import { resolvePath } from '../../utils/path.ts'

@@ -656,6 +656,115 @@ async def test_line_mask_beats_an_implicit_read():
 
 
 @pytest.mark.asyncio
+async def test_arith_read_chases_an_earlier_value():
+    calls, fetch = counting_source({"TOKEN": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute("name=TOKEN")).exit_code == 0
+        assert calls == []
+        io = await ws.execute("echo $((name))")
+        assert (await io.stdout_str()) == "7\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_arith_read_chases_a_same_line_assignment():
+    calls, fetch = counting_source({"TOKEN": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("name=TOKEN; echo $((name))")
+        assert (await io.stdout_str()) == "7\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_arith_chase_respects_a_body_mask():
+    calls, fetch = counting_source({"TOKEN": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("f() { local TOKEN=5; echo $((TOKEN)); }; f")
+        assert (await io.stdout_str()) == "5\n"
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_arith_chase_follows_a_body_masks_value():
+    calls, fetch = counting_source({"TOKEN": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("f() { local n=TOKEN; echo $((n)); }; f")
+        assert (await io.stdout_str()) == "7\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_test_command_numeric_comparison_chases():
+    calls, fetch = counting_source({"TOKEN": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute("name=TOKEN")).exit_code == 0
+        io = await ws.execute("[[ name -gt 5 ]]; echo $?")
+        assert (await io.stdout_str()) == "0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_let_operand_chases():
+    calls, fetch = counting_source({"TOKEN": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute("name=TOKEN")).exit_code == 0
+        io = await ws.execute("let y=name+1; echo $y")
+        assert (await io.stdout_str()) == "8\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_arith_chase_follows_a_dynamic_assignment():
+    calls, fetch = counting_source({"TOKEN": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        assert (await ws.execute("other=TOKEN")).exit_code == 0
+        io = await ws.execute("n=$other; echo $((n))")
+        assert (await io.stdout_str()) == "7\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_numeric_arithmetic_never_fetches():
+    calls, fetch = counting_source({"TOKEN": "7"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        io = await ws.execute("echo $((2 + 2))")
+        assert (await io.stdout_str()) == "4\n"
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_dynamic_head_fetches_everything_pending():
     calls, fetch = counting_source({"TOKEN": "t0"})
     register_secrets("fake", FakeConfig, fetch)

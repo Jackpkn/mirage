@@ -670,6 +670,115 @@ describe('fillEnv through execute', () => {
     }
   })
 
+  it('an arithmetic read chases an earlier value', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: '7' })
+    registerSecrets('fake-arith-chase', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-arith-chase', ref: 'r' } })
+    try {
+      expect((await ws.execute('name=TOKEN')).exitCode).toBe(0)
+      expect(calls).toEqual([])
+      const io = await ws.execute('echo $((name))')
+      expect(stdoutStr(io)).toBe('7\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an arithmetic read chases a same-line assignment', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: '7' })
+    registerSecrets('fake-arith-line', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-arith-line', ref: 'r' } })
+    try {
+      const io = await ws.execute('name=TOKEN; echo $((name))')
+      expect(stdoutStr(io)).toBe('7\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('the arithmetic chase respects a body mask', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: '7' })
+    registerSecrets('fake-arith-mask', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-arith-mask', ref: 'r' } })
+    try {
+      const io = await ws.execute('f() { local TOKEN=5; echo $((TOKEN)); }; f')
+      expect(stdoutStr(io)).toBe('5\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it("the arithmetic chase follows a body mask's value", async () => {
+    const { calls, fetch } = countingSource({ TOKEN: '7' })
+    registerSecrets('fake-arith-bodyval', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-arith-bodyval', ref: 'r' } })
+    try {
+      const io = await ws.execute('f() { local n=TOKEN; echo $((n)); }; f')
+      expect(stdoutStr(io)).toBe('7\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a [[ numeric comparison chases', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: '7' })
+    registerSecrets('fake-arith-test', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-arith-test', ref: 'r' } })
+    try {
+      expect((await ws.execute('name=TOKEN')).exitCode).toBe(0)
+      const io = await ws.execute('[[ name -gt 5 ]]; echo $?')
+      expect(stdoutStr(io)).toBe('0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a let operand chases', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: '7' })
+    registerSecrets('fake-arith-let', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-arith-let', ref: 'r' } })
+    try {
+      expect((await ws.execute('name=TOKEN')).exitCode).toBe(0)
+      const io = await ws.execute('let y=name+1; echo $y')
+      expect(stdoutStr(io)).toBe('8\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('the arithmetic chase follows a dynamic assignment', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: '7' })
+    registerSecrets('fake-arith-dyn', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-arith-dyn', ref: 'r' } })
+    try {
+      expect((await ws.execute('other=TOKEN')).exitCode).toBe(0)
+      const io = await ws.execute('n=$other; echo $((n))')
+      expect(stdoutStr(io)).toBe('7\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('numeric arithmetic never fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: '7' })
+    registerSecrets('fake-arith-num', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-arith-num', ref: 'r' } })
+    try {
+      const io = await ws.execute('echo $((2 + 2))')
+      expect(stdoutStr(io)).toBe('4\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('a dynamic head fetches everything pending', async () => {
     const { calls, fetch } = countingSource({ TOKEN: 't0' })
     registerSecrets('fake-dyn', FakeConfig, fetch)

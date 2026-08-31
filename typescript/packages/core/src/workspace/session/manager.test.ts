@@ -569,3 +569,40 @@ describe('restoreSeed', () => {
     expect(mgr.seedVars).toEqual(seed)
   })
 })
+
+describe('seed merge on hydration', () => {
+  it('merges env entries the record predates, record entries winning', async () => {
+    const store = new RAMSessionStore()
+    const old = new SessionManager('default', store)
+    old.get('default').vars.KEPT = { value: 'stored', attrs: new Set() }
+    old.create('agent')
+    old.get('agent').vars.KEPT = { value: 'agent', attrs: new Set() }
+    await old.ensureLoaded()
+    await old.flush()
+    const seeds = varsFromEntries({
+      TOKEN: { from: 'aws-sm', ref: 'prod' },
+      KEPT: 'seeded',
+    })
+    const fresh = new SessionManager('default', store, seeds)
+    await fresh.ensureLoaded()
+    expect(fresh.get('default').vars.TOKEN?.managed).not.toBeUndefined()
+    expect(fresh.get('default').vars.KEPT?.value).toBe('stored')
+    expect(fresh.get('agent').vars.TOKEN?.managed).not.toBeUndefined()
+    expect(fresh.get('agent').vars.KEPT?.value).toBe('agent')
+    expect(fresh.hasManagedEnv).toBe(true)
+  })
+
+  it('lands the merged seed durably on the next flush', async () => {
+    const store = new RAMSessionStore()
+    const old = new SessionManager('default', store)
+    await old.ensureLoaded()
+    await old.flush()
+    const seeds = varsFromEntries({ TOKEN: { from: 'aws-sm', ref: 'p' } })
+    const fresh = new SessionManager('default', store, seeds)
+    await fresh.ensureLoaded()
+    await fresh.flush()
+    const entries = await store.load()
+    const record = entries.get('default') as { managed?: Record<string, { ref: string }> }
+    expect(record.managed?.TOKEN?.ref).toBe('p')
+  })
+})

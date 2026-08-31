@@ -22,7 +22,11 @@ import type { JobConsole } from '../../shell/console/job_console.ts'
 import type { Resource } from '../../resource/base.ts'
 import { getCurrentSessionFor, runWithSession } from '../../context/session_context.ts'
 import type { JobTable } from '../../shell/job_table/index.ts'
-import { findSyntaxError, findUnterminatedBacktick, type ShellParser } from '../../shell/parse.ts'
+import {
+  findSyntaxError,
+  findUnterminatedBacktick,
+  type ShellParser,
+} from '../../shell/parse/index.ts'
 import type { ProvisionResult } from '../../provision/types.ts'
 import { errorVirtualPath, gnuStrerror } from '../../utils/errors.ts'
 import { makeAbortError, mergeSignals } from '../abort.ts'

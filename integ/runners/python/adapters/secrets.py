@@ -55,12 +55,14 @@ def build_secrets_env(
     a source that always fails, behind the target's denying profile:
     only a dead source can prove a refused command never fetched, and
     it needs its own target so the deny and the extra pending name
-    cannot leak into the other batteries. ``kind`` "implicit" is one
-    managed ``HOME`` for the reads with no ``$NAME`` in the text (a
-    tilde, a bare ``cd``); it needs its own target because any
-    whole-env case would fetch ``HOME`` first and the tilde case would
-    then prove nothing, and the value names the target's mount root so
-    ``cd`` lands on a real directory. The dotenv file carries a
+    cannot leak into the other batteries. ``kind`` "implicit" manages
+    the names read with no ``$NAME`` in the text (``HOME`` for a tilde
+    and a bare ``cd``, ``OLDPWD`` for ``cd -``, ``CDPATH`` for a
+    relative ``cd``, ``OPTIND`` for ``getopts``) plus ``ARITH_BOUND``
+    for the arithmetic value chase; they need their own target because
+    any whole-env case would fetch them first and each case would then
+    prove nothing, and the directory values name the target's mount
+    root so ``cd`` lands on a real directory. The dotenv file carries a
     ``${...}`` value on purpose: values are read verbatim in both
     languages, and interpolating hosts would disagree here.
 
@@ -85,10 +87,30 @@ def build_secrets_env(
         return {"GATED": {"from": "gated", "ref": "z"}}, _noop
     if kind == "implicit":
         os.environ["MIRAGE_INTEG_HOME_DIR"] = "/data"
+        os.environ["MIRAGE_INTEG_OLDPWD_DIR"] = "/data"
+        os.environ["MIRAGE_INTEG_CDPATH_DIR"] = "/data"
+        os.environ["MIRAGE_INTEG_OPTIND_START"] = "1"
+        os.environ["MIRAGE_INTEG_ARITH_BOUND"] = "7"
         return {
             "HOME": {
                 "from": "env",
                 "key": "MIRAGE_INTEG_HOME_DIR"
+            },
+            "OLDPWD": {
+                "from": "env",
+                "key": "MIRAGE_INTEG_OLDPWD_DIR"
+            },
+            "CDPATH": {
+                "from": "env",
+                "key": "MIRAGE_INTEG_CDPATH_DIR"
+            },
+            "OPTIND": {
+                "from": "env",
+                "key": "MIRAGE_INTEG_OPTIND_START"
+            },
+            "ARITH_BOUND": {
+                "from": "env",
+                "key": "MIRAGE_INTEG_ARITH_BOUND"
             },
         }, _noop
     counts: dict[str, int] = {}

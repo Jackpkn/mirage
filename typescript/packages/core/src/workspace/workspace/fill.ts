@@ -20,13 +20,16 @@ import { SecretsError } from '../../secrets/errors.ts'
 import { fetchSecret } from '../../secrets/registry.ts'
 import { SHOPT_DEFAULTS } from '../../shell/constants.ts'
 import {
+  arithReads,
+  assignmentValues,
   commandInvocations,
   commandWords,
   envReads,
+  identifierNames,
   implicitReads,
   opaqueReads,
   referencedNames,
-} from '../../shell/parse.ts'
+} from '../../shell/parse/index.ts'
 import type { ManagedRef, ShellVar } from '../../shell/variable.ts'
 import { VarAttr, withValue } from '../../shell/variable.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
@@ -392,6 +395,77 @@ function ownMasks(node: TSNodeLike, session: Session, writesGated: boolean): Rea
 }
 
 /**
+ * What the line's own assignments may leave in each target.
+ *
+ * Per target name, the literal values assigned anywhere in the walked
+ * set and, for dynamic values, the names those values read. Both feed
+ * the arithmetic chase: an arithmetic read of the target recurses into
+ * whichever value lands, and ordering is not modelled -- every
+ * candidate counts, which only over-fetches.
+ */
+function assignedReach(nodes: TSNodeLike[]): Map<string, [Set<string>, Set<string>]> {
+  const out = new Map<string, [Set<string>, Set<string>]>()
+  for (const node of nodes) {
+    for (const [name, literal, reads] of assignmentValues(node)) {
+      let entry = out.get(name)
+      if (entry === undefined) {
+        entry = [new Set<string>(), new Set<string>()]
+        out.set(name, entry)
+      }
+      if (literal !== null) entry[0].add(literal)
+      for (const read of reads) entry[1].add(read)
+    }
+  }
+  return out
+}
+
+/**
+ * Every name an arithmetic read may reach through stored values.
+ *
+ * Arithmetic resolution recurses: a name's value is evaluated as an
+ * expression of its own, so `name=TOKEN; echo $((name))` reads TOKEN.
+ * The chase follows each read name through its session value, its
+ * nameref target, and the line's own assignments (`assignedReach`),
+ * tokenizing values with `identifierNames`. A pending managed name has
+ * no value yet, so the chase adds it and stops there: what its fetched
+ * value may spell is unknowable before the fetch, the same accepted
+ * bound a stored body's cross-statement masks live under.
+ */
+function arithTargets(
+  session: Session,
+  names: ReadonlySet<string>,
+  assigned: Map<string, [Set<string>, Set<string>]>,
+): Set<string> {
+  const out = new Set<string>()
+  const frontier = [...names]
+  for (;;) {
+    const name = frontier.pop()
+    if (name === undefined) break
+    if (out.has(name)) continue
+    out.add(name)
+    const target = deref(session, name)
+    if (!out.has(target)) frontier.push(target)
+    const value = session.vars[name]?.value ?? null
+    // Any element of an array or map value may be the one the
+    // recursion lands on (`arr=(TOKEN); $((arr))` reads arr[0]), so
+    // every string in the structure is chased.
+    if (typeof value === 'string') {
+      frontier.push(...identifierNames(value))
+    } else if (Array.isArray(value)) {
+      for (const item of value) if (item !== null) frontier.push(...identifierNames(item))
+    } else if (value !== null) {
+      for (const item of Object.values(value)) frontier.push(...identifierNames(item))
+    }
+    const entry = assigned.get(name)
+    if (entry !== undefined) {
+      for (const literal of entry[0]) frontier.push(...identifierNames(literal))
+      frontier.push(...entry[1])
+    }
+  }
+  return out
+}
+
+/**
  * The pending names the line's walked set is about to read.
  *
  * An opaque read (`opaqueReads`) or a command head no static read can
@@ -400,8 +474,10 @@ function ownMasks(node: TSNodeLike, session: Session, writesGated: boolean): Rea
  * pending; otherwise the set is the walk's references (nameref targets
  * resolved through the session), the printing forms' explicit targets,
  * the implicit reads (`implicitReads`: a tilde reads `$HOME`, a bare
- * `cd` does too), the routed CLIs' env names, the eager-marked
- * entries, and, when some command renders the whole environment,
+ * `cd` does too), the names an arithmetic read reaches through stored
+ * values (`arithTargets`: `name=TOKEN; echo $((name))` reads TOKEN),
+ * the routed CLIs' env names, the eager-marked entries, and, when some
+ * command renders the whole environment,
  * everything pending except what every such render provably skips
  * (`env -u TOKEN`, an assignment prefix; the `excluded` third of
  * `envReads`). Each walked unit's reads are discounted by that unit's
@@ -426,6 +502,7 @@ function wanted(
   const implicit = new Set<string>()
   let renderedAny = false
   let renderedExcluded: ReadonlySet<string> | null = null
+  const assigned = assignedReach(nodes)
   for (const [position, node] of nodes.entries()) {
     const reads = envReads(node)
     if (opaqueReads(node)) return unmaskedPending()
@@ -443,6 +520,12 @@ function wanted(
         prior === null
           ? reads.excluded
           : new Set([...prior].filter((name: string) => reads.excluded.has(name)))
+    }
+    const arith = arithReads(node)
+    if (arith.size > 0) {
+      for (const name of arithTargets(session, arith, assigned)) {
+        if (!own.has(name)) referenced.add(name)
+      }
     }
     for (const name of reads.names) if (!own.has(name)) printed.add(name)
     for (const name of implicitReads(node)) if (!own.has(name)) implicit.add(name)
