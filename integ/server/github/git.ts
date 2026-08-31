@@ -19,7 +19,7 @@ import { INVALID_PERSON, blobSha, bodyPerson, commitPeople, personJson, treeSha 
 import { addBranch, branchFor, branchNames, commitList, treeOfBranch } from './store.ts'
 import type { RepoRow, Tree } from './store.ts'
 import { authedRoute, everywhere, fail, jsonBodyOf, param, route, str, withRepo } from './http.ts'
-import { recordCommit, writeFile } from './contents.ts'
+import { nextCommitSeq, recordCommit, writeFile } from './contents.ts'
 
 async function blobBySha(
   db: C,
@@ -187,7 +187,12 @@ const createRef = withRepo(async (ctx, repo) => {
   }
 })
 
-// Moving a branch is what makes a staged tree visible.
+// Moving a branch is what makes a staged tree visible, and it is also what
+// puts the commit on that branch's history: `POST /git/commits` parks the row
+// on the default branch (which is where the touched set is computed, and what
+// a golden that never moves a ref records), so a ref pointed anywhere else has
+// to take the row with it. A move, not a copy, because a row belongs to one
+// branch's history and a dangling commit was never on the default branch's.
 const updateRef = withRepo(async (ctx, repo) => {
   const ref = param(ctx, 'ref').replace(/^\/+|\/+$/g, '')
   const name = ref.startsWith('heads/') ? ref.slice('heads/'.length) : ''
@@ -209,28 +214,37 @@ const updateRef = withRepo(async (ctx, repo) => {
   for (const [path, data] of staged) {
     await writeFile(ctx.db, ctx.tenant, repo, name, path, data)
   }
+  if (commit.branch !== name) {
+    const seq = await nextCommitSeq(ctx.db, ctx.tenant, repo.fullName, name)
+    await ctx.db.githubCommit.update({ where: { pk: commit.pk }, data: { branch: name, seq } })
+  }
   return { status: 200, body: { ref: `refs/${ref}`, object: { sha, type: 'commit' } } }
 })
 
-// Looked up in the default branch's history rather than in the commit table,
-// because the root commit is synthesized from the tree and never stored: a
-// caller resolving a ref and then asking for that commit would 404 on the one
-// commit every repository has. A commit that named no tree of its own points
-// at the whole-tree sha, which is what a write through /contents produces.
+// Looked up in each branch's history rather than in the commit table, because
+// the root commit is synthesized from the tree and never stored: a caller
+// resolving a ref and then asking for that commit would 404 on the one commit
+// every repository has. Every branch, not just the default one, because a ref
+// update moves a commit's row onto the branch it named. A commit that named no
+// tree of its own points at the whole-tree sha, which is what a write through
+// /contents produces.
 const gitCommit = withRepo(async (ctx, repo) => {
   const sha = param(ctx, 'sha')
-  const history = await commitList(ctx.db, ctx.tenant, repo, repo.defaultBranch)
-  const row = history.find((c) => c.sha === sha)
-  if (row === undefined) return fail(404, 'Not Found')
-  return {
-    status: 200,
-    body: {
-      sha,
-      message: row.message,
-      tree: { sha: row.treeSha === '' ? treeSha('') : row.treeSha },
-      ...(commitPeople(row) ?? {}),
-    },
+  for (const branch of await branchNames(ctx.db, ctx.tenant, repo)) {
+    const history = await commitList(ctx.db, ctx.tenant, repo, branch)
+    const row = history.find((c) => c.sha === sha)
+    if (row === undefined) continue
+    return {
+      status: 200,
+      body: {
+        sha,
+        message: row.message,
+        tree: { sha: row.treeSha === '' ? treeSha('') : row.treeSha },
+        ...(commitPeople(row) ?? {}),
+      },
+    }
   }
+  return fail(404, 'Not Found')
 })
 
 async function headSha(ctx: Ctx<C>, repo: RepoRow, branch: string): Promise<string> {

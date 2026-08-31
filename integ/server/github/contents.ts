@@ -85,7 +85,7 @@ function dirJson(files: Tree, at: string): JsonValue[] | null {
   return [...entries.keys()].sort().map((k) => entries.get(k) as JsonValue)
 }
 
-async function nextCommitSeq(
+export async function nextCommitSeq(
   db: Client,
   tenant: string,
   repo: string,

@@ -225,6 +225,60 @@ async function main(): Promise<void> {
       date: '2026-01-01T00:00:00Z',
     })
 
+    // ---- pointing a ref at a commit is what puts it on that branch's
+    // history: a client that builds history stages a tree, creates the
+    // commit, and PATCHes the ref, and the branch's commit list has to grow
+    // by exactly that commit. The move is a move, not a copy: a commit a ref
+    // took to a branch does not stay on the default branch's history.
+    const mainBefore = await get(`${at}/repos/${REPO}/commits`)
+    const mainCount = Array.isArray(mainBefore) ? mainBefore.length : 0
+    const made6 = await post(`${at}/repos/${REPO}/git/refs`, {
+      ref: 'refs/heads/task-1',
+      sha: '',
+    })
+    check('a branch is created', made6.status === 201, String(made6.status))
+    const branchBefore = await get(`${at}/repos/${REPO}/commits?sha=task-1`)
+    const branchCount = Array.isArray(branchBefore) ? branchBefore.length : 0
+    const t6 = await stage(at, 'tasks/six.md', '# six\n')
+    const six = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task six',
+      tree: t6,
+      author: AUTHOR,
+    })
+    const sha6 = String(field(six.body, 'sha') ?? '')
+    const moved = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-1`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: sha6 }),
+    })
+    check('the ref moves', moved.status === 200, String(moved.status))
+    const branchAfter = await get(`${at}/repos/${REPO}/commits?sha=task-1`)
+    const rows = Array.isArray(branchAfter) ? branchAfter : []
+    check(
+      'the branch history grows by one',
+      rows.length === branchCount + 1,
+      `got ${String(rows.length)} want ${String(branchCount + 1)}`,
+    )
+    check('and its head is the commit the ref took', String(field(rows[0] ?? null, 'sha')) === sha6)
+    eq(
+      'with the message the commit stated',
+      field(field(rows[0] ?? null, 'commit'), 'message'),
+      'Add task six',
+    )
+    eq(
+      'and the author it stated',
+      field(field(field(rows[0] ?? null, 'commit'), 'author'), 'date'),
+      AUTHOR.date,
+    )
+    const mainAfter = await get(`${at}/repos/${REPO}/commits`)
+    check(
+      'the default branch does not keep it',
+      Array.isArray(mainAfter) && mainAfter.length === mainCount,
+      `got ${String(Array.isArray(mainAfter) ? mainAfter.length : -1)} want ${String(mainCount)}`,
+    )
+    const read6 = await get(`${at}/repos/${REPO}/git/commits/${sha6}`)
+    eq('GET /git/commits/:sha still answers after the move', field(read6, 'sha'), sha6)
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')
