@@ -31,6 +31,7 @@ import {
   branchNames,
   commitList,
   directoriesOf,
+  stageTree,
   submodulesOf,
   treeItems,
   treeOf,
@@ -126,21 +127,23 @@ export async function recordCommit(
   const authorJson = personJson(people.author)
   const committerJson = personJson(people.committer)
   const parentSha = parent ?? (await visibleHeadOf(db, tenant, repo, branch))
-  // A plumbing commit names its tree, and a /contents commit is the tree the
-  // write just produced, fingerprinted the way the synthesized root is. Both
-  // have to be in the sha or the address is not the content's: two writes of
-  // different bytes under one message onto one parent would otherwise be one
-  // commit, which is what a reset freeing a slot used to expose.
-  const state =
+  // EVERY commit names a tree, so every commit is a snapshot that can be read
+  // back on its own. A plumbing commit names the one its caller staged; a
+  // /contents commit stages the tree its own write just produced, which is why
+  // this reads the branch AFTER the write has landed. Without it a commit born
+  // here recorded no tree at all, and the only way to see its files was to read
+  // whatever its branch happened to hold later, which is a different answer the
+  // moment the branch moves.
+  //
+  // The tree is in the sha for the same reason git puts it there: two writes of
+  // different bytes under one message onto one parent are two commits, and
+  // addressing them by message and parent alone made them one.
+  const stored =
     tree === ''
-      ? [...(await treeOfBranch(db, tenant, repo, branch)).entries()]
-          .map(([p, d]): [string, string] => [p, blobSha(d)])
-          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-          .map(([p, b]) => `${p}:${b}`)
-          .join('\0')
+      ? await stageTree(db, tenant, repo, await treeOfBranch(db, tenant, repo, branch))
       : tree
   const sha = commitSha(
-    [repo.fullName, parentSha, state, authorJson, committerJson, message].join('\0'),
+    [repo.fullName, parentSha, stored, authorJson, committerJson, message].join('\0'),
   )
   await db.githubCommit.create({
     data: {
@@ -152,7 +155,7 @@ export async function recordCommit(
       authorLogin: '',
       date: '',
       filesJson: JSON.stringify(paths),
-      treeSha: tree,
+      treeSha: stored,
       authorJson,
       committerJson,
       seq,

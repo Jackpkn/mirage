@@ -145,6 +145,70 @@ export async function treeOfBranch(
   return out
 }
 
+// A tree's bytes, as `path:blob` pairs in path order. This is the tree's whole
+// identity, so it is what both the sha and any equality test are derived from.
+export function treeFingerprint(files: Tree): string {
+  return [...files.entries()]
+    .map(([p, d]): [string, string] => [p, blobSha(d)])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([p, b]) => `${p}:${b}`)
+    .join('\0')
+}
+
+// Scoped to the repository, not just the tenant. A staged sha is unique per
+// tenant, so a bare lookup accepted a tree staged in repository A while the
+// caller was operating on repository B, and committing it copied A's files
+// into B. The fake this replaces held `repo.trees` per repository, so a foreign
+// sha was simply not found there.
+export async function stagedTree(
+  db: C,
+  tenant: string,
+  repo: RepoRow,
+  sha: string,
+): Promise<Tree | null> {
+  const tree = await db.githubStagedTree.findFirst({
+    where: { tenant, repo: repo.fullName, sha },
+  })
+  if (tree === null) return null
+  const rows = await db.githubStagedEntry.findMany({
+    where: { tenant, treeSha: sha },
+    orderBy: { seq: 'asc' },
+  })
+  const out: Tree = new Map()
+  for (const r of rows) out.set(r.path, Buffer.from(r.data))
+  return out
+}
+
+// Store one tree and answer its sha. The sha is the CONTENT's, the way git's
+// is, so staging the same bytes twice is one object rather than two, and no id
+// can be reproduced by a later tree landing in a slot a delete freed. The
+// repository name is in the hash because the table's uniqueness is per tenant
+// while every reader scopes by repository: without it two repositories holding
+// the same file would collide on insert, and the second would be handed the
+// first's rows.
+export async function stageTree(
+  db: C,
+  tenant: string,
+  repo: RepoRow,
+  files: Tree,
+): Promise<string> {
+  const sha = treeSha(`${repo.fullName}\0${treeFingerprint(files)}`)
+  const already = await db.githubStagedTree.findFirst({
+    where: { tenant, repo: repo.fullName, sha },
+  })
+  if (already !== null) return sha
+  const count = await db.githubStagedTree.count({ where: { tenant, repo: repo.fullName } })
+  await db.githubStagedTree.create({ data: { tenant, repo: repo.fullName, sha, seq: count } })
+  let seq = 0
+  for (const [path, data] of files) {
+    await db.githubStagedEntry.create({
+      data: { tenant, treeSha: sha, path, data: new Uint8Array(data), seq },
+    })
+    seq += 1
+  }
+  return sha
+}
+
 // A ref is a branch name, HEAD, the empty string, or a commit sha belonging to
 // one branch's history. A fully qualified spelling names the same branch: tool
 // schemas advertise `refs/heads/main` and the live API accepts it on every
@@ -263,23 +327,31 @@ export async function headOf(
   return row?.headSha ?? ''
 }
 
-// One branch's commits, newest first: the chain its ref points at, then a
-// synthetic root derived from the branch's CONTENT rather than the
+// One branch's commits, newest first: the chain its ref points at, and under
+// it a synthetic root derived from the branch's CONTENT rather than the
 // repository's name, so that a mirror of a repository has the same root sha as
 // its source. Two branches differ in that root exactly when their trees
 // differ. The chain is walked rather than filtered by a column, so a commit
 // two refs share is on both lists and a commit a reset abandoned is on
 // neither, without either case being written down anywhere.
+//
+// That synthetic root is the floor for a chain that does not reach one of its
+// own, not a parent stapled under every history. A chain ENDING at a stored
+// commit with no parent already has its root, and appending a second one would
+// report a fabricated ancestor beneath a commit the caller created with
+// `parents: []` precisely to say it has none.
 export async function commitList(
   db: C,
   tenant: string,
   repo: RepoRow,
   branch: string,
 ): Promise<CommitRow[]> {
-  const tree = await treeOfBranch(db, tenant, repo, branch)
-  const pairs: Array<[string, string]> = [...tree.entries()].map(([p, d]) => [p, blobSha(d)])
   const head = await headOf(db, tenant, repo, branch)
   const walked = head === '' ? [] : chainFrom(head, await commitsBySha(db, tenant, repo))
+  const last = walked[walked.length - 1]
+  if (last !== undefined && last.parentSha === '') return walked
+  const tree = await treeOfBranch(db, tenant, repo, branch)
+  const pairs: Array<[string, string]> = [...tree.entries()].map(([p, d]) => [p, blobSha(d)])
   return [...walked, rootCommit(pairs)]
 }
 

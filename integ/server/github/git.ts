@@ -25,10 +25,12 @@ import {
   commitsBySha,
   headOf,
   reaches,
+  stageTree,
+  stagedTree,
   treeOfBranch,
   visibleHeadOf,
 } from './store.ts'
-import type { RepoRow, Tree } from './store.ts'
+import type { RepoRow } from './store.ts'
 import { authedRoute, everywhere, fail, jsonBodyOf, param, route, str, withRepo } from './http.ts'
 import { recordCommit, writeFile } from './contents.ts'
 
@@ -43,25 +45,6 @@ async function blobBySha(
     for (const data of files.values()) if (blobSha(data) === sha) return data
   }
   return null
-}
-
-// Scoped to the repository, not just the tenant. A staged sha is unique per
-// tenant, so a bare lookup accepted a tree staged in repository A while the
-// caller was operating on repository B, and committing it copied A's files
-// into B. The fake this replaces held `repo.trees` per repository, so a foreign
-// sha was simply not found there.
-async function stagedTree(db: C, tenant: string, repo: RepoRow, sha: string): Promise<Tree | null> {
-  const tree = await db.githubStagedTree.findFirst({
-    where: { tenant, repo: repo.fullName, sha },
-  })
-  if (tree === null) return null
-  const rows = await db.githubStagedEntry.findMany({
-    where: { tenant, treeSha: sha },
-    orderBy: { seq: 'asc' },
-  })
-  const out: Tree = new Map()
-  for (const r of rows) out.set(r.path, Buffer.from(r.data))
-  return out
 }
 
 // Build a tree from a base plus the caller's entries. A null sha is git's
@@ -102,21 +85,10 @@ const createTree = withRepo(async (ctx, repo) => {
       files.set(path, blob)
     }
   }
-  const count = await ctx.db.githubStagedTree.count({
-    where: { tenant: ctx.tenant, repo: repo.fullName },
-  })
-  const sha = treeSha(`${repo.fullName}:${String(count)}`)
-  await ctx.db.githubStagedTree.create({
-    data: { tenant: ctx.tenant, repo: repo.fullName, sha, seq: count },
-  })
-  let seq = 0
-  for (const [path, data] of files) {
-    await ctx.db.githubStagedEntry.create({
-      data: { tenant: ctx.tenant, treeSha: sha, path, data: new Uint8Array(data), seq },
-    })
-    seq += 1
+  return {
+    status: 201,
+    body: { sha: await stageTree(ctx.db, ctx.tenant, repo, files), tree: [] },
   }
-  return { status: 201, body: { sha, tree: [] } }
 })
 
 // The touched set is computed against the DEFAULT branch, which is what the
@@ -205,15 +177,16 @@ const createRef = withRepo(async (ctx, repo) => {
       : ((await ctx.db.githubCommit.findFirst({
           where: { tenant: ctx.tenant, repo: repo.fullName, sha: asked },
         })) as CommitRow | null)
-  // A plumbing commit carries its own tree, so the branch is populated from it.
-  // A /contents commit does not (its bytes are the branch's file rows), so it
-  // falls back to the branch that holds it, which is where those rows are.
-  const staged =
-    object === null || object.treeSha === ''
-      ? null
-      : await stagedTree(ctx.db, ctx.tenant, repo, object.treeSha)
-  const base = staged !== null ? null : await branchFor(ctx.db, ctx.tenant, repo, asked)
-  if (staged === null && base === null) return fail(422, 'Object does not exist')
+  // A commit carries its own tree, so the branch is populated from the commit
+  // that was named rather than from a branch that happens to hold it. Those are
+  // different answers whenever that branch has moved on since, and reading the
+  // branch reported the newer files under the older sha.
+  const staged = object === null ? null : await stagedTree(ctx.db, ctx.tenant, repo, object.treeSha)
+  if (object !== null && staged === null) return fail(422, 'Object does not exist')
+  // Only a sha no commit row answers for is resolved as a ref, which is how a
+  // branch name, HEAD, the empty string and the synthesized root all arrive.
+  const base = object !== null ? null : await branchFor(ctx.db, ctx.tenant, repo, asked)
+  if (object === null && base === null) return fail(422, 'Object does not exist')
   // Recorded before the files are copied, because a branch off an empty
   // repository copies none and would otherwise not exist at all.
   await addBranch(ctx.db, ctx.tenant, repo.fullName, name)
@@ -266,9 +239,10 @@ const updateRef = withRepo(async (ctx, repo) => {
   const commit = await ctx.db.githubCommit.findFirst({
     where: { tenant: ctx.tenant, repo: repo.fullName, sha },
   })
-  if (commit === null || commit.treeSha === '') {
-    return fail(422, 'Invalid request.\n\n"sha" is invalid.')
-  }
+  if (commit === null) return fail(422, 'Invalid request.\n\n"sha" is invalid.')
+  // Every commit records a tree, so the ref is restored to the snapshot the
+  // named commit took. A commit written through /contents used to record none,
+  // and was refused here as though it were not a commit at all.
   const staged = await stagedTree(ctx.db, ctx.tenant, repo, commit.treeSha)
   if (staged === null) return fail(422, 'Invalid request.\n\n"sha" is invalid.')
   // Refused before anything is written, so a refused update changes nothing.
@@ -295,8 +269,8 @@ const updateRef = withRepo(async (ctx, repo) => {
 // are both real objects the vendor still answers for. Only the synthesized
 // root has to be searched for, because it is derived from a branch's content
 // rather than stored, and a caller resolving a ref on a fresh repository asks
-// for exactly that one. A commit that named no tree of its own points at the
-// whole-tree sha, which is what a write through /contents produces.
+// for exactly that one. It is also the only row that names no tree, which is
+// why the whole-tree sha still stands in for one here.
 const gitCommit = withRepo(async (ctx, repo) => {
   const sha = param(ctx, 'sha')
   const stored = (await ctx.db.githubCommit.findFirst({

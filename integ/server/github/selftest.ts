@@ -782,6 +782,78 @@ async function main(): Promise<void> {
       String(forcedOver.status),
     )
 
+    // ---- a commit created with `parents: []` IS a root, so a branch standing
+    // on it stands on nothing further. The synthesized root is the floor for a
+    // chain that never reaches one of its own, not a parent stapled under
+    // every history.
+    const rootedList = await get(`${at}/repos/${REPO}/commits?sha=${trunk}`)
+    check(
+      'a stored root commit is the end of its branch history',
+      Array.isArray(rootedList) &&
+        rootedList.length === 1 &&
+        String(field(rootedList[0] ?? null, 'sha')) === shaRootish,
+      String(Array.isArray(rootedList) ? rootedList.length : -1),
+    )
+
+    // ---- a commit written through /contents is an object like any other, so
+    // a ref can be pointed at it. It reached the branch by advancing the ref,
+    // which is the one thing that used to make it unnameable: it carried no
+    // staged tree, and the ref endpoint read a missing tree as a missing
+    // commit.
+    await post(`${at}/repos/${REPO}/git/refs`, { ref: 'refs/heads/task-8', sha: '' })
+    const c1 = await fetch(`${at}/repos/${REPO}/contents/tasks/first.md`, {
+      method: 'PUT',
+      headers: HEADERS,
+      body: JSON.stringify({
+        message: 'Add the first file',
+        content: Buffer.from('# first\n').toString('base64'),
+        branch: 'task-8',
+      }),
+    })
+    const shaC1 = String(field(field((await c1.json()) as JsonValue, 'commit'), 'sha') ?? '')
+    check('a contents write records a commit', shaC1 !== '', shaC1)
+    const selfMove = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-8`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaC1 }),
+    })
+    check(
+      'a ref can be moved onto a contents commit',
+      selfMove.status === 200,
+      String(selfMove.status),
+    )
+
+    // ---- and that commit is a SNAPSHOT: a branch created at it carries the
+    // files it recorded, not whatever the branch it came from holds now.
+    const c2 = await fetch(`${at}/repos/${REPO}/contents/tasks/second.md`, {
+      method: 'PUT',
+      headers: HEADERS,
+      body: JSON.stringify({
+        message: 'Add the second file',
+        content: Buffer.from('# second\n').toString('base64'),
+        branch: 'task-8',
+      }),
+    })
+    check('the branch advances past it', c2.status === 201, String(c2.status))
+    const snap = await post(`${at}/repos/${REPO}/git/refs`, {
+      ref: 'refs/heads/task-8-snap',
+      sha: shaC1,
+    })
+    check('a ref can be created at the older one', snap.status === 201, String(snap.status))
+    eq('and reports it', field(field(snap.body, 'object'), 'sha'), shaC1)
+    const kept = await fetch(`${at}/repos/${REPO}/contents/tasks/first.md?ref=task-8-snap`, {
+      headers: HEADERS,
+    })
+    check(
+      'the snapshot carries what that commit recorded',
+      kept.status === 200,
+      String(kept.status),
+    )
+    const later = await fetch(`${at}/repos/${REPO}/contents/tasks/second.md?ref=task-8-snap`, {
+      headers: HEADERS,
+    })
+    check('and not what the branch gained afterwards', later.status === 404, String(later.status))
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')
