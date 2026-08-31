@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it, vi } from 'vitest'
-import { record, revisionFor, runWithRecording, runWithRevisions } from './context.ts'
+import { record, revisionFor, runWithRecording, runWithRevisions, startOp } from './context.ts'
 import type * as asyncContextModule from '../utils/async_context.ts'
 
 // The browser-runtime branch under node's test runner: the real
@@ -75,7 +75,7 @@ describe('recording on the fallback storage', () => {
     const [, records] = await runWithRecording(async () => {
       release()
       await first
-      record('read', '/x', 'test', 3, performance.now())
+      record('read', '/x', 'test', 3, startOp())
     })
     expect(records).toHaveLength(1)
     expect(records[0]?.path).toBe('/x')
