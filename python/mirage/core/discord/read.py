@@ -99,14 +99,19 @@ async def _blob_url(accessor: DiscordAccessor, path: PathSpec,
 
 async def _read_blob(accessor: DiscordAccessor, match: ScopeMatch,
                      path: PathSpec, index: IndexCacheStore) -> bytes:
-    return await download_file(await _blob_url(accessor, path, index), 0, None)
+    return await download_file(await _blob_url(accessor, path, index),
+                               0,
+                               None,
+                               session=accessor.pool)
 
 
 async def _read_blob_range(accessor: DiscordAccessor, match: ScopeMatch,
                            path: PathSpec, index: IndexCacheStore, offset: int,
                            size: int | None) -> bytes:
-    return await download_file(await _blob_url(accessor, path, index), offset,
-                               size)
+    return await download_file(await _blob_url(accessor, path, index),
+                               offset,
+                               size,
+                               session=accessor.pool)
 
 
 read = make_read(

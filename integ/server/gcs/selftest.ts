@@ -283,6 +283,52 @@ async function main(): Promise<void> {
       headers: TENANTED,
     })
 
+    // ---- a deleted bucket takes its pending resumable sessions with it: a
+    // stale upload_id must not finalize an orphan object, and must not write
+    // into a recreated bucket of the same name, which is another world's data.
+    await fetch(`${at}/storage/v1/b?project=integ-project`, {
+      method: 'POST',
+      headers: { ...TENANTED, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'doomed' }),
+    })
+    const open3 = await fetch(
+      `${at}/upload/storage/v1/b/doomed/o?uploadType=resumable&name=late.bin`,
+      {
+        method: 'POST',
+        headers: {
+          ...TENANTED,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': 'application/octet-stream',
+        },
+        body: JSON.stringify({ name: 'late.bin' }),
+      },
+    )
+    const stale = open3.headers.get('location') ?? ''
+    const gone = await fetch(`${at}/storage/v1/b/doomed`, { method: 'DELETE', headers: TENANTED })
+    check('an empty bucket with a pending upload deletes', gone.status === 204, String(gone.status))
+    const orphan = await fetch(stale, {
+      method: 'PUT',
+      headers: { ...TENANTED, 'Content-Range': `bytes 0-7/8` },
+      body: first,
+    })
+    check('a chunk on a deleted bucket answers 404', orphan.status === 404, String(orphan.status))
+    await fetch(`${at}/storage/v1/b?project=integ-project`, {
+      method: 'POST',
+      headers: { ...TENANTED, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'doomed' }),
+    })
+    const revived = await fetch(stale, {
+      method: 'PUT',
+      headers: { ...TENANTED, 'Content-Range': `bytes 0-7/8` },
+      body: first,
+    })
+    check(
+      'a recreated bucket does not revive the session',
+      revived.status === 404,
+      String(revived.status),
+    )
+    await fetch(`${at}/storage/v1/b/doomed`, { method: 'DELETE', headers: TENANTED })
+
     // ---- an overwrite keeps timeCreated, which is what the bq proxy's header
     // restore does to an object the emulator has just written.
     const again = (await json(

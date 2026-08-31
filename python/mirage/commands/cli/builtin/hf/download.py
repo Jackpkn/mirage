@@ -121,7 +121,7 @@ async def write_file(dispatch: DispatchFn, accessor: HfHubAccessor,
     """
     url = resolve_url(accessor.endpoint, accessor.repo_type, accessor.repo_id,
                       accessor.revision, repo_path)
-    data = await hub_bytes(accessor.token, url)
+    data = await hub_bytes(accessor.token, url, session=accessor.pool)
     target = posixpath.join(local_dir, repo_path)
     await ensure_dir(dispatch, posixpath.dirname(target))
     await dispatch("write", PathSpec.from_str_path(target), data=data)
@@ -204,7 +204,7 @@ async def cache_file(dispatch: DispatchFn, accessor: HfHubAccessor,
     if force or not await path_exists(dispatch, blob):
         url = resolve_url(accessor.endpoint, accessor.repo_type,
                           accessor.repo_id, accessor.revision, entry.path)
-        data = await hub_bytes(accessor.token, url)
+        data = await hub_bytes(accessor.token, url, session=accessor.pool)
         await ensure_dir(dispatch, posixpath.dirname(blob))
         await dispatch("write", PathSpec.from_str_path(blob), data=data)
     link = snapshot_path(cache_dir, folder, sha, entry.path)

@@ -96,6 +96,10 @@ export async function bucketIsEmpty(db: C, tenant: string, name: string): Promis
   return (await db.gcsObject.count({ where: { tenant, bucket: name } })) === 0
 }
 
+// Pending resumable sessions die WITH the bucket: a session that outlived it
+// accepted its remaining chunks and wrote an orphan object, or wrote into a
+// recreated bucket of the same name, which is another world's data.
 export async function deleteBucket(db: C, tenant: string, name: string): Promise<void> {
+  await db.gcsUpload.deleteMany({ where: { tenant, bucket: name } })
   await db.gcsBucket.delete({ where: { tenant_name: { tenant, name } } })
 }
