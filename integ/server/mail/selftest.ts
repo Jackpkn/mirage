@@ -444,6 +444,7 @@ async function main(): Promise<void> {
     await manifestChecks()
     await mimeChecks()
     await accountChecks()
+    await domainChecks()
     process.stdout.write(`mail selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')
@@ -613,9 +614,52 @@ async function manifestChecks(): Promise<void> {
     )
     const bad = await send({ manifest: 'broken' })
     check('a manifest that is present but malformed fails the reset', bad === 500, String(bad))
+    // The name rides an unauthenticated /reset body, and `../mail/v1` names a
+    // file that EXISTS here: joined verbatim it read outside fixtures/email.
+    const out = await send({ manifest: '../mail/v1' })
+    check('a manifest name that paths outside the root is refused', out === 400, String(out))
   } finally {
     fake.child.kill('SIGTERM')
   }
+}
+
+// `--mail-domain` moves the one served domain, and it is DECLARED to the
+// launch preflight: the flag used to be refused as unexpected, so the
+// documented override could never start the server. The value is checked at
+// launch too, because a value no address can carry the domain of would start
+// a server every login bounces off.
+async function domainChecks(): Promise<void> {
+  const fake = await launch(['--mail-domain', 'mcp.test'])
+  try {
+    check('a moved domain still seeds', (await reset(fake, RUN_A, 'integ')) === 200)
+    const a = await connect(fake, 'integ@mcp.test', RUN_A)
+    await a.logout()
+    let stock = ''
+    try {
+      await connect(fake, 'integ@example.com', RUN_A)
+    } catch (err) {
+      stock = detailOf(err)
+    }
+    check(
+      'the stock domain is refused once moved',
+      stock.includes('this server serves @mcp.test'),
+      stock,
+    )
+  } finally {
+    fake.child.kill('SIGTERM')
+  }
+  let refused = ''
+  try {
+    const dead = await launch(['--mail-domain', 'not a domain'])
+    dead.child.kill('SIGTERM')
+  } catch (err) {
+    refused = err instanceof Error ? err.message : String(err)
+  }
+  check(
+    'a value that is not a domain refuses the launch',
+    refused.includes('takes a domain'),
+    refused,
+  )
 }
 
 await main()

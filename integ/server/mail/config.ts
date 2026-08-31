@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { parseConfig, schemaFor } from '../kit/typescript/index.ts'
+import { KitError, parseConfig, schemaFor } from '../kit/typescript/index.ts'
 import type { PrismaClient } from '../../generated/mail/index.js'
 
 export type C = PrismaClient
@@ -35,6 +35,14 @@ export const config = parseConfig({
 // GreenMail's, so a harness that already points at 3143/3025 keeps working.
 export const DEFAULT_IMAP_PORT = 3143
 export const DEFAULT_SMTP_PORT = 3025
+
+// Every flag this fake takes beyond the kit's own, declared once so the
+// launcher's preflight and the readers below cannot drift: a flag missing
+// from this list is accepted by its reader and refused at startup.
+export const IMAP_FLAG = '--imap-port'
+export const SMTP_FLAG = '--smtp-port'
+export const MAIL_DOMAIN_FLAG = '--mail-domain'
+export const MAIL_FLAGS = [IMAP_FLAG, SMTP_FLAG, MAIL_DOMAIN_FLAG]
 
 // Every account starts with these, because every real provider does and
 // GreenMail does not: himalaya files a copy of each sent message into a sent
@@ -69,10 +77,21 @@ export const DEFAULT_MAIL_DOMAIN = 'example.com'
 // manifest is centred on somebody else.
 export const DEFAULT_PRIMARY = 'integ'
 
+// One label or dot-joined labels, alphanumeric with inner hyphens. Whatever
+// the source -- flag, env or default -- the value is checked here, so a flag
+// with no value or a word that can never equal an address's domain part is a
+// loud refusal at startup rather than a server every login bounces off.
+const DOMAIN_RE =
+  /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/
+
 export function mailDomain(argv: string[] = process.argv.slice(2)): string {
-  const i = argv.indexOf('--mail-domain')
-  if (i === -1) return process.env.MIRAGE_MAIL_DOMAIN ?? DEFAULT_MAIL_DOMAIN
-  return argv[i + 1] ?? DEFAULT_MAIL_DOMAIN
+  const i = argv.indexOf(MAIL_DOMAIN_FLAG)
+  const named =
+    i === -1 ? (process.env.MIRAGE_MAIL_DOMAIN ?? DEFAULT_MAIL_DOMAIN) : (argv[i + 1] ?? '')
+  if (!DOMAIN_RE.test(named)) {
+    throw new KitError(`${MAIL_DOMAIN_FLAG} takes a domain, got ${JSON.stringify(named)}`)
+  }
+  return named
 }
 
 export interface Address {

@@ -23,7 +23,14 @@ import {
   start,
 } from '../kit/typescript/index.ts'
 import { startMailArms } from './arms.ts'
-import { DEFAULT_IMAP_PORT, DEFAULT_SMTP_PORT } from './config.ts'
+import {
+  DEFAULT_IMAP_PORT,
+  DEFAULT_SMTP_PORT,
+  IMAP_FLAG,
+  MAIL_FLAGS,
+  SMTP_FLAG,
+  mailDomain,
+} from './config.ts'
 import { mailFake } from './fake.ts'
 
 // Three listeners, one world. The kit's own HTTP server answers /reset and
@@ -32,14 +39,17 @@ import { mailFake } from './fake.ts'
 // a line protocol is this fake's business, and pushing two sockets into the
 // shared launcher would make every other fake carry the concept.
 //
-// The two extra flags are DECLARED to the shared scan rather than re-parsed
+// The extra flags are DECLARED to the shared scan rather than re-parsed
 // here. This launcher used to carry its own copy of that scan, which is one
 // rule in two places: the copy had to be kept in step with the kit's by hand,
 // and the moment it drifted a flag would be accepted here and refused there.
-const IMAP_FLAG = '--imap-port'
-const SMTP_FLAG = '--smtp-port'
+// The list lives in config.ts beside the readers so the same drift cannot
+// open between the preflight and them. `mailDomain` runs once eagerly: it
+// validates its value, and a bad domain must refuse the launch here, not
+// bounce every LOGIN after the ports are already announced.
 const argv = process.argv.slice(2)
-checkArgv(argv, [IMAP_FLAG, SMTP_FLAG])
+checkArgv(argv, MAIL_FLAGS)
+mailDomain(argv)
 
 // `start`, not `serve`: serve() announces one endpoint and installs its own
 // signal handlers, and this fake has three listeners to announce and tear down

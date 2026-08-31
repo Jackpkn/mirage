@@ -31,7 +31,7 @@ async def read_page_json(config: NotionConfig,
                          page_id: str,
                          session: SessionArg = None) -> bytes:
     page = await get_page(config, page_id, session=session)
-    blocks = await list_block_tree(config, page_id)
+    blocks = await list_block_tree(config, page_id, session=session)
     normalized = normalize_page(page, blocks)
     return to_json_bytes(normalized)
 

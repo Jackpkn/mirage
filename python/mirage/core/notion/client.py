@@ -178,10 +178,12 @@ async def paginate_list(
     path: str,
     params: dict[str, Any] | None = None,
     page_size: int = 100,
+    session: SessionArg = None,
 ) -> list[dict[str, Any]]:
     merged = dict(params or {})
     merged["page_size"] = page_size
-    return await cursor_items(partial(_list_page, config, path, merged))
+    return await cursor_items(
+        partial(_list_page, config, path, merged, session=session))
 
 
 async def _post_page(config: NotionConfig,
@@ -201,8 +203,10 @@ async def paginate_post(
     body: dict[str, Any] | None = None,
     page_size: int = 100,
     max_results: int | None = None,
+    session: SessionArg = None,
 ) -> list[dict[str, Any]]:
     merged = dict(body or {})
     merged["page_size"] = min(page_size, MAX_PAGE_SIZE)
-    return await cursor_items(partial(_post_page, config, path, merged),
-                              max_results)
+    return await cursor_items(
+        partial(_post_page, config, path, merged, session=session),
+        max_results)

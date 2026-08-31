@@ -13,8 +13,8 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { Prisma, PrismaClient } from '../../generated/mail/index.js'
+import { fixturePath } from '../kit/typescript/index.ts'
 import type { Dmmf, Fake } from '../kit/typescript/index.ts'
 import { DEFAULT_MAILBOXES, DEFAULT_PRIMARY, config, splitAddress } from './config.ts'
 import type { C } from './config.ts'
@@ -44,7 +44,10 @@ export const mailFake: Fake<C> = {
     }
     const named = extras.manifest
     const manifest = typeof named === 'string' && named !== '' ? named : 'v1'
-    const path = join(fixtureRoot, MANIFEST_DIR, `${manifest}.json`)
+    // The manifest is a NAME, never a path: it rides an unauthenticated /reset
+    // body, and joined verbatim it chose which host-side .json the fake read.
+    // `fixturePath` is the same check every ordinary fixture name passes.
+    const path = fixturePath(MANIFEST_DIR, manifest, fixtureRoot)
     // ONLY a missing file is a legal empty world, which is what a run seeded
     // just to hold a CLI account wants. Catching everything meant a manifest
     // that was present but malformed -- or a name with a typo in it, which is

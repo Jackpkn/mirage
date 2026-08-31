@@ -25,6 +25,7 @@ async def search_pages(
     query: str = "",
     page_size: int = 100,
     max_results: int | None = None,
+    session: SessionArg = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {
         "filter": {
@@ -40,6 +41,7 @@ async def search_pages(
         body,
         page_size=page_size,
         max_results=max_results,
+        session=session,
     )
 
 
@@ -47,6 +49,7 @@ async def search_data_sources(
     config: NotionConfig,
     query: str = "",
     page_size: int = 100,
+    session: SessionArg = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {
         "filter": {
@@ -56,7 +59,11 @@ async def search_data_sources(
     }
     if query:
         body["query"] = query
-    return await paginate_post(config, "/search", body, page_size=page_size)
+    return await paginate_post(config,
+                               "/search",
+                               body,
+                               page_size=page_size,
+                               session=session)
 
 
 async def get_database(config: NotionConfig,
@@ -80,12 +87,14 @@ async def query_data_source(
     data_source_id: str,
     page_size: int = 100,
     body: dict[str, Any] | None = None,
+    session: SessionArg = None,
 ) -> list[dict[str, Any]]:
     return await paginate_post(
         config,
         f"/data_sources/{data_source_id}/query",
         body or {},
         page_size=page_size,
+        session=session,
     )
 
 
@@ -151,11 +160,13 @@ async def list_block_children(
     config: NotionConfig,
     block_id: str,
     page_size: int = 100,
+    session: SessionArg = None,
 ) -> list[dict[str, Any]]:
     return await paginate_list(
         config,
         f"/blocks/{block_id}/children",
         page_size=page_size,
+        session=session,
     )
 
 
@@ -166,6 +177,7 @@ async def list_block_tree(
     config: NotionConfig,
     block_id: str,
     depth: int = 0,
+    session: SessionArg = None,
 ) -> list[dict[str, Any]]:
     """List block children recursively, embedding nested blocks.
 
@@ -178,11 +190,13 @@ async def list_block_tree(
         config (NotionConfig): notion API config.
         block_id (str): page or block id whose children to list.
         depth (int): current recursion depth.
+        session (SessionArg): pool or live session every page of the
+            walk rides, nested levels included.
 
     Returns:
         list[dict]: top-level child blocks with nested ``children``.
     """
-    blocks = await list_block_children(config, block_id)
+    blocks = await list_block_children(config, block_id, session=session)
     if depth >= MAX_BLOCK_DEPTH:
         return blocks
     for block in blocks:
@@ -193,6 +207,7 @@ async def list_block_tree(
                 config,
                 block["id"],
                 depth + 1,
+                session=session,
             )
     return blocks
 
