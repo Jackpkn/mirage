@@ -353,6 +353,83 @@ async function main(): Promise<void> {
       sha8,
     )
 
+    // ---- two commits telling the same tree and message apart only by their
+    // author are two commits, even when a move freed the first one's sequence.
+    const t9 = await stage(at, 'tasks/nine.md', '# nine\n')
+    const nineA = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task nine',
+      tree: t9,
+      author: AUTHOR,
+    })
+    const sha9a = String(field(nineA.body, 'sha') ?? '')
+    await post(`${at}/repos/${REPO}/git/refs`, { ref: 'refs/heads/task-3', sha: '' })
+    await fetch(`${at}/repos/${REPO}/git/refs/heads/task-3`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: sha9a }),
+    })
+    const nineB = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task nine',
+      tree: t9,
+      author: { name: 'Sam Iyer', email: 'sam@example.com', date: '2025-09-06T10:00:00+08:00' },
+    })
+    check(
+      'a same-tree same-message commit by another author gets its own sha',
+      String(field(nineB.body, 'sha')) !== sha9a,
+      sha9a,
+    )
+
+    // ---- a reset is a reset even when the requested commit's row lives on
+    // another branch: it is older than the branch's commits, so the update is
+    // not a fast forward, and forcing it discards the newer commits without
+    // taking anything from the branch that holds the requested one.
+    const tK = await stage(at, 'tasks/ten.md', '# ten\n')
+    const ten = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task ten',
+      tree: tK,
+    })
+    const shaK = String(field(ten.body, 'sha') ?? '')
+    await post(`${at}/repos/${REPO}/git/refs`, { ref: 'refs/heads/task-4', sha: '' })
+    await fetch(`${at}/repos/${REPO}/git/refs/heads/task-4`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaK }),
+    })
+    const crossSoft = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-4`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: sha6 }),
+    })
+    check(
+      'a cross-branch backward update without force is refused',
+      crossSoft.status === 422,
+      String(crossSoft.status),
+    )
+    const crossForced = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-4`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: sha6, force: true }),
+    })
+    check('and lands when forced', crossForced.status === 200, String(crossForced.status))
+    const crossRef = await get(`${at}/repos/${REPO}/git/ref/heads/task-4`)
+    eq(
+      'the head is the requested commit after the reset',
+      field(field(crossRef, 'object'), 'sha'),
+      sha6,
+    )
+    const crossList = await get(`${at}/repos/${REPO}/commits?sha=task-4`)
+    check(
+      'the newer commit left the reset branch',
+      Array.isArray(crossList) && !crossList.some((c) => String(field(c, 'sha')) === shaK),
+      shaK,
+    )
+    const donorList = await get(`${at}/repos/${REPO}/commits?sha=task-1`)
+    check(
+      'and the branch holding the commit keeps it',
+      Array.isArray(donorList) && String(field(donorList[0] ?? null, 'sha')) === sha6,
+      String(field((Array.isArray(donorList) ? donorList[0] : null) ?? null, 'sha')),
+    )
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

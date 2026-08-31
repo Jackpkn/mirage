@@ -117,12 +117,15 @@ export async function recordCommit(
   },
 ): Promise<{ sha: string; message: string }> {
   const seq = await nextCommitSeq(db, tenant, repo.fullName, branch)
-  // A plumbing commit's sha also covers its tree: a ref update can move a
-  // commit off this branch, which frees its sequence, and a later commit
-  // reusing the sequence and the message would otherwise reproduce the sha
-  // for a different tree. A /contents commit has no tree and cannot move, so
-  // its derivation is unchanged and the goldens keep their shas.
-  const salt = tree === '' ? '' : `${tree}:`
+  const authorJson = personJson(people.author)
+  const committerJson = personJson(people.committer)
+  // A plumbing commit's sha also covers its tree and its people: a ref update
+  // can move a commit off this branch, which frees its sequence, and a later
+  // commit reusing the sequence and the message would otherwise reproduce the
+  // sha for a different tree or a different author, both of which git tells
+  // apart. A /contents commit has no tree and cannot move, so its derivation
+  // is unchanged and the goldens keep their shas.
+  const salt = tree === '' ? '' : `${tree}:${authorJson}:${committerJson}:`
   const sha = commitSha(`${repo.fullName}@${branch}:${String(seq)}:${salt}${message}`)
   await db.githubCommit.create({
     data: {
@@ -135,8 +138,8 @@ export async function recordCommit(
       date: '',
       filesJson: JSON.stringify(paths),
       treeSha: tree,
-      authorJson: personJson(people.author),
-      committerJson: personJson(people.committer),
+      authorJson,
+      committerJson,
       seq,
     },
   })

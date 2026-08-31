@@ -220,8 +220,19 @@ const updateRef = withRepo(async (ctx, repo) => {
   const staged = await stagedTree(ctx.db, ctx.tenant, repo, commit.treeSha)
   if (staged === null) return fail(422, 'Invalid request.\n\n"sha" is invalid.')
   // Refused before anything is written, so a refused update changes nothing.
+  // On the branch itself, a fast forward means the head; for a commit held by
+  // another branch, creation order stands in for ancestry (a commit created
+  // later can never be an ancestor of an earlier one), so the branch's rows
+  // with a higher pk are exactly the commits a reset would discard.
   const head = (await commitList(ctx.db, ctx.tenant, repo, name))[0]?.sha ?? ''
-  if (commit.branch === name && sha !== head && body.force !== true) {
+  const newer =
+    commit.branch === name
+      ? 0
+      : await ctx.db.githubCommit.count({
+          where: { tenant: ctx.tenant, repo: repo.fullName, branch: name, pk: { gt: commit.pk } },
+        })
+  const fastForward = commit.branch === name ? sha === head : newer === 0
+  if (!fastForward && body.force !== true) {
     return fail(422, 'Update is not a fast forward')
   }
   await ctx.db.githubFile.deleteMany({
@@ -231,6 +242,11 @@ const updateRef = withRepo(async (ctx, repo) => {
     await writeFile(ctx.db, ctx.tenant, repo, name, path, data)
   }
   if (commit.branch !== name) {
+    if (newer > 0) {
+      await ctx.db.githubCommit.deleteMany({
+        where: { tenant: ctx.tenant, repo: repo.fullName, branch: name, pk: { gt: commit.pk } },
+      })
+    }
     const seq = await nextCommitSeq(ctx.db, ctx.tenant, repo.fullName, name)
     if (commit.attached) {
       // Already on some branch's history by a ref's choice, so this ref gets
