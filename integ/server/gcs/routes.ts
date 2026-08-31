@@ -273,7 +273,12 @@ async function resumableChunk(ctx: Ctx<C>): Promise<Reply> {
     }
   }
   const range = CONTENT_RANGE_RE.exec(header(ctx, 'content-range'))
-  const more = range !== null && range[3] === '*'
+  // A chunk is final only when its declared END reaches the last byte of a
+  // declared total. A client that knows the size up front sends the number on
+  // EVERY chunk (`bytes 0-9/100` is the first tenth, not the whole thing), so
+  // a numeric denominator alone finalized ten bytes as the object and 404'd
+  // the rest of the upload.
+  const more = range !== null && (range[3] === '*' || Number(range[2]) < Number(range[3]) - 1)
   // A chunk is PLACED at the offset its Content-Range declares, never
   // appended blind: a client that lost a 308 retransmits from an earlier
   // offset, and concatenation would store those bytes twice. A chunk

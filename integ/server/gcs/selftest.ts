@@ -243,6 +243,46 @@ async function main(): Promise<void> {
     })
     eq('the chunks are concatenated in order', await whole.text(), 'aaaaaaaabbbbb')
 
+    // ---- a client that knows the size sends the numeric total on EVERY
+    // chunk: `bytes 0-7/13` is the first eight bytes of thirteen, not a
+    // finished object, and reading the denominator as finality stored the
+    // prefix and 404'd the rest of the upload.
+    const open2 = await fetch(
+      `${at}/upload/storage/v1/b/integ-exports/o?uploadType=resumable&name=sized.bin`,
+      {
+        method: 'POST',
+        headers: {
+          ...TENANTED,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': 'application/octet-stream',
+        },
+        body: JSON.stringify({ name: 'sized.bin' }),
+      },
+    )
+    const sized = open2.headers.get('location') ?? ''
+    const early = await fetch(sized, {
+      method: 'PUT',
+      headers: { ...TENANTED, 'Content-Range': `bytes 0-7/13` },
+      body: first,
+    })
+    check('a sized intermediate chunk is 308', early.status === 308, String(early.status))
+    eq('and reports what arrived', early.headers.get('range'), 'bytes=0-7')
+    const finish = (await json(sized, {
+      method: 'PUT',
+      headers: { 'Content-Range': `bytes 8-12/13` },
+      body: rest,
+    })) as Record<string, JsonValue>
+    eq('the chunk reaching total-1 finalizes', finish.size ?? null, '13')
+    const sizedBody = await fetch(`${at}/storage/v1/b/integ-exports/o/sized.bin?alt=media`, {
+      headers: TENANTED,
+    })
+    eq('the sized upload reads back whole', await sizedBody.text(), 'aaaaaaaabbbbb')
+    // Removed again so the listing goldens below stay about their own writes.
+    await fetch(`${at}/storage/v1/b/integ-exports/o/sized.bin`, {
+      method: 'DELETE',
+      headers: TENANTED,
+    })
+
     // ---- an overwrite keeps timeCreated, which is what the bq proxy's header
     // restore does to an object the emulator has just written.
     const again = (await json(
