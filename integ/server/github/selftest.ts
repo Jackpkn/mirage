@@ -668,6 +668,39 @@ async function main(): Promise<void> {
     })
     check('and lands when forced', staleForced.status === 200, String(staleForced.status))
 
+    // ---- a branch can be created directly at a commit no ref names yet,
+    // which is the two-step a client takes when it builds a branch from
+    // scratch: commit, then point a new ref at it. The branch starts at that
+    // commit and carries its tree, rather than inheriting some other ref's.
+    const tN = await stage(at, 'tasks/newbranch.md', '# new branch\n')
+    const newborn = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Commit for a branch that does not exist yet',
+      tree: tN,
+    })
+    const shaN = String(field(newborn.body, 'sha') ?? '')
+    const atCommit = await post(`${at}/repos/${REPO}/git/refs`, {
+      ref: 'refs/heads/task-7',
+      sha: shaN,
+    })
+    check(
+      'a ref can be created at a dangling commit',
+      atCommit.status === 201,
+      String(atCommit.status),
+    )
+    eq('and the new ref reports that commit', field(field(atCommit.body, 'object'), 'sha'), shaN)
+    const bornRef = await get(`${at}/repos/${REPO}/git/ref/heads/task-7`)
+    eq('which survives a re-read', field(field(bornRef, 'object'), 'sha'), shaN)
+    const bornList = await get(`${at}/repos/${REPO}/commits?sha=task-7`)
+    check(
+      'the branch history starts at that commit',
+      Array.isArray(bornList) && String(field(bornList[0] ?? null, 'sha')) === shaN,
+      String(field((Array.isArray(bornList) ? bornList[0] : null) ?? null, 'sha')),
+    )
+    const bornFile = await fetch(`${at}/repos/${REPO}/contents/tasks/newbranch.md?ref=task-7`, {
+      headers: HEADERS,
+    })
+    check("and carries that commit's tree", bornFile.status === 200, String(bornFile.status))
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

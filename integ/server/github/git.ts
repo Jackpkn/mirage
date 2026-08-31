@@ -171,10 +171,17 @@ const createCommit = withRepo(async (ctx, repo) => {
   }
 })
 
-// A branch starts as another name for whatever the base sha resolves to, which
-// is what a branch is: one pointer and every file reachable from it. It takes
-// the base's head, so the two SHARE the history behind that point and diverge
-// only in what each is pointed at next.
+// A branch starts as another name for whatever the base resolves to, which is
+// what a branch is: one pointer and every file reachable from it. It takes
+// that point as its head, so it SHARES the history behind it and diverges only
+// in what each ref is pointed at next.
+//
+// The base is resolved as a COMMIT OBJECT first and only then as a ref,
+// because those are two different questions and only the second one needs a
+// branch to already contain the commit. A client that commits and then creates
+// the branch at that sha is naming an object no ref has reached yet, and
+// asking which existing branch holds it answers "none" for a commit that is
+// perfectly real.
 const createRef = withRepo(async (ctx, repo) => {
   const body = jsonBodyOf(ctx)
   const ref = str(body, 'ref').replace(/^\/+|\/+$/g, '')
@@ -183,19 +190,34 @@ const createRef = withRepo(async (ctx, repo) => {
   if (name === '') return fail(422, 'Invalid request.\n\n"ref" is invalid.')
   const names = await branchNames(ctx.db, ctx.tenant, repo)
   if (names.includes(name)) return fail(422, 'Reference already exists')
-  const base = await branchFor(ctx.db, ctx.tenant, repo, str(body, 'sha'))
-  if (base === null) return fail(422, 'Object does not exist')
+  const asked = str(body, 'sha')
+  const object =
+    asked === ''
+      ? null
+      : ((await ctx.db.githubCommit.findFirst({
+          where: { tenant: ctx.tenant, repo: repo.fullName, sha: asked },
+        })) as CommitRow | null)
+  // A plumbing commit carries its own tree, so the branch is populated from it.
+  // A /contents commit does not (its bytes are the branch's file rows), so it
+  // falls back to the branch that holds it, which is where those rows are.
+  const staged =
+    object === null || object.treeSha === ''
+      ? null
+      : await stagedTree(ctx.db, ctx.tenant, repo, object.treeSha)
+  const base = staged !== null ? null : await branchFor(ctx.db, ctx.tenant, repo, asked)
+  if (staged === null && base === null) return fail(422, 'Object does not exist')
   // Recorded before the files are copied, because a branch off an empty
   // repository copies none and would otherwise not exist at all.
   await addBranch(ctx.db, ctx.tenant, repo.fullName, name)
-  const baseHead = await headOf(ctx.db, ctx.tenant, repo, base)
-  if (baseHead !== '') {
+  const startAt =
+    object !== null ? object.sha : base === null ? '' : await headOf(ctx.db, ctx.tenant, repo, base)
+  if (startAt !== '') {
     await ctx.db.githubBranch.updateMany({
       where: { tenant: ctx.tenant, repo: repo.fullName, name },
-      data: { headSha: baseHead },
+      data: { headSha: startAt },
     })
   }
-  const files = await treeOfBranch(ctx.db, ctx.tenant, repo, base)
+  const files = staged ?? (await treeOfBranch(ctx.db, ctx.tenant, repo, base ?? repo.defaultBranch))
   let seq = 0
   for (const [path, data] of files) {
     await ctx.db.githubFile.create({
