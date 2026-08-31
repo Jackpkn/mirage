@@ -12,7 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import { invokedEnvNames } from '../../commands/cli/walk.ts'
+import { invokedEnvNames, suppliedEnvNames } from '../../commands/cli/walk.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { RouteDecision } from '../../runtime/routing/index.ts'
 import { VFSRuntime } from '../../runtime/table.ts'
@@ -29,6 +29,7 @@ import {
   implicitReads,
   opaqueReads,
   referencedNames,
+  sameNode,
 } from '../../shell/parse/index.ts'
 import type { ManagedRef, ShellVar } from '../../shell/variable.ts'
 import { VarAttr, withValue } from '../../shell/variable.ts'
@@ -165,7 +166,9 @@ export function guestBound(
  * routing, and a head the session's profile hides never runs at all.
  * The invocation's literal words then prune the tree
  * (`invokedEnvNames`), so `ntn api get` contributes the api and get
- * chain rather than every sibling verb's options.
+ * chain rather than every sibling verb's options, minus the options
+ * the invocation itself supplies (`suppliedEnvNames`): typed outranks
+ * environment, so the parser never reads those.
  */
 export function cliEnvNames(
   nodes: TSNodeLike[],
@@ -179,10 +182,16 @@ export function cliEnvNames(
       const install = registry.clis.get(head)
       if (install === null) continue
       if (lookup(head, session, registry) !== Consumer.CLI) continue
-      const words = args.includes(null)
-        ? null
-        : new Set(args.filter((arg): arg is string => arg !== null && !arg.startsWith('-')))
-      for (const name of invokedEnvNames(install.spec, words)) out.add(name)
+      if (args.includes(null)) {
+        for (const name of invokedEnvNames(install.spec, null)) out.add(name)
+        continue
+      }
+      const literal = args.filter((arg): arg is string => arg !== null)
+      const words = new Set(literal.filter((arg) => !arg.startsWith('-')))
+      const supplied = suppliedEnvNames(install.spec, literal)
+      for (const name of invokedEnvNames(install.spec, words)) {
+        if (!supplied.has(name)) out.add(name)
+      }
     }
   }
   return out
@@ -338,6 +347,7 @@ export function maskedNames(
   session: Session,
   writesGated: boolean,
   inBody = false,
+  before: TSNodeLike | null = null,
 ): ReadonlySet<string> {
   if (writesGated) return new Set()
   const masked = new Set<string>()
@@ -346,6 +356,9 @@ export function maskedNames(
   for (let idx = 0; idx < children.length; idx += 1) {
     const stmt = children[idx]
     if (stmt === undefined) break
+    // A stored statement is discounted by exactly the prefix that runs
+    // before it, never by its own writes.
+    if (before !== null && sameNode(stmt, before)) break
     if (MASK_WALK_SKIPS.has(stmt.type)) continue
     let masks: ReadonlySet<string> | null
     if (stmt.type === 'variable_assignment' || stmt.type === 'variable_assignments') {
@@ -388,13 +401,22 @@ const BODY_CONTAINERS: ReadonlySet<string> = new Set(['compound_statement', 'sub
  * whatever scope the invocation runs in. An alias expansion is a
  * program run mid-line, where `local` refuses without writing, so only
  * the context-free forms mask there. A stored body joins as its
- * statements, one node each, so a mask in one never discounts a
- * sibling's read -- the sound direction, over-fetching only.
+ * statements, one node each (the granularity the per-statement policy
+ * pass judges at), but the stored list keeps the original container
+ * alive, so each statement recovers its body scope through its parent:
+ * the prefix that runs before it (`before`) discounts its reads
+ * exactly as a same-line body's prefix would.
  */
 function ownMasks(node: TSNodeLike, session: Session, writesGated: boolean): ReadonlySet<string> {
-  if (BODY_CONTAINERS.has(node.type)) return maskedNames(node, session, writesGated, true)
-  if (node.type === 'program') return maskedNames(node, session, writesGated)
-  return new Set()
+  let own: ReadonlySet<string> = new Set()
+  if (BODY_CONTAINERS.has(node.type)) own = maskedNames(node, session, writesGated, true)
+  else if (node.type === 'program') own = maskedNames(node, session, writesGated)
+  const parent = node.parent ?? null
+  if (parent !== null && BODY_CONTAINERS.has(parent.type)) {
+    const scoped = maskedNames(parent, session, writesGated, true, node)
+    if (scoped.size > 0) own = new Set([...own, ...scoped])
+  }
+  return own
 }
 
 /**

@@ -20,6 +20,7 @@ export {
   commandWords,
   identifierNames,
   referencedNames,
+  sameNode,
 } from './names.ts'
 export {
   createShellParser,

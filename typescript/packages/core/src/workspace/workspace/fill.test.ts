@@ -578,6 +578,37 @@ describe('fillEnv through execute', () => {
     }
   })
 
+  it('a stored body mask holds across lines', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-stored-mask', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-stored-mask', ref: 'r' } })
+    try {
+      // The stored statements keep their container, so the body's
+      // leading local masks its later reads on a later line exactly
+      // as it does when the definition and the call share one.
+      const line = 'fshadow() { local TOKEN=shadow; echo "s:$TOKEN"; }'
+      expect((await ws.execute(line)).exitCode).toBe(0)
+      expect(stdoutStr(await ws.execute('fshadow'))).toBe('s:shadow\n')
+      expect(calls).toEqual([])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a stored body read before its mask fetches', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-stored-read', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-stored-read', ref: 'r' } })
+    try {
+      const line = 'fread() { echo "r:$TOKEN"; local TOKEN=shadow; }'
+      expect((await ws.execute(line)).exitCode).toBe(0)
+      expect(stdoutStr(await ws.execute('fread'))).toBe('r:t0\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('a top-level declaration masks', async () => {
     const { calls, fetch } = countingSource({ TOKEN: 't0' })
     registerSecrets('fake-top-decl', FakeConfig, fetch)
@@ -1290,6 +1321,44 @@ describe('fillEnv through execute', () => {
     try {
       ws.registerCli('mycli', envCliSpec())
       await ws.execute('mycli alpha')
+      expect([...calls].sort()).toEqual(['alpha', 'root'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a supplied cli option skips its env', async () => {
+    const { calls, fetch } = countingSource({ CLI_ROOT: 'r0', CLI_ALPHA: 'a0' })
+    registerSecrets('fake-cli-supplied', FakeConfig, fetch)
+    const ws = await makeWs({
+      CLI_ROOT: { from: 'fake-cli-supplied', ref: 'root' },
+      CLI_ALPHA: { from: 'fake-cli-supplied', ref: 'alpha' },
+    })
+    try {
+      ws.registerCli('mycli', envCliSpec())
+      // Typed outranks environment: the parser never reads CLI_ROOT
+      // when --token is on the line, so nothing may fetch it.
+      await ws.execute('mycli --token explicit alpha')
+      expect(calls).toEqual(['alpha'])
+      await ws.execute('mycli --token explicit alpha --a explicit2')
+      expect(calls).toEqual(['alpha'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an abbreviated option still fetches', async () => {
+    const { calls, fetch } = countingSource({ CLI_ROOT: 'r0', CLI_ALPHA: 'a0' })
+    registerSecrets('fake-cli-abbrev', FakeConfig, fetch)
+    const ws = await makeWs({
+      CLI_ROOT: { from: 'fake-cli-abbrev', ref: 'root' },
+      CLI_ALPHA: { from: 'fake-cli-abbrev', ref: 'alpha' },
+    })
+    try {
+      ws.registerCli('mycli', envCliSpec())
+      // An abbreviation is never claimed as supplied: the scan stops
+      // and the fetch keeps today's shape, over-fetching only.
+      await ws.execute('mycli --tok explicit alpha')
       expect([...calls].sort()).toEqual(['alpha', 'root'])
     } finally {
       await ws.close()

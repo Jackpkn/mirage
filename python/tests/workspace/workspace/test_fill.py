@@ -570,6 +570,39 @@ async def test_body_mask_reading_the_standing_value_fetches():
 
 
 @pytest.mark.asyncio
+async def test_stored_body_mask_holds_across_lines():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        # The stored statements keep their container, so the body's
+        # leading local masks its later reads on a later line exactly
+        # as it does when the definition and the call share one.
+        line = 'fshadow() { local TOKEN=shadow; echo "s:$TOKEN"; }'
+        assert (await ws.execute(line)).exit_code == 0
+        io = await ws.execute("fshadow")
+        assert (await io.stdout_str()) == "s:shadow\n"
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_stored_body_read_before_its_mask_fetches():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        line = 'fread() { echo "r:$TOKEN"; local TOKEN=shadow; }'
+        assert (await ws.execute(line)).exit_code == 0
+        io = await ws.execute("fread")
+        assert (await io.stdout_str()) == "r:t0\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_top_level_declaration_masks():
     calls, fetch = counting_source({"TOKEN": "t0"})
     register_secrets("fake", FakeConfig, fetch)
@@ -1252,6 +1285,56 @@ async def test_cli_fetches_only_the_invoked_verb_path():
     try:
         ws.register_cli("mycli", _cli_spec())
         await ws.execute("mycli alpha")
+        assert sorted(calls) == ["alpha", "root"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_supplied_cli_option_skips_its_env():
+    calls, fetch = counting_source({"CLI_ROOT": "r0", "CLI_ALPHA": "a0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({
+        "CLI_ROOT": {
+            "from": "fake",
+            "ref": "root"
+        },
+        "CLI_ALPHA": {
+            "from": "fake",
+            "ref": "alpha"
+        },
+    })
+    try:
+        ws.register_cli("mycli", _cli_spec())
+        # Typed outranks environment: the parser never reads CLI_ROOT
+        # when --token is on the line, so nothing may fetch it.
+        await ws.execute("mycli --token explicit alpha")
+        assert calls == ["alpha"]
+        await ws.execute("mycli --token explicit alpha --a explicit2")
+        assert calls == ["alpha"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_abbreviated_option_still_fetches():
+    calls, fetch = counting_source({"CLI_ROOT": "r0", "CLI_ALPHA": "a0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({
+        "CLI_ROOT": {
+            "from": "fake",
+            "ref": "root"
+        },
+        "CLI_ALPHA": {
+            "from": "fake",
+            "ref": "alpha"
+        },
+    })
+    try:
+        ws.register_cli("mycli", _cli_spec())
+        # An abbreviation is never claimed as supplied: the scan stops
+        # and the fetch keeps today's shape, over-fetching only.
+        await ws.execute("mycli --tok explicit alpha")
         assert sorted(calls) == ["alpha", "root"]
     finally:
         await ws.close()

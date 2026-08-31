@@ -82,6 +82,92 @@ export function invokedEnvNames(
 }
 
 /**
+ * The spelling one dash token certainly supplies, and its width.
+ *
+ * Mirrors the exact-token arms the walk and the flat parser share -- an
+ * attached value, a value in the next word, a bare boolean -- and
+ * answers null for anything subtler (a cluster, an abbreviation, an
+ * undeclared spelling, a long given a value it refuses), where the
+ * caller must stop claiming anything.
+ */
+function suppliedOption(
+  cs: CompiledSpec,
+  token: string,
+  hasNext: boolean,
+): [string, number] | null {
+  if (token.startsWith('--')) {
+    const eq = token.indexOf('=')
+    const spelling = eq === -1 ? token : token.slice(0, eq)
+    if (cs.longOptionalSpellings.has(spelling)) return [spelling, 1]
+    if (cs.longBoolSpellings.has(spelling)) return eq === -1 ? [spelling, 1] : null
+    if (cs.longValueSpellings.has(spelling)) {
+      if (eq !== -1) return [spelling, 1]
+      return hasNext ? [spelling, 2] : null
+    }
+    return null
+  }
+  for (const vf of cs.attachSpellings) {
+    if (token.startsWith(vf) && token.length > vf.length) return [vf, 1]
+  }
+  for (const vf of cs.valueSpellings) {
+    if (token === vf) return hasNext ? [vf, 2] : null
+    if (token.startsWith(vf) && token.length > vf.length) return [vf, 1]
+  }
+  if (cs.boolSpellings.has(token)) return [token, 1]
+  return null
+}
+
+/**
+ * Env names of options the invocation's own words supply.
+ *
+ * The parser never reads `Option.env` for a destination the line
+ * already fills (typed outranks environment), so a supplied option's
+ * managed variable is not a read and must not fetch: a dead source
+ * would otherwise fail a line that never consults it. Presence is
+ * claimed only where consumption is certain, walking level by level
+ * the way `walk` does and matching only the exact-token forms.
+ * Anything subtler stops the scan -- keeping what was proven for a
+ * word that only ends option parsing (`--`, an operand under a
+ * remainder leaf, a verb that matches nothing), and keeping nothing
+ * for a word whose consumption is in doubt (a cluster, an
+ * abbreviation, `--help`, whose rendering itself reads the
+ * environment) -- so a wrong guess can only over-fetch, never skip a
+ * real read.
+ */
+export function suppliedEnvNames(spec: CLISpec, args: readonly string[]): ReadonlySet<string> {
+  const out = new Set<string>()
+  let node = spec
+  let cs = compileSpec(node)
+  let i = 0
+  while (i < args.length) {
+    const token = args[i]
+    if (token === undefined || token === '--') return out
+    if (token.startsWith('-') && token !== '-') {
+      if (token === '--help' || token.startsWith('--help=')) return new Set()
+      const hit = suppliedOption(cs, token, i + 1 < args.length)
+      if (hit === null) return new Set()
+      const [spelling, consumed] = hit
+      const variable = cs.envByDest.get(cs.destOf(spelling))
+      if (variable !== undefined) out.add(variable)
+      i += consumed
+      continue
+    }
+    if (node.fn !== null || node.script !== null) {
+      if (cs.remainder) return out
+      i += 1
+      continue
+    }
+    const child = findChild(node, token)
+    if (child === null) return out
+    node = child
+    if (ownsArgv(node)) return out
+    cs = compileSpec(node)
+    i += 1
+  }
+  return out
+}
+
+/**
  * Descend a tree by verb words, null if a word names no subcommand.
  *
  * Returns the node and its canonical path, so an alias renders under the

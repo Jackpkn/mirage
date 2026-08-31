@@ -118,6 +118,102 @@ def invoked_env_names(spec: CLISpec,
     return frozenset(out)
 
 
+def _supplied_option(cs: CompiledSpec, token: str,
+                     has_next: bool) -> tuple[str, int] | None:
+    """The spelling one dash token certainly supplies, and its width.
+
+    Mirrors the exact-token arms the walk and the flat parser share --
+    an attached value, a value in the next word, a bare boolean -- and
+    answers None for anything subtler (a cluster, an abbreviation, an
+    undeclared spelling, a long given a value it refuses), where the
+    caller must stop claiming anything.
+
+    Args:
+        cs (CompiledSpec): the level's compiled tables.
+        token (str): the dash token as typed.
+        has_next (bool): a following word exists to consume as a value.
+    """
+    if token.startswith("--"):
+        spelling, eq, _ = token.partition("=")
+        if spelling in cs.long_optional_spellings:
+            return spelling, 1
+        if spelling in cs.long_bool_spellings:
+            return None if eq else (spelling, 1)
+        if spelling in cs.long_value_spellings:
+            if eq:
+                return spelling, 1
+            return (spelling, 2) if has_next else None
+        return None
+    for vf in cs.attach_spellings:
+        if token.startswith(vf) and len(token) > len(vf):
+            return vf, 1
+    for vf in cs.value_spellings:
+        if token == vf:
+            return (vf, 2) if has_next else None
+        if token.startswith(vf) and len(token) > len(vf):
+            return vf, 1
+    if token in cs.bool_spellings:
+        return token, 1
+    return None
+
+
+def supplied_env_names(spec: CLISpec, args: Sequence[str]) -> frozenset[str]:
+    """Env names of options the invocation's own words supply.
+
+    The parser never reads ``Option.env`` for a destination the line
+    already fills (typed outranks environment), so a supplied option's
+    managed variable is not a read and must not fetch: a dead source
+    would otherwise fail a line that never consults it. Presence is
+    claimed only where consumption is certain, walking level by level
+    the way ``walk`` does and matching only the exact-token forms.
+    Anything subtler stops the scan -- keeping what was proven for a
+    word that only ends option parsing (``--``, an operand under a
+    remainder leaf, a verb that matches nothing), and keeping nothing
+    for a word whose consumption is in doubt (a cluster, an
+    abbreviation, ``--help``, whose rendering itself reads the
+    environment) -- so a wrong guess can only over-fetch, never skip a
+    real read.
+
+    Args:
+        spec (CLISpec): the installed tree's root.
+        args (Sequence[str]): the invocation's literal argument words.
+    """
+    out: set[str] = set()
+    node = spec
+    cs = compile_spec(node)
+    i = 0
+    while i < len(args):
+        token = args[i]
+        if token == "--":
+            return frozenset(out)
+        if token.startswith("-") and token != "-":
+            if token == "--help" or token.startswith("--help="):
+                return frozenset()
+            hit = _supplied_option(cs, token, i + 1 < len(args))
+            if hit is None:
+                return frozenset()
+            spelling, consumed = hit
+            variable = cs.env_by_dest.get(cs.dest_of(spelling))
+            if variable is not None:
+                out.add(variable)
+            i += consumed
+            continue
+        if node.fn is not None or node.script is not None:
+            if cs.remainder:
+                return frozenset(out)
+            i += 1
+            continue
+        child = find_child(node, token)
+        if child is None:
+            return frozenset(out)
+        node = child
+        if owns_argv(node):
+            return frozenset(out)
+        cs = compile_spec(node)
+        i += 1
+    return frozenset(out)
+
+
 def owns_argv(node: CLISpec) -> bool:
     """True when the node parses its own command line instead of mirage.
 

@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 
 import tree_sitter
 
-from mirage.commands.cli.walk import invoked_env_names
+from mirage.commands.cli.walk import invoked_env_names, supplied_env_names
 from mirage.runtime.base import Runtime
 from mirage.runtime.routing import RouteDecision
 from mirage.runtime.table import VFSRuntime
@@ -167,7 +167,9 @@ def cli_env_names(nodes: Sequence[tree_sitter.Node], session: Session,
     the name wins routing, and a head the session's profile hides never
     runs at all. The invocation's literal words then prune the tree
     (``invoked_env_names``), so ``ntn api get`` contributes the api and
-    get chain rather than every sibling verb's options.
+    get chain rather than every sibling verb's options, minus the
+    options the invocation itself supplies (``supplied_env_names``):
+    typed outranks environment, so the parser never reads those.
 
     Args:
         nodes (Sequence[tree_sitter.Node]): the line's walked set
@@ -185,10 +187,14 @@ def cli_env_names(nodes: Sequence[tree_sitter.Node], session: Session,
                 continue
             if lookup(head, session, registry) is not Consumer.CLI:
                 continue
-            words = (None if any(arg is None for arg in args) else frozenset(
-                arg for arg in args
-                if arg is not None and not arg.startswith("-")))
-            out |= invoked_env_names(install.spec, words)
+            literal = [arg for arg in args if arg is not None]
+            if len(literal) != len(args):
+                out |= invoked_env_names(install.spec, None)
+                continue
+            words = frozenset(arg for arg in literal
+                              if not arg.startswith("-"))
+            out |= (invoked_env_names(install.spec, words) -
+                    supplied_env_names(install.spec, literal))
     return frozenset(out)
 
 
@@ -311,7 +317,8 @@ def _unset_masks(stmt: tree_sitter.Node) -> frozenset[str] | None:
 def masked_names(node: tree_sitter.Node,
                  session: Session,
                  writes_gated: bool,
-                 in_body: bool = False) -> frozenset[str]:
+                 in_body: bool = False,
+                 before: tree_sitter.Node | None = None) -> frozenset[str]:
     """Names one unit definitely replaces before anything can read them.
 
     The unit's leading run of plain statements that only assign,
@@ -337,12 +344,15 @@ def masked_names(node: tree_sitter.Node,
 
     Args:
         node (tree_sitter.Node): the unit's parsed tree -- the line's
-            own, or one defined body's (never a stored statement: those
-            join one at a time).
+            own, one defined body's, or a stored statement's parent
+            container (with ``before`` naming the statement).
         session (Session): the session the line runs in.
         writes_gated (bool): a policy hooks ``pre_session``.
         in_body (bool): the unit is a function body, where ``local``
             assigns.
+        before (tree_sitter.Node | None): stop at this child, so a
+            stored statement is discounted by exactly the prefix that
+            runs before it and never by its own writes.
     """
     if writes_gated:
         return frozenset()
@@ -350,6 +360,8 @@ def masked_names(node: tree_sitter.Node,
     needed: set[str] = set()
     children = node.children
     for idx, stmt in enumerate(children):
+        if before is not None and stmt.id == before.id:
+            break
         if not stmt.is_named or stmt.type == "comment":
             continue
         if stmt.type in ("variable_assignment", "variable_assignments"):
@@ -394,19 +406,30 @@ def _own_masks(node: tree_sitter.Node, session: Session,
     read, whatever scope the invocation runs in. An alias expansion is
     a program run mid-line, where ``local`` refuses without writing, so
     only the context-free forms mask there. A stored body joins as its
-    statements, one node each, so a mask in one never discounts a
-    sibling's read -- the sound direction, over-fetching only.
+    statements, one node each (the granularity the per-statement policy
+    pass judges at), but the stored list keeps the original container
+    alive, so each statement recovers its body scope through its
+    parent: the prefix that runs before it (``before``) discounts its
+    reads exactly as a same-line body's prefix would.
 
     Args:
         node (tree_sitter.Node): one walked unit past the line itself.
         session (Session): the session the line runs in.
         writes_gated (bool): a policy hooks ``pre_session``.
     """
+    own: frozenset[str] = frozenset()
     if node.type in _BODY_CONTAINERS:
-        return masked_names(node, session, writes_gated, in_body=True)
-    if node.type == "program":
-        return masked_names(node, session, writes_gated)
-    return frozenset()
+        own = masked_names(node, session, writes_gated, in_body=True)
+    elif node.type == "program":
+        own = masked_names(node, session, writes_gated)
+    parent = node.parent
+    if parent is not None and parent.type in _BODY_CONTAINERS:
+        own |= masked_names(parent,
+                            session,
+                            writes_gated,
+                            in_body=True,
+                            before=node)
+    return own
 
 
 def _assigned_reach(
