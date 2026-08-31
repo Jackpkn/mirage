@@ -20,8 +20,9 @@ import type { JobConsole } from '../../shell/console/index.ts'
 import type { ObserverStore } from '../../observe/store.ts'
 import type { OpsRegistry } from '../../ops/registry.ts'
 import type { Resource } from '../../resource/base.ts'
+import type { EnvEntries } from '../../secrets/config.ts'
 import type { ConsoleFactory } from '../../shell/job_table/index.ts'
-import type { ShellParser } from '../../shell/parse.ts'
+import type { ShellParser } from '../../shell/parse/index.ts'
 import type { Limit, ConsistencyPolicy, DriftPolicy, MountMode } from '../../types.ts'
 import type { AskHandler, Policy } from '../../policy/index.ts'
 import type { RouteDecision, RoutePolicy } from '../../runtime/routing/index.ts'
@@ -151,6 +152,14 @@ export interface WorkspaceOptions {
    * installs through the same fail-loud path as registerCli.
    */
   clis?: Record<string, [string | CLISpec, Record<string, unknown> | null]>
+  /**
+   * The environment plane: one map, name -> entry. A bare string is
+   * the literal short form; a mapping is an env entry, either a
+   * literal with attrs or a managed pointer (`from`/`ref`/`key`/
+   * `fetch`). Managed values are fetched lazily at the pre-command
+   * boundary and live only on session vars.
+   */
+  env?: EnvEntries
 }
 
 export class ExecuteResult {

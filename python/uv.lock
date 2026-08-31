@@ -5839,11 +5839,15 @@ all = [
     { name = "pydantic-ai-backend" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "openai"], marker = "extra == 'extra-9-mirage-ai-all' or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-openai') or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-openhands') or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-pydantic-ai')" },
     { name = "pymongo" },
+    { name = "python-dotenv" },
     { name = "qdrant-client", extra = ["fastembed"], marker = "extra == 'extra-9-mirage-ai-all' or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-openai') or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-openhands') or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-pydantic-ai')" },
     { name = "redis", extra = ["hiredis"], marker = "extra == 'extra-9-mirage-ai-all' or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-openai') or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-openhands') or (extra == 'extra-9-mirage-ai-camel' and extra == 'extra-9-mirage-ai-pydantic-ai')" },
 ]
 anthropic = [
     { name = "anthropic" },
+]
+aws-sm = [
+    { name = "aioboto3" },
 ]
 camel = [
     { name = "camel-ai" },
@@ -5864,6 +5868,9 @@ daytona = [
 ]
 deepagents = [
     { name = "deepagents" },
+]
+dotenv = [
+    { name = "python-dotenv" },
 ]
 e2b = [
     { name = "e2b" },
@@ -5976,6 +5983,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agno", marker = "extra == 'agno'", specifier = ">=2.7.4" },
+    { name = "aioboto3", marker = "extra == 'aws-sm'", specifier = ">=13.0" },
     { name = "aioboto3", marker = "extra == 'gcs'", specifier = ">=13.0" },
     { name = "aioboto3", marker = "extra == 'oci'", specifier = ">=13.0" },
     { name = "aioboto3", marker = "extra == 'r2'", specifier = ">=13.0" },
@@ -6006,6 +6014,7 @@ requires-dist = [
     { name = "mfusepy", marker = "extra == 'fuse'", specifier = ">=1.0.0" },
     { name = "mirage-ai", extras = ["agno"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["anthropic"], marker = "extra == 'all'" },
+    { name = "mirage-ai", extras = ["aws-sm"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["chroma"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["chroma"], marker = "extra == 'sandbox'" },
     { name = "mirage-ai", extras = ["claude-agent-sdk"], marker = "extra == 'all'" },
@@ -6013,6 +6022,7 @@ requires-dist = [
     { name = "mirage-ai", extras = ["databricks"], marker = "extra == 'sandbox'" },
     { name = "mirage-ai", extras = ["daytona"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["deepagents"], marker = "extra == 'all'" },
+    { name = "mirage-ai", extras = ["dotenv"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["e2b"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["email"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["email"], marker = "extra == 'sandbox'" },
@@ -6061,6 +6071,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.13.0" },
     { name = "pymongo", marker = "extra == 'gridfs'", specifier = ">=4.9" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.9" },
+    { name = "python-dotenv", marker = "extra == 'dotenv'", specifier = ">=1.2.2" },
     { name = "python-multipart", specifier = ">=0.0.27" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "qdrant-client", extras = ["fastembed"], marker = "extra == 'qdrant'", specifier = ">=1.18.0" },
@@ -6073,7 +6084,7 @@ requires-dist = [
     { name = "wasmtime", marker = "extra == 'quickjs'", specifier = ">=46" },
     { name = "wasmtime", marker = "extra == 'wasi'", specifier = ">=46" },
 ]
-provides-extras = ["monty", "wasi", "quickjs", "s3", "r2", "gcs", "oci", "databricks", "ssh", "nextcloud", "hf-buckets", "fuse", "mongodb", "gridfs", "postgres", "redis", "email", "langfuse", "chroma", "qdrant", "anthropic", "openai", "pydantic-ai", "deepagents", "openhands", "agno", "claude-agent-sdk", "camel", "daytona", "all", "sandbox", "lancedb", "mem0", "e2b"]
+provides-extras = ["monty", "wasi", "quickjs", "s3", "r2", "gcs", "oci", "databricks", "ssh", "nextcloud", "hf-buckets", "fuse", "mongodb", "gridfs", "postgres", "redis", "email", "dotenv", "aws-sm", "langfuse", "chroma", "qdrant", "anthropic", "openai", "pydantic-ai", "deepagents", "openhands", "agno", "claude-agent-sdk", "camel", "daytona", "all", "sandbox", "lancedb", "mem0", "e2b"]
 
 [package.metadata.requires-dev]
 dev = [
