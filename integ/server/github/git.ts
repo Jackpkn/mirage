@@ -26,6 +26,7 @@ import {
   headOf,
   reaches,
   treeOfBranch,
+  visibleHeadOf,
 } from './store.ts'
 import type { RepoRow, Tree } from './store.ts'
 import { authedRoute, everywhere, fail, jsonBodyOf, param, route, str, withRepo } from './http.ts'
@@ -146,9 +147,16 @@ const createCommit = withRepo(async (ctx, repo) => {
   if (author === INVALID_PERSON) return fail(422, 'Invalid request.\n\n"author" is invalid.')
   const committer = bodyPerson(body, 'committer')
   if (committer === INVALID_PERSON) return fail(422, 'Invalid request.\n\n"committer" is invalid.')
+  // A present `parents` is the caller's answer even when it is empty: `[]` is
+  // how the API spells a root commit, and re-parenting one onto the branch
+  // head would change both its sha and its ancestry. Only an ABSENT field
+  // falls back to where the default branch currently points.
   const parents = body.parents
-  const stated = Array.isArray(parents) && typeof parents[0] === 'string' ? parents[0] : null
-  const parent = stated ?? (await headOf(ctx.db, ctx.tenant, repo, repo.defaultBranch))
+  const parent = Array.isArray(parents)
+    ? typeof parents[0] === 'string'
+      ? parents[0]
+      : ''
+    : await visibleHeadOf(ctx.db, ctx.tenant, repo, repo.defaultBranch)
   const commit = await recordCommit(
     ctx.db,
     ctx.tenant,
@@ -264,7 +272,7 @@ const updateRef = withRepo(async (ctx, repo) => {
   const staged = await stagedTree(ctx.db, ctx.tenant, repo, commit.treeSha)
   if (staged === null) return fail(422, 'Invalid request.\n\n"sha" is invalid.')
   // Refused before anything is written, so a refused update changes nothing.
-  const head = await headOf(ctx.db, ctx.tenant, repo, name)
+  const head = await visibleHeadOf(ctx.db, ctx.tenant, repo, name)
   const byId = await commitsBySha(ctx.db, ctx.tenant, repo)
   if (!reaches(sha, head, byId) && body.force !== true) {
     return fail(422, 'Update is not a fast forward')

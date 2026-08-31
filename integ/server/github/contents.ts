@@ -31,11 +31,11 @@ import {
   branchNames,
   commitList,
   directoriesOf,
-  headOf,
   submodulesOf,
   treeItems,
   treeOf,
   treeOfBranch,
+  visibleHeadOf,
 } from './store.ts'
 import type { RepoRow, Tree } from './store.ts'
 import { authedRoute, everywhere, fail, jsonBodyOf, param, route, str, withRepo } from './http.ts'
@@ -125,7 +125,7 @@ export async function recordCommit(
   const seq = await nextCommitSeq(db, tenant, repo.fullName)
   const authorJson = personJson(people.author)
   const committerJson = personJson(people.committer)
-  const parentSha = parent ?? (await headOf(db, tenant, repo, branch))
+  const parentSha = parent ?? (await visibleHeadOf(db, tenant, repo, branch))
   // A plumbing commit names its tree, and a /contents commit is the tree the
   // write just produced, fingerprinted the way the synthesized root is. Both
   // have to be in the sha or the address is not the content's: two writes of

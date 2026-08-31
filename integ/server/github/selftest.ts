@@ -701,6 +701,87 @@ async function main(): Promise<void> {
     })
     check("and carries that commit's tree", bornFile.status === 200, String(bornFile.status))
 
+    // ---- a seeded branch carries files and no stored commit, and the ref
+    // endpoint answers for it with a synthesized root. That root is the ref's
+    // position, so it is what a first update is judged against: a commit that
+    // does not build on it would discard the seeded tree, which is a reset.
+    const reseed = await fetch(`${at}/reset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tenants: [TENANT], fixture: 'v1' }),
+    })
+    check('the fixture is seeded again', reseed.status === 200, String(reseed.status))
+    const seededRoot = String(
+      field(field(await get(`${at}/repos/${REPO}/git/ref/heads/${trunk}`), 'object'), 'sha'),
+    )
+    check('a seeded branch answers with a root commit', seededRoot !== '', seededRoot)
+
+    // A commit that states no parent at all is a root commit, which is what an
+    // empty `parents` means: it is not the absent field, and it must not be
+    // quietly re-parented onto the branch head.
+    const tR = await stage(at, 'tasks/rootish.md', '# rootish\n')
+    const rootish = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'A root commit',
+      tree: tR,
+      parents: [],
+    })
+    const shaRootish = String(field(rootish.body, 'sha') ?? '')
+    const implied = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'A root commit',
+      tree: tR,
+    })
+    check(
+      'an empty parents list is not the same commit as an absent one',
+      String(field(implied.body, 'sha')) !== shaRootish,
+      `${shaRootish} vs ${String(field(implied.body, 'sha'))}`,
+    )
+
+    const overwrite = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaRootish }),
+    })
+    check(
+      'a commit that does not build on the seeded root is refused',
+      overwrite.status === 422,
+      String(overwrite.status),
+    )
+    const keptRef = await get(`${at}/repos/${REPO}/git/ref/heads/${trunk}`)
+    eq(
+      'and the branch still answers with its root',
+      field(field(keptRef, 'object'), 'sha'),
+      seededRoot,
+    )
+
+    // The same update, from a commit that DOES build on that root, is an
+    // ordinary advance: this is the flow every client takes on a fresh repo.
+    const onRoot = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Built on the seeded root',
+      tree: tR,
+      parents: [seededRoot],
+    })
+    const shaOnRoot = String(field(onRoot.body, 'sha') ?? '')
+    const advanced = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaOnRoot }),
+    })
+    check(
+      'a commit built on the root advances unforced',
+      advanced.status === 200,
+      String(advanced.status),
+    )
+    const forcedOver = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaRootish, force: true }),
+    })
+    check(
+      'and the refused one lands when forced',
+      forcedOver.status === 200,
+      String(forcedOver.status),
+    )
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

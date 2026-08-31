@@ -220,8 +220,35 @@ export function chainFrom(head: string, byId: Map<string, CommitRow>): CommitRow
 // ancestor, since that is where a chain ends.
 export function reaches(head: string, ancestor: string, byId: Map<string, CommitRow>): boolean {
   if (ancestor === '') return true
-  if (head === ancestor) return true
-  return chainFrom(head, byId).some((c) => c.sha === ancestor)
+  // Walked as POINTERS rather than as rows, because the sha being looked for
+  // may be one no row carries: a synthesized root is derived from a branch's
+  // content and stored nowhere, yet it is what the ref endpoint answers with
+  // and therefore what a commit on a seeded branch states as its parent.
+  const seen = new Set<string>()
+  let at = head
+  while (at !== '' && !seen.has(at)) {
+    if (at === ancestor) return true
+    seen.add(at)
+    at = byId.get(at)?.parentSha ?? ''
+  }
+  return false
+}
+
+// Where a ref answers it points, which is the stored head once anything has
+// been committed and the synthesized root before that. A seeded branch carries
+// files and no commit row, so its root is the only position it has, and both
+// the fast-forward test and a new commit's default parent have to use it or
+// they are reasoning about a ref the API never described.
+export async function visibleHeadOf(
+  db: C,
+  tenant: string,
+  repo: RepoRow,
+  branch: string,
+): Promise<string> {
+  const stored = await headOf(db, tenant, repo, branch)
+  if (stored !== '') return stored
+  const tree = await treeOfBranch(db, tenant, repo, branch)
+  return rootCommit([...tree.entries()].map(([p, d]): [string, string] => [p, blobSha(d)])).sha
 }
 
 export async function headOf(
