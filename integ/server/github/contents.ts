@@ -140,6 +140,10 @@ export async function recordCommit(
       treeSha: tree,
       authorJson,
       committerJson,
+      // A /contents write moves its ref the moment it lands, so its commit is
+      // attached history from birth; only a plumbing commit (tree present)
+      // parks and waits for a ref update to claim it.
+      attached: tree === '',
       seq,
     },
   })

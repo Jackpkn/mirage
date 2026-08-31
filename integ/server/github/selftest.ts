@@ -472,6 +472,59 @@ async function main(): Promise<void> {
     const trunkRef2 = await get(`${at}/repos/${REPO}/git/ref/heads/${trunk}`)
     eq('and the ref reports the advance', field(field(trunkRef2, 'object'), 'sha'), shaTh)
 
+    // ---- a /contents write advanced its ref the moment it landed, so it is
+    // attached history: a backward PATCH past it is forced, and forcing
+    // discards it like any other commit the reset abandons.
+    const tF = await stage(at, 'tasks/fourteen.md', '# fourteen\n')
+    const fourteen = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task fourteen',
+      tree: tF,
+    })
+    const shaF = String(field(fourteen.body, 'sha') ?? '')
+    await post(`${at}/repos/${REPO}/git/refs`, { ref: 'refs/heads/task-5', sha: '' })
+    await fetch(`${at}/repos/${REPO}/git/refs/heads/task-5`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaF }),
+    })
+    const put = await fetch(`${at}/repos/${REPO}/contents/tasks/fifteen.md`, {
+      method: 'PUT',
+      headers: HEADERS,
+      body: JSON.stringify({
+        message: 'Add fifteen via contents',
+        content: Buffer.from('# fifteen\n').toString('base64'),
+        branch: 'task-5',
+      }),
+    })
+    check('a contents write lands on the branch', put.status === 201, String(put.status))
+    const pastSoft = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-5`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaF }),
+    })
+    check(
+      'a backward PATCH past a contents commit is refused without force',
+      pastSoft.status === 422,
+      String(pastSoft.status),
+    )
+    const pastForced = await fetch(`${at}/repos/${REPO}/git/refs/heads/task-5`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaF, force: true }),
+    })
+    check('and lands when forced', pastForced.status === 200, String(pastForced.status))
+    const pastRef = await get(`${at}/repos/${REPO}/git/ref/heads/task-5`)
+    eq('the ref reports the reset commit', field(field(pastRef, 'object'), 'sha'), shaF)
+    const pastList = await get(`${at}/repos/${REPO}/commits?sha=task-5`)
+    check(
+      'and the contents commit left the history',
+      Array.isArray(pastList) &&
+        !pastList.some(
+          (c) => String(field(field(c, 'commit'), 'message')) === 'Add fifteen via contents',
+        ),
+      'Add fifteen via contents',
+    )
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')
