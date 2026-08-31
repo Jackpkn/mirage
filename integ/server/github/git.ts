@@ -220,18 +220,37 @@ const updateRef = withRepo(async (ctx, repo) => {
   const staged = await stagedTree(ctx.db, ctx.tenant, repo, commit.treeSha)
   if (staged === null) return fail(422, 'Invalid request.\n\n"sha" is invalid.')
   // Refused before anything is written, so a refused update changes nothing.
-  // On the branch itself, a fast forward means the head; for a commit held by
-  // another branch, creation order stands in for ancestry (a commit created
-  // later can never be an ancestor of an earlier one), so the branch's rows
-  // with a higher pk are exactly the commits a reset would discard.
-  const head = (await commitList(ctx.db, ctx.tenant, repo, name))[0]?.sha ?? ''
+  // Only ATTACHED rows count as the ref's position: a parked commit was never
+  // where the ref pointed, so attaching one is always a fast forward, however
+  // many others are parked beside it. On the branch itself, a fast forward
+  // therefore means the attached head; for a commit held by another branch,
+  // creation order stands in for ancestry (a commit created later can never
+  // be an ancestor of an earlier one), so the branch's attached rows with a
+  // higher pk are exactly the commits a reset would discard. The proxy is
+  // conservative, not exact: the fake records no parent relationships
+  // (`POST /git/commits` ignores `parents`), so a divergent sibling created
+  // after everything on the branch reads as a fast forward and is appended,
+  // which is the permissive answer every cross-branch update gave before the
+  // guard existed. Exact ancestry would need the parent DAG the model does
+  // not keep.
+  const attachedHead = await ctx.db.githubCommit.findFirst({
+    where: { tenant: ctx.tenant, repo: repo.fullName, branch: name, attached: true },
+    orderBy: { seq: 'desc' },
+  })
+  const refHead = attachedHead?.sha ?? ''
   const newer =
     commit.branch === name
       ? 0
       : await ctx.db.githubCommit.count({
-          where: { tenant: ctx.tenant, repo: repo.fullName, branch: name, pk: { gt: commit.pk } },
+          where: {
+            tenant: ctx.tenant,
+            repo: repo.fullName,
+            branch: name,
+            attached: true,
+            pk: { gt: commit.pk },
+          },
         })
-  const fastForward = commit.branch === name ? sha === head : newer === 0
+  const fastForward = commit.branch === name ? !commit.attached || sha === refHead : newer === 0
   if (!fastForward && body.force !== true) {
     return fail(422, 'Update is not a fast forward')
   }
@@ -244,7 +263,13 @@ const updateRef = withRepo(async (ctx, repo) => {
   if (commit.branch !== name) {
     if (newer > 0) {
       await ctx.db.githubCommit.deleteMany({
-        where: { tenant: ctx.tenant, repo: repo.fullName, branch: name, pk: { gt: commit.pk } },
+        where: {
+          tenant: ctx.tenant,
+          repo: repo.fullName,
+          branch: name,
+          attached: true,
+          pk: { gt: commit.pk },
+        },
       })
     }
     const seq = await nextCommitSeq(ctx.db, ctx.tenant, repo.fullName, name)
@@ -274,15 +299,29 @@ const updateRef = withRepo(async (ctx, repo) => {
         data: { branch: name, seq, attached: true },
       })
     }
-  } else {
-    if (sha !== head) {
+  } else if (commit.attached) {
+    // A forced reset discards only what the ref owned: parked and seeded
+    // rows were never attached, so they survive for a ref that still wants
+    // them.
+    if (sha !== refHead) {
       await ctx.db.githubCommit.deleteMany({
-        where: { tenant: ctx.tenant, repo: repo.fullName, branch: name, seq: { gt: commit.seq } },
+        where: {
+          tenant: ctx.tenant,
+          repo: repo.fullName,
+          branch: name,
+          attached: true,
+          seq: { gt: commit.seq },
+        },
       })
     }
-    if (!commit.attached) {
-      await ctx.db.githubCommit.update({ where: { pk: commit.pk }, data: { attached: true } })
-    }
+  } else {
+    // Attaching a parked commit tops the branch, so the ref reports the
+    // commit it was just pointed at.
+    const seq = await nextCommitSeq(ctx.db, ctx.tenant, repo.fullName, name)
+    await ctx.db.githubCommit.update({
+      where: { pk: commit.pk },
+      data: { attached: true, seq },
+    })
   }
   return { status: 200, body: { ref: `refs/${ref}`, object: { sha, type: 'commit' } } }
 })

@@ -430,6 +430,48 @@ async function main(): Promise<void> {
       String(field((Array.isArray(donorList) ? donorList[0] : null) ?? null, 'sha')),
     )
 
+    // ---- a client may prepare several commits before touching any ref, and
+    // attaching one of the parked ones is a fast forward: the others were
+    // never the ref's position, so they must not make the update forced.
+    const repoInfo = await get(`${at}/repos/${REPO}`)
+    const trunk = String(field(repoInfo, 'default_branch'))
+    const tw = await stage(at, 'tasks/twelve.md', '# twelve\n')
+    const twelve = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task twelve',
+      tree: tw,
+    })
+    const shaTw = String(field(twelve.body, 'sha') ?? '')
+    const th = await stage(at, 'tasks/thirteen.md', '# thirteen\n')
+    const thirteen = await post(`${at}/repos/${REPO}/git/commits`, {
+      message: 'Add task thirteen',
+      tree: th,
+    })
+    const shaTh = String(field(thirteen.body, 'sha') ?? '')
+    const parked1 = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaTw }),
+    })
+    check(
+      'attaching a parked commit needs no force with another parked above',
+      parked1.status === 200,
+      String(parked1.status),
+    )
+    const trunkRef1 = await get(`${at}/repos/${REPO}/git/ref/heads/${trunk}`)
+    eq('and the ref reports it', field(field(trunkRef1, 'object'), 'sha'), shaTw)
+    const parked2 = await fetch(`${at}/repos/${REPO}/git/refs/heads/${trunk}`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ sha: shaTh }),
+    })
+    check(
+      'attaching the second parked commit advances',
+      parked2.status === 200,
+      String(parked2.status),
+    )
+    const trunkRef2 = await get(`${at}/repos/${REPO}/git/ref/heads/${trunk}`)
+    eq('and the ref reports the advance', field(field(trunkRef2, 'object'), 'sha'), shaTh)
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')
