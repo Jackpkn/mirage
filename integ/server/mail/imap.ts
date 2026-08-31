@@ -374,7 +374,14 @@ async function dispatch(
     return
   }
   if (verb === 'EXPUNGE') {
-    await expungeDeleted(runtime, session)
+    // RFC 4315: UID EXPUNGE removes only the \Deleted messages its uid set
+    // names, and the set is REQUIRED; a bare EXPUNGE removes them all.
+    const uidSet = args[1] ?? ''
+    if (uidMode && uidSet === '') {
+      write(session, `${tag} BAD UID EXPUNGE takes a uid set`)
+      return
+    }
+    await expungeDeleted(runtime, session, uidMode ? uidSet : null)
     write(session, `${tag} OK EXPUNGE completed`)
     return
   }
@@ -765,11 +772,20 @@ async function append(
 // EXPUNGE removes every \Deleted message and reports each one by SEQUENCE
 // NUMBER, highest first. Highest first is not a detail: each report renumbers
 // the messages after it, so ascending order tells the client to remove the
-// wrong ones.
-async function expungeDeleted(runtime: Runtime<C>, session: Session): Promise<void> {
+// wrong ones. A UID EXPUNGE narrows the sweep to its uid set, so a \Deleted
+// message the client deliberately left out survives; null means the bare
+// verb (and CLOSE's implicit sweep), which spares nothing.
+async function expungeDeleted(
+  runtime: Runtime<C>,
+  session: Session,
+  uidSet: string | null = null,
+): Promise<void> {
   await queue.enqueue(session.run, async () => {
     const rows = await loaded(runtime, session)
-    const doomed = rows.filter((one) => one.flags.includes('\\Deleted'))
+    const top = highest(rows, true)
+    const doomed = rows.filter(
+      (one) => one.flags.includes('\\Deleted') && (uidSet === null || inSet(uidSet, one.uid, top)),
+    )
     for (const msg of [...doomed].reverse()) {
       await removeMessage(db(runtime, session), session.tenant, session.mailbox, msg.uid)
       write(session, `* ${String(msg.seq)} EXPUNGE`)

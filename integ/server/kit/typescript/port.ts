@@ -19,15 +19,7 @@ import { KitError } from './errors.ts'
 // hand-rolled process.argv.indexOf with an in-file DEFAULT_PORT, and none.
 // 0 means "pick an ephemeral port and announce it".
 export function parsePort(argv: string[] = process.argv.slice(2), fallback = 0): number {
-  const i = argv.indexOf('--port')
-  if (i === -1) return fallback
-  const raw = argv[i + 1]
-  if (raw === undefined) throw new KitError('--port requires a value')
-  const port = Number(raw)
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new KitError(`invalid port ${raw}`)
-  }
-  return port
+  return parseFlagPort('--port', argv, fallback)
 }
 
 // The fixture a standalone fake seeds at startup, so one server binary can
@@ -99,19 +91,25 @@ export function checkArgv(argv: string[] = process.argv.slice(2), extra: string[
   }
 }
 
-// A flag's value by position, for a fake reading one of its OWN flags. Same
-// scan `parsePort` does, so a second socket's port is read the way the first
-// one is rather than by a hand-rolled indexOf that misses `--flag` at the end.
+// A flag's value by position, for a fake reading one of its OWN flags.
+// `parsePort` is this function bound to `--port`, so every socket's port is
+// read under ONE rule. The rule is strict on purpose: the fallback answers
+// only an ABSENT flag, a flag typed with no value is refused rather than
+// silently defaulted, and the value is digits-or-nothing because parseInt's
+// tolerated suffix ("3025junk") announced a healthy listener on a port the
+// launch line never asked for.
 export function parseFlagPort(
   flag: string,
   argv: string[] = process.argv.slice(2),
   fallback = 0,
 ): number {
   const at = argv.indexOf(flag)
-  if (at === -1 || at + 1 >= argv.length) return fallback
-  const value = Number.parseInt(argv[at + 1] ?? '', 10)
-  if (Number.isNaN(value) || value < 0 || value > 65535) {
-    throw new KitError(`${flag} must be a port number, got ${String(argv[at + 1])}`)
+  if (at === -1) return fallback
+  const raw = argv[at + 1]
+  if (raw === undefined) throw new KitError(`${flag} requires a value`)
+  const port = Number(raw)
+  if (!/^\d+$/.test(raw) || !Number.isInteger(port) || port > 65535) {
+    throw new KitError(`${flag} must be a port number, got ${raw}`)
   }
-  return value
+  return port
 }

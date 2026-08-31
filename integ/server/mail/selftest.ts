@@ -315,13 +315,18 @@ async function main(): Promise<void> {
         appended === false ? 'refused' : `uid ${String(appended.uid)}`,
       )
 
-      // ---- EXPUNGE: \Deleted then removed, and the mailbox shrinks
+      // ---- EXPUNGE: \Deleted then removed, and the mailbox shrinks. BOTH
+      // messages carry \Deleted, so `UID EXPUNGE 1` proves the uid set
+      // narrows the sweep: the bare-EXPUNGE fallback would take uid 2 too.
       const del = await a.getMailboxLock('Sent')
       try {
-        await a.messageFlagsAdd('1', ['\\Deleted'], { uid: true })
+        await a.messageFlagsAdd('1:2', ['\\Deleted'], { uid: true })
         await a.messageDelete('1', { uid: true })
         const left = (await a.search({}, { uid: true })) as number[]
-        eq('EXPUNGE removes only the flagged message', left, [2])
+        eq('UID EXPUNGE removes only its uid set', left, [2])
+        const still = (await a.search({ deleted: true }, { uid: true })) as number[]
+        eq('the excluded message keeps its \\Deleted flag', still, [2])
+        await a.messageFlagsRemove('2', ['\\Deleted'], { uid: true })
       } finally {
         del.release()
       }
@@ -445,6 +450,7 @@ async function main(): Promise<void> {
     await mimeChecks()
     await accountChecks()
     await domainChecks()
+    await portChecks()
     process.stdout.write(`mail selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')
@@ -659,6 +665,52 @@ async function domainChecks(): Promise<void> {
     'a value that is not a domain refuses the launch',
     refused.includes('takes a domain'),
     refused,
+  )
+}
+
+// A launch that must die before announcing, spawned with EXACTLY these args:
+// `launch` cannot say this, because it puts `--imap-port 0 --smtp-port 0`
+// first and the scan reads a flag's FIRST occurrence. Announcing anything is
+// the regression, so a stdout line resolves empty and fails the check.
+async function dies(args: string[]): Promise<string> {
+  const child = spawn(
+    join(INTEG, 'node_modules', '.bin', 'tsx'),
+    [join(HERE, 'main.ts'), '--port', '0', ...args],
+    { cwd: INTEG, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } },
+  )
+  let err = ''
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (d: string) => {
+    err += d
+  })
+  return new Promise<string>((ok) => {
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', () => {
+      child.kill('SIGTERM')
+      ok('')
+    })
+    child.on('exit', () => {
+      ok(err)
+    })
+  })
+}
+
+// The kit's port scan is strict on the arm flags too: parseInt's tolerated
+// suffix used to read `3025junk` as 3025, and a flag typed with no value
+// silently took the fallback, so the process announced a healthy listener on
+// a port the launch line never asked for.
+async function portChecks(): Promise<void> {
+  const junk = await dies(['--smtp-port', '3025junk'])
+  check(
+    'a port with a trailing suffix refuses the launch',
+    junk.includes('must be a port number'),
+    junk.slice(0, 80),
+  )
+  const bare = await dies(['--imap-port'])
+  check(
+    'a port flag with no value refuses the launch',
+    bare.includes('requires a value'),
+    bare.slice(0, 80),
   )
 }
 
