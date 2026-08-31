@@ -142,9 +142,10 @@ def test_opaque_reads(command, opaque):
         ("cd /a; cd ./b; cd ..", set()),
         ("cd ~", {"HOME"}),
         ("cd $d", {"HOME", "OLDPWD", "CDPATH"}),
-        # read splits on $IFS, getopts resumes from $OPTIND.
+        # read splits on $IFS; getopts resumes from $OPTIND and
+        # consults $OPTERR before printing a diagnostic.
         ("read v", {"IFS"}),
-        ("getopts ab o", {"OPTIND"}),
+        ("getopts ab o", {"OPTIND", "OPTERR"}),
         # A definition's body runs at invocation, not here.
         ("f() { cd; }", set()),
     ])

@@ -58,7 +58,8 @@ def build_secrets_env(
     cannot leak into the other batteries. ``kind`` "implicit" manages
     the names read with no ``$NAME`` in the text (``HOME`` for a tilde
     and a bare ``cd``, ``OLDPWD`` for ``cd -``, ``CDPATH`` for a
-    relative ``cd``, ``OPTIND`` for ``getopts``) plus ``ARITH_BOUND``
+    relative ``cd``, ``OPTIND`` and ``OPTERR`` for ``getopts``) plus
+    ``ARITH_BOUND``
     for the arithmetic value chase and the ``ARITH_HOP``/``ARITH_END``
     pair, whose first value names the second so only a replan after
     the fetch can reach it; they need their own target because
@@ -92,6 +93,7 @@ def build_secrets_env(
         os.environ["MIRAGE_INTEG_OLDPWD_DIR"] = "/data"
         os.environ["MIRAGE_INTEG_CDPATH_DIR"] = "/data"
         os.environ["MIRAGE_INTEG_OPTIND_START"] = "1"
+        os.environ["MIRAGE_INTEG_OPTERR"] = "0"
         os.environ["MIRAGE_INTEG_ARITH_BOUND"] = "7"
         os.environ["MIRAGE_INTEG_ARITH_HOP"] = "ARITH_END"
         os.environ["MIRAGE_INTEG_ARITH_END"] = "9"
@@ -111,6 +113,10 @@ def build_secrets_env(
             "OPTIND": {
                 "from": "env",
                 "key": "MIRAGE_INTEG_OPTIND_START"
+            },
+            "OPTERR": {
+                "from": "env",
+                "key": "MIRAGE_INTEG_OPTERR"
             },
             "ARITH_BOUND": {
                 "from": "env",
@@ -218,6 +224,11 @@ def build_secrets_env(
         "REDEF_TOKEN": {
             "from": "counter",
             "ref": "redef",
+            "key": "token"
+        },
+        "APPEND_TOKEN": {
+            "from": "counter",
+            "ref": "app",
             "key": "token"
         },
     }

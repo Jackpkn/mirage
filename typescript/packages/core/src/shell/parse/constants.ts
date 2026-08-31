@@ -77,11 +77,12 @@ export const DECL_PRINTER_HEADS: ReadonlySet<string> = new Set(['export', 'decla
 export const NAMEREF_HEADS: ReadonlySet<string> = new Set(['declare', 'typeset', 'local'])
 
 // Names a builtin reads with no `$NAME` in the text: `read` splits its
-// input on `$IFS` and `getopts` resumes from `$OPTIND`. `cd`'s names
-// depend on the operand shape (`cdReads`).
+// input on `$IFS`; `getopts` resumes from `$OPTIND` and consults
+// `$OPTERR` before printing a diagnostic. `cd`'s names depend on the
+// operand shape (`cdReads`).
 export const IMPLICIT_HEAD_READS: ReadonlyMap<string, readonly string[]> = new Map([
   ['read', ['IFS']],
-  ['getopts', ['OPTIND']],
+  ['getopts', ['OPTIND', 'OPTERR']],
 ])
 
 // A relative `cd` operand searches `$CDPATH` unless it is anchored

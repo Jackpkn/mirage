@@ -39,6 +39,10 @@ def _collect_names(node: tree_sitter.Node, out: set[str]) -> None:
         return
     field = TARGET_NAME_FIELDS.get(node.type)
     target = node.child_by_field_name(field) if field else None
+    # `+=` reads the target before writing it (`TOKEN+=x` starts from
+    # the existing value), so an append's name is a read here too.
+    if target is not None and any(c.type == "+=" for c in node.children):
+        target = None
     for child in node.children:
         if target is not None and child.id == target.id:
             continue
@@ -71,8 +75,9 @@ def referenced_names(node: tree_sitter.Node) -> frozenset[str]:
     construction: the worst a spurious name costs is one fetch. Walked
     everywhere -- command substitution bodies, redirect targets,
     heredoc bodies, arithmetic -- with two exceptions that are writes,
-    not reads (an assignment's own name, a for loop's variable), one
-    that runs later rather than now (a function definition's body,
+    not reads (an assignment's own name, unless it appends, since
+    ``+=`` starts from the value it extends; a for loop's variable),
+    one that runs later rather than now (a function definition's body,
     which the fill layer joins back in at invocation), and one the
     grammar gives for free: a single-quoted string tokenizes as
     `raw_string` with no children, so `'$X'` never reads X.

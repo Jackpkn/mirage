@@ -48,6 +48,10 @@ describe('referencedNames', () => {
     // The assignment's own name is a write, not a read; the
     // substitution body is walked.
     ['x=$(echo $Y)', ['Y']],
+    // An append starts from the value it extends, so its target is a
+    // read where a plain assignment's is not.
+    ['TOKEN+=x', ['TOKEN']],
+    ['export V+=$W', ['V', 'W']],
     ['cat <$F', ['F']],
     // The loop variable is a write; the word list is a read.
     ['for i in $L; do echo hi; done', ['L']],
@@ -167,8 +171,9 @@ describe('assignmentValues', () => {
     // A dynamic value reports its reads instead of a literal.
     ['n=$other', [['n', null, ['other']]]],
     ['n=', [['n', '', []]]],
-    // += still reports: the chase unions with the standing value.
-    ['n+=$q', [['n', null, ['q']]]],
+    // += reports its reads with the target among them: the append
+    // starts from the standing value.
+    ['n+=$q', [['n', null, ['n', 'q']]]],
     // An element write never replaces the whole value.
     ['a[0]=x', []],
     // A prefix assignment is one too.

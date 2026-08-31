@@ -32,6 +32,10 @@ from mirage.shell.parse import (arith_reads, assignment_values,
         # The assignment's own name is a write, not a read; the
         # substitution body is walked.
         ("x=$(echo $Y)", {"Y"}),
+        # An append starts from the value it extends, so its target is
+        # a read where a plain assignment's is not.
+        ("TOKEN+=x", {"TOKEN"}),
+        ("export V+=$W", {"V", "W"}),
         ("cat <$F", {"F"}),
         # The loop variable is a write; the word list is a read.
         ("for i in $L; do echo hi; done", {"L"}),
@@ -153,8 +157,9 @@ def test_arith_reads(command, names):
         # A dynamic value reports its reads instead of a literal.
         ("n=$other", (("n", None, frozenset({"other"})), )),
         ("n=", (("n", "", frozenset()), )),
-        # += still reports: the chase unions with the standing value.
-        ("n+=$q", (("n", None, frozenset({"q"})), )),
+        # += reports its reads with the target among them: the append
+        # starts from the standing value.
+        ("n+=$q", (("n", None, frozenset({"n", "q"})), )),
         # An element write never replaces the whole value.
         ("a[0]=x", ()),
         # A prefix assignment is one too.

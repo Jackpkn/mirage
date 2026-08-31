@@ -118,53 +118,85 @@ function suppliedOption(
 }
 
 /**
- * Env names of options the invocation's own words supply.
+ * Variables every visited reader of which was supplied. `carriers` is
+ * each visited level's `envByDest` table in walk order; `supplied` the
+ * `level:destination` keys the line certainly fills.
+ */
+function claimed(
+  carriers: readonly ReadonlyMap<string, string>[],
+  supplied: ReadonlySet<string>,
+): Set<string> {
+  const won = new Set<string>()
+  const blocked = new Set<string>()
+  carriers.forEach((table, level) => {
+    for (const [dest, variable] of table) {
+      if (supplied.has(`${String(level)}:${dest}`)) won.add(variable)
+      else blocked.add(variable)
+    }
+  })
+  for (const variable of blocked) won.delete(variable)
+  return won
+}
+
+/**
+ * Env names whose every reader on the walked path is supplied.
  *
  * The parser never reads `Option.env` for a destination the line
  * already fills (typed outranks environment), so a supplied option's
  * managed variable is not a read and must not fetch: a dead source
- * would otherwise fail a line that never consults it. Presence is
- * claimed only where consumption is certain, walking level by level
- * the way `walk` does and matching only the exact-token forms.
- * Anything subtler stops the scan -- keeping what was proven for a
- * word that only ends option parsing (`--`, an operand under a
- * remainder leaf, a verb that matches nothing), and keeping nothing
- * for a word whose consumption is in doubt (a cluster, an
- * abbreviation, `--help`, whose rendering itself reads the
- * environment) -- so a wrong guess can only over-fetch, never skip a
- * real read.
+ * would otherwise fail a line that never consults it. Tracking is by
+ * destination, never by bare name: two options may declare one
+ * variable, and a variable shared by a supplied and an unsupplied
+ * destination stays a read, because the unsupplied one still falls
+ * back to it. Presence is claimed only where consumption is certain,
+ * walking level by level the way `walk` does and matching only the
+ * exact-token forms. Anything subtler stops the scan -- keeping what
+ * was proven for a word that only ends option parsing (an operand
+ * under a remainder leaf, a verb that matches nothing; `--` also
+ * drops every variable readable below the group, since the walk keeps
+ * descending after it), and keeping nothing for a word whose
+ * consumption is in doubt (a cluster, an abbreviation, `--help`) --
+ * so a wrong guess can only over-fetch, never skip a real read.
  */
 export function suppliedEnvNames(spec: CLISpec, args: readonly string[]): ReadonlySet<string> {
-  const out = new Set<string>()
+  const supplied = new Set<string>()
   let node = spec
   let cs = compileSpec(node)
+  const carriers: ReadonlyMap<string, string>[] = [cs.envByDest]
   let i = 0
   while (i < args.length) {
     const token = args[i]
-    if (token === undefined || token === '--') return out
+    if (token === undefined) break
+    if (token === '--') {
+      const out = claimed(carriers, supplied)
+      for (const child of node.subcommands) {
+        for (const below of envNames(child)) out.delete(below)
+      }
+      return out
+    }
     if (token.startsWith('-') && token !== '-') {
       if (token === '--help' || token.startsWith('--help=')) return new Set()
       const hit = suppliedOption(cs, token, i + 1 < args.length)
       if (hit === null) return new Set()
       const [spelling, consumed] = hit
-      const variable = cs.envByDest.get(cs.destOf(spelling))
-      if (variable !== undefined) out.add(variable)
+      supplied.add(`${String(carriers.length - 1)}:${cs.destOf(spelling)}`)
       i += consumed
       continue
     }
     if (node.fn !== null || node.script !== null) {
-      if (cs.remainder) return out
+      if (cs.remainder) return claimed(carriers, supplied)
       i += 1
       continue
     }
     const child = findChild(node, token)
-    if (child === null) return out
+    if (child === null) return claimed(carriers, supplied)
     node = child
-    if (ownsArgv(node)) return out
+    if (ownsArgv(node)) return claimed(carriers, supplied)
     cs = compileSpec(node)
+    carriers.push(cs.envByDest)
     i += 1
   }
-  return out
+  return claimed(carriers, supplied)
 }
 
 /**
@@ -407,9 +439,12 @@ function resolveGroupPaths(cs: CompiledSpec, flags: WalkFlagBag, cwd: string): v
 }
 
 /**
- * Apply a node's declarative option rules after its scan: defaults land as
- * if typed and PATH values resolve, then choices and required are enforced,
- * the same order the flat parser uses. Returns a rendered refusal or null when
+ * Apply a node's declarative option rules after its scan: the environment
+ * lands first, then defaults, then PATH values resolve and choices and
+ * required are enforced, the same order the flat parser uses (parser.ts) --
+ * an option's declared variable outranks its default, yields to anything
+ * the line typed, and gets the same coercion, choices test and required
+ * credit a typed value does. Returns a rendered refusal or null when
  * satisfied.
  */
 function finishNode(
@@ -419,7 +454,14 @@ function finishNode(
   flags: WalkFlagBag,
   cwd: string,
   style: UsageStyle,
+  env: Readonly<Record<string, string>> | null,
 ): WalkResult | null {
+  for (const [dest, variable] of cs.envByDest) {
+    if (dest in flags) continue
+    const supplied = env?.[variable]
+    if (supplied === undefined || supplied === '') continue
+    flags[dest] = cs.multipleDests.has(dest) ? [supplied] : supplied
+  }
   for (const [dest, value] of cs.defaults) {
     if (!(dest in flags)) {
       flags[dest] = cs.multipleDests.has(dest) ? [value] : value
@@ -471,11 +513,19 @@ function finishNode(
  * on stderr with exit 1, and group-level option errors refuse on stderr
  * with exit 129. The leaf's own argv is not parsed here; it rides the
  * ordinary spec machinery. `head` is the installed head word, used in
- * every rendering so a renamed install prints its own name, and `cwd` is the
+ * every rendering so a renamed install prints its own name, `cwd` is the
  * working directory PATH-typed group values resolve against, so a group option
- * resolves the way a leaf option does.
+ * resolves the way a leaf option does, and `env` is the session environment,
+ * so a group option declaring `Option.env` fills at its own level exactly as
+ * a leaf one does in the flat parser.
  */
-export function walk(head: string, spec: CLISpec, argv: readonly string[], cwd = '/'): WalkResult {
+export function walk(
+  head: string,
+  spec: CLISpec,
+  argv: readonly string[],
+  cwd = '/',
+  env: Readonly<Record<string, string>> | null = null,
+): WalkResult {
   let node = spec
   // Read once off the root and never off a node: a program answers in one
   // voice at every level, so a subcommand cannot pick its own.
@@ -601,7 +651,7 @@ export function walk(head: string, spec: CLISpec, argv: readonly string[], cwd =
         i += 1
         continue
       }
-      const refused = finishNode(name, node, cs, flags, cwd, style)
+      const refused = finishNode(name, node, cs, flags, cwd, style, env)
       if (refused !== null) return refused
       // An alias resolves to its canonical node; the path records the
       // canonical name (argparse prog attribution: errors under `gws co`
@@ -617,7 +667,7 @@ export function walk(head: string, spec: CLISpec, argv: readonly string[], cwd =
       break
     }
     if (descended) continue
-    const refused = finishNode(name, node, cs, flags, cwd, style)
+    const refused = finishNode(name, node, cs, flags, cwd, style, env)
     if (refused !== null) return refused
     return new WalkResult({
       output: ENC.encode(nodeHelp(name, node, style)),

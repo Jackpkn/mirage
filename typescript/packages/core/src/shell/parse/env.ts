@@ -307,9 +307,9 @@ function cdReads(args: (string | null)[]): ReadonlySet<string> {
  * scan mirrors the expansion exactly: `~user`, a mid-word tilde and a
  * quoted one stay literal. `cd` reads `$HOME` bare, `$OLDPWD` for `-`
  * and `$CDPATH` for a searchable relative operand; `read` splits on
- * `$IFS`; `getopts` resumes from `$OPTIND`. These join the fill plan
- * exactly as a spelled reference does, so a managed `HOME` fetches for
- * `echo ~` the way it does for `echo $HOME`.
+ * `$IFS`; `getopts` resumes from `$OPTIND` and consults `$OPTERR`.
+ * These join the fill plan exactly as a spelled reference does, so a
+ * managed `HOME` fetches for `echo ~` the way it does for `echo $HOME`.
  */
 export function implicitReads(node: TSNodeLike): ReadonlySet<string> {
   const out = new Set<string>()

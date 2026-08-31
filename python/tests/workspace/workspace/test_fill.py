@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict
 
 from mirage import Action, CommandContext, Deny, MountMode, Policy, Workspace
 from mirage.commands.cli.types import CLISpec
-from mirage.commands.spec.types import Option
+from mirage.commands.spec.types import FlagValue, Option
 from mirage.io import IOResult
 from mirage.policy import Ask
 from mirage.policy.match import Outcome
@@ -1244,6 +1244,27 @@ async def _cli_noop(config, paths, *texts, **flags):
     return None, IOResult()
 
 
+_PROBE_FLAGS: list[dict[str, FlagValue]] = []
+
+
+async def _cli_probe(inv):
+    _PROBE_FLAGS.append(dict(inv.flags))
+    return None, IOResult()
+
+
+def _shared_cli_spec() -> CLISpec:
+    return CLISpec(name="mycli",
+                   options=(Option(long="--token",
+                                   type="str",
+                                   env="CLI_SHARED"), ),
+                   subcommands=(CLISpec(name="alpha",
+                                        fn=_cli_probe,
+                                        options=(Option(
+                                            long="--a",
+                                            type="str",
+                                            env="CLI_SHARED"), )), ))
+
+
 def _cli_spec() -> CLISpec:
     return CLISpec(name="mycli",
                    options=(Option(long="--token", type="str",
@@ -1336,6 +1357,94 @@ async def test_abbreviated_option_still_fetches():
         # and the fetch keeps today's shape, over-fetching only.
         await ws.execute("mycli --tok explicit alpha")
         assert sorted(calls) == ["alpha", "root"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_group_env_option_reaches_the_leaf():
+    calls, fetch = counting_source({"CLI_ROOT": "r0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"CLI_ROOT": {"from": "fake", "ref": "root"}})
+    try:
+        _PROBE_FLAGS.clear()
+        ws.register_cli(
+            "mycli",
+            CLISpec(name="mycli",
+                    options=(Option(long="--token", type="str",
+                                    env="CLI_ROOT"), ),
+                    subcommands=(CLISpec(name="alpha", fn=_cli_probe), )))
+        io = await ws.execute("mycli alpha")
+        assert io.exit_code == 0
+        assert calls == ["root"]
+        # The walk fills the group level from the same environment the
+        # leaf parse reads, so the fetched value reaches the handler.
+        assert _PROBE_FLAGS == [{"token": "r0"}]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_shared_env_with_an_unsupplied_reader_still_fetches():
+    calls, fetch = counting_source({"CLI_SHARED": "s0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"CLI_SHARED": {"from": "fake", "ref": "shared"}})
+    try:
+        _PROBE_FLAGS.clear()
+        ws.register_cli("mycli", _shared_cli_spec())
+        # --token is typed, but --a still falls back to the variable
+        # the two declare, so it must fetch.
+        io = await ws.execute("mycli --token typed alpha")
+        assert io.exit_code == 0
+        assert calls == ["shared"]
+        assert _PROBE_FLAGS == [{"token": "typed", "a": "s0"}]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_shared_env_with_every_reader_supplied_skips_the_fetch():
+    calls, fetch = counting_source({"CLI_SHARED": "s0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"CLI_SHARED": {"from": "fake", "ref": "shared"}})
+    try:
+        _PROBE_FLAGS.clear()
+        ws.register_cli("mycli", _shared_cli_spec())
+        io = await ws.execute("mycli --token typed alpha --a typed2")
+        assert io.exit_code == 0
+        assert calls == []
+        assert _PROBE_FLAGS == [{"token": "typed", "a": "typed2"}]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_append_assignment_fetches_before_extending():
+    calls, fetch = counting_source({"TOKEN": "t0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"TOKEN": {"from": "fake", "ref": "r"}})
+    try:
+        # The append alone on its line is a read: it starts from the
+        # value it extends, then the write detaches the name.
+        assert (await ws.execute("TOKEN+=x")).exit_code == 0
+        assert calls == ["r"]
+        io = await ws.execute("echo $TOKEN")
+        assert (await io.stdout_str()) == "t0x\n"
+        assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_getopts_consults_a_managed_opterr():
+    calls, fetch = counting_source({"OPTERR": "0"})
+    register_secrets("fake", FakeConfig, fetch)
+    ws = _ws({"OPTERR": {"from": "fake", "ref": "oe"}})
+    try:
+        io = await ws.execute("getopts a opt -z")
+        assert calls == ["oe"]
+        assert (await io.stderr_str()) == ""
+        assert io.exit_code == 0
     finally:
         await ws.close()
 

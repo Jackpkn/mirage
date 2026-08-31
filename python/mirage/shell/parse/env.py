@@ -315,9 +315,10 @@ def implicit_reads(node: tree_sitter.Node) -> frozenset[str]:
     mid-word tilde and a quoted one stay literal. ``cd`` reads
     ``$HOME`` bare, ``$OLDPWD`` for ``-`` and ``$CDPATH`` for a
     searchable relative operand; ``read`` splits on ``$IFS``;
-    ``getopts`` resumes from ``$OPTIND``. These join the fill plan
-    exactly as a spelled reference does, so a managed ``HOME`` fetches
-    for ``echo ~`` the way it does for ``echo $HOME``.
+    ``getopts`` resumes from ``$OPTIND`` and consults ``$OPTERR``.
+    These join the fill plan exactly as a spelled reference does, so a
+    managed ``HOME`` fetches for ``echo ~`` the way it does for
+    ``echo $HOME``.
 
     Args:
         node (tree_sitter.Node): root node from parse().

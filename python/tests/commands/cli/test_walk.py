@@ -16,7 +16,8 @@ from dataclasses import replace
 
 from mirage.commands.cli import CLISpec, walk
 from mirage.commands.cli.walk import (env_names, find_child, find_node,
-                                      invoked_env_names, node_help, owns_argv)
+                                      invoked_env_names, node_help, owns_argv,
+                                      supplied_env_names)
 from mirage.commands.spec.types import Option, UsageStyle
 from mirage.runtime.types import ScriptSource
 
@@ -474,3 +475,51 @@ def test_invoked_env_names_prunes_to_the_selected_path():
     # None means a word only the runtime can spell: the whole tree is
     # the only safe answer.
     assert invoked_env_names(tree, None) == env_names(tree)
+
+
+def test_group_env_fills_at_its_own_level():
+    result = walk("tool", _env_tree(), ["alpha", "deep"], "/", {
+        "ROOT_T": "rv",
+        "ALPHA_T": "av"
+    })
+    assert result.leaf is not None
+    assert result.group_flags == {"--token": "rv", "--a": "av"}
+
+
+def test_group_env_yields_to_the_typed_value():
+    result = walk("tool", _env_tree(), ["--token", "typed", "alpha", "deep"],
+                  "/", {"ROOT_T": "rv"})
+    assert result.leaf is not None
+    assert result.group_flags == {"--token": "typed"}
+
+
+def _shared_env_tree() -> CLISpec:
+    return CLISpec(
+        name="tool",
+        options=(Option(long="--token", type="str", env="SHARED"), ),
+        subcommands=(CLISpec(name="alpha",
+                             fn=_verb,
+                             options=(Option(long="--a",
+                                             type="str",
+                                             env="SHARED"), )), ),
+    )
+
+
+def test_supplied_env_names_tracks_destinations_not_names():
+    tree = _shared_env_tree()
+    # One reader supplied: the unsupplied one still falls back to the
+    # variable, so it stays a read.
+    assert supplied_env_names(tree, ["--token", "x", "alpha"]) == frozenset()
+    # Every reader on the path supplied: nothing consults it.
+    assert supplied_env_names(
+        tree, ["--token", "x", "alpha", "--a", "y"]) == {"SHARED"}
+
+
+def test_supplied_env_names_double_dash_keeps_descendants_readable():
+    # The walk keeps descending after --, so a variable a subcommand
+    # can still read is never claimed ...
+    assert supplied_env_names(_shared_env_tree(),
+                              ["--token", "x", "--"]) == frozenset()
+    # ... while one with no reader below the group stays claimed.
+    assert supplied_env_names(_env_tree(),
+                              ["--token", "x", "--"]) == {"ROOT_T"}

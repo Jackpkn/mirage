@@ -49,7 +49,8 @@ async function fetchDead(_config: DeadConfig, _ref: string): Promise<ResolvedSec
  * leak into the other batteries. `kind` "implicit" manages the names
  * read with no `$NAME` in the text (`HOME` for a tilde and a bare
  * `cd`, `OLDPWD` for `cd -`, `CDPATH` for a relative `cd`, `OPTIND`
- * for `getopts`) plus `ARITH_BOUND` for the arithmetic value chase
+ * and `OPTERR` for `getopts`) plus `ARITH_BOUND` for the arithmetic
+ * value chase
  * and the `ARITH_HOP`/`ARITH_END` pair, whose first value names the
  * second so only a replan after the fetch can reach it;
  * they need their own target because any whole-env case would fetch
@@ -82,6 +83,7 @@ export function buildSecretsEnv(kind: string): {
     process.env['MIRAGE_INTEG_OLDPWD_DIR'] = '/data'
     process.env['MIRAGE_INTEG_CDPATH_DIR'] = '/data'
     process.env['MIRAGE_INTEG_OPTIND_START'] = '1'
+    process.env['MIRAGE_INTEG_OPTERR'] = '0'
     process.env['MIRAGE_INTEG_ARITH_BOUND'] = '7'
     process.env['MIRAGE_INTEG_ARITH_HOP'] = 'ARITH_END'
     process.env['MIRAGE_INTEG_ARITH_END'] = '9'
@@ -91,6 +93,7 @@ export function buildSecretsEnv(kind: string): {
         OLDPWD: { from: 'env', key: 'MIRAGE_INTEG_OLDPWD_DIR' },
         CDPATH: { from: 'env', key: 'MIRAGE_INTEG_CDPATH_DIR' },
         OPTIND: { from: 'env', key: 'MIRAGE_INTEG_OPTIND_START' },
+        OPTERR: { from: 'env', key: 'MIRAGE_INTEG_OPTERR' },
         ARITH_BOUND: { from: 'env', key: 'MIRAGE_INTEG_ARITH_BOUND' },
         ARITH_HOP: { from: 'env', key: 'MIRAGE_INTEG_ARITH_HOP' },
         ARITH_END: { from: 'env', key: 'MIRAGE_INTEG_ARITH_END' },
@@ -134,6 +137,7 @@ export function buildSecretsEnv(kind: string): {
     ALIAS_TOKEN: { from: 'counter', ref: 'alias', key: 'token' },
     CLEAN_TOKEN: { from: 'counter', ref: 'clean', key: 'token' },
     REDEF_TOKEN: { from: 'counter', ref: 'redef', key: 'token' },
+    APPEND_TOKEN: { from: 'counter', ref: 'app', key: 'token' },
   }
   return { env, cleanup }
 }

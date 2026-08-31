@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { Option } from '../../commands/spec/types.ts'
+import { Option, type FlagValue } from '../../commands/spec/types.ts'
 import { CLISpec, type CLIVerbFn } from '../../commands/cli/types.ts'
 import { RAMResource } from '../../resource/ram/ram.ts'
 import type { Runtime } from '../../runtime/base.ts'
@@ -109,6 +109,20 @@ function envCliSpec(): CLISpec {
         name: 'beta',
         fn: leaf,
         options: [new Option({ long: '--b', type: 'str', env: 'CLI_BETA' })],
+      }),
+    ],
+  })
+}
+
+function sharedCliSpec(probe: CLIVerbFn): CLISpec {
+  return new CLISpec({
+    name: 'mycli',
+    options: [new Option({ long: '--token', type: 'str', env: 'CLI_SHARED' })],
+    subcommands: [
+      new CLISpec({
+        name: 'alpha',
+        fn: probe,
+        options: [new Option({ long: '--a', type: 'str', env: 'CLI_SHARED' })],
       }),
     ],
   })
@@ -1360,6 +1374,107 @@ describe('fillEnv through execute', () => {
       // and the fetch keeps today's shape, over-fetching only.
       await ws.execute('mycli --tok explicit alpha')
       expect([...calls].sort()).toEqual(['alpha', 'root'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a group env option reaches the leaf', async () => {
+    const seen: Record<string, FlagValue>[] = []
+    const probe: CLIVerbFn = (inv) => {
+      seen.push({ ...inv.flags })
+      return null
+    }
+    const { calls, fetch } = countingSource({ CLI_ROOT: 'r0' })
+    registerSecrets('fake-cli-group-env', FakeConfig, fetch)
+    const ws = await makeWs({ CLI_ROOT: { from: 'fake-cli-group-env', ref: 'root' } })
+    try {
+      ws.registerCli(
+        'mycli',
+        new CLISpec({
+          name: 'mycli',
+          options: [new Option({ long: '--token', type: 'str', env: 'CLI_ROOT' })],
+          subcommands: [new CLISpec({ name: 'alpha', fn: probe })],
+        }),
+      )
+      const io = await ws.execute('mycli alpha')
+      expect(io.exitCode).toBe(0)
+      expect(calls).toEqual(['root'])
+      // The walk fills the group level from the same environment the
+      // leaf parse reads, so the fetched value reaches the handler.
+      expect(seen).toEqual([{ token: 'r0' }])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a shared env with an unsupplied reader still fetches', async () => {
+    const seen: Record<string, FlagValue>[] = []
+    const probe: CLIVerbFn = (inv) => {
+      seen.push({ ...inv.flags })
+      return null
+    }
+    const { calls, fetch } = countingSource({ CLI_SHARED: 's0' })
+    registerSecrets('fake-cli-shared-one', FakeConfig, fetch)
+    const ws = await makeWs({ CLI_SHARED: { from: 'fake-cli-shared-one', ref: 'shared' } })
+    try {
+      ws.registerCli('mycli', sharedCliSpec(probe))
+      // --token is typed, but --a still falls back to the variable the
+      // two declare, so it must fetch.
+      const io = await ws.execute('mycli --token typed alpha')
+      expect(io.exitCode).toBe(0)
+      expect(calls).toEqual(['shared'])
+      expect(seen).toEqual([{ token: 'typed', a: 's0' }])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a shared env with every reader supplied skips the fetch', async () => {
+    const seen: Record<string, FlagValue>[] = []
+    const probe: CLIVerbFn = (inv) => {
+      seen.push({ ...inv.flags })
+      return null
+    }
+    const { calls, fetch } = countingSource({ CLI_SHARED: 's0' })
+    registerSecrets('fake-cli-shared-all', FakeConfig, fetch)
+    const ws = await makeWs({ CLI_SHARED: { from: 'fake-cli-shared-all', ref: 'shared' } })
+    try {
+      ws.registerCli('mycli', sharedCliSpec(probe))
+      const io = await ws.execute('mycli --token typed alpha --a typed2')
+      expect(io.exitCode).toBe(0)
+      expect(calls).toEqual([])
+      expect(seen).toEqual([{ token: 'typed', a: 'typed2' }])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('an append assignment fetches before extending', async () => {
+    const { calls, fetch } = countingSource({ TOKEN: 't0' })
+    registerSecrets('fake-append', FakeConfig, fetch)
+    const ws = await makeWs({ TOKEN: { from: 'fake-append', ref: 'r' } })
+    try {
+      // The append alone on its line is a read: it starts from the
+      // value it extends, then the write detaches the name.
+      expect((await ws.execute('TOKEN+=x')).exitCode).toBe(0)
+      expect(calls).toEqual(['r'])
+      expect(stdoutStr(await ws.execute('echo $TOKEN'))).toBe('t0x\n')
+      expect(calls).toEqual(['r'])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('getopts consults a managed OPTERR', async () => {
+    const { calls, fetch } = countingSource({ OPTERR: '0' })
+    registerSecrets('fake-opterr', FakeConfig, fetch)
+    const ws = await makeWs({ OPTERR: { from: 'fake-opterr', ref: 'oe' } })
+    try {
+      const io = await ws.execute('getopts a opt -z')
+      expect(calls).toEqual(['oe'])
+      expect(stderrStr(io)).toBe('')
+      expect(io.exitCode).toBe(0)
     } finally {
       await ws.close()
     }

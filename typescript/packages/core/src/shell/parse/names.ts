@@ -45,7 +45,10 @@ function collectNames(node: TSNodeLike, out: Set<string>): void {
     return
   }
   const field = TARGET_NAME_FIELDS[node.type]
-  const target = field !== undefined ? (node.childForFieldName?.(field) ?? null) : null
+  let target = field !== undefined ? (node.childForFieldName?.(field) ?? null) : null
+  // `+=` reads the target before writing it (`TOKEN+=x` starts from
+  // the existing value), so an append's name is a read here too.
+  if (target !== null && node.children.some((c) => c.type === '+=')) target = null
   for (const child of node.children) {
     if (target !== null && sameNode(child, target)) continue
     collectNames(child, out)
@@ -75,11 +78,12 @@ export function* walkNamedOutsideDefs(node: TSNodeLike): Generator<TSNodeLike> {
  * construction: the worst a spurious name costs is one fetch. Walked
  * everywhere -- command substitution bodies, redirect targets, heredoc
  * bodies, arithmetic -- with two exceptions that are writes, not reads
- * (an assignment's own name, a for loop's variable), one that runs
- * later rather than now (a function definition's body, which the fill
- * layer joins back in at invocation), and one the grammar gives for
- * free: a single-quoted string tokenizes as `raw_string` with no
- * children, so `'$X'` never reads X.
+ * (an assignment's own name, unless it appends, since `+=` starts from
+ * the value it extends; a for loop's variable), one that runs later
+ * rather than now (a function definition's body, which the fill layer
+ * joins back in at invocation), and one the grammar gives for free: a
+ * single-quoted string tokenizes as `raw_string` with no children, so
+ * `'$X'` never reads X.
  */
 export function referencedNames(node: TSNodeLike): ReadonlySet<string> {
   const out = new Set<string>()

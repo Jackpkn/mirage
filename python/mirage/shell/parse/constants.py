@@ -75,11 +75,12 @@ DECL_PRINTER_HEADS = frozenset({"export", "declare", "typeset"})
 NAMEREF_HEADS = frozenset({"declare", "typeset", "local"})
 
 # Names a builtin reads with no ``$NAME`` in the text: ``read`` splits
-# its input on ``$IFS`` and ``getopts`` resumes from ``$OPTIND``.
-# ``cd``'s names depend on the operand shape (``cd_reads``).
+# its input on ``$IFS``; ``getopts`` resumes from ``$OPTIND`` and
+# consults ``$OPTERR`` before printing a diagnostic. ``cd``'s names
+# depend on the operand shape (``cd_reads``).
 IMPLICIT_HEAD_READS: dict[str, frozenset[str]] = {
     "read": frozenset({"IFS"}),
-    "getopts": frozenset({"OPTIND"}),
+    "getopts": frozenset({"OPTIND", "OPTERR"}),
 }
 
 # A relative ``cd`` operand searches ``$CDPATH`` unless it is anchored

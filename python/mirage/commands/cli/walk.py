@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
 from mirage.commands.cli.constants import CLAP_EXIT, USAGE_EXIT
@@ -157,35 +157,63 @@ def _supplied_option(cs: CompiledSpec, token: str,
     return None
 
 
+def _claimed(carriers: Sequence[Mapping[str, str]],
+             supplied: set[tuple[int, str]]) -> frozenset[str]:
+    """Variables every visited reader of which was supplied.
+
+    Args:
+        carriers (Sequence[Mapping[str, str]]): each visited level's
+            ``env_by_dest`` table, in walk order.
+        supplied (set[tuple[int, str]]): the (level, destination) pairs
+            the line certainly fills.
+    """
+    claimed: set[str] = set()
+    blocked: set[str] = set()
+    for level, table in enumerate(carriers):
+        for dest, variable in table.items():
+            if (level, dest) in supplied:
+                claimed.add(variable)
+            else:
+                blocked.add(variable)
+    return frozenset(claimed - blocked)
+
+
 def supplied_env_names(spec: CLISpec, args: Sequence[str]) -> frozenset[str]:
-    """Env names of options the invocation's own words supply.
+    """Env names whose every reader on the walked path is supplied.
 
     The parser never reads ``Option.env`` for a destination the line
     already fills (typed outranks environment), so a supplied option's
     managed variable is not a read and must not fetch: a dead source
-    would otherwise fail a line that never consults it. Presence is
-    claimed only where consumption is certain, walking level by level
-    the way ``walk`` does and matching only the exact-token forms.
-    Anything subtler stops the scan -- keeping what was proven for a
-    word that only ends option parsing (``--``, an operand under a
-    remainder leaf, a verb that matches nothing), and keeping nothing
-    for a word whose consumption is in doubt (a cluster, an
-    abbreviation, ``--help``, whose rendering itself reads the
-    environment) -- so a wrong guess can only over-fetch, never skip a
-    real read.
+    would otherwise fail a line that never consults it. Tracking is by
+    destination, never by bare name: two options may declare one
+    variable, and a variable shared by a supplied and an unsupplied
+    destination stays a read, because the unsupplied one still falls
+    back to it. Presence is claimed only where consumption is certain,
+    walking level by level the way ``walk`` does and matching only the
+    exact-token forms. Anything subtler stops the scan -- keeping what
+    was proven for a word that only ends option parsing (an operand
+    under a remainder leaf, a verb that matches nothing; ``--`` also
+    drops every variable readable below the group, since the walk
+    keeps descending after it), and keeping nothing for a word whose
+    consumption is in doubt (a cluster, an abbreviation, ``--help``) --
+    so a wrong guess can only over-fetch, never skip a real read.
 
     Args:
         spec (CLISpec): the installed tree's root.
         args (Sequence[str]): the invocation's literal argument words.
     """
-    out: set[str] = set()
+    supplied: set[tuple[int, str]] = set()
     node = spec
     cs = compile_spec(node)
+    carriers: list[Mapping[str, str]] = [cs.env_by_dest]
     i = 0
     while i < len(args):
         token = args[i]
         if token == "--":
-            return frozenset(out)
+            below: set[str] = set()
+            for sub in node.subcommands:
+                below |= env_names(sub)
+            return _claimed(carriers, supplied) - below
         if token.startswith("-") and token != "-":
             if token == "--help" or token.startswith("--help="):
                 return frozenset()
@@ -193,25 +221,24 @@ def supplied_env_names(spec: CLISpec, args: Sequence[str]) -> frozenset[str]:
             if hit is None:
                 return frozenset()
             spelling, consumed = hit
-            variable = cs.env_by_dest.get(cs.dest_of(spelling))
-            if variable is not None:
-                out.add(variable)
+            supplied.add((len(carriers) - 1, cs.dest_of(spelling)))
             i += consumed
             continue
         if node.fn is not None or node.script is not None:
             if cs.remainder:
-                return frozenset(out)
+                return _claimed(carriers, supplied)
             i += 1
             continue
         child = find_child(node, token)
         if child is None:
-            return frozenset(out)
+            return _claimed(carriers, supplied)
         node = child
         if owns_argv(node):
-            return frozenset(out)
+            return _claimed(carriers, supplied)
         cs = compile_spec(node)
+        carriers.append(cs.env_by_dest)
         i += 1
-    return frozenset(out)
+    return _claimed(carriers, supplied)
 
 
 def owns_argv(node: CLISpec) -> bool:
@@ -479,14 +506,22 @@ def _resolve_group_paths(cs: CompiledSpec, flags: WalkFlagBag,
             flags[dest] = resolve_path(value, cwd)
 
 
-def _finish_node(name: str, node: CLISpec, cs: CompiledSpec,
-                 flags: WalkFlagBag, cwd: str,
-                 style: UsageStyle) -> WalkResult | None:
+def _finish_node(name: str,
+                 node: CLISpec,
+                 cs: CompiledSpec,
+                 flags: WalkFlagBag,
+                 cwd: str,
+                 style: UsageStyle,
+                 env: Mapping[str, str] | None = None) -> WalkResult | None:
     """Apply a node's declarative option rules after its scan.
 
-    Defaults land as if typed and PATH values resolve, then choices and
-    required are enforced, the same order the flat parser uses. Returns
-    a rendered refusal or None when the node is satisfied.
+    The environment lands first, then defaults, then PATH values
+    resolve and choices and required are enforced, the same order the
+    flat parser uses (parser.py): an option's declared variable
+    outranks its default, yields to anything the line typed, and gets
+    the same coercion, choices test and required credit a typed value
+    does. Returns a rendered refusal or None when the node is
+    satisfied.
 
     Args:
         name (str): display path walked so far.
@@ -495,7 +530,19 @@ def _finish_node(name: str, node: CLISpec, cs: CompiledSpec,
         flags (WalkFlagBag): accumulated group flags.
         cwd (str): current working directory, for PATH values.
         style (UsageStyle): the root's dialect, for any refusal.
+        env (Mapping[str, str] | None): session environment for
+            ``Option.env`` fallbacks, None outside a session.
     """
+    for dest, variable in cs.env_by_dest.items():
+        if dest in flags:
+            continue
+        supplied = env.get(variable) if env else None
+        if not supplied:
+            continue
+        if dest in cs.multiple_dests:
+            flags[dest] = [supplied]
+        else:
+            flags[dest] = supplied
     for dest, default in cs.defaults.items():
         if dest not in flags:
             if dest in cs.multiple_dests:
@@ -537,7 +584,8 @@ def _finish_node(name: str, node: CLISpec, cs: CompiledSpec,
 def walk(head: str,
          spec: CLISpec,
          argv: Sequence[str],
-         cwd: str = "/") -> WalkResult:
+         cwd: str = "/",
+         env: Mapping[str, str] | None = None) -> WalkResult:
     """Resolve one command line against a CLI tree.
 
     Each level consumes its own options in POSIX order (stop at the
@@ -556,6 +604,9 @@ def walk(head: str,
         argv (Sequence[str]): the words after the head.
         cwd (str): working directory for PATH-typed group values, so a
             group option resolves the way a leaf option does.
+        env (Mapping[str, str] | None): session environment, so a group
+            option declaring ``Option.env`` fills at its own level
+            exactly as a leaf one does in the flat parser.
     """
     node = spec
     # Read once off the root and never off a node: a program answers in
@@ -684,7 +735,7 @@ def walk(head: str,
                                         token=unknown)
                 i += 1
                 continue
-            refused = _finish_node(name, node, cs, flags, cwd, style)
+            refused = _finish_node(name, node, cs, flags, cwd, style, env)
             if refused is not None:
                 return refused
             # An alias resolves to its canonical node; the path records
@@ -700,7 +751,7 @@ def walk(head: str,
             break
         if descended:
             continue
-        refused = _finish_node(name, node, cs, flags, cwd, style)
+        refused = _finish_node(name, node, cs, flags, cwd, style, env)
         if refused is not None:
             return refused
         return WalkResult(output=node_help(name, node, style).encode(),
