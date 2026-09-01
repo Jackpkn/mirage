@@ -532,10 +532,16 @@ function walkInterpolate(v: unknown, env: Record<string, string>, missing: strin
     return v.map((item) => walkInterpolate(item, env, missing))
   }
   if (v !== null && typeof v === 'object') {
-    const out: Record<string, unknown> = {}
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      out[k] = walkInterpolate(val, env, missing)
-    }
+    // fromEntries, not keyed assignment: this copy walks the whole
+    // config, so a `__proto__` key anywhere in it (a source instance,
+    // a source's own config field) would assign through the prototype
+    // setter and vanish before anything downstream saw it.
+    const out = Object.fromEntries(
+      Object.entries(v as Record<string, unknown>).map(([k, val]) => [
+        k,
+        walkInterpolate(val, env, missing),
+      ]),
+    )
     return out
   }
   return v

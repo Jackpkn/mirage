@@ -164,7 +164,7 @@ describe('workspaces router', () => {
       url: '/v1/workspaces',
       payload: { id: 'src-s', config: { mounts: { '/': { resource: 'ram', mode: 'write' } } } },
     })
-    for (const bad of [{ prod: { source: 'nope' } }, { prod: { nosource: 1 } }]) {
+    for (const bad of [{ prod: { source: 'nope' } }, { prod: { nosource: 1 } }, []]) {
       const res = await app.inject({
         method: 'POST',
         url: '/v1/workspaces/src-s/clone',

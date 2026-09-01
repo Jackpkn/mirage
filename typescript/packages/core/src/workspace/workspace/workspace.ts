@@ -70,6 +70,7 @@ import { provisionNode } from '../node/provision_node.ts'
 import { buildFilePrompt } from '../file_prompt.ts'
 import { getCurrentSessionFor } from '../../context/session_context.ts'
 import { SourceBlockSchema, type SourceBlock } from '../../secrets/config.ts'
+import { SecretsError } from '../../secrets/errors.ts'
 import { sourceFor } from '../../secrets/registry.ts'
 import { resolveSources } from '../../secrets/sources.ts'
 import type { ResolvedSource } from '../../secrets/types.ts'
@@ -183,6 +184,21 @@ export class Workspace {
     // The source table, kept as declarations: building one reads its
     // bootstrap pointers, which is I/O, and this constructor is sync.
     // `secretSources` builds them once, before the first fetch.
+    // Checked here, so every caller-supplied route is covered at once:
+    // an array arrives from an untyped REST override, and
+    // `Object.entries` on one yields nothing, so the declarations
+    // would silently vanish and every restored pointer would read as
+    // an unknown source.
+    // Read as `unknown` on purpose: the declared type says mapping,
+    // and the value comes from an untyped REST override that can say
+    // otherwise, which is exactly the case being caught.
+    const declared: unknown = options.secrets
+    if (
+      declared !== undefined &&
+      (typeof declared !== 'object' || declared === null || Array.isArray(declared))
+    ) {
+      throw new SecretsError('config `secrets` must be a mapping')
+    }
     this.sourceBlocks = Object.fromEntries(
       Object.entries(options.secrets ?? {}).map(([name, block]) => [
         name,

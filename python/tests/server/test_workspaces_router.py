@@ -485,7 +485,15 @@ async def test_clone_with_a_bad_secrets_override_is_a_bad_request():
                            base_url="http://test") as client:
         r = await client.post("/v1/workspaces", json=_minimal_config())
         wid = r.json()["id"]
-        for bad in ({"prod": {"source": "nope"}}, {"prod": {"nosource": 1}}):
+        for bad in ({
+                "prod": {
+                    "source": "nope"
+                }
+        }, {
+                "prod": {
+                    "nosource": 1
+                }
+        }, []):
             r = await client.post(f"/v1/workspaces/{wid}/clone",
                                   json={"override": {
                                       "secrets": bad

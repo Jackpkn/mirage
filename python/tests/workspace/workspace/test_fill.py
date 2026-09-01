@@ -1991,6 +1991,15 @@ async def test_from_state_takes_the_block_the_deployment_supplies():
 
 
 @pytest.mark.asyncio
+async def test_a_non_mapping_secrets_block_is_refused():
+    """An untyped REST override can hand over a list, and `.items()`
+    on one yields nothing -- the declarations would vanish silently and
+    every restored pointer would read as an unknown source."""
+    with pytest.raises(SecretsError, match="must be a mapping"):
+        _ws({}, secrets=[])
+
+
+@pytest.mark.asyncio
 async def test_an_instance_naming_an_unknown_source_fails_at_construction():
     with pytest.raises(SecretsError, match="unknown secrets source"):
         _ws({}, secrets={"prod": {"source": "nope"}})

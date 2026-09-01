@@ -39,6 +39,7 @@ from mirage.runtime.base import Runtime
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.routing import RouteDecision, RoutePolicy
 from mirage.secrets.config import EnvVar, SourceBlock
+from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import source_for
 from mirage.secrets.sources import resolve_sources
 from mirage.secrets.types import ResolvedSource
@@ -177,6 +178,14 @@ class Workspace:
         # secret. Spelling it `secret_blocks` made every reader (and
         # CodeQL's name heuristic, which flagged the instance name in a
         # log line as a credential) believe otherwise.
+        # Checked here, so every caller-supplied route is covered at
+        # once: a list arrives from an untyped REST override, and
+        # `Object.entries`/`.items()` on one yields nothing, so the
+        # declarations would silently vanish and every restored pointer
+        # would read as an unknown source.
+        if secrets is not None and not isinstance(secrets, Mapping):
+            raise SecretsError("config `secrets` must be a mapping, got "
+                               f"{type(secrets).__name__}")
         self._source_blocks: dict[str, SourceBlock] = {
             name: (block if isinstance(block, SourceBlock) else
                    SourceBlock.model_validate(block))

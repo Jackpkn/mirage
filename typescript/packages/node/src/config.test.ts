@@ -1177,3 +1177,18 @@ describe('the secrets block', () => {
     expect(() => loadWorkspaceConfig({ ...base, secrets: 'nope' })).toThrow(/must be a mapping/)
   })
 })
+
+describe('config interpolation', () => {
+  it('keeps a __proto__ key through the walk', () => {
+    // The copy walks the whole config, so keyed assignment would drop
+    // a `__proto__` source instance or config field before anything
+    // downstream saw it.
+    const cfg = Object.fromEntries([
+      ['__proto__', 'kept'],
+      ['plain', 'v'],
+    ])
+    const out = interpolateEnv(cfg, {})
+    expect(Object.hasOwn(out, '__proto__')).toBe(true)
+    expect((out as Record<string, unknown>).__proto__).toBe('kept')
+  })
+})
