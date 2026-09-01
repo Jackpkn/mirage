@@ -46,7 +46,9 @@ import { hfHubRoutes } from './routes.ts'
 import {
   FS_INVALID,
   FS_NOT_FOUND,
+  FS_TEXT_ONLY,
   catMarkdown,
+  type CatBounds,
   detailsMarkdown,
   fsError,
   fsRecovery,
@@ -348,6 +350,166 @@ function fsFail(code: string, message: string): FsOut {
   return { text: fsError(code, message), error: { code, message } }
 }
 
+// A bare `cat` is BOUNDED, and these are the live server's own numbers rather
+// than a guess at them. It documents its limits at hf://README.md -- a page the
+// fake does not serve but the real server does -- and that table says
+// `cat --max-bytes` is 20,000 by default and 80,000 at most.
+//
+// This repo used one invented 64KiB constant for both roles until the page was
+// read. It was wrong twice over: too generous as a default, too strict as a
+// ceiling, and it silently clamped where upstream refuses. A fake that returns
+// whole files would be a different server than the one being measured; so is a
+// fake that returns the wrong number of bytes on every cat.
+const CAT_DEFAULT_BYTES = 20_000
+const CAT_MAX_BYTES = 80_000
+
+interface CatArgs {
+  offset: number
+  maxBytes: number
+}
+
+function catArgs(rest: string[]): CatArgs | Refusal {
+  const bad = (message: string): Refusal => ({ code: FS_INVALID, message })
+  const out: CatArgs = { offset: 0, maxBytes: CAT_DEFAULT_BYTES }
+  for (let i = 0; i < rest.length; i += 2) {
+    const flag = rest[i] ?? ''
+    if (flag !== '--offset' && flag !== '--max-bytes') {
+      return bad(`EINVAL: unexpected argument for cat: ${flag}`)
+    }
+    const raw = rest[i + 1]
+    if (raw === undefined) return bad(`EINVAL: ${flag} needs a value`)
+    // A sign parses and then fails the range test, which is upstream's order
+    // and not a detail: `--max-bytes -1` earns the RANGE message there, not
+    // the integer one, so a caller reading the error learns which rule it
+    // broke. Both sentences below are the live server's, verbatim.
+    if (!/^-?\d+$/.test(raw)) return bad(`EINVAL: ${flag} requires an integer`)
+    const value = Number(raw)
+    if (flag === '--offset') {
+      if (value < 0) return bad('EINVAL: offset must be non-negative')
+      out.offset = value
+      continue
+    }
+    if (value < 0 || value > CAT_MAX_BYTES) {
+      return bad(`EINVAL: max_bytes must be between 0 and ${String(CAT_MAX_BYTES)}`)
+    }
+    // Zero is not an empty read upstream, it is the MAXIMUM -- the range is
+    // documented as "between 0 and 80000" and `--max-bytes 0` on a 466KB file
+    // answers 80,000 bytes. Read as "no bytes" this fake would hand back an
+    // empty page where the live server hands back the largest one it serves,
+    // which is the widest gap any single flag value could open between them.
+    out.maxBytes = value === 0 ? CAT_MAX_BYTES : value
+  }
+  return out
+}
+
+// Where a bounded read may stop. A cut INSIDE a multi-byte character makes
+// `toString('utf8')` replace both halves with U+FFFD, and `next_offset` then
+// names a byte the caller never received whole -- so the pages of a paginated
+// read cannot be reassembled into the file, which is the one thing pagination
+// is for.
+//
+// Upstream appears to do the same, and forward rather than back: a default cat
+// of a 466KB tokenizer.json answers `Bytes: 20001` against a documented default
+// of 20,000, which is a bound overshot by exactly enough to finish a character.
+// Forward also means a character wider than the bound still makes progress,
+// instead of answering an empty page at the same offset forever.
+//
+// The cap keeps the bound a bound. `cat` refuses binary by name above, but a
+// name is not a guarantee -- a .txt or .json holding invalid UTF-8 is served,
+// and a run of continuation bytes in one would carry an uncapped walk to the
+// end of the file. Three bytes is the most a walk can ever need: a UTF-8
+// sequence is four bytes at its widest, so a lead byte is never further than
+// three continuation bytes from the next boundary, and the walk stops there
+// whether or not it found one.
+const UTF8_MAX_TAIL = 3
+
+function utf8End(buf: Buffer, end: number): number {
+  let at = end
+  while (at < buf.length && at - end < UTF8_MAX_TAIL && ((buf[at] ?? 0) & 0xc0) === 0x80) {
+    at += 1
+  }
+  return at
+}
+
+// Where a bounded read may START, which upstream resolves the other way: the
+// offset RETREATS to the beginning of the character it landed in, rather than
+// advancing past it. Read against the live server, on a card whose byte 61
+// opens the three-byte `\u7c73`:
+//
+//   --offset 61 --max-bytes 12  ->  bytes=12  next=73  '\u7c73\u996d\u662f\u4e00'
+//   --offset 62 --max-bytes 12  ->  bytes=15  next=76  '\u7c73\u996d\u662f\u4e00\u79cd'
+//   --offset 63 --max-bytes 12  ->  bytes=15  next=76  '\u7c73\u996d\u662f\u4e00\u79cd'
+//   --offset 64 --max-bytes 12  ->  bytes=12  next=76  '\u996d\u662f\u4e00\u79cd'
+//
+// 62 and 63 both answer a page that BEGINS at 61 -- the character is served
+// whole rather than dropped -- and the bound is still measured from the offset
+// the caller asked for, so the page runs to 76 and reports 15 bytes for a
+// 12-byte request. Retreating cannot loop: the start only ever moves earlier,
+// while `next_offset` is an end that always lands on a boundary, so a caller
+// paginating from a reported offset never enters this path at all.
+function utf8Start(buf: Buffer, from: number): number {
+  let at = from
+  while (at > 0 && from - at < UTF8_MAX_TAIL && ((buf[at] ?? 0) & 0xc0) === 0x80) {
+    at -= 1
+  }
+  return at
+}
+
+// `cat` is TEXT-ONLY upstream, and refuses on the name rather than on the
+// bytes: "The file extension or MIME type is known to be binary." That makes
+// the refusal cheap -- no blob is fetched -- and makes the list of suffixes
+// the whole of the behaviour.
+//
+// `.bin`, `.safetensors` and `.h5` were each confirmed against a live repo.
+// The rest are this fake's reconstruction of the classes hf://README.md names
+// in its own words -- "model weights, archives, images, media, Parquet" -- and
+// are the one part of the cat surface not read off the live server. The list
+// earns its place anyway: the huggingface-upload fixture carries
+// pytorch_model.bin and figures/*.png, so an agent that cats them is refused
+// upstream and would be handed bytes by a fake that skipped this.
+const BINARY_SUFFIX = [
+  '.bin',
+  '.safetensors',
+  '.h5',
+  '.ckpt',
+  '.pt',
+  '.pth',
+  '.onnx',
+  '.msgpack',
+  '.tflite',
+  '.zip',
+  '.tar',
+  '.gz',
+  '.tgz',
+  '.bz2',
+  '.xz',
+  '.7z',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.bmp',
+  '.mp3',
+  '.mp4',
+  '.wav',
+  '.flac',
+  '.ogg',
+  '.webm',
+  '.mov',
+  '.parquet',
+  '.arrow',
+  '.npy',
+  '.npz',
+  '.pkl',
+  '.pdf',
+]
+
+function binaryName(path: string): boolean {
+  const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase()
+  return BINARY_SUFFIX.some((suffix) => name.endsWith(suffix))
+}
+
 async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> {
   if (cmd === 'attach' || cmd === 'search') {
     return fsFail(
@@ -358,8 +520,11 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
   const uri = args[0] ?? ''
   const where = locate(uri)
   if (!('kind' in where)) return fsFail(where.code, where.message)
-  if (args.length > 1) {
-    return fsFail(FS_INVALID, `EINVAL: unexpected argument for ${cmd}: ${args[1] ?? ''}`)
+  const rest = args.slice(1)
+  // Every other command here takes the URI alone. `cat` takes the two flags
+  // its own captured grammar advertises, and refuses the rest below.
+  if (cmd !== 'cat' && rest.length > 0) {
+    return fsFail(FS_INVALID, `EINVAL: unexpected argument for ${cmd}: ${rest[0] ?? ''}`)
   }
   if (cmd === 'ls' || cmd === 'find') {
     const reply = await treeAt(at, where, cmd === 'find')
@@ -416,6 +581,16 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
   }
   if (cmd === 'cat') {
     if (where.path === '') return fsFail(FS_INVALID, `EINVAL: cat needs a file path: ${uri}`)
+    const flags = catArgs(rest)
+    if ('code' in flags) return fsFail(flags.code, flags.message)
+    if (binaryName(where.path)) {
+      return fsFail(
+        FS_TEXT_ONLY,
+        `Refusing to cat non-text file: ${where.path.slice(where.path.lastIndexOf('/') + 1)}. ` +
+          `The file extension or MIME type is known to be binary. ` +
+          `Use ls or stat for file metadata.`,
+      )
+    }
     const reply = await callRoute(
       at,
       'GET',
@@ -424,15 +599,32 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
     if (reply.status !== 200 || !Buffer.isBuffer(reply.body)) {
       return fsFail(FS_NOT_FOUND, `File does not exist: ${where.path}`)
     }
+    // The whole file is fetched and then sliced, because the resolve route
+    // serves a stored blob rather than a range. What the bound protects is the
+    // TOOL RESULT, which is the thing that costs the caller.
+    const whole = reply.body
+    const asked = Math.min(flags.offset, whole.length)
+    const from = utf8Start(whole, asked)
+    // Measured from the offset the caller ASKED for, not from the retreated
+    // one, which is what makes a mid-character read report more bytes than it
+    // requested rather than fewer.
+    const end = utf8End(whole, Math.min(asked + flags.maxBytes, whole.length))
+    const slice = whole.subarray(from, end)
+    const bounds: CatBounds = { offset: from, total: whole.length, next: end }
+    const truncated = bounds.next < bounds.total
     return {
-      text: catMarkdown(uri, where.path, reply.body),
+      text: catMarkdown(uri, where.path, slice, bounds),
       result: {
         uri,
         op: 'cat',
         path: where.path,
-        content: reply.body.toString('utf8'),
-        bytes: reply.body.length,
-        truncated: false,
+        content: slice.toString('utf8'),
+        bytes: slice.length,
+        truncated,
+        // Both names are the captured schema's own vocabulary, not coined:
+        // `truncation_reason` is an enum there and `max_bytes` is one of its
+        // four values.
+        ...(truncated ? { truncation_reason: 'max_bytes', next_offset: bounds.next } : {}),
       },
     }
   }
