@@ -30,6 +30,13 @@ describe('builtin registration', () => {
     }
   })
 
+  it('the 1password builtin resolves while its peer is installed', () => {
+    // The probe asks the resolver, it does not load the SDK, so this
+    // passes here (devDependency) and refuses with the package to
+    // install where the optional peer is absent.
+    expect(() => sourceFor('1password')).not.toThrowError()
+  })
+
   it('the env builtin fetches through the lazy wrapper', async () => {
     process.env.MIRAGE_TEST_BUILTIN_SECRET = 'armed'
     const secret = await fetchSecret('env', '')

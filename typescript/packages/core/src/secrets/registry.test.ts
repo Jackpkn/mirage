@@ -47,6 +47,25 @@ describe('secrets registry', () => {
     expect(() => sourceFor('nope')).toThrowError(/vault-known/)
   })
 
+  it('sourceFor refuses a source whose optional peer is absent', () => {
+    // A dynamic import would only discover this on the first fetch,
+    // and that failure is redacted; python gets the check for free
+    // because its sourceFor resolves an import path.
+    registerSecrets(
+      'vault-nopeer',
+      VaultConfig,
+      () => Promise.resolve({ fields: {} }),
+      () => {
+        throw new SecretsError("the 'vault-nopeer' source needs its optional dependency (x)")
+      },
+    )
+    expect(() => sourceFor('vault-nopeer')).toThrowError(/optional dependency \(x\)/)
+    // A source without a probe still resolves, so a workspace that
+    // does not declare this one pays nothing.
+    registerSecrets('vault-peerless', VaultConfig, () => Promise.resolve({ fields: {} }))
+    expect(() => sourceFor('vault-peerless')).not.toThrowError()
+  })
+
   it('knownSources sorts every registered name', () => {
     registerSecrets('zz-last', VaultConfig, () => Promise.resolve({ fields: {} }))
     registerSecrets('aa-first', VaultConfig, () => Promise.resolve({ fields: {} }))

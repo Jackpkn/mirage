@@ -22,6 +22,17 @@ import type { ResolvedSecret, ResolvedSource, SecretFetchFn } from './types.ts'
 export interface SourceEntry {
   readonly configModel: z.ZodType
   readonly fetch: SecretFetchFn
+  /**
+   * Throws when the source's optional dependency is absent, and is
+   * called by `sourceFor` -- so a declaration naming a source whose
+   * SDK is not installed fails where the workspace is built, with the
+   * package to install, rather than as a redacted fetch failure on the
+   * first line that reads a secret. Python gets this for free: its
+   * `sourceFor` resolves an import path, so the ModuleNotFoundError is
+   * the check. A dynamic import here is async and construction is
+   * not, hence a synchronous probe the source supplies.
+   */
+  readonly requirePeer?: () => void
 }
 
 // One registry, populated by registerSecrets. Python's core registry
@@ -44,8 +55,13 @@ export function registerSecrets<C>(
   name: string,
   configModel: z.ZodType<C>,
   fetch: SecretFetchFn<C>,
+  requirePeer?: () => void,
 ): void {
-  REGISTERED.set(name, { configModel, fetch })
+  REGISTERED.set(name, {
+    configModel,
+    fetch,
+    ...(requirePeer !== undefined ? { requirePeer } : {}),
+  })
 }
 
 /** Every name `sourceFor` can resolve. */
@@ -67,6 +83,7 @@ export function sourceFor(name: string): SourceEntry {
       `unknown secrets source '${name}'; known: [${knownSources().join(', ')}]`,
     )
   }
+  entry.requirePeer?.()
   return entry
 }
 
