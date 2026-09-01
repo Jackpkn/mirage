@@ -16,6 +16,8 @@ import importlib.metadata
 import logging
 from typing import Any, NamedTuple
 
+from pydantic import ValidationError
+
 from mirage.resource.base import BaseResource
 from mirage.resource.loader import load_backend_class
 
@@ -320,6 +322,33 @@ def _resource_defect(built: BaseResource) -> str | None:
     return None
 
 
+def _redacted_config_error(name: str, exc: ValidationError) -> ValueError:
+    """A resource config failure with the rejected values removed.
+
+    Pydantic reports the value it refused as `input_value`, and a mount
+    config is exactly where a credential lands. The create route
+    answers `str(e)` as its 400 detail, so an unparseable secret came
+    straight back to a caller whose only way to name it was a pointer
+    into the secrets plane. The field and the reason are what fixes a
+    typo; the value is not.
+
+    Chained with `from None` on purpose: the original carries the value
+    in `__cause__`, and a logged traceback would print it.
+
+    Args:
+        name (str): the registry name being built.
+        exc (ValidationError): what the config class raised.
+
+    Returns:
+        ValueError: the same failures, values removed.
+    """
+    parts = []
+    for err in exc.errors(include_input=False, include_url=False):
+        loc = ".".join(str(p) for p in err["loc"]) or "config"
+        parts.append(f"{loc}: {err['msg']}")
+    return ValueError(f"{name}: {'; '.join(parts)}")
+
+
 def build_resource(name: str,
                    config: dict[str, Any] | None = None) -> BaseResource:
     """Construct a resource instance by its registry name.
@@ -376,11 +405,14 @@ def build_resource(name: str,
     config_ref = entry.config_path
     if config_ref is None:
         config_ref = getattr(resource_cls, "CONFIG_CLS", None)
-    if config_ref is None:
-        built = resource_cls(**cfg_dict)
-    else:
-        config_cls = resolve_class(config_ref)
-        built = resource_cls(config_cls(**cfg_dict))
+    try:
+        if config_ref is None:
+            built = resource_cls(**cfg_dict)
+        else:
+            config_cls = resolve_class(config_ref)
+            built = resource_cls(config_cls(**cfg_dict))
+    except ValidationError as exc:
+        raise _redacted_config_error(name, exc) from None
     if ":" in name:
         defect = _resource_defect(built)
         if defect is not None:
