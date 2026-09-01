@@ -19,8 +19,9 @@ from typing import Any
 from pydantic import ValidationError
 
 from mirage.secrets.config import SecretRef, SourceBlock
-from mirage.secrets.errors import SecretsError, field_summary
+from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import fetch_secret, source_for
+from mirage.secrets.summary import field_summary
 from mirage.secrets.types import ResolvedSecret, ResolvedSource
 
 logger = logging.getLogger(__name__)

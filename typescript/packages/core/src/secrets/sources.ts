@@ -15,7 +15,8 @@
 import type { z } from 'zod'
 
 import type { SecretRef, SourceBlock } from './config.ts'
-import { SecretsError, fieldSummary } from './errors.ts'
+import { SecretsError } from './errors.ts'
+import { fieldSummary } from './summary.ts'
 import { fetchSecret, sourceFor } from './registry.ts'
 import type { ResolvedSecret, ResolvedSource } from './types.ts'
 

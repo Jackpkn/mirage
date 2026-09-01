@@ -14,40 +14,9 @@
 
 import pytest
 
-from mirage.secrets.errors import (MAX_LISTED_FIELDS, SecretsError,
-                                   field_summary)
+from mirage.secrets.errors import SecretsError
 
 
 def test_secrets_error_is_an_exception_with_a_message():
     with pytest.raises(SecretsError, match="dead source"):
         raise SecretsError("dead source")
-
-
-def test_field_summary_lists_a_secret_sized_secret():
-    assert field_summary({"credential": "x", "username": "u"}, "op") == \
-        "{credential, username}"
-
-
-def test_field_summary_lists_nothing_for_an_empty_secret():
-    assert field_summary({}, "op") == "{}"
-
-
-def test_field_summary_lists_up_to_the_cap():
-    fields = {f"f{i:02d}": "v" for i in range(MAX_LISTED_FIELDS)}
-    assert field_summary(fields, "op") == "{" + ", ".join(sorted(fields)) + "}"
-
-
-def test_field_summary_counts_a_process_environment_instead():
-    fields = {f"f{i:02d}": "v" for i in range(MAX_LISTED_FIELDS + 1)}
-    summary = field_summary(fields, "op")
-    assert summary == f"{MAX_LISTED_FIELDS + 1} fields"
-    assert "f00" not in summary
-
-
-def test_field_summary_never_lists_the_process_environment():
-    """A hardened container starts from `env -i` plus a handful of
-    credentials, so a count threshold alone would recite exactly the
-    environment worth hiding."""
-    fields = {"HOME": "/root", "AWS_SESSION_TOKEN": "t"}
-    assert field_summary(fields, "env") == "2 fields"
-    assert "AWS_SESSION_TOKEN" not in field_summary(fields, "env")
