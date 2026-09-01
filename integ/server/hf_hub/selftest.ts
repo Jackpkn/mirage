@@ -62,6 +62,11 @@ function eq(name: string, got: JsonValue, want: JsonValue): void {
   check(name, a === b, a === b ? a : `got ${a} want ${b}`)
 }
 
+// A 1x1 PNG. Written out rather than generated so the bytes in the fixture
+// are the bytes an image decoder accepts, signature included.
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
 interface Fake {
   child: ChildProcessByStdio<null, Readable, Readable>
   endpoint: string
@@ -177,6 +182,26 @@ async function mcpChecks(): Promise<void> {
       const content = out.content as { type: string; text?: string }[]
       return content.map((one) => one.text ?? '').join('')
     }
+    // The whole tool result, not just its prose: `isError` lives beside the
+    // content and the per-operation error objects live inside
+    // structuredContent, and neither is visible in the rendered markdown.
+    const call = async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<Record<string, JsonValue>> =>
+      (await client.callTool({ name, arguments: args })) as Record<string, JsonValue>
+    const errorOf = (out: Record<string, JsonValue>, i = 0): Record<string, JsonValue> => {
+      const structured = (out.structuredContent ?? {}) as Record<string, JsonValue>
+      const rows = (structured.results ?? []) as Record<string, JsonValue>[]
+      return ((rows[i] ?? {}).error ?? {}) as Record<string, JsonValue>
+    }
+    const ops = (...list: Record<string, unknown>[]): Record<string, unknown> => ({
+      operations: list,
+    })
+    const catOp = (uri: string, ...rest: string[]): Record<string, unknown> => ({
+      cmd: 'cat',
+      args: [uri, ...rest],
+    })
 
     const who = await text('hf_whoami', {})
     check(
@@ -391,6 +416,20 @@ async function mcpChecks(): Promise<void> {
         // can be. Pushed twice under two names, because upstream decides by
         // the NAME: `.bin` is refused unread, while the same bytes under a
         // text extension are served and have to be bounded instead.
+        // A file inside a directory, so the repository HAS one: `cat` and
+        // `stat` both have to tell a directory from a missing path, and a
+        // flat repo cannot prove either.
+        JSON.stringify({ key: 'file', value: { path: 'nested/note.txt', content: 'in a dir\n' } }),
+        // A REAL 1x1 PNG, header and all, because attach returns the bytes
+        // untouched and a caller decodes them.
+        JSON.stringify({
+          key: 'file',
+          value: { path: 'figures/fig1.png', encoding: 'base64', content: PNG_1X1 },
+        }),
+        // A DIRECTORY whose name ends in an image extension. Nothing stops a
+        // repository holding one, and it is the one shape where classifying
+        // on the name alone gives the wrong answer.
+        JSON.stringify({ key: 'file', value: { path: 'assets.png/inside.txt', content: 'x\n' } }),
         ...['binary.bin', 'invalid.txt'].map((path) =>
           JSON.stringify({
             key: 'file',
@@ -496,11 +535,492 @@ async function mcpChecks(): Promise<void> {
       blob.slice(0, 260),
     )
 
+    // ---- the error envelope
+    //
+    // Every line below was read off https://huggingface.co/mcp. None of it is
+    // visible in the rendered markdown, and an agent that branches on a code
+    // or on `isError` sees only this.
+    const noSuchFile = await call('hf_fs', ops(catOp('hf://models/integ/card-model/nope.txt')))
+    eq('a missing file is HF_FS_NOT_FOUND', errorOf(noSuchFile).code ?? null, 'HF_FS_NOT_FOUND')
+    // `stat` answers a missing path, a directory and a binary blob without
+    // erroring on any of them, so it is the command upstream names for all
+    // three -- and names for nothing else.
+    eq('and suggests stat', errorOf(noSuchFile).suggestedOperation ?? null, 'stat')
+    eq('and the whole result is an error', noSuchFile.isError ?? null, true)
+
+    const binary = await call('hf_fs', ops(catOp('hf://models/integ/card-model/binary.bin')))
+    eq('a binary name is HF_FS_TEXT_ONLY', errorOf(binary).code ?? null, 'HF_FS_TEXT_ONLY')
+    eq('and suggests stat too', errorOf(binary).suggestedOperation ?? null, 'stat')
+
+    // Three shapes of "that is not a file", each with its own sentence.
+    const atRepo = await call('hf_fs', ops(catOp('hf://models/integ/card-model')))
+    eq('a repo root is HF_FS_NOT_A_FILE', errorOf(atRepo).code ?? null, 'HF_FS_NOT_A_FILE')
+    eq(
+      'and says so in upstream words',
+      errorOf(atRepo).message ?? null,
+      'cat requires a URI that points to a file path.',
+    )
+    const atNamespace = await call('hf_fs', ops(catOp('hf://models/integ')))
+    eq(
+      'a namespace is HF_FS_NOT_A_FILE as well',
+      errorOf(atNamespace).message ?? null,
+      'cat requires a URI that points to a file path, not a namespace.',
+    )
+    const atDir = await call('hf_fs', ops(catOp('hf://models/integ/card-model/nested')))
+    eq(
+      'and a directory names itself',
+      errorOf(atDir).message ?? null,
+      'cat requires a file path, got dir: nested',
+    )
+    eq('all three suggest stat', errorOf(atDir).suggestedOperation ?? null, 'stat')
+
+    // A malformed argument is the caller's to fix, so upstream suggests
+    // nothing -- the key is absent rather than null.
+    const flag = await call('hf_fs', ops(catOp('hf://models/integ/card-model/README.md', '--nope')))
+    eq('a bad flag is HF_FS_INVALID_ARGUMENT', errorOf(flag).code ?? null, 'HF_FS_INVALID_ARGUMENT')
+    check(
+      'and suggests nothing at all',
+      !('suggestedOperation' in errorOf(flag)),
+      JSON.stringify(errorOf(flag)),
+    )
+    const scheme = await call('hf_fs', ops(catOp('/not/a/uri')))
+    eq(
+      'a URI without the scheme says so upstream way',
+      errorOf(scheme).message ?? null,
+      'EINVAL: URI must start with hf://',
+    )
+    const bogus = await call('hf_fs', ops(catOp('hf://bogus/x/y')))
+    eq(
+      'and a type upstream does not have is named against upstream list',
+      errorOf(bogus).message ?? null,
+      "EINVAL: Invalid URI type 'bogus'. Must be one of models, datasets, spaces, buckets, collections, papers.",
+    )
+    // `papers` IS one of upstream's roots; this fake simply holds no rows for
+    // it, and saying that is more use than calling the name invalid.
+    const unserved = await call('hf_fs', ops(catOp('hf://papers/2502.16161/metadata.json')))
+    check(
+      'a real root the fake does not serve says which it serves',
+      String(errorOf(unserved).message ?? '').includes('the mirage hf_hub fake serves'),
+      JSON.stringify(errorOf(unserved).message ?? null),
+    )
+
+    // `isError` is the whole batch's, and one success clears it.
+    const bothBad = await call(
+      'hf_fs',
+      ops(catOp('hf://models/integ/card-model/nope.txt'), catOp('/not/a/uri')),
+    )
+    eq('a batch where everything failed is an error', bothBad.isError ?? null, true)
+    const mixed = await call(
+      'hf_fs',
+      ops(
+        catOp('hf://models/integ/card-model/README.md'),
+        catOp('hf://models/integ/card-model/nope.txt'),
+      ),
+    )
+    check('but one success clears it', !('isError' in mixed), JSON.stringify(mixed.isError ?? null))
+
+    // ---- attach
+    //
+    // The live server returns a COMPLETE image and cannot truncate one, so
+    // every refusal below is a refusal rather than a cut. All four codes and
+    // all four sentences were read off https://huggingface.co/mcp.
+    const attach = (uri: string, ...rest: string[]): Record<string, unknown> => ({
+      cmd: 'attach',
+      args: [uri, ...rest],
+    })
+    const png = await call('hf_fs', ops(attach('hf://models/integ/card-model/figures/fig1.png')))
+    const blocks = (png.content ?? []) as Record<string, JsonValue>[]
+    check(
+      'attach returns the image beside the prose',
+      blocks.some((one) => one.type === 'image' && one.mimeType === 'image/png'),
+      JSON.stringify(blocks.map((one) => one.type)),
+    )
+    check(
+      'and the bytes are the file, decodable',
+      Buffer.from(String((blocks.find((one) => one.type === 'image') ?? {}).data ?? ''), 'base64')
+        .subarray(0, 8)
+        .toString('hex') === '89504e470d0a1a0a',
+      String((blocks.find((one) => one.type === 'image') ?? {}).data ?? '').slice(0, 24),
+    )
+    const attachText = blocks.map((one) => String(one.text ?? '')).join('')
+    check(
+      'and the prose names the MIME type',
+      attachText.includes('- MIME type: `image/png`'),
+      attachText.slice(0, 240),
+    )
+    check('and a whole-file byte count', attachText.includes('- Bytes: '), attachText.slice(0, 240))
+
+    // A text file is the wrong KIND of thing, and upstream names `cat` for it
+    // rather than the diagnostic `stat` it names everywhere else.
+    const asText = await call('hf_fs', ops(attach('hf://models/integ/card-model/README.md')))
+    eq('attaching text is HF_FS_IMAGE_ONLY', errorOf(asText).code ?? null, 'HF_FS_IMAGE_ONLY')
+    eq(
+      'and says so upstream way',
+      errorOf(asText).message ?? null,
+      'Refusing to attach known text file: README.md. Attach returns supported image files only.',
+    )
+    eq('and points at cat, not stat', errorOf(asText).suggestedOperation ?? null, 'cat')
+
+    const asBinary = await call('hf_fs', ops(attach('hf://models/integ/card-model/binary.bin')))
+    eq(
+      'a non-image binary is unsupported media',
+      errorOf(asBinary).code ?? null,
+      'HF_FS_UNSUPPORTED_MEDIA',
+    )
+    const asDir = await call('hf_fs', ops(attach('hf://models/integ/card-model/nested')))
+    eq('and so is a directory', errorOf(asDir).code ?? null, 'HF_FS_UNSUPPORTED_MEDIA')
+
+    const tooSmall = await call(
+      'hf_fs',
+      ops(attach('hf://models/integ/card-model/figures/fig1.png', '--max-bytes', '1')),
+    )
+    eq(
+      'a bound under the file size refuses rather than truncating',
+      errorOf(tooSmall).code ?? null,
+      'HF_FS_IMAGE_TOO_LARGE',
+    )
+    const overCeiling = await call(
+      'hf_fs',
+      ops(attach('hf://models/integ/card-model/figures/fig1.png', '--max-bytes', '25000000')),
+    )
+    // The bound an agent reached for when it tried to pull a 21MB file past
+    // cat's limit. Upstream names its ceiling; this fake used to answer that
+    // attach did not exist.
+    eq(
+      'and a bound over the ceiling names the ceiling',
+      errorOf(overCeiling).message ?? null,
+      'EINVAL: attach max_bytes must be between 1 and 8388608',
+    )
+    const zeroBound = await call(
+      'hf_fs',
+      ops(attach('hf://models/integ/card-model/figures/fig1.png', '--max-bytes', '0')),
+    )
+    // Zero is INVALID for attach where `cat --max-bytes 0` means the maximum.
+    // The two commands genuinely differ; each was read off the live server.
+    eq(
+      'zero is invalid here, unlike cat',
+      errorOf(zeroBound).message ?? null,
+      'EINVAL: attach max_bytes must be between 1 and 8388608',
+    )
+    const withOffset = await call(
+      'hf_fs',
+      ops(attach('hf://models/integ/card-model/figures/fig1.png', '--offset', '5')),
+    )
+    eq(
+      'and --offset is meaningless for a whole file',
+      errorOf(withOffset).message ?? null,
+      'EINVAL: unexpected argument for attach: --offset',
+    )
+    const goneImage = await call('hf_fs', ops(attach('hf://models/integ/card-model/nope.png')))
+    eq('a missing image is HF_FS_NOT_FOUND', errorOf(goneImage).code ?? null, 'HF_FS_NOT_FOUND')
+
+    // A directory that ends in `.png` is still a directory. Classified on the
+    // name alone it reads as an image, resolves to nothing, and would be
+    // reported as a file that does not exist -- of a path that does.
+    const dirNamedPng = await call('hf_fs', ops(attach('hf://models/integ/card-model/assets.png')))
+    eq(
+      'a directory named like an image is still unsupported media',
+      errorOf(dirNamedPng).code ?? null,
+      'HF_FS_UNSUPPORTED_MEDIA',
+    )
+    // `cat` answers TEXT_ONLY for the same path, and that is not an
+    // oversight: upstream refuses binary on the NAME, before it resolves
+    // anything -- "the file extension or MIME type is known to be binary" --
+    // so a directory called `assets.png` never reaches a directory check
+    // there either. attach differs because its name check is what SELECTS
+    // the image branch, so the mistake is only recoverable after the resolve.
+    const catDirPng = await call('hf_fs', ops(catOp('hf://models/integ/card-model/assets.png')))
+    eq(
+      'cat refuses it on the name, as upstream does',
+      errorOf(catDirPng).code ?? null,
+      'HF_FS_TEXT_ONLY',
+    )
+    const statDirPng = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/assets.png'] }],
+    })
+    check('and stat calls it a dir', statDirPng.includes('- Type: `dir`'), statDirPng.slice(0, 200))
+
+    // ---- roots the fake does not hold are not bad NAMES
+    //
+    // `docs` and `README.md` are addressable upstream -- `ls hf://docs`
+    // answers and `cat hf://README.md` is where it documents its limits --
+    // so calling them invalid types was wrong twice over.
+    const docs = await call('hf_fs', ops(catOp('hf://docs/transformers/index')))
+    check(
+      'an unserved root says which roots are served',
+      String(errorOf(docs).message ?? '').includes('the mirage hf_hub fake serves'),
+      JSON.stringify(errorOf(docs).message ?? null),
+    )
+    const readme = await call('hf_fs', ops(catOp('hf://README.md')))
+    check(
+      'and so does the root-level page',
+      String(errorOf(readme).message ?? '').includes('the mirage hf_hub fake serves'),
+      JSON.stringify(errorOf(readme).message ?? null),
+    )
+
+    // ---- a repository past one page
+    //
+    // The REST arm pages at DEFAULT_LIMIT and puts the cursor in a `Link`
+    // header. Reading only page one made this fake disagree with itself on
+    // any repository bigger than that: `ls` showed a prefix in silence, and
+    // `stat` called a file that exists `missing`, because the recursive tree
+    // it searched stopped before reaching it. 60 files is one page and a
+    // remainder.
+    const PAGED = 60
+    await fetch(`${mcp.rest.endpoint}/api/repos/create`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEFAULT_TENANT}`,
+        'Content-Type': 'application/json',
+      },
+      // The namespace is the repo's OWNER, which the create route takes from
+      // `organization` and otherwise from the bearer -- and the bearer here
+      // is the default tenant, not `integ`.
+      body: JSON.stringify({ name: 'paged-model', type: 'model', organization: 'integ' }),
+    })
+    const pushedMany = await fetch(
+      `${mcp.rest.endpoint}/api/models/integ/paged-model/commit/main`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${DEFAULT_TENANT}`,
+          'Content-Type': 'application/x-ndjson',
+        },
+        body: [
+          JSON.stringify({ key: 'header', value: { summary: 'more than one page' } }),
+          ...Array.from({ length: PAGED }, (_unused, i) =>
+            JSON.stringify({
+              key: 'file',
+              value: { path: `f${String(i).padStart(3, '0')}.txt`, content: `row ${String(i)}\n` },
+            }),
+          ),
+        ].join('\n'),
+      },
+    )
+    check(
+      'a repository of 60 files is pushed',
+      pushedMany.status === 200,
+      String(pushedMany.status),
+    )
+    const lastFile = `f${String(PAGED - 1).padStart(3, '0')}.txt`
+    const paged = await call('hf_fs', ops({ cmd: 'ls', args: ['hf://models/integ/paged-model'] }))
+    const pagedRows = (
+      (
+        (((paged.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+          string,
+          JsonValue
+        >[]
+      )[0] ?? {}
+    ).result as Record<string, JsonValue>
+    check(
+      'ls returns every page, not the first',
+      ((pagedRows.entries ?? []) as JsonValue[]).length === PAGED,
+      String(((pagedRows.entries ?? []) as JsonValue[]).length),
+    )
+    // ---- and the listing is bounded, by upstream's number
+    //
+    // 1,000 entries by default and 10,000 at most. The bound matters twice:
+    // it is what upstream answers, and it is what stops an arbitrarily large
+    // repository being aggregated whole in order to throw most of it away.
+    const capped = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ/paged-model', '--limit', '10'] }),
+    )
+    const cappedRow = (
+      (((capped.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+        string,
+        JsonValue
+      >[]
+    )[0]
+    const cappedResult = (cappedRow ?? {}).result as Record<string, JsonValue>
+    eq('--limit bounds the listing', ((cappedResult.entries ?? []) as JsonValue[]).length, 10)
+    eq('and says it was cut', cappedResult.truncated ?? null, true)
+    eq('in the schema own vocabulary', cappedResult.truncation_reason ?? null, 'entry_limit')
+    const cappedText = ((capped.content ?? []) as Record<string, JsonValue>[])
+      .map((one) => String(one.text ?? ''))
+      .join('')
+    check(
+      'and after the table, the way upstream places it',
+      cappedText.includes(
+        'Result truncated after reaching the entry limit. Rerun with a larger --limit, up to 10000.',
+      ),
+      cappedText.slice(-200),
+    )
+    // A listing that FITS is not cut, and says nothing about limits.
+    const uncut = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ/paged-model', '--limit', '60'] }),
+    )
+    const uncutResult = (
+      (
+        (((uncut.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+          string,
+          JsonValue
+        >[]
+      )[0] ?? {}
+    ).result as Record<string, JsonValue>
+    check(
+      'a listing that fits is not marked truncated',
+      !('truncated' in uncutResult),
+      JSON.stringify(Object.keys(uncutResult)),
+    )
+    const badLimit = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ/paged-model', '--limit', '20000'] }),
+    )
+    eq(
+      'a limit past the ceiling names the ceiling',
+      errorOf(badLimit).message ?? null,
+      'EINVAL: limit must be between 1 and 10000 for this command',
+    )
+    const otherFlag = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ/paged-model', '--sort', 'downloads'] }),
+    )
+    eq(
+      'and a flag the fake has nothing behind is still an honest EINVAL',
+      errorOf(otherFlag).message ?? null,
+      'EINVAL: unexpected argument for ls: --sort',
+    )
+
+    const statLate = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: [`hf://models/integ/paged-model/${lastFile}`] }],
+    })
+    check(
+      'and stat finds a file past the first page',
+      statLate.includes('- Type: `file`') && statLate.includes('- Exists: yes'),
+      statLate.slice(0, 220),
+    )
+
+    // ---- the shared attachment budget
+    //
+    // 8MiB across ONE call, whatever the per-file bound allows. The captured
+    // schema permits 30 operations, so without this a valid request could ask
+    // for 30 x 8MiB. Two 5MiB images are one over.
+    const FIVE_MIB = 5 * 1024 * 1024
+    const bigPng = Buffer.concat([
+      Buffer.from(PNG_1X1, 'base64'),
+      Buffer.alloc(FIVE_MIB, 0),
+    ]).toString('base64')
+    const pushedBig = await fetch(`${mcp.rest.endpoint}/api/models/integ/card-model/commit/main`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEFAULT_TENANT}`,
+        'Content-Type': 'application/x-ndjson',
+      },
+      body: [
+        JSON.stringify({ key: 'header', value: { summary: 'two large images' } }),
+        JSON.stringify({
+          key: 'file',
+          value: { path: 'figures/big1.png', encoding: 'base64', content: bigPng },
+        }),
+        JSON.stringify({
+          key: 'file',
+          value: { path: 'figures/big2.png', encoding: 'base64', content: bigPng },
+        }),
+      ].join('\n'),
+    })
+    check('two 5MiB images are pushed', pushedBig.status === 200, String(pushedBig.status))
+    const twoBig = await call(
+      'hf_fs',
+      ops(
+        attach('hf://models/integ/card-model/figures/big1.png'),
+        attach('hf://models/integ/card-model/figures/big2.png'),
+      ),
+    )
+    const rowsOf = (out: Record<string, JsonValue>): Record<string, JsonValue>[] =>
+      (((out.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+        string,
+        JsonValue
+      >[]
+    eq('the first attachment is admitted', (rowsOf(twoBig)[0] ?? {}).status ?? null, 'success')
+    eq(
+      'and the second is dropped on the shared budget',
+      errorOf(twoBig, 1).code ?? null,
+      'HF_FS_ATTACHMENT_BUDGET_EXCEEDED',
+    )
+    eq(
+      'with upstream sentence',
+      errorOf(twoBig, 1).message ?? null,
+      'Attachment omitted because the batch exceeds the cumulative response limit of 8388608 bytes.',
+    )
+    eq('and told to retry it alone', errorOf(twoBig, 1).suggestedOperation ?? null, 'attach')
+    check(
+      'only the admitted image rides along',
+      ((twoBig.content ?? []) as Record<string, JsonValue>[]).filter((one) => one.type === 'image')
+        .length === 1,
+      JSON.stringify(((twoBig.content ?? []) as Record<string, JsonValue>[]).map((o) => o.type)),
+    )
+
+    // ---- stat tells four things apart, which is why upstream recommends it
+    // for "an uncertain target type". A repository is `repo` and not `dir`,
+    // and a path that is not there is `missing` and not a directory -- the
+    // fake reported both wrongly until the tree's ROWS became the test.
+    const statRepo = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model'] }],
+    })
+    check(
+      'stat calls a repository a repo',
+      statRepo.includes('- Type: `repo`'),
+      statRepo.slice(0, 200),
+    )
+    const statDir = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/nested'] }],
+    })
+    check('and a directory a dir', statDir.includes('- Type: `dir`'), statDir.slice(0, 200))
+    const statGone = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/nope.txt'] }],
+    })
+    check(
+      'and a path that is not there missing',
+      statGone.includes('- Exists: no') && statGone.includes('- Type: `missing`'),
+      statGone.slice(0, 200),
+    )
+    check(
+      'and prints the path even then',
+      statGone.includes('- Path: `nope.txt`'),
+      statGone.slice(0, 200),
+    )
+
     const stat = await text('hf_fs', {
       operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/README.md'] }],
     })
     check('stat reports existence', stat.includes('- Exists: yes'), stat.slice(0, 200))
     check('stat reports a size', stat.includes('- Size: '), stat.slice(0, 200))
+
+    // A file one level down, which is the case stat reads a PARENT listing
+    // for rather than the repository root. It used to walk the whole recursive
+    // tree to find this row, and paid the repository to keep one entry.
+    const statNested = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/nested/note.txt'] }],
+    })
+    check(
+      'stat finds a file inside a directory, with its size',
+      statNested.includes('- Type: `file`') &&
+        statNested.includes('- Path: `nested/note.txt`') &&
+        /- Size: \d/.test(statNested),
+      statNested.slice(0, 220),
+    )
+    // Absent from a directory that IS there -- the listing consulted has to be
+    // the parent's, and a row missing from it is what `missing` means.
+    const statNestedGone = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/nested/nope.txt'] }],
+    })
+    check(
+      'and calls a name absent from an existing directory missing',
+      statNestedGone.includes('- Type: `missing`') && statNestedGone.includes('- Exists: no'),
+      statNestedGone.slice(0, 220),
+    )
+    // A directory below the root is a `dir` too, which only the parent's
+    // synthesized row can say: git commits no directory object of its own.
+    const statNestedDir = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/assets.png'] }],
+    })
+    check(
+      'and a directory whose name looks like a file is still a dir',
+      statNestedDir.includes('- Type: `dir`'),
+      statNestedDir.slice(0, 220),
+    )
 
     // Both error codes are the live server's own, captured rather than coined,
     // because an agent may branch on the bracketed code.

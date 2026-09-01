@@ -705,11 +705,14 @@ function validateYaml(ctx: Ctx<C>): Reply {
     parsed = yamlLoad(source)
   } catch (err) {
     // The status, the envelope and the `Invalid YAML in README.md: ` prefix are
-    // upstream's. The sentence AFTER the prefix is js-yaml's own and upstream
-    // runs a different build of it -- both render the same `-----^` snippet,
-    // but `license: [` is "deficient indentation" here and "unexpected end of
-    // the stream within a flow collection" there. What decides the upload is
-    // the 400, and that is exact.
+    // upstream's, and so is the parser's sentence for the case that matters:
+    // `license: [` answers "unexpected end of the stream within a flow
+    // collection" on both. What differs is the CURSOR. Upstream reports it at
+    // (2:1) over a two-line snippet and this reports (1:11) over one, because
+    // the block captured above carries no trailing newline and upstream's
+    // parser is fed one -- adding it here moves the cursor into agreement and
+    // the sentence out of it, which is how the two builds are known to differ
+    // at all. What decides the upload is the 400, and that is exact.
     const message = err instanceof Error ? err.message : String(err)
     return cardError(`Invalid YAML in README.md: ${message}`)
   }
