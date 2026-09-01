@@ -66,6 +66,7 @@ import {
   searchMarkdown,
   statMarkdown,
   type FsEntry,
+  type RepoEntry,
 } from './render.ts'
 
 // The tool document is CAPTURED, never authored. notion's MCP arm can answer
@@ -318,16 +319,26 @@ async function detailsText(at: Dispatch, args: Record<string, JsonValue>): Promi
 
 // ------------------------------------------------------------------- hf_fs
 
-interface Located {
+// A repository and a path inside it, which is the only shape that has files
+// under it and the only shape the tree routes accept.
+interface RepoAt {
   kind: string
   id: string
   path: string
 }
 
-// `hf://<kind>/<namespace>/<name>[/<path>]`, which is the only URI shape this
-// fake has data behind. The live tool also addresses trending listings, papers,
-// collections and buckets; those are refused by name below rather than guessed
-// at, because the fake has no rows for any of them.
+// The three shapes a URI can name. The other two are DISCOVERY scopes, where
+// the entries are repositories rather than paths, and where the answer comes
+// from the listing endpoint rather than from a tree.
+type Located =
+  | ({ scope: 'repo' } & RepoAt)
+  | { scope: 'namespace'; kind: string; namespace: string }
+  | { scope: 'kind'; kind: string }
+
+// What the fake cannot answer, said in a sentence rather than guessed at. It
+// holds rows for models, datasets and spaces at all three scopes; the live
+// tool also addresses papers, collections, buckets, documentation and the
+// trending feeds, and each of those is refused by name below.
 interface Refusal {
   code: string
   message: string
@@ -349,7 +360,7 @@ const UPSTREAM_KINDS = ['models', 'datasets', 'spaces', 'buckets', 'collections'
 // true, rather than as bad names, which is not.
 const UPSTREAM_ROOTS = [...UPSTREAM_KINDS, 'docs', 'README.md']
 
-function locate(uri: string, cmd: string): Located | Refusal {
+function locate(uri: string): Located | Refusal {
   const bad = (message: string): Refusal => ({ code: FS_INVALID, message })
   if (!uri.startsWith('hf://')) return bad('EINVAL: URI must start with hf://')
   const parts = uri
@@ -364,21 +375,213 @@ function locate(uri: string, cmd: string): Located | Refusal {
   if (!KINDS.includes(kind)) {
     return bad(`EINVAL: the mirage hf_hub fake serves ${KINDS.join(', ')} only: ${uri}`)
   }
-  // A URI naming a root or an owner is a NAMESPACE, and asking `cat` for one
-  // is not a malformed argument -- it is a URI that points at the wrong kind
-  // of thing, which is what NOT_A_FILE says. The live server answers that
-  // code here, and an agent branching on the code should not be told it
-  // mistyped a flag. Every other command still gets the fake's own sentence,
-  // because a namespace listing is a thing this fake genuinely cannot do.
-  if (parts.length < 3) {
-    return cmd === 'cat'
-      ? {
-          code: FS_NOT_A_FILE,
-          message: 'cat requires a URI that points to a file path, not a namespace.',
-        }
-      : bad(`EINVAL: expected hf://${kind}/<namespace>/<name>: ${uri}`)
+  // Shape only. Whether the scope this names is one the CALLER's command can
+  // answer is the command's question, not this function's -- `cat` wants a
+  // file and `search` refuses one, and neither can be decided here.
+  if (parts.length === 1) return { scope: 'kind', kind }
+  if (parts.length === 2) return { scope: 'namespace', kind, namespace: parts[1] ?? '' }
+  return {
+    scope: 'repo',
+    kind,
+    id: `${parts[1] ?? ''}/${parts[2] ?? ''}`,
+    path: parts.slice(3).join('/'),
   }
-  return { kind, id: `${parts[1] ?? ''}/${parts[2] ?? ''}`, path: parts.slice(3).join('/') }
+}
+
+// ------------------------------------------------------- discovery scopes
+
+// The tool document's own list, and the reason this fake grew them: an agent
+// asked `ls hf://datasets/<owner> --limit 100` and `search hf://datasets
+// "Annoy" --limit 50` as its FIRST two operations, was refused both, retried
+// the listing twice, and reported the repositories unavailable. Every URI it
+// sent is in the captured grammar. A fake that refuses what its own tool
+// document promises does not measure a tool surface, it measures the fake.
+const SEARCH_DEFAULT_LIMIT = 100
+const SEARCH_MAX_LIMIT = 1000
+
+// The document spells a repo type singular in a Details cell and the routes
+// spell it plural in a path, the same split `PLURAL` bridges the other way.
+const SINGULAR: Record<string, string> = {
+  models: 'model',
+  datasets: 'dataset',
+  spaces: 'space',
+}
+
+// `--sort` names a camelCase field on the tool and a snake_case one on the
+// Hub API this fake serves. Only the five the listing route can actually
+// order by are here; the other five the grammar advertises (likes30d,
+// mainSize, id, trending, upvotes) have no key behind them, and are refused
+// by name below rather than accepted and ignored.
+const SORT_FIELDS: Record<string, string> = {
+  createdAt: 'created_at',
+  downloads: 'downloads',
+  likes: 'likes',
+  lastModified: 'last_modified',
+  trendingScore: 'trending_score',
+}
+
+function num(v: JsonValue | undefined): number {
+  return typeof v === 'number' ? v : 0
+}
+
+/**
+ * One repository, as a discovery listing prints it.
+ *
+ * Every conditional field here was captured, not reasoned about, from
+ * `ls hf://models/deepseek-ai`, `ls hf://spaces/stabilityai` and
+ * `search hf://models "meta-llama/Llama-3.1-8B"` on 2026-09-01:
+ *
+ * - a Space carries neither `downloads` nor `gated`, and carries `sdk`
+ *   where a model carries `task`;
+ * - a model or dataset that is not gated carries `gated: false`, so the key
+ *   is present and the value is a boolean, while a gated one carries the
+ *   flavour (`"manual"`) and prints `gated=manual` BESIDE `public` rather
+ *   than instead of it.
+ *
+ * `private` is the one word here with no capture behind it: nothing gated or
+ * private is visible to an anonymous probe, so `public` is observed and
+ * `private` is its complement.
+ */
+function repoEntry(kind: string, row: Record<string, JsonValue>): RepoEntry {
+  const id = String(row.id ?? '')
+  const space = kind === 'spaces'
+  const task = row.pipeline_tag
+  const sdk = row.sdk
+  const gated = row.gated
+  return {
+    type: 'repo',
+    id,
+    uri: `hf://${kind}/${id}`,
+    repoType: SINGULAR[kind] ?? kind,
+    visibility: row.private === true ? 'private' : 'public',
+    ...(space ? {} : { gated: typeof gated === 'string' && gated !== '' ? gated : false }),
+    likes: num(row.likes),
+    ...(space ? {} : { downloads: num(row.downloads) }),
+    ...(typeof task === 'string' && task !== '' ? { task } : {}),
+    ...(typeof sdk === 'string' && sdk !== '' ? { sdk } : {}),
+    updated: String(row.lastModified ?? ''),
+  }
+}
+
+// The structured half of the same row. Written from the entry rather than
+// from the API row a second time, so the table and the JSON cannot disagree
+// about what a repository is.
+function repoResult(one: RepoEntry): JsonValue {
+  return {
+    type: 'repo',
+    path: one.id,
+    uri: one.uri,
+    repo_type: one.repoType,
+    private: one.visibility === 'private',
+    ...(one.gated === undefined ? {} : { gated: one.gated }),
+    likes: one.likes,
+    ...(one.downloads === undefined ? {} : { downloads: one.downloads }),
+    ...(one.task === undefined ? {} : { task: one.task }),
+    ...(one.sdk === undefined ? {} : { sdk: one.sdk }),
+    updated_at: one.updated,
+  }
+}
+
+interface Discovery {
+  query: string
+  limit: number
+  sort: string
+  type: string
+  tags: string[]
+}
+
+/**
+ * The flags a discovery listing takes.
+ *
+ * `search` alone accepts a bare QUERY before them, which is why the caller
+ * says whether one is allowed rather than this reading it off `cmd`: a
+ * stray positional on `ls` is a mistyped flag, not a search term.
+ */
+function discoveryArgs(cmd: string, rest: string[], positional: boolean): Discovery | Refusal {
+  const bad = (message: string): Refusal => ({ code: FS_INVALID, message })
+  const max = cmd === 'search' ? SEARCH_MAX_LIMIT : LIST_MAX_LIMIT
+  const out: Discovery = {
+    query: '',
+    limit: cmd === 'search' ? SEARCH_DEFAULT_LIMIT : LIST_DEFAULT_LIMIT,
+    sort: '',
+    type: '',
+    tags: [],
+  }
+  let i = 0
+  if (positional && rest.length > 0 && !(rest[0] ?? '').startsWith('--')) {
+    out.query = rest[0] ?? ''
+    i = 1
+  }
+  for (; i < rest.length; i += 2) {
+    const flag = rest[i] ?? ''
+    const raw = rest[i + 1]
+    // `--query` is not in the grammar line the tool document prints, and the
+    // live server names it anyway when it refuses a search with no query
+    // ("requires a positional query or --query"), so it is a real spelling.
+    const known =
+      flag === '--limit' ||
+      flag === '--sort' ||
+      flag === '--type' ||
+      (cmd === 'search' && (flag === '--tag' || flag === '--query'))
+    if (!known) return bad(`EINVAL: unexpected argument for ${cmd}: ${flag}`)
+    if (raw === undefined) return bad(`EINVAL: ${flag} needs a value`)
+    if (flag === '--limit') {
+      if (!/^-?\d+$/.test(raw)) return bad(`EINVAL: ${flag} requires an integer`)
+      const value = Number(raw)
+      if (value < 1 || value > max) {
+        return bad(`EINVAL: limit must be between 1 and ${String(max)} for this command`)
+      }
+      out.limit = value
+      continue
+    }
+    if (flag === '--sort') {
+      if (SORT_FIELDS[raw] === undefined) {
+        return bad(
+          `EINVAL: the mirage hf_hub fake sorts by ${Object.keys(SORT_FIELDS).join(', ')}: ${raw}`,
+        )
+      }
+      out.sort = raw
+      continue
+    }
+    if (flag === '--type') {
+      out.type = raw
+      continue
+    }
+    if (flag === '--query') {
+      out.query = raw
+      continue
+    }
+    out.tags.push(raw)
+  }
+  return out
+}
+
+/**
+ * A discovery listing: repositories of one kind, optionally one owner's.
+ *
+ * Both scopes are the SAME listing route with one more parameter, which is
+ * why they are one function. `--type` filters to nothing unless it is `repo`,
+ * because a discovery scope holds no files and no directories -- captured:
+ * `ls hf://models/deepseek-ai --type file` answers an empty table rather than
+ * an error.
+ */
+async function discover(
+  at: Dispatch,
+  kind: string,
+  owner: string,
+  flags: Discovery,
+): Promise<RepoEntry[]> {
+  if (flags.type !== '' && flags.type !== 'repo') return []
+  const query: Record<string, string | string[]> = { full: '1' }
+  if (owner !== '') query.author = owner
+  if (flags.query !== '') query.search = flags.query
+  if (flags.sort !== '') query.sort = SORT_FIELDS[flags.sort] ?? flags.sort
+  if (flags.tags.length > 0) query.filter = flags.tags
+  // One past the limit, the way the tree listings do it: enough to know the
+  // answer was cut without carrying a tail that is about to be dropped.
+  query.limit = String(flags.limit + 1)
+  const found = rows(await callRoute(at, 'GET', `/api/${kind}`, query))
+  return found.map((one) => repoEntry(kind, one))
 }
 
 function entriesOf(reply: Reply): FsEntry[] {
@@ -421,7 +624,7 @@ function entriesOf(reply: Reply): FsEntry[] {
  * discovered rather than handing back a shorter tree that reads exactly like
  * a complete one.
  */
-async function* treePages(at: Dispatch, where: Located, recursive: boolean): AsyncGenerator<Reply> {
+async function* treePages(at: Dispatch, where: RepoAt, recursive: boolean): AsyncGenerator<Reply> {
   const suffix = where.path === '' ? '' : `/${where.path}`
   const path = `/api/${where.kind}/${where.id}/tree/main${suffix}`
   const query: Record<string, string> = recursive ? { recursive: 'true' } : {}
@@ -455,7 +658,7 @@ async function* treePages(at: Dispatch, where: Located, recursive: boolean): Asy
  */
 async function treeAt(
   at: Dispatch,
-  where: Located,
+  where: RepoAt,
   recursive: boolean,
   cap = Number.POSITIVE_INFINITY,
 ): Promise<Reply> {
@@ -723,7 +926,7 @@ function imageMime(path: string): string | undefined {
 // there, so `ok` alone calls every miss a directory. A directory in git
 // always holds something -- an empty one cannot be committed -- so the rows
 // are the test, and this is the only place that knows it.
-async function isDirectory(at: Dispatch, where: Located): Promise<boolean> {
+async function isDirectory(at: Dispatch, where: RepoAt): Promise<boolean> {
   if (where.path === '') return false
   // One page: the question is whether there is a row, not what the rows are.
   const listed = await treeAt(at, where, false, 1)
@@ -742,7 +945,7 @@ async function isDirectory(at: Dispatch, where: Located): Promise<boolean> {
  * the entire repository to keep a single row; a batch of the 30 operations one
  * call allows paid that thirty times over.
  */
-async function rowAt(at: Dispatch, where: Located): Promise<FsEntry | undefined> {
+async function rowAt(at: Dispatch, where: RepoAt): Promise<FsEntry | undefined> {
   const cut = where.path.lastIndexOf('/')
   const parent = cut === -1 ? '' : where.path.slice(0, cut)
   for await (const page of treePages(at, { ...where, path: parent }, false)) {
@@ -848,18 +1051,109 @@ function readmeOne(cmd: string, rest: string[]): FsOut {
   }
 }
 
+/**
+ * A command aimed at a discovery scope -- a kind root or an owner namespace.
+ *
+ * Split out rather than folded into the branches below because the two scopes
+ * share nothing with a repository except the command names: there is no tree
+ * to page, no path to resolve, and the entries are repositories. Every one of
+ * the refusals here is a thing the fake genuinely does not hold, and says so;
+ * none of them is a URI the caller got wrong.
+ */
+async function discoverOne(
+  at: Dispatch,
+  cmd: string,
+  uri: string,
+  where: Exclude<Located, { scope: 'repo' }>,
+  rest: string[],
+): Promise<FsOut> {
+  const owner = where.scope === 'namespace' ? where.namespace : ''
+  // A namespace is not a file, and saying so with NOT_A_FILE rather than
+  // EINVAL is upstream's own answer: an agent branching on the code should
+  // not be told it mistyped a flag.
+  if (cmd === 'cat') {
+    return fsFail(FS_NOT_A_FILE, 'cat requires a URI that points to a file path, not a namespace.')
+  }
+  if (cmd === 'attach') {
+    return fsFail(FS_INVALID, `EINVAL: expected hf://${where.kind}/<namespace>/<name>: ${uri}`)
+  }
+  if (cmd === 'stat') {
+    if (rest.length > 0) {
+      return fsFail(FS_INVALID, `EINVAL: unexpected argument for ${cmd}: ${rest[0] ?? ''}`)
+    }
+    // Neither answer is looked up. Captured: `stat hf://models/<anything>`
+    // reports `exists: yes, type: namespace` for an owner that does not
+    // exist, because the server is describing the URI's shape rather than
+    // the Hub's contents.
+    if (where.scope === 'kind') {
+      return {
+        text: statMarkdown(uri, 'dir', ''),
+        result: { uri, op: 'stat', exists: true, type: 'dir', path: '' },
+      }
+    }
+    return {
+      text: statMarkdown(uri, 'namespace', '', undefined, undefined, owner),
+      result: { uri, op: 'stat', exists: true, type: 'namespace', path: '', namespace: owner },
+    }
+  }
+  if (cmd !== 'ls' && cmd !== 'find' && cmd !== 'search') {
+    return fsFail(FS_INVALID, `EINVAL: unknown command: ${cmd}`)
+  }
+  // `ls hf://<kind>` lists one virtual `trending` directory upstream, and a
+  // trending feed is the one thing behind these roots that this fake has no
+  // rows for. Answering with an entry whose own listing then fails would be
+  // worse than saying so, so it says so and names what does work.
+  if (cmd !== 'search' && where.scope === 'kind') {
+    return fsFail(
+      FS_INVALID,
+      `EINVAL: the mirage hf_hub fake has no trending feed behind hf://${where.kind}; ` +
+        `use search hf://${where.kind} or ${cmd} hf://${where.kind}/<namespace>`,
+    )
+  }
+  const flags = discoveryArgs(cmd, rest, cmd === 'search')
+  if (!('limit' in flags)) return fsFail(flags.code, flags.message)
+  const found = await discover(at, where.kind, owner, flags)
+  const truncated = found.length > flags.limit
+  const entries = truncated ? found.slice(0, flags.limit) : found
+  return {
+    text: listingMarkdown(cmd, uri, entries, truncated),
+    result: {
+      uri,
+      op: cmd,
+      entries: entries.map(repoResult),
+      // Two different notices, and search's carries no message: captured on
+      // the same day from the same server, `ls` says `entry_limit` with the
+      // sentence and `search` says `limit` with nothing beside it.
+      ...(truncated
+        ? cmd === 'search'
+          ? { truncated: true, truncation_reason: 'limit' }
+          : {
+              truncated: true,
+              truncation_reason: 'entry_limit',
+              truncation_message: LIST_TRUNCATED,
+            }
+        : {}),
+    },
+  }
+}
+
 async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget): Promise<FsOut> {
+  const uri = args[0] ?? ''
+  if (uri === README_URI) return readmeOne(cmd, args.slice(1))
+  const where = locate(uri)
+  if (!('kind' in where)) return fsFail(where.code, where.message)
+  const rest = args.slice(1)
+  if (where.scope !== 'repo') return discoverOne(at, cmd, uri, where, rest)
+  // Upstream's own sentence, and it names every scope rather than this one:
+  // search is discovery, and a repository is the one URI that is already
+  // discovered.
   if (cmd === 'search') {
     return fsFail(
       FS_INVALID,
-      `EINVAL: ${cmd} is not served by the mirage hf_hub fake; use ls, cat, stat or find`,
+      'EINVAL: search requires hf://models|datasets|spaces[/OWNER], ' +
+        'hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers',
     )
   }
-  const uri = args[0] ?? ''
-  if (uri === README_URI) return readmeOne(cmd, args.slice(1))
-  const where = locate(uri, cmd)
-  if (!('kind' in where)) return fsFail(where.code, where.message)
-  const rest = args.slice(1)
   // `stat` is the only command that takes the URI alone; cat, attach, ls and
   // find each parse their own flags below and refuse the rest by name there.
   // Listing the exceptions here was a standing trap -- attach and then ls
@@ -888,16 +1182,6 @@ async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget):
       result: {
         uri,
         op: cmd,
-        // The schema's own three, and the same vocabulary cat uses -- with
-        // `entry_limit` where cat says `max_bytes`, because that is the enum
-        // value upstream answers for a listing.
-        ...(truncated
-          ? {
-              truncated: true,
-              truncation_reason: 'entry_limit',
-              truncation_message: LIST_TRUNCATED,
-            }
-          : {}),
         // A directory entry carries no `size`, which is the live server's own
         // shape rather than a zero: the schema makes size optional precisely
         // because a Hub directory has none.
@@ -906,6 +1190,18 @@ async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget):
             ? { type: 'dir', path: one.path }
             : { type: 'file', path: one.path, size: one.size, ...(one.lfs ? { lfs: true } : {}) },
         ),
+        // The schema's own three, and the same vocabulary cat uses -- with
+        // `entry_limit` where cat says `max_bytes`, because that is the enum
+        // value upstream answers for a listing. AFTER the entries, which is
+        // the order the live result serializes in and therefore the order the
+        // model reads.
+        ...(truncated
+          ? {
+              truncated: true,
+              truncation_reason: 'entry_limit',
+              truncation_message: LIST_TRUNCATED,
+            }
+          : {}),
       },
     }
   }
