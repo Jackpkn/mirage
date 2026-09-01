@@ -742,20 +742,16 @@ async function mcpChecks(): Promise<void> {
 
     // ---- roots the fake does not hold are not bad NAMES
     //
-    // `docs` and `README.md` are addressable upstream -- `ls hf://docs`
-    // answers and `cat hf://README.md` is where it documents its limits --
-    // so calling them invalid types was wrong twice over.
+    // `docs` is addressable upstream, so calling it an invalid TYPE was wrong;
+    // it is a root this fake does not hold, which is a different sentence.
+    // `README.md` was in here too until the fake started serving it, and the
+    // pair is worth keeping side by side: one of these is a gap and the other
+    // was, and only the served one stops charging the agent for our name.
     const docs = await call('hf_fs', ops(catOp('hf://docs/transformers/index')))
     check(
       'an unserved root says which roots are served',
       String(errorOf(docs).message ?? '').includes('the mirage hf_hub fake serves'),
       JSON.stringify(errorOf(docs).message ?? null),
-    )
-    const readme = await call('hf_fs', ops(catOp('hf://README.md')))
-    check(
-      'and so does the root-level page',
-      String(errorOf(readme).message ?? '').includes('the mirage hf_hub fake serves'),
-      JSON.stringify(errorOf(readme).message ?? null),
     )
 
     // ---- a repository past one page
@@ -1020,6 +1016,65 @@ async function mcpChecks(): Promise<void> {
       'and a directory whose name looks like a file is still a dir',
       statNestedDir.includes('- Type: `dir`'),
       statNestedDir.slice(0, 220),
+    )
+
+    // ---- hf://README.md, the limits page the tool document points at
+    //
+    // Every expectation below was read off the live server, including which
+    // of the two "wrong kind of thing" codes each command answers with. The
+    // fake used to refuse the path outright, in a sentence naming itself.
+    const readmeStat = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://README.md'] }],
+    })
+    check(
+      'stat hf://README.md is a file with a Content-Type',
+      readmeStat.includes('- Type: `file`') &&
+        readmeStat.includes('- Path: `README.md`') &&
+        readmeStat.includes('- Content-Type: `text/markdown`'),
+      readmeStat.slice(0, 260),
+    )
+    const readmeCat = await text('hf_fs', {
+      operations: [{ cmd: 'cat', args: ['hf://README.md'] }],
+    })
+    check(
+      'cat hf://README.md serves the captured page',
+      readmeCat.includes('# Hugging Face virtual filesystem') &&
+        readmeCat.includes('Content-Type: `text/markdown`'),
+      readmeCat.slice(0, 260),
+    )
+    // The page documents the bounds this fake implements, so a fake that
+    // served a DIFFERENT page would be telling the agent the wrong numbers.
+    check(
+      'and the page still documents the bounds the fake enforces',
+      readmeCat.includes('hf_fs_write') && readmeCat.includes('30 operations'),
+      readmeCat.slice(0, 200),
+    )
+    const readmeCut = await text('hf_fs', {
+      operations: [{ cmd: 'cat', args: ['hf://README.md', '--max-bytes', '120'] }],
+    })
+    check(
+      'a bounded read of it stops where asked, and says where to resume',
+      readmeCut.includes('Bytes: 120') &&
+        readmeCut.includes('Content truncated. Resume with offset 120.'),
+      readmeCut.slice(0, 200),
+    )
+    const readmeLs = await call('hf_fs', ops({ cmd: 'ls', args: ['hf://README.md'] }))
+    eq(
+      'ls on it is ENOTDIR, not the fake naming itself',
+      errorOf(readmeLs).code ?? null,
+      'HF_FS_NOT_A_DIRECTORY',
+    )
+    eq(
+      'and find answers the same code',
+      errorOf(await call('hf_fs', ops({ cmd: 'find', args: ['hf://README.md'] }))).code ?? null,
+      'HF_FS_NOT_A_DIRECTORY',
+    )
+    // A DIFFERENT code from ls: it is a file, just not an attachable one.
+    eq(
+      'attach on it is NOT_A_FILE, which is a different refusal',
+      errorOf(await call('hf_fs', ops({ cmd: 'attach', args: ['hf://README.md'] }))).message ??
+        null,
+      'attach requires a direct repository or bucket file URI.',
     )
 
     // Both error codes are the live server's own, captured rather than coined,

@@ -49,6 +49,7 @@ import {
   FS_IMAGE_ONLY,
   FS_IMAGE_TOO_LARGE,
   FS_NOT_A_FILE,
+  FS_NOT_A_DIRECTORY,
   FS_NOT_FOUND,
   FS_TEXT_ONLY,
   FS_UNSUPPORTED_MEDIA,
@@ -75,6 +76,27 @@ import {
 // live server's own `tools/list` is pinned as a fixture and replayed verbatim.
 // Refresh it with `pnpm run hf-mcp:capture`, which records what it came from.
 const TOOLS_FIXTURE = join(DEFAULT_FIXTURE_ROOT, 'hf-mcp', 'tools.json')
+// The limits page, captured beside the schemas by the same script and for the
+// same reason. `hf://README.md` is a FILE at the root of the virtual
+// filesystem -- no owner, no repository, no tree route behind it -- and the
+// tool document's own closing line sends the model to it: "Limits and
+// path-specific behavior are documented at hf://README.md". A fake that
+// refuses the path refuses an instruction it handed out itself, which is what
+// happened: an agent asked for it mid-benchmark and was told, in bytes it was
+// charged for, that "the mirage hf_hub fake" serves something else.
+const README_FIXTURE = join(DEFAULT_FIXTURE_ROOT, 'hf-mcp', 'README.md')
+const README_URI = 'hf://README.md'
+const README_PATH = 'README.md'
+// Declared by the virtual documentation files and by nothing else -- a
+// repository file's stat and cat carry no Content-Type at all.
+const README_MIME = 'text/markdown'
+
+let readmeCached: Buffer | undefined
+
+function readmeBytes(): Buffer {
+  readmeCached ??= readFileSync(README_FIXTURE)
+  return readmeCached
+}
 
 interface ToolDoc {
   capturedFrom: string
@@ -762,6 +784,70 @@ interface Budget {
   left: number
 }
 
+/**
+ * The four answers `hf://README.md` has, each read off the live server.
+ *
+ * It is a file, so `ls` and `find` refuse it as ENOTDIR and `attach` refuses
+ * it as the wrong kind of file -- the two refusals differ because upstream's
+ * differ, and an agent may branch on either code. `cat` and `stat` serve the
+ * captured page, and both name a Content-Type that a repository file does not
+ * have.
+ *
+ * Served from the fixture rather than through `callRoute` because there is no
+ * route: this page belongs to the MCP server, not to the Hub behind it, and
+ * the REST arm has nothing to answer for it. That is the one place the two
+ * arms legitimately do not share an implementation.
+ */
+function readmeOne(cmd: string, rest: string[]): FsOut {
+  const whole = readmeBytes()
+  if (cmd === 'stat') {
+    if (rest.length > 0) {
+      return fsFail(FS_INVALID, `EINVAL: unexpected argument for ${cmd}: ${rest[0] ?? ''}`)
+    }
+    return {
+      text: statMarkdown(README_URI, 'file', README_PATH, whole.length, README_MIME),
+      result: {
+        uri: README_URI,
+        op: 'stat',
+        exists: true,
+        type: 'file',
+        path: README_PATH,
+        content_type: README_MIME,
+        size: whole.length,
+      },
+    }
+  }
+  if (cmd === 'ls' || cmd === 'find') return fsFail(FS_NOT_A_DIRECTORY, 'ENOTDIR: not a directory')
+  if (cmd === 'attach') {
+    return fsFail(FS_NOT_A_FILE, 'attach requires a direct repository or bucket file URI.')
+  }
+  if (cmd !== 'cat') return fsFail(FS_INVALID, `EINVAL: unknown command: ${cmd}`)
+  const flags = catArgs(rest)
+  if ('code' in flags) return fsFail(flags.code, flags.message)
+  // The same slicing a repository file gets, including the mid-character
+  // retreat: this page is UTF-8 and a caller may resume into the middle of a
+  // character exactly as it may anywhere else.
+  const asked = Math.min(flags.offset, whole.length)
+  const from = utf8Start(whole, asked)
+  const end = utf8End(whole, Math.min(asked + flags.maxBytes, whole.length))
+  const slice = whole.subarray(from, end)
+  const bounds: CatBounds = { offset: from, total: whole.length, next: end }
+  const truncated = bounds.next < bounds.total
+  return {
+    text: catMarkdown(README_URI, README_PATH, slice, bounds, README_MIME),
+    result: {
+      uri: README_URI,
+      op: 'cat',
+      path: README_PATH,
+      content: slice.toString('utf8'),
+      content_type: README_MIME,
+      bytes: slice.length,
+      truncated,
+      ...(truncated ? { truncation_reason: 'max_bytes', next_offset: bounds.next } : {}),
+    },
+  }
+}
+
 async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget): Promise<FsOut> {
   if (cmd === 'search') {
     return fsFail(
@@ -770,6 +856,7 @@ async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget):
     )
   }
   const uri = args[0] ?? ''
+  if (uri === README_URI) return readmeOne(cmd, args.slice(1))
   const where = locate(uri, cmd)
   if (!('kind' in where)) return fsFail(where.code, where.message)
   const rest = args.slice(1)
