@@ -458,3 +458,18 @@ async def test_create_explicit_store_block_wins_over_disk_default(tmp_path):
         r = await client.post("/v1/workspaces", json=body)
         assert r.status_code == 201, r.text
     assert not (tmp_path / "workspaces" / "ramws").exists()
+
+
+@pytest.mark.asyncio
+async def test_create_with_an_unresolvable_secrets_block_is_a_bad_request():
+    """A `secrets:` block naming a source the host cannot resolve is
+    the caller's mistake, like a mount whose resource is unknown."""
+    app, _ = _make_app_with_short_grace(grace=10.0)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as client:
+        body = _minimal_config()
+        body["config"]["secrets"] = {"prod": {"source": "nope"}}
+        r = await client.post("/v1/workspaces", json=body)
+        assert r.status_code == 400, r.text
+        assert "nope" in r.json()["detail"]

@@ -173,9 +173,11 @@ async def clone_workspace_version(req: CloneRequest,
         try:
             ws = await Workspace.from_state(to_state(entries, meta),
                                             secrets=secrets)
-        except SecretsError as e:
-            # A secrets override naming an unknown source, or one whose
-            # optional dependency is absent, is a bad request.
+        except (SecretsError, ValueError) as e:
+            # A secrets override naming an unknown source, one whose
+            # optional dependency is absent, or a block the schema
+            # refuses (pydantic's ValidationError is a ValueError) is a
+            # bad request, not a 500.
             raise HTTPException(status_code=400, detail=str(e))
     else:
         if req.source_id not in registry:

@@ -62,9 +62,10 @@ async def create_workspace(req: CreateWorkspaceRequest,
         kwargs["owns_store"] = True
     try:
         ws = Workspace(**kwargs)
-    except (FileNotFoundError, ImportError, ValueError) as e:
+    except (FileNotFoundError, ImportError, SecretsError, ValueError) as e:
         # Construction failures (a wasi build dir that does not exist, a
-        # missing runtime extra) are the caller's to fix, not a 500.
+        # missing runtime extra, a `secrets:` block naming a source the
+        # host cannot resolve) are the caller's to fix, not a 500.
         raise HTTPException(status_code=400, detail=str(e))
     try:
         for prefix, (backend,

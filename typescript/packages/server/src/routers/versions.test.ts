@@ -158,6 +158,31 @@ describe('versions router', () => {
     expect(await cat(newId, '/b.txt')).toBe('base\n')
   })
 
+  it('clones from a version with its own secret declarations', async () => {
+    // A version store holds no `secrets:` block, and the live source
+    // may be gone, so the request names the declarations itself.
+    const id = await createWs()
+    const version = await commit(id, 'base')
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/workspaces/clone',
+      payload: { sourceId: id, at: version, secrets: { prod: { source: 'env' } } },
+    })
+    expect(res.statusCode).toBe(201)
+    const newId = res.json<{ id: string }>().id
+    expect(newId).not.toBe(id)
+
+    // A declaration the host cannot resolve proves the override is
+    // read rather than ignored, and answers 400 rather than 500.
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/v1/workspaces/clone',
+      payload: { sourceId: id, at: version, secrets: { prod: { source: 'nope' } } },
+    })
+    expect(bad.statusCode).toBe(400)
+    expect(bad.json<{ detail: string }>().detail).toContain('nope')
+  })
+
   it('returns empty log before any commit', async () => {
     const id = await createWs()
     const res = await app.inject({ method: 'GET', url: `/v1/workspaces/${id}/versions` })
