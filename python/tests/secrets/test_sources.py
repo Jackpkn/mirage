@@ -13,7 +13,7 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import pytest
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
 
 from mirage.secrets import registry
 from mirage.secrets.config import DotenvConfig, SourceBlock
@@ -129,7 +129,7 @@ async def test_a_refusal_never_carries_the_value(monkeypatch):
 async def test_config_value_reads_one_field(monkeypatch):
     monkeypatch.setenv("SOURCES_PROBE", "v")
     ref = block(token={"from": "env", "key": "SOURCES_PROBE"}).config["token"]
-    assert await config_value("prod", "token", ref) == "v"
+    assert await config_value("prod", "token", ref, {}) == "v"
 
 
 @pytest.mark.asyncio
@@ -166,3 +166,72 @@ async def test_an_instance_may_be_named_after_a_dunder():
     assert set(built) == {"__proto__"}
     secret = await built["__proto__"].fetch(built["__proto__"].config, "")
     assert secret.fields == {"credential": "weird:none"}
+
+
+class LoudConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    token: str = ""
+
+    @field_validator("token")
+    @classmethod
+    def _refuse(cls, value: str) -> str:
+        raise ValueError(f"bad token {value}")
+
+
+@pytest.mark.asyncio
+async def test_a_model_refusal_reports_the_code_not_the_words(monkeypatch):
+    """A custom source's own validator may spell the rejected input,
+    and the value it rejects is the credential just fetched."""
+    monkeypatch.setenv("SOURCES_LOUD", "s3cr3t-value")
+    register_secrets("loud", LoudConfig, fetch_demo)
+    with pytest.raises(SecretsError) as caught:
+        await resolve_sources({
+            "prod":
+            SourceBlock.model_validate({
+                "source": "loud",
+                "config": {
+                    "token": {
+                        "from": "env",
+                        "key": "SOURCES_LOUD"
+                    },
+                },
+            })
+        })
+    message = str(caught.value)
+    assert message == "secrets.prod: token: value_error"
+    assert "s3cr3t-value" not in message
+
+
+@pytest.mark.asyncio
+async def test_one_bootstrap_secret_is_fetched_once():
+    """Two fields naming one dotenv file must read one generation of
+    it; a rotation between them would pin a mismatched pair."""
+    calls: list[str] = []
+
+    async def counting(config: DotenvConfig, ref: str) -> ResolvedSecret:
+        calls.append(ref)
+        return ResolvedSecret(fields={"A": "a", "B": "b"})
+
+    register_secrets("dotenv", DotenvConfig, counting)
+    built = await resolve_sources({
+        "prod":
+        SourceBlock.model_validate({
+            "source": "demo",
+            "config": {
+                "account": {
+                    "from": "dotenv",
+                    "ref": "/one/file",
+                    "key": "A"
+                },
+                "token": {
+                    "from": "dotenv",
+                    "ref": "/one/file",
+                    "key": "B"
+                },
+            },
+        })
+    })
+    assert calls == ["/one/file"]
+    secret = await built["prod"].fetch(built["prod"].config, "")
+    assert secret.fields == {"credential": "a:b"}

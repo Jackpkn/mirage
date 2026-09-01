@@ -137,7 +137,7 @@ describe('resolveSources', () => {
     process.env.SOURCES_PROBE = 'v'
     try {
       const ref = block({ token: { from: 'env', key: 'SOURCES_PROBE' } }).config.token
-      expect(await configValue('prod', 'token', ref as never)).toBe('v')
+      expect(await configValue('prod', 'token', ref as never, new Map())).toBe('v')
     } finally {
       delete process.env.SOURCES_PROBE
     }
@@ -153,6 +153,53 @@ describe('resolveSources', () => {
     expect(Object.hasOwn(built, '__proto__')).toBe(true)
     const secret = await fetchSecret('__proto__', '', built)
     expect(secret.fields.credential).toBe('weird:none')
+  })
+
+  it('reports the issue code, not the words a refinement chose', async () => {
+    // A custom source's own refinement may spell the rejected input,
+    // and the value it rejects is the credential just fetched.
+    const LoudConfig = z.strictObject({
+      token: z.string().refine(() => false, { message: 'bad token' }),
+    })
+    registerSecrets('loud-sources', LoudConfig, () => Promise.resolve({ fields: {} }))
+    process.env.SOURCES_LOUD = 's3cr3t-value'
+    try {
+      const caught = await resolveSources({
+        prod: SourceBlockSchema.parse({
+          source: 'loud-sources',
+          config: { token: { from: 'env', key: 'SOURCES_LOUD' } },
+        }),
+      }).then(
+        () => null,
+        (err: unknown) => err,
+      )
+      expect(String(caught)).toContain('secrets.prod: token: custom')
+      expect(String(caught)).not.toContain('s3cr3t-value')
+    } finally {
+      delete process.env.SOURCES_LOUD
+    }
+  })
+
+  it('fetches one bootstrap secret once', async () => {
+    // Two fields naming one dotenv file must read one generation of
+    // it; a rotation between them would pin a mismatched pair.
+    const calls: string[] = []
+    registerSecrets('dotenv', DeadConfig, (_config: unknown, ref: string) => {
+      calls.push(ref)
+      return Promise.resolve({ fields: { A: 'a', B: 'b' } })
+    })
+    const built = await resolveSources({
+      prod: SourceBlockSchema.parse({
+        source: 'demo-sources',
+        config: {
+          account: { from: 'dotenv', ref: '/one/file', key: 'A' },
+          token: { from: 'dotenv', ref: '/one/file', key: 'B' },
+        },
+      }),
+    })
+    expect(calls).toEqual(['/one/file'])
+    const entry = instance(built, 'prod')
+    expect((await entry.fetch(entry.config as never, '')).fields.credential).toBe('a:b')
   })
 
   it('redacts a failed bootstrap fetch', async () => {

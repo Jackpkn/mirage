@@ -30,11 +30,17 @@ export class SecretsError extends Error {
   }
 }
 
-// Past this many, what came back is not a secret's shape: the `env`
-// source answers with the whole process environment, and reciting a
-// host's variable names back to the agent is neither a useful hint nor
-// ours to print.
+// Past this many, what came back is not a secret's shape, and
+// reciting a host's names back to the agent is neither a useful hint
+// nor ours to print.
 export const MAX_LISTED_FIELDS = 12
+
+// Sources whose fields are the host's shape rather than a secret's,
+// and are never named back however few of them there are: a hardened
+// container starts from `env -i` plus a handful of credentials, so a
+// count threshold alone would recite exactly the environment worth
+// hiding.
+export const OPAQUE_FIELD_SOURCES: ReadonlySet<string> = new Set(['env'])
 
 /**
  * How a refusal names the fields the secret did carry.
@@ -42,10 +48,13 @@ export const MAX_LISTED_FIELDS = 12
  * Lives beside the error it words because both the config plane and
  * the env plane raise it, from different packages. Returns what
  * follows "has" in the message: the labels for a secret of ordinary
- * size, a bare count for one big enough to be a process environment.
+ * size, a bare count for the process environment or for anything big
+ * enough to be one.
  */
-export function fieldSummary(fields: Readonly<Record<string, string>>): string {
+export function fieldSummary(fields: Readonly<Record<string, string>>, source: string): string {
   const names = Object.keys(fields)
-  if (names.length > MAX_LISTED_FIELDS) return `${String(names.length)} fields`
+  if (OPAQUE_FIELD_SOURCES.has(source) || names.length > MAX_LISTED_FIELDS) {
+    return `${String(names.length)} fields`
+  }
   return `{${names.sort(compareCodePoints).join(', ')}}`
 }

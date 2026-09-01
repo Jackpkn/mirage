@@ -26,24 +26,33 @@ describe('SecretsError', () => {
 
 describe('fieldSummary', () => {
   it('lists a secret-sized secret', () => {
-    expect(fieldSummary({ username: 'u', credential: 'x' })).toBe('{credential, username}')
+    expect(fieldSummary({ username: 'u', credential: 'x' }, 'op')).toBe('{credential, username}')
   })
 
   it('lists nothing for an empty secret', () => {
-    expect(fieldSummary({})).toBe('{}')
+    expect(fieldSummary({}, 'op')).toBe('{}')
   })
 
   it('lists up to the cap', () => {
     const fields: Record<string, string> = {}
     for (let i = 0; i < MAX_LISTED_FIELDS; i += 1) fields[`f${String(i).padStart(2, '0')}`] = 'v'
-    expect(fieldSummary(fields)).toBe(`{${Object.keys(fields).join(', ')}}`)
+    expect(fieldSummary(fields, 'op')).toBe(`{${Object.keys(fields).join(', ')}}`)
   })
 
   it('counts a process environment instead of reciting it', () => {
     const fields: Record<string, string> = {}
     for (let i = 0; i <= MAX_LISTED_FIELDS; i += 1) fields[`f${String(i).padStart(2, '0')}`] = 'v'
-    const summary = fieldSummary(fields)
+    const summary = fieldSummary(fields, 'op')
     expect(summary).toBe(`${String(MAX_LISTED_FIELDS + 1)} fields`)
     expect(summary).not.toContain('f00')
+  })
+
+  it('never lists the process environment', () => {
+    // A hardened container starts from `env -i` plus a handful of
+    // credentials, so a count threshold alone would recite exactly the
+    // environment worth hiding.
+    const fields = { HOME: '/root', AWS_SESSION_TOKEN: 't' }
+    expect(fieldSummary(fields, 'env')).toBe('2 fields')
+    expect(fieldSummary(fields, 'env')).not.toContain('AWS_SESSION_TOKEN')
   })
 })

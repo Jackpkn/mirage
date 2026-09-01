@@ -693,5 +693,5 @@ async def fill_env(
             if value is None:
                 raise SecretsError(
                     f"{name}: wanted field {key!r}, the {source} secret "
-                    f"has {field_summary(secret.fields)}")
+                    f"has {field_summary(secret.fields, source)}")
             session.vars[name] = with_value(records[name], value)

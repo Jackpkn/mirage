@@ -21,12 +21,13 @@ from pydantic import ValidationError
 from mirage.secrets.config import SecretRef, SourceBlock
 from mirage.secrets.errors import SecretsError, field_summary
 from mirage.secrets.registry import fetch_secret, source_for
-from mirage.secrets.types import ResolvedSource
+from mirage.secrets.types import ResolvedSecret, ResolvedSource
 
 logger = logging.getLogger(__name__)
 
 
-async def config_value(name: str, field: str, ref: SecretRef) -> str:
+async def config_value(name: str, field: str, ref: SecretRef,
+                       fetched: dict[tuple[str, str], ResolvedSecret]) -> str:
     """Read one source-config value from its bootstrap source.
 
     Args:
@@ -43,6 +44,9 @@ async def config_value(name: str, field: str, ref: SecretRef) -> str:
             shadowing ``env`` renders whatever it likes. The source's
             own words go to the host log instead.
     """
+    seen = fetched.get((ref.provider, ref.ref))
+    if seen is not None:
+        return _field(name, field, ref, seen)
     try:
         secret = await fetch_secret(ref.provider, ref.ref)
     except Exception as exc:
@@ -50,11 +54,17 @@ async def config_value(name: str, field: str, ref: SecretRef) -> str:
                        field, ref.provider, exc)
         raise SecretsError(f"secrets.{name}.config.{field}: cannot fetch "
                            f"from {ref.provider}") from exc
+    fetched[(ref.provider, ref.ref)] = secret
+    return _field(name, field, ref, secret)
+
+
+def _field(name: str, field: str, ref: SecretRef,
+           secret: ResolvedSecret) -> str:
     value = secret.fields.get(ref.key)
     if value is None:
         raise SecretsError(f"secrets.{name}.config.{field}: wanted field "
                            f"{ref.key!r}, the {ref.provider} secret has "
-                           f"{field_summary(secret.fields)}")
+                           f"{field_summary(secret.fields, ref.provider)}")
     return value
 
 
@@ -79,17 +89,28 @@ async def resolve_sources(
             the message.
     """
     out: dict[str, ResolvedSource] = {}
+    # One fetch per bootstrap secret for the whole resolution: two
+    # fields of one config naming the same dotenv file must read one
+    # generation of it, or a rotation between them pins a mismatched
+    # pair for the workspace's life.
+    fetched: dict[tuple[str, str], ResolvedSecret] = {}
     for name, block in blocks.items():
         config_model, fetch = source_for(block.source)
         values: dict[str, Any] = {}
         for field, value in block.config.items():
-            values[field] = (await config_value(name, field, value)
+            values[field] = (await config_value(name, field, value, fetched)
                              if isinstance(value, SecretRef) else value)
         try:
             config = config_model.model_validate(values)
         except ValidationError as exc:
+            logger.warning("secrets.%s: config refused: %s", name, exc)
+            # The error TYPE, never pydantic's rendered message: a
+            # custom source's own validator may spell the rejected
+            # input, and `values` is where a fetched credential has
+            # just landed. The field path and the code say what is
+            # wrong; the words go to the host log.
             detail = "; ".join(
-                f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}"
+                f"{'.'.join(str(part) for part in err['loc'])}: {err['type']}"
                 for err in exc.errors())
             raise SecretsError(f"secrets.{name}: {detail}") from exc
         out[name] = ResolvedSource(config, fetch)

@@ -12,10 +12,12 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import type { z } from 'zod'
+
 import type { SecretRef, SourceBlock } from './config.ts'
 import { SecretsError, fieldSummary } from './errors.ts'
 import { fetchSecret, sourceFor } from './registry.ts'
-import type { ResolvedSource } from './types.ts'
+import type { ResolvedSecret, ResolvedSource } from './types.ts'
 
 /**
  * Whether one config value is a pointer rather than a literal.
@@ -38,7 +40,15 @@ function isSecretRef(value: unknown): value is SecretRef {
  * custom source shadowing `env` renders whatever it likes. The
  * source's own words go to the host log instead.
  */
-export async function configValue(name: string, field: string, ref: SecretRef): Promise<string> {
+export async function configValue(
+  name: string,
+  field: string,
+  ref: SecretRef,
+  fetched: Map<string, ResolvedSecret>,
+): Promise<string> {
+  const cacheKey = `${ref.from}\u0000${ref.ref}`
+  const seen = fetched.get(cacheKey)
+  if (seen !== undefined) return selectField(name, field, ref, seen)
   let secret
   try {
     secret = await fetchSecret(ref.from, ref.ref)
@@ -50,14 +60,30 @@ export async function configValue(name: string, field: string, ref: SecretRef): 
       cause: caught,
     })
   }
+  fetched.set(cacheKey, secret)
+  return selectField(name, field, ref, secret)
+}
+
+function selectField(name: string, field: string, ref: SecretRef, secret: ResolvedSecret): string {
   const value = secret.fields[ref.key]
   if (value === undefined) {
     throw new SecretsError(
       `secrets.${name}.config.${field}: wanted field '${ref.key}', ` +
-        `the ${ref.from} secret has ${fieldSummary(secret.fields)}`,
+        `the ${ref.from} secret has ${fieldSummary(secret.fields, ref.from)}`,
     )
   }
   return value
+}
+
+// The field path and the error code, never the rendered message: a
+// custom source's own refinement may spell the rejected input, and the
+// values are where a fetched credential has just landed. An
+// unrecognized key carries no path, so its own names stand in -- they
+// are what the deployment wrote in the block, not anything fetched.
+function issueDetail(issue: z.core.$ZodIssue): string {
+  const path = issue.path.map(String).join('.')
+  const where = path !== '' ? path : issue.code === 'unrecognized_keys' ? issue.keys.join(', ') : ''
+  return `${where}: ${issue.code}`
 }
 
 /**
@@ -78,17 +104,26 @@ export async function resolveSources(
   blocks: Readonly<Record<string, SourceBlock>>,
 ): Promise<Record<string, ResolvedSource>> {
   const out: [string, ResolvedSource][] = []
+  // One fetch per bootstrap secret for the whole resolution: two
+  // fields of one config naming the same dotenv file must read one
+  // generation of it, or a rotation between them pins a mismatched
+  // pair for the workspace's life.
+  const fetched = new Map<string, ResolvedSecret>()
   for (const [name, block] of Object.entries(blocks)) {
     const { configModel, fetch } = sourceFor(block.source)
     const values: Record<string, unknown> = {}
     for (const [field, value] of Object.entries(block.config)) {
-      values[field] = isSecretRef(value) ? await configValue(name, field, value) : value
+      values[field] = isSecretRef(value) ? await configValue(name, field, value, fetched) : value
     }
     const parsed = configModel.safeParse(values)
     if (!parsed.success) {
-      const detail = parsed.error.issues
-        .map((issue) => `${issue.path.map(String).join('.')}: ${issue.message}`)
-        .join('; ')
+      console.warn(`secrets.${name}: config refused: ${parsed.error.message}`)
+      // The issue CODE, never zod's rendered message: a custom
+      // source's own refinement may spell the rejected input, and
+      // `values` is where a fetched credential has just landed. The
+      // field path and the code say what is wrong; the words go to the
+      // host log.
+      const detail = parsed.error.issues.map(issueDetail).join('; ')
       throw new SecretsError(`secrets.${name}: ${detail}`)
     }
     out.push([name, { config: parsed.data, fetch }])

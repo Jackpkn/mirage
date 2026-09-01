@@ -666,7 +666,8 @@ export async function fillEnv(
       const value = Object.hasOwn(secret.fields, key) ? secret.fields[key] : undefined
       if (value === undefined) {
         throw new SecretsError(
-          `${name}: wanted field '${key}', the ${source} secret has ` + fieldSummary(secret.fields),
+          `${name}: wanted field '${key}', the ${source} secret has ` +
+            fieldSummary(secret.fields, source),
         )
       }
       setSessionEntry(session.vars, name, withValue(record, value))
