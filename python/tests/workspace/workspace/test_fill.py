@@ -28,6 +28,9 @@ from mirage.policy import Ask
 from mirage.policy.match import Outcome
 from mirage.policy.types import Decision, Scope
 from mirage.resource.ram import RAMResource
+from mirage.runtime.base import Runtime
+from mirage.runtime.mixin import LineExecutorMixin
+from mirage.runtime.types import RunResult
 from mirage.secrets import registry
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import register_secrets
@@ -1770,6 +1773,53 @@ async def slow_bootstrap(calls: list[str]) -> FetchFn:
         return ResolvedSecret(fields={"TOKEN": "t"})
 
     return fetch
+
+
+class LineBox(Runtime, LineExecutorMixin):
+    name = "sandbox"
+    captures = ("*", )
+
+    async def run_line(self, line: str, stdin: bytes | None,
+                       env: dict[str, str], cwd: str) -> RunResult:
+        return RunResult(stdout=b"box", stderr=None, exit_code=0)
+
+
+@pytest.mark.asyncio
+async def test_a_whole_line_with_nothing_pending_resolves_nothing():
+    """A whole-line program may read any name, so the walk is skipped
+    -- but a session with nothing pending still has nothing to fetch,
+    and evaluating both arguments read a bootstrap source anyway."""
+    calls: list[str] = []
+    register_secrets("env", FakeConfig, await slow_bootstrap(calls))
+    register_secrets("acct-whole", AccountConfig, account_source())
+    ws = Workspace(
+        {"/ram": RAMResource()},
+        mode=MountMode.EXEC,
+        runtimes=[LineBox(), "vfs"],
+        secrets={
+            "prod": {
+                "source": "acct-whole",
+                "config": {
+                    "token": {
+                        "from": "env",
+                        "key": "TOKEN"
+                    }
+                },
+            }
+        },
+        env={"TOKEN": {
+            "from": "prod",
+            "ref": "r",
+            "key": "credential"
+        }})
+    try:
+        session = ws.get_session(ws.default_session_id)
+        session.hidden_vars = HiddenVars(names=("TOKEN", ))
+        io = await ws.execute("nvidia-smi -L")
+        assert io.exit_code == 0
+        assert calls == []
+    finally:
+        await ws.close()
 
 
 @pytest.mark.asyncio

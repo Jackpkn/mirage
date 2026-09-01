@@ -200,8 +200,11 @@ def _build_load_secrets(
     """
     if not override:
         return None
-    block = override.get("secrets")
-    return block if isinstance(block, dict) and block else None
+    # Passed through as it arrived, even when it is not a mapping: the
+    # constructor is the one place that judges the container, and
+    # filtering here turned a bad override into a successful load whose
+    # every restored pointer was unresolvable.
+    return override.get("secrets")
 
 
 def _build_load_resources(

@@ -499,3 +499,28 @@ async def test_clone_with_a_bad_secrets_override_is_a_bad_request():
                                       "secrets": bad
                                   }})
             assert r.status_code == 400, r.text
+
+
+@pytest.mark.asyncio
+async def test_load_with_a_non_mapping_secrets_override_is_a_bad_request(
+        tmp_path):
+    """Filtering it to None here turned a bad override into a
+    successful load whose every restored pointer was unresolvable."""
+    app, _ = _make_app_with_short_grace(grace=10.0, snapshot_root=tmp_path)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as client:
+        r = await client.post("/v1/workspaces", json=_minimal_config())
+        wid = r.json()["id"]
+        target = tmp_path / "snap.tar"
+        r = await client.post(f"/v1/workspaces/{wid}/snapshot",
+                              json={"path": str(target)})
+        assert r.status_code == 200, r.text
+        r = await client.post("/v1/workspaces/load",
+                              json={
+                                  "path": str(target),
+                                  "override": {
+                                      "secrets": []
+                                  },
+                              })
+        assert r.status_code == 400, r.text
