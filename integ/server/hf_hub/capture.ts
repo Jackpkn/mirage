@@ -152,11 +152,23 @@ async function readmeOf(token: string): Promise<string> {
 
 const token = process.env.HF_TOKEN ?? ''
 const anon = await listTools('')
+// Anonymously for BOTH, because the pair has to describe one server. The
+// document below is built from `anon`, so a README fetched with the token
+// would pin the authenticated page beside the anonymous schemas -- one
+// fixture from each of two snapshots, which is the thing this script exists
+// to prevent.
+const readme = await readmeOf('')
 if (token !== '') {
   const authed = await listTools(token)
   if (JSON.stringify(anon.tools) !== JSON.stringify(authed.tools)) {
     throw new Error(
       'the anonymous and authenticated tool lists differ; the fixture can only pin one, ' +
+        'so decide which the measurement uses before refreshing it',
+    )
+  }
+  if (readme !== (await readmeOf(token))) {
+    throw new Error(
+      'the anonymous and authenticated README pages differ; the fixture can only pin one, ' +
         'so decide which the measurement uses before refreshing it',
     )
   }
@@ -170,11 +182,15 @@ const doc = {
   instructions: anon.init.instructions,
   tools: anon.tools,
 }
-writeFileSync(OUT, `${JSON.stringify(doc, null, 2)}\n`)
 
-// Verbatim, with no trailing newline added: this is a file the fake serves
-// byte for byte, and `Bytes:` in the reply counts whatever is written here.
-const readme = await readmeOf(token)
+// Both writes LAST, after every fetch and every assertion above. Written as
+// they were reached -- tool document, then page -- a failed or truncated
+// README left tools.json already replaced and README.md still the previous
+// capture: two snapshots of a surface the fake presents as one, and the
+// script exiting non-zero would not have put it back.
+// The page is verbatim, with no trailing newline added: the fake serves it
+// byte for byte and `Bytes:` in the reply counts whatever is written here.
+writeFileSync(OUT, `${JSON.stringify(doc, null, 2)}\n`)
 writeFileSync(OUT_README, readme)
 const info = doc.serverInfo as { name?: string; version?: string }
 process.stdout.write(
