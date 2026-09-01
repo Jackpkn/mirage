@@ -854,6 +854,36 @@ async function main(): Promise<void> {
     })
     check('and not what the branch gained afterwards', later.status === 404, String(later.status))
 
+    // ---- listing an issue's comments, which no mirage client asks for
+    // `gh issue comment` posts one and there is no verb that lists them, so
+    // the battery cannot reach this and the endpoint would ship untested.
+    // What does ask is everything on the other side of the fake: a grader
+    // checking that the reply it wanted is the reply that landed reads
+    // `comments[-1]`, which is only "what was said last" if the order is the
+    // vendor's -- oldest first.
+    const opened = await post(`${at}/repos/${REPO}/issues`, {
+      title: 'License info. needed',
+      body: 'Could you provide license info.?',
+    })
+    check('an issue is opened', opened.status === 201, String(opened.status))
+    const issueNo = String(field(opened.body, 'number') ?? '')
+    const empty = await get(`${at}/repos/${REPO}/issues/${issueNo}/comments`)
+    eq('a fresh issue lists no comments', empty, [])
+    for (const body of ['first', 'second']) {
+      const said = await post(`${at}/repos/${REPO}/issues/${issueNo}/comments`, { body })
+      check(`a comment is posted (${body})`, said.status === 201, String(said.status))
+    }
+    const thread = await get(`${at}/repos/${REPO}/issues/${issueNo}/comments`)
+    const bodies = Array.isArray(thread) ? thread.map((c) => field(c, 'body')) : []
+    eq('and both come back oldest first', bodies, ['first', 'second'])
+    check(
+      'each carries the author a grader checks',
+      Array.isArray(thread) && thread.every((c) => field(field(c, 'user'), 'login') !== null),
+      JSON.stringify(thread).slice(0, 200),
+    )
+    const noSuch = await fetch(`${at}/repos/${REPO}/issues/4242/comments`, { headers: HEADERS })
+    check('an issue that is not there is 404', noSuch.status === 404, String(noSuch.status))
+
     process.stdout.write(`github selftest: ${String(checks)} checks passed\n`)
   } finally {
     fake.child.kill('SIGTERM')

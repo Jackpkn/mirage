@@ -206,6 +206,39 @@ async function createComment(ctx: Ctx<C>, repo: RepoRow): Promise<Reply> {
   }
 }
 
+/**
+ * Every comment on one issue, oldest first.
+ *
+ * Oldest first is the vendor's order and it is the whole of what a caller
+ * reads this for: `comments[-1]` is "what was said last", which is how a
+ * grader asks whether the reply it wanted is the reply that landed. Sorting
+ * the other way would leave every such check reading the opening comment.
+ *
+ * The shape matches what `createComment` returns, plus `created_at`, so a
+ * caller that posts and then lists sees one comment described one way.
+ */
+async function listComments(ctx: Ctx<C>, repo: RepoRow): Promise<Reply> {
+  const number = numberParam(ctx)
+  if (number === null) return fail(404, 'Not Found')
+  const issue = await issueRow(ctx.db, ctx.tenant, repo, number)
+  const pull = issue === null ? await pullRow(ctx.db, ctx.tenant, repo, number) : null
+  if (issue === null && pull === null) return fail(404, 'Not Found')
+  const rows = await ctx.db.githubComment.findMany({
+    where: { ...scope(ctx.tenant), repo: repo.fullName, issueNumber: number },
+    orderBy: { seq: 'asc' },
+  })
+  return pagedReply(
+    ctx,
+    rows.map((row) => ({
+      id: row.id,
+      body: row.body,
+      created_at: row.createdAt,
+      user: { login: row.user },
+      html_url: `https://github.com/${repo.fullName}/issues/${String(number)}#issuecomment-${String(row.id)}`,
+    })),
+  )
+}
+
 export function issueRoutes(): KitRoute<C>[] {
   return everywhere<C>(API_PREFIXES, (p) => [
     route<C>('GET', `${p}/repos/:owner/:repo/issues`, authedRoute(withRepo(listIssues))),
@@ -216,6 +249,11 @@ export function issueRoutes(): KitRoute<C>[] {
     route<C>('PATCH', `${p}/repos/:owner/:repo/issues/:number`, authedRoute(withRepo(editIssue)), {
       write: true,
     }),
+    route<C>(
+      'GET',
+      `${p}/repos/:owner/:repo/issues/:number/comments`,
+      authedRoute(withRepo(listComments)),
+    ),
     route<C>(
       'POST',
       `${p}/repos/:owner/:repo/issues/:number/comments`,

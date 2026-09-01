@@ -1902,6 +1902,74 @@ async function main(): Promise<void> {
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))
 
+    // ---- raw, which is resolve for a reader
+    // `/raw/` is how the Hub's own web view links a README and how anything
+    // holding a plain `requests.get` reads one: no redirect, `text/plain`,
+    // and -- the part that is not a synonym for resolve -- an LFS-tracked
+    // path answers with its POINTER rather than its bytes. Probed against
+    // huggingface.co, where `/datasets/lockon/ToolACE/raw/main/data.json`
+    // is 133 bytes of `version https://git-lfs...` against 37MB through
+    // resolve. No client inside mirage sends this request, so the battery
+    // cannot reach it and the endpoint would otherwise ship untested.
+    const rawCard = ['---', 'license: mit', '---', '', '# Raw', ''].join('\n')
+    await repoWithCard(fake.endpoint, 'datasets', 'raw-dataset', rawCard)
+    const raw = await fetch(`${fake.endpoint}/datasets/${TENANT}/raw-dataset/raw/main/README.md`, {
+      headers: { Authorization: `Bearer ${TENANT}` },
+    })
+    check('raw serves the file', raw.status === 200, String(raw.status))
+    eq('raw serves it verbatim', await raw.text(), rawCard)
+    check(
+      'raw is text/plain, where resolve is a download',
+      (raw.headers.get('content-type') ?? '').startsWith('text/plain'),
+      raw.headers.get('content-type') ?? '',
+    )
+    check('raw names the commit', (raw.headers.get('x-repo-commit') ?? '') !== '', '')
+
+    const rawResolve = await fetch(
+      `${fake.endpoint}/datasets/${TENANT}/raw-dataset/resolve/main/README.md`,
+      { headers: { Authorization: `Bearer ${TENANT}` } },
+    )
+    eq('and resolve still answers the same bytes', await rawResolve.text(), rawCard)
+
+    // ---- a path is decoded once, not twice
+    // The kit router decodes every captured parameter, `*path` included, so a
+    // `decodeURIComponent` in the handler was a second pass. Both halves are
+    // checked because only one of them is loud: `100%.txt` threw `URI
+    // malformed` and answered 500, while `a%20b.txt` decoded a second time to
+    // `a b.txt` and served a DIFFERENT file with a 200. Caught in review on
+    // the PR that added `raw`; `resolve` had carried it since it was written.
+    const pushedPct = await fetch(
+      `${fake.endpoint}/api/datasets/${TENANT}/raw-dataset/commit/main`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${TENANT}`, 'Content-Type': 'application/x-ndjson' },
+        body: [
+          JSON.stringify({ key: 'header', value: { summary: 'add percent paths' } }),
+          JSON.stringify({ key: 'file', value: { path: '100%.txt', content: 'percent' } }),
+          JSON.stringify({ key: 'file', value: { path: 'a b.txt', content: 'space' } }),
+          JSON.stringify({ key: 'file', value: { path: 'a%20b.txt', content: 'literal' } }),
+        ].join('\n'),
+      },
+    )
+    check('percent-named files are pushed', pushedPct.status === 200, String(pushedPct.status))
+    const readAt = async (encoded: string, via: string): Promise<string> => {
+      const r = await fetch(
+        `${fake.endpoint}/datasets/${TENANT}/raw-dataset/${via}/main/${encoded}`,
+        { headers: { Authorization: `Bearer ${TENANT}` } },
+      )
+      return r.status === 200 ? await r.text() : `status ${String(r.status)}`
+    }
+    eq('a literal % in a name is not a malformed URI', await readAt('100%25.txt', 'raw'), 'percent')
+    eq('nor through resolve', await readAt('100%25.txt', 'resolve'), 'percent')
+    eq('a literal %20 is not decoded twice', await readAt('a%2520b.txt', 'raw'), 'literal')
+    eq('and a real space still reaches its own file', await readAt('a%20b.txt', 'raw'), 'space')
+
+    const rawMissing = await fetch(
+      `${fake.endpoint}/datasets/${TENANT}/raw-dataset/raw/main/nope.txt`,
+      { headers: { Authorization: `Bearer ${TENANT}` } },
+    )
+    check('raw 404s a path that is not there', rawMissing.status === 404, String(rawMissing.status))
+
     await mcpChecks()
     await launchChecks()
 

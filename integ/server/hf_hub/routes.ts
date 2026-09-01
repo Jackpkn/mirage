@@ -499,9 +499,15 @@ async function tree(ctx: Ctx<C>): Promise<Reply> {
   return pageOf(rows, ctx.query.get('cursor'), limit, ctx.url, ctx.runPrefix)
 }
 
-// ----------------------------------------------------------------- resolve
+// ------------------------------------------------------- resolve and raw
 
-async function resolve(ctx: Ctx<C>): Promise<Reply> {
+interface Found {
+  sha: string
+  blob: HfBlobRow
+}
+
+/** The one blob a `resolve` or `raw` URL names, or the error that URL earns. */
+async function blobFor(ctx: Ctx<C>): Promise<Found | Reply> {
   const kind = ctx.params.kind ?? 'models'
   const namespace = namespaceOf(ctx)
   const name = ctx.params.name ?? ''
@@ -511,9 +517,23 @@ async function resolve(ctx: Ctx<C>): Promise<Reply> {
   const revision = ctx.params.rev ?? DEFAULT_REVISION
   const sha = await resolveRevision(ctx.db, ctx.tenant, key, revision)
   if (sha === null) return revisionNotFound(revision)
-  const path = decodeURIComponent(ctx.params.path ?? '')
+  // Not decoded here. The kit router already decodes every captured
+  // parameter, `*path` included, so a second pass is a second decode:
+  // `100%.txt` is requested as `100%25.txt`, arrives as `100%.txt`, and
+  // `decodeURIComponent` throws on the bare `%` -- a 500 where the file
+  // exists. The quieter half is worse: a file literally named `a%20b.txt`
+  // is requested as `a%2520b.txt`, arrives as `a%20b.txt`, and decodes
+  // again to `a b.txt` -- a DIFFERENT file, served with a 200.
+  const path = ctx.params.path ?? ''
   const blob = await blobAt(ctx.db, ctx.tenant, key, sha, path)
   if (blob === null) return entryNotFound()
+  return { sha, blob }
+}
+
+async function resolve(ctx: Ctx<C>): Promise<Reply> {
+  const found = await blobFor(ctx)
+  if ('status' in found) return found
+  const { sha, blob } = found
   const body = Buffer.from(blob.content)
   const etag = blob.lfsOid !== '' ? blob.lfsOid : blob.oid
   const headers: Record<string, string> = {
@@ -529,6 +549,53 @@ async function resolve(ctx: Ctx<C>): Promise<Reply> {
   // headers above ride along on whichever status comes back, because a client
   // reads `X-Repo-Commit` off a partial response exactly as off a whole one.
   const windowed = rangeReply(ctx.headers, body)
+  return { ...windowed, headers: { ...headers, ...windowed.headers } }
+}
+
+/**
+ * The git-lfs pointer a large file is tracked by, which is what `raw` serves
+ * in place of its content.
+ *
+ * Three lines and a trailing newline, exactly as the spec writes them --
+ * probed rather than recalled: `/datasets/lockon/ToolACE/raw/main/data.json`
+ * answers 133 bytes of this against 37MB through `resolve`.
+ */
+function pointer(blob: HfBlobRow): string {
+  return [
+    'version https://git-lfs.github.com/spec/v1',
+    `oid sha256:${blob.lfsOid}`,
+    `size ${String(blob.content.length)}`,
+    '',
+  ].join('\n')
+}
+
+/**
+ * `raw`, which is `resolve` for a reader rather than for a downloader.
+ *
+ * Two differences, and both are why it cannot simply forward to `resolve`.
+ * The content type is `text/plain` and there is no redirect, so a plain
+ * `requests.get` gets the file -- which is how the Hub's own web view links a
+ * README, and how anything that never learned about LFS reads one. And an
+ * LFS-tracked path answers with its POINTER, not its bytes: three lines
+ * naming the sha256 and the size. A caller that wants the file wants
+ * `resolve`; a caller that wants the pointer has no other way to ask.
+ *
+ * ETag is the git blob oid on both branches, where `resolve` swaps in the
+ * lfs oid -- the pointer IS the blob here, so its own oid is the honest one.
+ */
+async function raw(ctx: Ctx<C>): Promise<Reply> {
+  const found = await blobFor(ctx)
+  if ('status' in found) return found
+  const { sha, blob } = found
+  const body = Buffer.from(blob.lfsOid !== '' ? pointer(blob) : blob.content)
+  const headers: Record<string, string> = {
+    ETag: `"${blob.oid}"`,
+    'X-Repo-Commit': sha,
+  }
+  // The content type is the kit's to state rather than this map's: it owns the
+  // 200, the 206 and the 416 and writes the header on all three, so one set
+  // here is the single header the spread below overwrites.
+  const windowed = rangeReply(ctx.headers, body, 'text/plain; charset=utf-8')
   return { ...windowed, headers: { ...headers, ...windowed.headers } }
 }
 
@@ -913,9 +980,12 @@ function repoRoute(
 
 function resolveRoutes(kind: string, prefix: string): KitRoute<C>[] {
   const bind = (ctx: Ctx<C>): Promise<Reply> => resolve({ ...ctx, params: { ...ctx.params, kind } })
+  const bindRaw = (ctx: Ctx<C>): Promise<Reply> => raw({ ...ctx, params: { ...ctx.params, kind } })
   return [
     route('GET', `${prefix}/:ns/:name/resolve/:rev/*path`, bind),
     route('GET', `${prefix}/:name/resolve/:rev/*path`, bind),
+    route('GET', `${prefix}/:ns/:name/raw/:rev/*path`, bindRaw),
+    route('GET', `${prefix}/:name/raw/:rev/*path`, bindRaw),
   ]
 }
 
