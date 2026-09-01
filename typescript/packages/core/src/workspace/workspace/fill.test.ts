@@ -1638,6 +1638,40 @@ describe('declared source instances', () => {
     ).rejects.toThrowError(/unknown secrets source/)
   })
 
+  it('resolves the block once for concurrent first lines', async () => {
+    // The memo is written after an await, so caching only the result
+    // lets both sessions read every bootstrap source, and a rotation
+    // between the two reads leaves the loser's config on one line.
+    const calls: string[] = []
+    registerSecrets('env', FakeConfig, async (_config: unknown, ref: string) => {
+      calls.push(ref)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return { fields: { TOKEN: 't' } }
+    })
+    registerSecrets('acct-race', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      {
+        prod: { source: 'acct-race', config: { token: { from: 'env', key: 'TOKEN' } } },
+      },
+    )
+    ws.createSession('a')
+    ws.createSession('b')
+    try {
+      const [first, second] = await Promise.all([
+        ws.execute('echo "$TOKEN"', { sessionId: 'a' }),
+        ws.execute('echo "$TOKEN"', { sessionId: 'b' }),
+      ])
+      expect(stdoutStr(first)).toBe('default:r:t\n')
+      expect(stdoutStr(second)).toBe('default:r:t\n')
+      expect(calls).toEqual([''])
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('a copy keeps the declared instances', async () => {
     registerSecrets('acct-copy', AccountConfig, accountSource())
     const ws = await makeWs(

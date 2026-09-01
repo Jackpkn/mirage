@@ -173,18 +173,24 @@ class Workspace:
         # its bootstrap pointers, which is I/O, and this constructor is
         # sync. `_secret_sources` builds them once, before the first
         # fetch.
-        self._secret_blocks: dict[str, SourceBlock] = {
+        # Named for what it holds: the source *declarations*, never a
+        # secret. Spelling it `secret_blocks` made every reader (and
+        # CodeQL's name heuristic, which flagged the instance name in a
+        # log line as a credential) believe otherwise.
+        self._source_blocks: dict[str, SourceBlock] = {
             name: (block if isinstance(block, SourceBlock) else
                    SourceBlock.model_validate(block))
             for name, block in (secrets or {}).items()
         }
         self._secret_sources_built: dict[str, ResolvedSource] | None = None
-        for block in self._secret_blocks.values():
+        self._secret_sources_task: asyncio.Task[dict[
+            str, ResolvedSource]] | None = None
+        for block in self._source_blocks.values():
             source_for(block.source)
         seed_vars = vars_from_entries(env) if env else None
         for var in (seed_vars or {}).values():
             if (var.managed is not None
-                    and var.managed.source not in self._secret_blocks):
+                    and var.managed.source not in self._source_blocks):
                 source_for(var.managed.source)
         self._session_mgr = SessionManager(session_id,
                                            store=stores.sessions,
@@ -333,10 +339,25 @@ class Workspace:
         declaration and rightly fails every line, while an unreachable
         store still fails only the names that want it.
         """
-        if self._secret_sources_built is None:
-            self._secret_sources_built = await resolve_sources(
-                self._secret_blocks)
-        return self._secret_sources_built
+        if self._secret_sources_built is not None:
+            return self._secret_sources_built
+        # The in-flight resolution is cached, not just its result: two
+        # sessions filling concurrently would both find the memo empty
+        # across the await and read every bootstrap source twice, and a
+        # rotation between the two reads would leave the loser's config
+        # on one of the lines. Cleared either way, so a failed
+        # resolution is retried by the next line rather than pinned
+        # forever.
+        task = self._secret_sources_task
+        if task is None:
+            task = asyncio.ensure_future(resolve_sources(self._source_blocks))
+            self._secret_sources_task = task
+        try:
+            built = await task
+        finally:
+            self._secret_sources_task = None
+        self._secret_sources_built = built
+        return built
 
     @property
     def _has_managed_env(self) -> bool:
@@ -764,7 +785,7 @@ class Workspace:
         return await type(self)._from_state(state,
                                             resources=resources,
                                             clis=reusable_clis(self),
-                                            secrets=self._secret_blocks)
+                                            secrets=self._source_blocks)
 
     @classmethod
     async def _from_state(

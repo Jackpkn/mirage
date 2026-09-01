@@ -155,3 +155,14 @@ async def test_a_failed_bootstrap_fetch_is_redacted(monkeypatch):
     message = str(err.value)
     assert message == "secrets.prod.config.token: cannot fetch from dotenv"
     assert "/host/only/.env" not in message
+
+
+@pytest.mark.asyncio
+async def test_an_instance_may_be_named_after_a_dunder():
+    """Free in python; the TypeScript twin has to build its table with
+    Object.fromEntries, since a keyed literal assigns `__proto__`
+    through the prototype setter and leaves no own entry."""
+    built = await resolve_sources({"__proto__": block(account="weird")})
+    assert set(built) == {"__proto__"}
+    secret = await built["__proto__"].fetch(built["__proto__"].config, "")
+    assert secret.fields == {"credential": "weird:none"}

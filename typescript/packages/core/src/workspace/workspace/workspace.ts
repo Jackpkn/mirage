@@ -136,8 +136,10 @@ export class Workspace {
   }
   private readonly watchManager: WatchManager
   private readonly runtimes: Runtimes
-  private readonly secretBlocks: Readonly<Record<string, SourceBlock>>
+  // Named for what it holds: the source declarations, never a secret.
+  private readonly sourceBlocks: Readonly<Record<string, SourceBlock>>
   private secretSourcesBuilt: Readonly<Record<string, ResolvedSource>> | null = null
+  private secretSourcesPending: Promise<Record<string, ResolvedSource>> | null = null
   private readonly router: Router
   private readonly routePolicy: RoutePolicy | null
   private readonly scriptPolicy: ScriptPolicy
@@ -181,18 +183,18 @@ export class Workspace {
     // The source table, kept as declarations: building one reads its
     // bootstrap pointers, which is I/O, and this constructor is sync.
     // `secretSources` builds them once, before the first fetch.
-    this.secretBlocks = Object.fromEntries(
+    this.sourceBlocks = Object.fromEntries(
       Object.entries(options.secrets ?? {}).map(([name, block]) => [
         name,
         SourceBlockSchema.parse(block),
       ]),
     )
-    for (const block of Object.values(this.secretBlocks)) sourceFor(block.source)
+    for (const block of Object.values(this.sourceBlocks)) sourceFor(block.source)
     const seedVars = options.env !== undefined ? varsFromEntries(options.env) : undefined
     for (const seeded of Object.values(seedVars ?? {})) {
       if (
         seeded.managed !== undefined &&
-        !Object.hasOwn(this.secretBlocks, seeded.managed.source)
+        !Object.hasOwn(this.sourceBlocks, seeded.managed.source)
       ) {
         sourceFor(seeded.managed.source)
       }
@@ -1005,8 +1007,23 @@ export class Workspace {
    * names that want it.
    */
   private async secretSources(): Promise<Readonly<Record<string, ResolvedSource>>> {
-    this.secretSourcesBuilt ??= await resolveSources(this.secretBlocks)
-    return this.secretSourcesBuilt
+    if (this.secretSourcesBuilt !== null) return this.secretSourcesBuilt
+    // The in-flight resolution is cached, not just its result: two
+    // sessions filling concurrently would both find the memo empty
+    // across the await and read every bootstrap source twice, and a
+    // rotation between the two reads would leave the loser's config on
+    // one of the lines. Cleared either way, so a failed resolution is
+    // retried by the next line rather than pinned forever.
+    const pending = this.secretSourcesPending ?? resolveSources(this.sourceBlocks)
+    this.secretSourcesPending = pending
+    let built
+    try {
+      built = await pending
+    } finally {
+      this.secretSourcesPending = null
+    }
+    this.secretSourcesBuilt = built
+    return built
   }
 
   /** Everything the module-level executor needs, assembled from this workspace. */
@@ -1174,7 +1191,7 @@ export class Workspace {
       // install does: an env pointer restores from state naming its
       // instance, and without the block the copy would answer the
       // first read with "unknown secrets source".
-      secrets: options.secrets ?? this.secretBlocks,
+      secrets: options.secrets ?? this.sourceBlocks,
     }
     const copyAgentId = options.agentId ?? this.agentId
     if (copyAgentId !== null) opts.agentId = copyAgentId

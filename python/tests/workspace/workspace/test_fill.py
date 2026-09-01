@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import dataclasses
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -1757,6 +1758,54 @@ async def test_a_bare_source_name_still_uses_ambient_defaults():
     try:
         out = await ws.execute('echo "$TOKEN"')
         assert out.stdout == b"default:r:none\n"
+    finally:
+        await ws.close()
+
+
+async def slow_bootstrap(calls: list[str]) -> FetchFn:
+
+    async def fetch(config: FakeConfig, ref: str) -> ResolvedSecret:
+        calls.append(ref)
+        await asyncio.sleep(0.01)
+        return ResolvedSecret(fields={"TOKEN": "t"})
+
+    return fetch
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_lines_resolve_the_block_once():
+    """Two sessions filling at once must share one resolution: the memo
+    is written after an await, so caching only the result lets both
+    read every bootstrap source, and a rotation between the two reads
+    would leave the loser's config on one of the lines."""
+    calls: list[str] = []
+    register_secrets("env", FakeConfig, await slow_bootstrap(calls))
+    register_secrets("acct-race", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={
+                 "prod": {
+                     "source": "acct-race",
+                     "config": {
+                         "token": {
+                             "from": "env",
+                             "key": "TOKEN"
+                         }
+                     },
+                 }
+             })
+    ws.create_session("a")
+    ws.create_session("b")
+    try:
+        first, second = await asyncio.gather(
+            ws.execute('echo "$TOKEN"', session_id="a"),
+            ws.execute('echo "$TOKEN"', session_id="b"))
+        assert (await first.stdout_str()) == "default:r:t\n"
+        assert (await second.stdout_str()) == "default:r:t\n"
+        assert calls == [""]
     finally:
         await ws.close()
 

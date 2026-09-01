@@ -77,7 +77,7 @@ export async function configValue(name: string, field: string, ref: SecretRef): 
 export async function resolveSources(
   blocks: Readonly<Record<string, SourceBlock>>,
 ): Promise<Record<string, ResolvedSource>> {
-  const out: Record<string, ResolvedSource> = {}
+  const out: [string, ResolvedSource][] = []
   for (const [name, block] of Object.entries(blocks)) {
     const { configModel, fetch } = sourceFor(block.source)
     const values: Record<string, unknown> = {}
@@ -91,7 +91,11 @@ export async function resolveSources(
         .join('; ')
       throw new SecretsError(`secrets.${name}: ${detail}`)
     }
-    out[name] = { config: parsed.data, fetch }
+    out.push([name, { config: parsed.data, fetch }])
   }
-  return out
+  // Object.fromEntries, not a keyed object literal: an instance named
+  // `__proto__` assigns through the prototype setter and leaves no own
+  // entry for the lookup to find, where python's dict takes the name
+  // like any other.
+  return Object.fromEntries(out)
 }

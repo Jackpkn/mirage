@@ -17,7 +17,7 @@ import { z } from 'zod'
 
 import { SourceBlockSchema } from './config.ts'
 import { SecretsError } from './errors.ts'
-import { registerSecrets } from './registry.ts'
+import { fetchSecret, registerSecrets } from './registry.ts'
 import { configValue, resolveSources } from './sources.ts'
 import type { ResolvedSecret, ResolvedSource } from './types.ts'
 
@@ -141,6 +141,18 @@ describe('resolveSources', () => {
     } finally {
       delete process.env.SOURCES_PROBE
     }
+  })
+
+  it('keeps a __proto__ instance as an own entry', async () => {
+    // Both the input and the output have to be built with
+    // fromEntries: a keyed object literal assigns through the
+    // prototype setter and leaves no own property, so the lookup
+    // would miss an instance python's dict takes like any other.
+    const blocks = Object.fromEntries([['__proto__', block({ account: 'weird' })]])
+    const built = await resolveSources(blocks)
+    expect(Object.hasOwn(built, '__proto__')).toBe(true)
+    const secret = await fetchSecret('__proto__', '', built)
+    expect(secret.fields.credential).toBe('weird:none')
   })
 
   it('redacts a failed bootstrap fetch', async () => {
