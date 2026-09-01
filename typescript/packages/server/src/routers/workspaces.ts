@@ -93,6 +93,13 @@ export function registerWorkspacesRoutes(app: FastifyInstance, deps: WorkspaceRo
       try {
         args = await configToWorkspaceArgs(cfg)
       } catch (e) {
+        if (e instanceof SecretsError || e instanceof z.ZodError) {
+          // A `secrets:` block the host cannot resolve is the caller's
+          // config, not a backend that would not answer. Resolution moved
+          // into configToWorkspaceArgs, so without this the same body that
+          // python's create route refuses with 400 got a 502 here.
+          return reply.status(400).send({ detail: e.message })
+        }
         return reply.status(502).send({ detail: `resource build failed: ${(e as Error).message}` })
       }
       const resourceMap: Record<string, MountSpec> = {}

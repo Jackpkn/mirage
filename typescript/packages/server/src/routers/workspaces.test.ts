@@ -124,6 +124,25 @@ describe('workspaces router', () => {
     await app.close()
   })
 
+  it('POST /v1/workspaces 400s for a bad secrets block', async () => {
+    // Resolution moved into configToWorkspaceArgs, whose catch answers
+    // 502. An unresolvable source is the caller's config, and python's
+    // create route refuses the same body with 400.
+    const app = buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/workspaces',
+      payload: {
+        config: {
+          mounts: { '/': { resource: 'ram', mode: 'write' } },
+          secrets: { prod: { source: 'nope' } },
+        },
+      },
+    })
+    expect(res.statusCode).toBe(400)
+    await app.close()
+  })
+
   it('DELETE /v1/workspaces/:id removes', async () => {
     const app = buildApp()
     await app.inject({
