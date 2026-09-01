@@ -235,3 +235,67 @@ async def test_one_bootstrap_secret_is_fetched_once():
     assert calls == ["/one/file"]
     secret = await built["prod"].fetch(built["prod"].config, "")
     assert secret.fields == {"credential": "a:b"}
+
+
+class ThrowingConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    token: str = ""
+
+    @field_validator("token")
+    @classmethod
+    def _raise(cls, value: str) -> str:
+        raise RuntimeError(f"bad token {value}")
+
+
+@pytest.mark.asyncio
+async def test_a_validator_that_raises_is_redacted_too(monkeypatch):
+    """pydantic wraps only ValueError and AssertionError, so a
+    validator raising anything else never becomes an issue list."""
+    monkeypatch.setenv("SOURCES_THROWN", "s3cr3t-value")
+    register_secrets("throwing", ThrowingConfig, fetch_demo)
+    with pytest.raises(SecretsError) as caught:
+        await resolve_sources({
+            "prod":
+            SourceBlock.model_validate({
+                "source": "throwing",
+                "config": {
+                    "token": {
+                        "from": "env",
+                        "key": "SOURCES_THROWN"
+                    },
+                },
+            })
+        })
+    message = str(caught.value)
+    assert message == "secrets.prod: config refused"
+    assert "s3cr3t-value" not in message
+
+
+@pytest.mark.asyncio
+async def test_a_bootstrap_field_named_after_a_dunder_is_absent(monkeypatch):
+    """Free in python; the TypeScript twin needs an own-property check,
+    since a plain object answers `constructor` from its prototype."""
+    register_secrets("dotenv", DotenvConfig, counting_fields())
+    with pytest.raises(SecretsError, match="wanted field 'constructor'"):
+        await resolve_sources({
+            "prod":
+            SourceBlock.model_validate({
+                "source": "demo",
+                "config": {
+                    "token": {
+                        "from": "dotenv",
+                        "ref": "/f",
+                        "key": "constructor"
+                    },
+                },
+            })
+        })
+
+
+def counting_fields():
+
+    async def fetch(config: DotenvConfig, ref: str) -> ResolvedSecret:
+        return ResolvedSecret(fields={"A": "a"})
+
+    return fetch

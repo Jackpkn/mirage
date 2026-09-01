@@ -59,4 +59,26 @@ describe('cloneWorkspaceWithOverride', () => {
     await src.close()
     await clone.close()
   })
+
+  it('lets an override replace the declared instances', async () => {
+    // A staging clone points at its own accounts; keeping the source
+    // workspace's would leave it reading production.
+    registerSecrets('acct-override', AccountConfig, (config: AccountConfig, ref: string) =>
+      Promise.resolve({ fields: { credential: `${config.account}:${ref}` } }),
+    )
+    const src = new Workspace(
+      { '/': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        secrets: { prod: { source: 'acct-override', config: { account: 'live' } } },
+        env: { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      },
+    )
+    const clone = await cloneWorkspaceWithOverride(src, {
+      secrets: { prod: { source: 'acct-override', config: { account: 'staging' } } },
+    })
+    expect((await clone.execute('echo "$TOKEN"')).stdoutText.trim()).toBe('staging:r')
+    await src.close()
+    await clone.close()
+  })
 })

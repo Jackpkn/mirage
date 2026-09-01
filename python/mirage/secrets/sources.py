@@ -113,5 +113,13 @@ async def resolve_sources(
                 f"{'.'.join(str(part) for part in err['loc'])}: {err['type']}"
                 for err in exc.errors())
             raise SecretsError(f"secrets.{name}: {detail}") from exc
+        except Exception as exc:
+            # A validator that RAISES rather than returning a
+            # validation error never becomes an issue list, and
+            # pydantic only wraps ValueError and AssertionError. The
+            # words are the validator's, over a value just fetched.
+            logger.warning("secrets.%s: config validation raised: %s", name,
+                           exc)
+            raise SecretsError(f"secrets.{name}: config refused") from exc
         out[name] = ResolvedSource(block.source, config, fetch)
     return out

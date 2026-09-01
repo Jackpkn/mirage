@@ -65,7 +65,10 @@ export async function configValue(
 }
 
 function selectField(name: string, field: string, ref: SecretRef, secret: ResolvedSecret): string {
-  const value = secret.fields[ref.key]
+  // Own properties only, the check `fillEnv` already makes: a plain
+  // object answers `fields['constructor']` with a prototype member,
+  // and that would reach the source's config model as a value.
+  const value = Object.hasOwn(secret.fields, ref.key) ? secret.fields[ref.key] : undefined
   if (value === undefined) {
     throw new SecretsError(
       `secrets.${name}.config.${field}: wanted field '${ref.key}', ` +
@@ -115,7 +118,16 @@ export async function resolveSources(
     for (const [field, value] of Object.entries(block.config)) {
       values[field] = isSecretRef(value) ? await configValue(name, field, value, fetched) : value
     }
-    const parsed = configModel.safeParse(values)
+    let parsed
+    try {
+      parsed = configModel.safeParse(values)
+    } catch (caught) {
+      // A refinement that THROWS never becomes an issue list, and
+      // safeParse does not catch it. The words are the refinement's,
+      // over a value just fetched.
+      console.warn(`secrets.${name}: config validation threw: ${String(caught)}`)
+      throw new SecretsError(`secrets.${name}: config refused`, { cause: caught })
+    }
     if (!parsed.success) {
       console.warn(`secrets.${name}: config refused: ${parsed.error.message}`)
       // The issue CODE, never zod's rendered message: a custom

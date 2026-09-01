@@ -202,6 +202,47 @@ describe('resolveSources', () => {
     expect((await entry.fetch(entry.config as never, '')).fields.credential).toBe('a:b')
   })
 
+  it('redacts a refinement that throws instead of failing', async () => {
+    // safeParse does not catch what a refinement throws, so it never
+    // becomes an issue list; the words are over a value just fetched.
+    const ThrowingConfig = z.strictObject({
+      token: z.string().refine(() => {
+        throw new Error('bad token s3cr3t-value')
+      }),
+    })
+    registerSecrets('throwing-sources', ThrowingConfig, () => Promise.resolve({ fields: {} }))
+    process.env.SOURCES_THROWN = 's3cr3t-value'
+    try {
+      const caught = await resolveSources({
+        prod: SourceBlockSchema.parse({
+          source: 'throwing-sources',
+          config: { token: { from: 'env', key: 'SOURCES_THROWN' } },
+        }),
+      }).then(
+        () => null,
+        (err: unknown) => err,
+      )
+      expect(String(caught)).toContain('secrets.prod: config refused')
+      expect(String(caught)).not.toContain('s3cr3t-value')
+    } finally {
+      delete process.env.SOURCES_THROWN
+    }
+  })
+
+  it('reports a bootstrap field named after a prototype member absent', async () => {
+    registerSecrets('dotenv', DeadConfig, () => Promise.resolve({ fields: { A: 'a' } }))
+    const caught = await resolveSources({
+      prod: SourceBlockSchema.parse({
+        source: 'demo-sources',
+        config: { token: { from: 'dotenv', ref: '/f', key: 'constructor' } },
+      }),
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(String(caught)).toContain("wanted field 'constructor'")
+  })
+
   it('redacts a failed bootstrap fetch', async () => {
     registerSecrets('dotenv', DeadConfig, () =>
       Promise.reject(new SecretsError('dotenv file not found: /host/only/.env')),

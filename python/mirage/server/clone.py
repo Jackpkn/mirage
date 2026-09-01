@@ -88,7 +88,10 @@ async def clone_workspace_with_override(src_ws: Workspace,
     merged = {**existing, **override_resources}
     # Same-process, so the declarations travel with the clone the way
     # a reused remote resource does: the state carries the env
-    # pointers but never the `secrets:` block behind them.
+    # pointers but never the `secrets:` block behind them. An override
+    # naming its own wins, the way a mount override does, so a staging
+    # clone does not keep reading production accounts.
+    secrets = (override or {}).get("secrets") or src_ws.declared_sources
     return await Workspace._from_state(state,
                                        resources=merged,
-                                       secrets=src_ws.declared_sources)
+                                       secrets=secrets)

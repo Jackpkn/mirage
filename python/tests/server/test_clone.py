@@ -64,3 +64,45 @@ async def test_a_clone_keeps_the_declared_instances():
             await clone.close()
     finally:
         await src.close()
+
+
+@pytest.mark.asyncio
+async def test_an_override_replaces_the_declared_instances():
+    """A staging clone points at its own accounts; keeping the source
+    workspace's would leave it reading production."""
+    register_secrets("acct-override", AccountConfig, fetch_account)
+    src = Workspace(
+        {"/": RAMResource()},
+        mode=MountMode.WRITE,
+        secrets={
+            "prod": {
+                "source": "acct-override",
+                "config": {
+                    "account": "live"
+                },
+            }
+        },
+        env={"TOKEN": {
+            "from": "prod",
+            "ref": "r",
+            "key": "credential"
+        }})
+    try:
+        clone = await clone_workspace_with_override(
+            src, {
+                "secrets": {
+                    "prod": {
+                        "source": "acct-override",
+                        "config": {
+                            "account": "staging"
+                        },
+                    }
+                }
+            })
+        try:
+            result = await clone.execute('echo "$TOKEN"')
+            assert (await result.stdout_str()) == "staging:r\n"
+        finally:
+            await clone.close()
+    finally:
+        await src.close()

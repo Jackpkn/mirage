@@ -75,6 +75,9 @@ export async function cloneWorkspaceWithOverride(
   const merged = { ...existing, ...overrideResources }
   // Same-process, so the declarations travel with the clone the way a
   // reused remote resource does: the state carries the env pointers
-  // but never the `secrets:` block behind them.
-  return Workspace.fromState(state, { secrets: src.declaredSources }, merged)
+  // but never the `secrets:` block behind them. An override naming its
+  // own wins, the way a mount override does, so a staging clone does
+  // not keep reading production accounts.
+  const secrets = override?.secrets ?? src.declaredSources
+  return Workspace.fromState(state, { secrets }, merged)
 }
