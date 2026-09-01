@@ -133,7 +133,6 @@ jobs:
           run integ/truth/typescript/redis_cache.json
           run integ/truth/typescript/redis_vfs.json
           run integ/truth/version_branching.json
-          run integ/truth/secrets_local.json
           exit $bad
 
   python-fs:

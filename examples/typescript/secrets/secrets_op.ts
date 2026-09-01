@@ -25,11 +25,11 @@ const CONFIG = join(
   '../../python/secrets/workspace.yaml',
 )
 
-// What the two declared instances read for their own credentials. The
-// dotenv path in the yaml is cwd-relative, so run this from the repo
-// root the way every other example is run.
+// What the declared instance reads for its own credential. The dotenv
+// path in the yaml is cwd-relative, so run this from the repo root the
+// way every other example is run.
 const DOTENV = '.env.development'
-const NEEDS = ['OP_SERVICE_ACCOUNT_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']
+const NEEDS = ['OP_SERVICE_ACCOUNT_TOKEN']
 
 // Every line here is ordinary bash: a managed variable is spelled
 // `$SLACK_BOT_TOKEN`, never as a pointer, so nothing on the line tells
@@ -44,15 +44,9 @@ const LINES = [
   // An item reference read through `key: credential`. A slack bot
   // token starts `xoxb-`, so the prefix is proof the value is real.
   'printf %s "$SLACK_BOT_TOKEN" | cut -c1-5',
-  'echo "slack token: ${#SLACK_BOT_TOKEN} chars"',
+  'echo "bot token: ${#SLACK_BOT_TOKEN} chars"',
   // A field reference, the shape 1Password copies out of the app.
-  'echo "linear key: ${#LINEAR_API_KEY} chars"',
-  // Two variables out of one item: one ref, so one fetch serves both.
-  'echo "notion: ${#NOTION_TOKEN} chars, id ${#NOTION_DATABASE_ID} chars"',
-  // A different instance. Reaching a source it cannot fetch from
-  // fails this line and no other.
-  'echo "db password: ${#DB_PASSWORD} chars"',
-  'echo "the next line still runs"',
+  'echo "user token: ${#SLACK_USER_TOKEN} chars"',
 ]
 
 const dec = new TextDecoder()
