@@ -60,6 +60,18 @@ describe('EnvVarSchema', () => {
 })
 
 describe('SourceBlockSchema', () => {
+  it('keeps a __proto__ config key as an own property', () => {
+    // Keyed assignment would run the prototype setter and the key
+    // would never reach the source's own model; python's dict passes
+    // it through like any other.
+    const block = SourceBlockSchema.parse({
+      source: 'demo',
+      config: Object.fromEntries([['__proto__', 'kept']]),
+    })
+    expect(Object.hasOwn(block.config, '__proto__')).toBe(true)
+    expect(block.config.__proto__).toBe('kept')
+  })
+
   it('takes a type and a config', () => {
     const block = SourceBlockSchema.parse({
       source: 'aws-sm',

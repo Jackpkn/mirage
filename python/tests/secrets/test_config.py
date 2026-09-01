@@ -227,3 +227,15 @@ def test_a_pointer_refuses_unknown_keys():
 def test_a_source_block_refuses_unknown_keys():
     with pytest.raises(ValidationError):
         SourceBlock.model_validate({"source": "env", "account": "x"})
+
+
+def test_a_source_config_keeps_a_dunder_key():
+    """Free in python; the TypeScript twin had to drop `z.record`,
+    which builds by keyed assignment and loses `__proto__` outright."""
+    block = SourceBlock.model_validate({
+        "source": "demo",
+        "config": {
+            "__proto__": "kept"
+        },
+    })
+    assert block.config == {"__proto__": "kept"}

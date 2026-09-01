@@ -118,16 +118,23 @@ export type SecretRef = z.infer<typeof SecretRefSchema>
  */
 export const SourceBlockSchema = z.strictObject({
   source: z.string(),
+  // A custom check rather than `z.record`, which builds its output by
+  // keyed assignment and so DROPS a `__proto__` key outright -- the
+  // deployment's own spelling would vanish instead of reaching the
+  // source's model, where python reports it as an unknown field.
   config: z
-    .record(z.string(), z.unknown())
+    .custom<Record<string, unknown>>(
+      (value) => typeof value === 'object' && value !== null && !Array.isArray(value),
+      { message: 'config must be a mapping' },
+    )
     .default({})
     .transform((config, ctx) => {
-      const out: Record<string, unknown> = {}
+      const out: [string, unknown][] = []
       for (const [name, item] of Object.entries(config)) {
         const pointer =
           typeof item === 'object' && item !== null && !Array.isArray(item) && 'from' in item
         if (!pointer) {
-          out[name] = item
+          out.push([name, item])
           continue
         }
         // Reported, never thrown: a throw from inside a transform
@@ -140,9 +147,13 @@ export const SourceBlockSchema = z.strictObject({
           }
           continue
         }
-        out[name] = parsed.data
+        out.push([name, parsed.data])
       }
-      return out
+      // Object.fromEntries, not keyed assignment: a config key named
+      // `__proto__` would otherwise assign through the prototype
+      // setter and never reach the source's own model, where python's
+      // dict passes it through like any other.
+      return Object.fromEntries(out)
     }),
 })
 

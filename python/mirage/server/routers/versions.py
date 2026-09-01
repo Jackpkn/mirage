@@ -161,13 +161,16 @@ async def clone_workspace_version(req: CloneRequest,
         except KeyError:
             raise HTTPException(status_code=404,
                                 detail=f"version not found: {req.at}")
-        # A version store holds no `secrets:` block either, so the
-        # live workspace this version came from supplies it.
+        # A version store holds no `secrets:` block either. The
+        # request names the declarations when it has them, which is the
+        # only route open once the live source is gone (a restart);
+        # otherwise the live workspace supplies them.
         live = registry.get(
             req.source_id) if req.source_id in registry else None
-        ws = await Workspace.from_state(
-            to_state(entries, meta),
-            secrets=live.runner.ws.declared_sources if live else None)
+        secrets = req.secrets or (live.runner.ws.declared_sources
+                                  if live else None)
+        ws = await Workspace.from_state(to_state(entries, meta),
+                                        secrets=secrets)
     else:
         if req.source_id not in registry:
             raise HTTPException(status_code=404, detail="workspace not found")
