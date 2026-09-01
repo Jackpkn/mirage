@@ -92,11 +92,6 @@ export function arrayWith(arr: ShellArray, idx: number, value: string): ShellArr
   return updated
 }
 
-/** Append values after the highest assigned index, as `arr+=(...)`. */
-export function arrayAppend(arr: ShellArray, values: string[]): void {
-  arr.push(...values)
-}
-
 /**
  * Take the assigned elements from index `offset` on, in index order.
  *

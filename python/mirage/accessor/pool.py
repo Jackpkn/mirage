@@ -184,11 +184,3 @@ class LoopClientCache:
                          extra)
         if failures:
             raise failures[0]
-
-    def open_count(self) -> int:
-        """Return how many clients are currently held.
-
-        Returns:
-            int: number of open clients.
-        """
-        return len(self._entries)

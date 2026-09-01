@@ -25,7 +25,7 @@ from mirage.shell.helpers import (  # isort: skip
     get_function_name, get_heredoc_meta, get_heredoc_parts, get_if_branches,
     get_list_parts, get_negated_command, get_parts, get_pipeline_commands,
     get_process_sub_body, get_redirects, get_subshell_body, get_text,
-    get_unset_names, get_while_parts, literal_word, split_env_prefix)
+    get_while_parts, literal_word, split_env_prefix)
 
 _LANG = tree_sitter.Language(tree_sitter_bash.language())
 _PARSER = tree_sitter.Parser(_LANG)
@@ -276,11 +276,6 @@ def test_export_keyword():
 
 def test_local_keyword():
     assert get_declaration_keyword(_first("local X=hello")) == "local"
-
-
-def test_unset_names():
-    names = get_unset_names(_first("unset VAR1 VAR2"))
-    assert names == ["VAR1", "VAR2"]
 
 
 # ── negated command ──────────────────────────────

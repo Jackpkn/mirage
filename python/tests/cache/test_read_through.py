@@ -18,8 +18,7 @@ from mirage.cache.context import push_cache_manager
 from mirage.cache.file.ram import RAMFileCacheStore
 from mirage.cache.manager import CacheManager
 from mirage.cache.read_through import (cache_aware_read_bytes,
-                                       cache_aware_read_stream,
-                                       cached_prefix_bytes)
+                                       cache_aware_read_stream)
 from mirage.types import PathSpec
 from mirage.utils.key_prefix import mount_key
 
@@ -157,27 +156,3 @@ async def test_read_stream_captures_manager_before_drain():
     out = await _drain(source)
     assert out == b"payload"
     assert backend.stream_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_cached_prefix_bytes_slices_when_warm():
-    manager = await _warm_manager(b"payload")
-    prev = push_cache_manager(manager)
-    try:
-        out = await cached_prefix_bytes(_spec(), 4)
-        whole = await cached_prefix_bytes(_spec(), None)
-    finally:
-        push_cache_manager(prev)
-    assert out == b"payl"
-    assert whole == b"payload"
-
-
-@pytest.mark.asyncio
-async def test_cached_prefix_bytes_miss_and_no_manager_return_none():
-    miss_manager = CacheManager(RAMFileCacheStore(), None, "/s3/", True)
-    prev = push_cache_manager(miss_manager)
-    try:
-        assert await cached_prefix_bytes(_spec(), 4) is None
-    finally:
-        push_cache_manager(prev)
-    assert await cached_prefix_bytes(_spec(), 4) is None

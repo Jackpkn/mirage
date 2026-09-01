@@ -150,7 +150,7 @@ def test_client_from_a_closed_loop_is_released_not_forgotten():
 
     assert opened == [0, 1, 2]
     assert released == [0, 1, 2]
-    assert cache.open_count() == 0
+    assert len(cache._entries) == 0
 
 
 def test_a_dead_loop_is_released_once_under_concurrent_gets():
@@ -190,12 +190,12 @@ def test_a_failed_release_keeps_the_entry_retryable():
         await cache.get(_stub(opened, released, counter, fail_release=True))
         with pytest.raises(RuntimeError, match="release failed"):
             await cache.close()
-        assert cache.open_count() == 1, "a failed release must keep the entry"
+        assert len(cache._entries) == 1, "a failed release must keep the entry"
         assert released == []
         # The manager is held rather than wrapped in an AsyncExitStack, so the
         # retry really re-invokes __aexit__ instead of finding a spent stack.
         await cache.close()
-        assert cache.open_count() == 0
+        assert len(cache._entries) == 0
         assert released == [0]
 
     asyncio.run(go())
@@ -227,7 +227,7 @@ def test_close_reports_a_failed_release_instead_of_logging_it():
     # The good one was still released: one failure must not skip the rest, it
     # must only be reported. The failed one stays for a later attempt.
     assert released == [1]
-    assert cache.open_count() == 1
+    assert len(cache._entries) == 1
 
 
 def test_a_failed_release_does_not_strand_the_other_loops():
@@ -252,7 +252,7 @@ def test_a_failed_release_does_not_strand_the_other_loops():
 
     assert opened == [0, 1, 2]
     assert sorted(released) == [0, 1, 2], "a failed release stranded a client"
-    assert cache.open_count() == 0
+    assert len(cache._entries) == 0
 
 
 def test_a_loop_that_failed_to_open_leaves_no_lock_behind():
@@ -273,7 +273,7 @@ def test_a_loop_that_failed_to_open_leaves_no_lock_behind():
         asyncio.run(step())
     asyncio.run(cache.close())
 
-    assert cache.open_count() == 0
+    assert len(cache._entries) == 0
     assert cache._locks == {}, "a closed loop kept its lock"
 
 
@@ -295,14 +295,3 @@ def test_key_is_the_loop_object_not_its_id():
     assert seen[0] != seen[1], "each run needs its own client"
     asyncio.run(cache.close())
     assert sorted(released) == [0, 1]
-
-
-@pytest.mark.asyncio
-async def test_open_count_reports_live_clients():
-    opened, released, counter = [], [], [0]
-    cache = LoopClientCache("test")
-    assert cache.open_count() == 0
-    await cache.get(_stub(opened, released, counter))
-    assert cache.open_count() == 1
-    await cache.close()
-    assert cache.open_count() == 0

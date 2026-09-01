@@ -208,16 +208,6 @@ def array_with(arr: ShellArray, idx: int, value: str) -> ShellArray:
     return updated
 
 
-def array_append(arr: ShellArray, values: list[str]) -> None:
-    """Append values after the highest assigned index, as ``arr+=(...)``.
-
-    Args:
-        arr (ShellArray): the array, mutated in place.
-        values (list[str]): the element values to add.
-    """
-    arr.extend(values)
-
-
 def array_slice(arr: ShellArray, offset: int, length: int | None) -> list[str]:
     """Take the assigned elements from index ``offset`` on, in order.
 

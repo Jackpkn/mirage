@@ -121,6 +121,11 @@ redis    = ["redis[hiredis]>=5.0"]
 # --- mail ---
 email    = ["aioimaplib>=2.0.1", "aiosmtplib>=5.1.0"]
 
+# --- secrets sources ---
+dotenv   = ["python-dotenv>=1.2.2"]
+aws-sm   = ["aioboto3>=13.0"]
+1password = ["onepassword-sdk>=0.4.1"]
+
 # --- data ---
 
 # --- observability ---
@@ -193,6 +198,9 @@ all = [
     "mirage-ai[postgres]",
     "mirage-ai[redis]",
     "mirage-ai[email]",
+    "mirage-ai[dotenv]",
+    "mirage-ai[aws-sm]",
+    "mirage-ai[1password]",
     "mirage-ai[langfuse]",
     "mirage-ai[mem0]",
     "mirage-ai[chroma]",
@@ -270,6 +278,47 @@ dev = [
     "pytest-httpx>=0.36.0",
     "pytest-xdist>=3.8.0",
     "mypy>=2.3.0",
+    "deadcode>=2.4.1",
+]
+
+# Advisory dead-code finder for local use only. NOT a CI gate and not a
+# pre-commit hook: the tool still misreports ~200 live symbols here (see
+# below), so a red run means "read the diff", never "the build is broken".
+#
+# Run it as:  uv run deadcode mirage/
+#
+# `mirage/` and NOT `tests/` is the load-bearing part of that command. A
+# symbol referenced only by its own test is dead production code, and
+# passing tests/ would count that test as a consumer and hide it. Every
+# symbol removed in the dead-code sweep was found exactly this way.
+#
+# The ignore lists below are false positives, not debt. deadcode resolves
+# names statically, so anything invoked by a framework rather than by name
+# reads as unused, and its four --ignore-*-decorated-with flags are no-ops
+# in 2.4.1, so a decorator cannot be excused as a decorator:
+#   *_cmd            typer verbs registered via @app.command(...)
+#   _validate_*      pydantic @field_validator / @model_validator methods
+#   _normalize_*     (same)
+#   __*__            Protocol __call__, __getattr__ lazy-import shims
+#   runtime/wasm     WASI ABI constant tables, complete on purpose
+#   server/routers   FastAPI handlers registered via @router.get/post
+#   agents/*         adapters implementing third-party framework interfaces
+#   fuse/*           libfuse callbacks dispatched by signature
+[tool.deadcode]
+ignore-names = [
+    "*_cmd",
+    "__*__",
+    "_validate_*",
+    "_normalize_*",
+    "_check_*",
+    "_coerce_*",
+    "_v_*",
+]
+ignore-names-in-files = [
+    "mirage/runtime/wasm/*",
+    "mirage/server/routers/*",
+    "mirage/agents/*",
+    "mirage/fuse/*",
 ]
 
 [tool.pytest.ini_options]

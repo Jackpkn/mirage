@@ -41,15 +41,15 @@
       "apple-mobile-web-app-status-bar-style": "black-translucent",
       "og:type": "website",
       "og:url": "https://docs.mirage.strukto.ai",
-      "og:image": "https://raw.githubusercontent.com/strukto-ai/mirage/main/assets/mirage-og-light.png",
-      "og:image:alt": "Mirage virtual filesystem for AI agents",
+      "og:image": "https://raw.githubusercontent.com/strukto-ai/mirage/main/assets/mirage-og-light@2x.png",
+      "og:image:alt": "Mirage: a virtual terminal for AI agents",
       "og:site_name": "Mirage",
       "og:locale": "en_US",
       "twitter:card": "summary_large_image",
       "twitter:site": "@struktoai",
       "twitter:creator": "@struktoai",
-      "twitter:image": "https://raw.githubusercontent.com/strukto-ai/mirage/main/assets/mirage-og-light.png",
-      "twitter:image:alt": "Mirage \u00b7 Unified Virtual Filesystem for AI Agents | Strukto"
+      "twitter:image": "https://raw.githubusercontent.com/strukto-ai/mirage/main/assets/mirage-og-light@2x.png",
+      "twitter:image:alt": "Mirage \u00b7 A Virtual Terminal for AI Agents | Strukto"
     }
   },
   "navigation": {
@@ -181,15 +181,21 @@
             "group": "CLIs",
             "pages": [
               "home/setup/clis",
-              "home/setup/cli/himalaya",
-              "home/setup/cli/gws",
-              "home/setup/cli/slack",
-              "home/setup/cli/discord",
-              "home/setup/cli/ntn",
-              "home/setup/cli/linear",
-              "home/setup/cli/gh",
-                "home/setup/cli/hf",
-              "home/setup/cli/git"
+              {
+                "group": "CLIs",
+                "icon": "terminal",
+                "pages": [
+                  "home/setup/cli/himalaya",
+                  "home/setup/cli/gws",
+                  "home/setup/cli/slack",
+                  "home/setup/cli/discord",
+                  "home/setup/cli/ntn",
+                  "home/setup/cli/linear",
+                  "home/setup/cli/gh",
+                  "home/setup/cli/hf",
+                  "home/setup/cli/git"
+                ]
+              }
             ]
           },
           {
@@ -372,15 +378,21 @@
             "pages": [
               "python/cli/index",
               "python/cli/custom",
-              "python/cli/himalaya",
-              "python/cli/gws",
-              "python/cli/slack",
-              "python/cli/discord",
-              "python/cli/ntn",
-              "python/cli/linear",
-              "python/cli/gh",
-                "python/cli/hf",
-              "python/cli/git"
+              {
+                "group": "CLIs",
+                "icon": "terminal",
+                "pages": [
+                  "python/cli/himalaya",
+                  "python/cli/gws",
+                  "python/cli/slack",
+                  "python/cli/discord",
+                  "python/cli/ntn",
+                  "python/cli/linear",
+                  "python/cli/gh",
+                  "python/cli/hf",
+                  "python/cli/git"
+                ]
+              }
             ]
           },
           {
@@ -562,15 +574,21 @@
             "pages": [
               "typescript/cli/index",
               "typescript/cli/custom",
-              "typescript/cli/himalaya",
-              "typescript/cli/gws",
-              "typescript/cli/slack",
-              "typescript/cli/discord",
-              "typescript/cli/ntn",
-              "typescript/cli/linear",
-              "typescript/cli/gh",
-                "typescript/cli/hf",
-              "typescript/cli/git"
+              {
+                "group": "CLIs",
+                "icon": "terminal",
+                "pages": [
+                  "typescript/cli/himalaya",
+                  "typescript/cli/gws",
+                  "typescript/cli/slack",
+                  "typescript/cli/discord",
+                  "typescript/cli/ntn",
+                  "typescript/cli/linear",
+                  "typescript/cli/gh",
+                  "typescript/cli/hf",
+                  "typescript/cli/git"
+                ]
+              }
             ]
           },
           {

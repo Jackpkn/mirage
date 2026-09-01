@@ -12,6 +12,7 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { load as yamlLoad } from 'js-yaml'
 import { rangeReply, route } from '../kit/typescript/index.ts'
 import type { Ctx, JsonValue, KitRoute, Reply } from '../kit/typescript/index.ts'
 import {
@@ -498,9 +499,15 @@ async function tree(ctx: Ctx<C>): Promise<Reply> {
   return pageOf(rows, ctx.query.get('cursor'), limit, ctx.url, ctx.runPrefix)
 }
 
-// ----------------------------------------------------------------- resolve
+// ------------------------------------------------------- resolve and raw
 
-async function resolve(ctx: Ctx<C>): Promise<Reply> {
+interface Found {
+  sha: string
+  blob: HfBlobRow
+}
+
+/** The one blob a `resolve` or `raw` URL names, or the error that URL earns. */
+async function blobFor(ctx: Ctx<C>): Promise<Found | Reply> {
   const kind = ctx.params.kind ?? 'models'
   const namespace = namespaceOf(ctx)
   const name = ctx.params.name ?? ''
@@ -510,9 +517,23 @@ async function resolve(ctx: Ctx<C>): Promise<Reply> {
   const revision = ctx.params.rev ?? DEFAULT_REVISION
   const sha = await resolveRevision(ctx.db, ctx.tenant, key, revision)
   if (sha === null) return revisionNotFound(revision)
-  const path = decodeURIComponent(ctx.params.path ?? '')
+  // Not decoded here. The kit router already decodes every captured
+  // parameter, `*path` included, so a second pass is a second decode:
+  // `100%.txt` is requested as `100%25.txt`, arrives as `100%.txt`, and
+  // `decodeURIComponent` throws on the bare `%` -- a 500 where the file
+  // exists. The quieter half is worse: a file literally named `a%20b.txt`
+  // is requested as `a%2520b.txt`, arrives as `a%20b.txt`, and decodes
+  // again to `a b.txt` -- a DIFFERENT file, served with a 200.
+  const path = ctx.params.path ?? ''
   const blob = await blobAt(ctx.db, ctx.tenant, key, sha, path)
   if (blob === null) return entryNotFound()
+  return { sha, blob }
+}
+
+async function resolve(ctx: Ctx<C>): Promise<Reply> {
+  const found = await blobFor(ctx)
+  if ('status' in found) return found
+  const { sha, blob } = found
   const body = Buffer.from(blob.content)
   const etag = blob.lfsOid !== '' ? blob.lfsOid : blob.oid
   const headers: Record<string, string> = {
@@ -528,6 +549,53 @@ async function resolve(ctx: Ctx<C>): Promise<Reply> {
   // headers above ride along on whichever status comes back, because a client
   // reads `X-Repo-Commit` off a partial response exactly as off a whole one.
   const windowed = rangeReply(ctx.headers, body)
+  return { ...windowed, headers: { ...headers, ...windowed.headers } }
+}
+
+/**
+ * The git-lfs pointer a large file is tracked by, which is what `raw` serves
+ * in place of its content.
+ *
+ * Three lines and a trailing newline, exactly as the spec writes them --
+ * probed rather than recalled: `/datasets/lockon/ToolACE/raw/main/data.json`
+ * answers 133 bytes of this against 37MB through `resolve`.
+ */
+function pointer(blob: HfBlobRow): string {
+  return [
+    'version https://git-lfs.github.com/spec/v1',
+    `oid sha256:${blob.lfsOid}`,
+    `size ${String(blob.content.length)}`,
+    '',
+  ].join('\n')
+}
+
+/**
+ * `raw`, which is `resolve` for a reader rather than for a downloader.
+ *
+ * Two differences, and both are why it cannot simply forward to `resolve`.
+ * The content type is `text/plain` and there is no redirect, so a plain
+ * `requests.get` gets the file -- which is how the Hub's own web view links a
+ * README, and how anything that never learned about LFS reads one. And an
+ * LFS-tracked path answers with its POINTER, not its bytes: three lines
+ * naming the sha256 and the size. A caller that wants the file wants
+ * `resolve`; a caller that wants the pointer has no other way to ask.
+ *
+ * ETag is the git blob oid on both branches, where `resolve` swaps in the
+ * lfs oid -- the pointer IS the blob here, so its own oid is the honest one.
+ */
+async function raw(ctx: Ctx<C>): Promise<Reply> {
+  const found = await blobFor(ctx)
+  if ('status' in found) return found
+  const { sha, blob } = found
+  const body = Buffer.from(blob.lfsOid !== '' ? pointer(blob) : blob.content)
+  const headers: Record<string, string> = {
+    ETag: `"${blob.oid}"`,
+    'X-Repo-Commit': sha,
+  }
+  // The content type is the kit's to state rather than this map's: it owns the
+  // 200, the 206 and the 416 and writes the header on all three, so one set
+  // here is the single header the spread below overwrites.
+  const windowed = rangeReply(ctx.headers, body, 'text/plain; charset=utf-8')
   return { ...windowed, headers: { ...headers, ...windowed.headers } }
 }
 
@@ -634,6 +702,104 @@ async function commit(ctx: Ctx<C>): Promise<Reply> {
       commitUrl: `${origin(ctx)}/${found.repo.namespace}/${found.repo.name}/commit/${sha}`,
     },
   }
+}
+
+// `upload_folder` VALIDATES a README before it hashes or uploads anything, so
+// a fake without this route cannot accept a folder containing one -- which is
+// most of them. Probed with huggingface_hub 0.33.4: the client posts
+// {content, repoType} and reads {errors, warnings} back, surfacing warnings as
+// python warnings and turning a 400 into `ValueError: Invalid metadata in
+// README.md` (hf_api.py:_validate_yaml). A 404 here is not a soft failure; it
+// aborts the upload.
+//
+// The four answers below were read off https://huggingface.co/api/validate-yaml
+// itself, which serves anonymously, rather than reasoned about:
+//
+//   ---\nlicense: mit\n---\n        200 {errors:[], warnings:[]}
+//   # hello\n                      200 + "empty or missing yaml metadata"
+//   ---\nlicense: mit\n---oops\n    200 + the same warning
+//   ---\n---\n                      200 + the same warning
+//   ---\nlicense: [\n---\n          400 "Invalid YAML in README.md: <parser>"
+//   ---\nhello\n---\n               400 "The YAML metadata ... is invalid."
+//   ---\n- a\n- b\n---\n            400 "\"value\" must be of type object"
+//   ---\nbogus_key: 1\n---\n        200 -- unknown keys are allowed
+//
+// The ragged fence is the one worth naming, because this route asserted the
+// opposite until the endpoint was asked. `---\nlicense: mit\n---oops` does not
+// close the block under huggingface_hub's own REGEX_YAML_BLOCK, and the
+// tempting inference is that an unclosed block is an ERROR. It is not: an
+// unparseable block is simply not metadata, and a card without metadata
+// uploads with a warning. Refusing it would have failed uploads the real Hub
+// accepts, which is the same class of harm as accepting ones it rejects.
+const FRONTMATTER = /^(\s*---[\r\n]+)([\S\s]*?)([\r\n]+---(\r\n|\n|$))/
+
+// Upstream's own strings, including the help links it hands the client.
+const YAMLLINT_HELP = 'You can use a tool like http://www.yamllint.com/ to check it'
+const CARD_HELP = 'https://huggingface.co/docs/hub/model-cards#model-card-metadata'
+const MISSING_METADATA = 'empty or missing yaml metadata in repo card'
+
+function cardError(message: string): Reply {
+  return {
+    status: 400,
+    body: { errors: [{ message, help: YAMLLINT_HELP, type: 'error' }], warnings: [] },
+  }
+}
+
+function validateYaml(ctx: Ctx<C>): Reply {
+  if (!authed(ctx)) return unauthorized()
+  const body = obj(ctx.json())
+  const content = str(body.content)
+  const block = FRONTMATTER.exec(content)
+  // No block, or one that does not close, is not an error -- it is a card
+  // with no metadata, which uploads.
+  if (block === null) {
+    return {
+      status: 200,
+      body: { errors: [], warnings: [{ message: MISSING_METADATA, help: CARD_HELP }] },
+    }
+  }
+  const source = block[2] ?? ''
+  // A block that CAPTURED but holds nothing is "invalid", not "missing": the
+  // distinction is upstream's and it is narrow. `---\n---\n` does not match
+  // the regex at all -- there is no newline before the closing fence for the
+  // block to occupy -- so it warns like a card with no frontmatter, while
+  // `---\n\n---\n` matches with an empty body and is refused. Answered here
+  // rather than by the parser because js-yaml 5 throws on an empty document
+  // where upstream's build returns nothing and reports it as invalid metadata.
+  if (source.trim() === '') return cardError('The YAML metadata of your README.md is invalid.')
+  let parsed: unknown
+  try {
+    parsed = yamlLoad(source)
+  } catch (err) {
+    // The status, the envelope and the `Invalid YAML in README.md: ` prefix are
+    // upstream's, and so is the parser's sentence for the case that matters:
+    // `license: [` answers "unexpected end of the stream within a flow
+    // collection" on both. What differs is the CURSOR. Upstream reports it at
+    // (2:1) over a two-line snippet and this reports (1:11) over one, because
+    // the block captured above carries no trailing newline and upstream's
+    // parser is fed one -- adding it here moves the cursor into agreement and
+    // the sentence out of it, which is how the two builds are known to differ
+    // at all. What decides the upload is the 400, and that is exact.
+    const message = err instanceof Error ? err.message : String(err)
+    return cardError(`Invalid YAML in README.md: ${message}`)
+  }
+  // An empty block parses to null, and a bare scalar to a string; neither is
+  // metadata, and upstream separates the two shapes it rejects.
+  if (parsed === null || parsed === undefined)
+    return cardError('The YAML metadata of your README.md is invalid.')
+  if (Array.isArray(parsed)) {
+    return {
+      status: 400,
+      body: { errors: [{ message: '"value" must be of type object', path: [] }], warnings: [] },
+    }
+  }
+  if (typeof parsed !== 'object')
+    return cardError('The YAML metadata of your README.md is invalid.')
+  // Upstream goes on to check the card against the Hub's schema -- `license`
+  // against a closed enum of some seventy values, and more. That list is not
+  // reproduced here, so a card this route accepts may still be refused there.
+  // Unknown keys ARE accepted upstream, which is why nothing rejects them.
+  return { status: 200, body: { errors: [], warnings: [] } }
 }
 
 async function createRepoRoute(ctx: Ctx<C>): Promise<Reply> {
@@ -814,9 +980,12 @@ function repoRoute(
 
 function resolveRoutes(kind: string, prefix: string): KitRoute<C>[] {
   const bind = (ctx: Ctx<C>): Promise<Reply> => resolve({ ...ctx, params: { ...ctx.params, kind } })
+  const bindRaw = (ctx: Ctx<C>): Promise<Reply> => raw({ ...ctx, params: { ...ctx.params, kind } })
   return [
     route('GET', `${prefix}/:ns/:name/resolve/:rev/*path`, bind),
     route('GET', `${prefix}/:name/resolve/:rev/*path`, bind),
+    route('GET', `${prefix}/:ns/:name/raw/:rev/*path`, bindRaw),
+    route('GET', `${prefix}/:name/raw/:rev/*path`, bindRaw),
   ]
 }
 
@@ -826,6 +995,7 @@ export function hfHubRoutes(): KitRoute<C>[] {
     // Two segments, where every repo route has three or more, so these cannot
     // collide with the `/api/:kind/:name` pair the comment below is about.
     ...KINDS.map((k) => route<C>('GET', `/api/${k}`, (ctx) => listRepos(k, ctx))),
+    route('POST', '/api/validate-yaml', validateYaml),
     route('POST', '/api/repos/create', createRepoRoute, { write: true }),
     route('DELETE', '/api/repos/delete', deleteRepoRoute, { write: true }),
     // Every suffixed route comes FIRST, and the bare repoInfo pair last.

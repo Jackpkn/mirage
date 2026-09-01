@@ -1,7 +1,7 @@
 import pytest
 
 from mirage.commands.builtin.generic.wc import (WCCounts, format_multi,
-                                                format_wc, wc, wc_lines)
+                                                format_wc_lines, wc)
 from mirage.types import PathSpec
 
 
@@ -177,58 +177,43 @@ async def test_wc_binary_input_does_not_crash():
     assert counts.lines == 1  # one \n at byte 0x0a
 
 
-@pytest.mark.asyncio
-async def test_wc_lines_fast_path_matches_full():
-    """`wc_lines` fast path must agree with the full counter."""
-    data = b"alpha\nbeta\ngamma\ndelta\n"
-    fast = await wc_lines(data)
-    full = await wc(data)
-    assert fast == full.lines == 4
+def _fmt(counts, **kw):
+    label = kw.pop("label", None)
+    return format_wc_lines([(counts, label)], **kw)[0]
 
 
-@pytest.mark.asyncio
-async def test_wc_lines_fast_path_no_trailing_newline():
-    assert await wc_lines(b"a\nb\nc") == 2
-
-
-@pytest.mark.asyncio
-async def test_wc_lines_fast_path_empty():
-    assert await wc_lines(b"") == 0
-
-
-def test_format_wc_default_no_label():
+def test_format_wc_lines_default_no_label():
     counts = WCCounts(lines=2, words=4, bytes_=20)
-    assert format_wc(counts) == "      2       4      20"
+    assert _fmt(counts) == "      2       4      20"
 
 
-def test_format_wc_default_with_label():
+def test_format_wc_lines_default_with_label():
     counts = WCCounts(lines=2, words=4, bytes_=20)
-    assert format_wc(counts, label="/f.txt") == " 2  4 20 /f.txt"
+    assert _fmt(counts, label="/f.txt") == " 2  4 20 /f.txt"
 
 
-def test_format_wc_args_l():
+def test_format_wc_lines_args_l():
     counts = WCCounts(lines=2, words=4, bytes_=20)
-    assert format_wc(counts, lines=True) == "2"
-    assert format_wc(counts, lines=True, label="/f.txt") == "2 /f.txt"
+    assert _fmt(counts, lines=True) == "2"
+    assert _fmt(counts, lines=True, label="/f.txt") == "2 /f.txt"
 
 
-def test_format_wc_w_c_m():
+def test_format_wc_lines_w_c_m():
     counts = WCCounts(lines=2, words=4, bytes_=20, chars=18)
-    assert format_wc(counts, words=True) == "4"
-    assert format_wc(counts, bytes_=True) == "20"
-    assert format_wc(counts, chars=True) == "18"
+    assert _fmt(counts, words=True) == "4"
+    assert _fmt(counts, bytes_=True) == "20"
+    assert _fmt(counts, chars=True) == "18"
 
 
-def test_format_wc_combines_lines_and_max_line_length():
+def test_format_wc_lines_combines_lines_and_max_line_length():
     counts = WCCounts(lines=2, max_line_length=11)
-    assert format_wc(counts, lines=True,
-                     max_line_length=True) == "      2      11"
+    assert _fmt(counts, lines=True, max_line_length=True) == "      2      11"
 
 
-def test_format_wc_combines_selected_counts_in_canonical_order():
+def test_format_wc_lines_combines_selected_counts_in_canonical_order():
     counts = WCCounts(lines=2, words=4, bytes_=20, chars=18)
-    assert format_wc(counts, lines=True, words=True, bytes_=True,
-                     chars=True) == "      2       4      18      20"
+    assert _fmt(counts, lines=True, words=True, bytes_=True,
+                chars=True) == "      2       4      18      20"
 
 
 def test_wc_counts_merge():

@@ -537,20 +537,13 @@ def get_declaration_keyword(node: tree_sitter.Node) -> str:
     return node.children[0].type
 
 
-def get_unset_names(node: tree_sitter.Node) -> list[str]:
-    """Get variable names from unset_command."""
-    return [
-        get_text(c) for c in node.named_children if c.type == NT.VARIABLE_NAME
-    ]
-
-
 def get_unset_args(node: tree_sitter.Node) -> list[str]:
     """Get every operand word of unset_command, keeping ``-f``/``-v``/``-n``.
 
-    Unlike ``get_unset_names`` this preserves the leading option words so
-    the handler can tell a function unset (``unset -f``) from a variable
-    unset, and splits the operand span the way the shell does so a
-    subscript target (``unset arr[1]``, quoted or not) stays one word.
+    The leading option words are preserved so the handler can tell a
+    function unset (``unset -f``) from a variable unset, and the operand
+    span is split the way the shell does so a subscript target
+    (``unset arr[1]``, quoted or not) stays one word.
     """
     operands = node.children[1:]
     if not operands:

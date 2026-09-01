@@ -100,13 +100,3 @@ export function cacheAwareStreamEager(raw: PathStream): PathStream {
  * range-read fast path (e.g. `head -c N`) serve from a fully cached file
  * without a partial backend fetch. `n = null` returns the whole cached blob.
  */
-export async function cachedPrefixBytes(
-  path: PathSpec,
-  n: number | null,
-): Promise<Uint8Array | null> {
-  const manager = activeCacheManager()
-  if (manager === null || !(path instanceof PathSpec)) return null
-  const cached = await manager.cachedBytes(path)
-  if (cached === null) return null
-  return n === null ? cached : cached.slice(0, n)
-}
