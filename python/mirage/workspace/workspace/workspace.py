@@ -328,6 +328,18 @@ class Workspace:
         return await explain_line(parse(line), session, self._registry,
                                   self._namespace)
 
+    @property
+    def declared_sources(self) -> Mapping[str, SourceBlock]:
+        """The `secrets:` declarations this workspace was built with.
+
+        Read by the paths that rebuild a workspace from state: a
+        snapshot never carries the block, because it is the
+        deployment's credentials, so a same-process rebuild has to
+        carry it across or the restored pointers name instances the new
+        workspace never heard of.
+        """
+        return self._source_blocks
+
     async def _secret_sources(self) -> Mapping[str, ResolvedSource]:
         """The declared source instances, built once.
 

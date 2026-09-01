@@ -132,11 +132,14 @@ export async function findItemId(client: Client, vaultId: string, name: string):
  * neither shape promises more than the other.
  */
 export function fieldsFromItem(item: Item): Record<string, string> {
-  const fields: Record<string, string> = {}
-  for (const field of item.fields) {
-    if (field.title !== '') fields[field.title] = field.value
-  }
-  if (item.notes !== '' && fields[NOTES_KEY] === undefined) fields[NOTES_KEY] = item.notes
+  // Object.fromEntries, not keyed assignment: a field labelled
+  // `__proto__` would otherwise assign through the prototype setter
+  // and leave no own property for a `key` to select, where python's
+  // dict keeps the label like any other.
+  const fields = Object.fromEntries(
+    item.fields.filter((field) => field.title !== '').map((field) => [field.title, field.value]),
+  ) as Record<string, string>
+  if (item.notes !== '' && !Object.hasOwn(fields, NOTES_KEY)) fields[NOTES_KEY] = item.notes
   return fields
 }
 

@@ -16,7 +16,12 @@ import { describe, expect, it } from 'vitest'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
 import { Workspace } from '@struktoai/mirage-node'
+import { z } from '@struktoai/mirage-core/resource/secrets'
+import { registerSecrets } from '@struktoai/mirage-core/secrets/registry'
 import { cloneWorkspaceWithOverride } from './clone.ts'
+
+const AccountConfig = z.strictObject({ account: z.string().default('default') })
+type AccountConfig = z.infer<typeof AccountConfig>
 
 describe('cloneWorkspaceWithOverride', () => {
   it('produces an independent workspace whose writes do not touch the source', async () => {
@@ -28,6 +33,29 @@ describe('cloneWorkspaceWithOverride', () => {
     expect(srcRead.stdoutText.trim()).toBe('source-only')
     const cloneRead = await clone.execute('cat /file.txt')
     expect(cloneRead.stdoutText.trim()).toBe('clone-write')
+    await src.close()
+    await clone.close()
+  })
+
+  it('keeps the declared source instances', async () => {
+    // State carries the env pointers and never the `secrets:` block
+    // behind them, so a clone that does not carry the declarations
+    // answers the first read with an unknown source.
+    registerSecrets('acct-clone', AccountConfig, (config: AccountConfig, ref: string) =>
+      Promise.resolve({ fields: { credential: `${config.account}:${ref}` } }),
+    )
+    const src = new Workspace(
+      { '/': new RAMResource() },
+      {
+        mode: MountMode.WRITE,
+        secrets: { prod: { source: 'acct-clone', config: { account: 'a1' } } },
+        env: { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      },
+    )
+    const clone = await cloneWorkspaceWithOverride(src, null)
+    const read = await clone.execute('echo "$TOKEN"')
+    expect(read.exitCode).toBe(0)
+    expect(read.stdoutText.trim()).toBe('a1:r')
     await src.close()
     await clone.close()
   })

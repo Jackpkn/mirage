@@ -162,8 +162,11 @@ async def load_workspace(req: LoadWorkspaceRequest,
         raise HTTPException(status_code=409,
                             detail=f"workspace id already exists: {req.id!r}")
     resources = _build_load_resources(req.override)
+    secrets = _build_load_secrets(req.override)
     try:
-        ws = await Workspace.load(str(safe_path), resources=resources)
+        ws = await Workspace.load(str(safe_path),
+                                  resources=resources,
+                                  secrets=secrets)
     except FileNotFoundError:
         raise HTTPException(status_code=400,
                             detail=f"snapshot not found: {req.path}")
@@ -174,6 +177,20 @@ async def load_workspace(req: LoadWorkspaceRequest,
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return await make_detail(entry)
+
+
+def _build_load_secrets(
+        override: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The `secrets:` declarations a load override supplies.
+
+    A snapshot never carries the block, because it is the deployment's
+    credentials, so a restored pointer at a declared instance needs it
+    named here -- the same reason a redacted mount needs `mounts`.
+    """
+    if not override:
+        return None
+    block = override.get("secrets")
+    return block if isinstance(block, dict) and block else None
 
 
 def _build_load_resources(

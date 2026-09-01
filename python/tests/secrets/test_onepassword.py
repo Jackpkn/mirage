@@ -139,6 +139,15 @@ def test_fields_from_item_skips_an_unlabelled_field():
                                   }
 
 
+def test_fields_from_item_keeps_a_dunder_label():
+    """Free in python; the TypeScript twin has to build the map with
+    Object.fromEntries, since keyed assignment runs the prototype
+    setter for `__proto__` and leaves no own property."""
+    assert fields_from_item(item([field("__proto__", "shh")])) == {
+        "__proto__": "shh"
+    }
+
+
 def test_fields_from_item_keeps_a_notes_field_over_the_note():
     fields = fields_from_item(
         item([field("notesPlain", "from-field")], notes="from-note"))

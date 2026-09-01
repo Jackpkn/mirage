@@ -149,6 +149,15 @@ describe('fieldsFromItem', () => {
     ).toEqual({ credential: 'shh' })
   })
 
+  it('keeps a __proto__ field as an own property', () => {
+    // Keyed assignment would run the prototype setter and leave no own
+    // property, so a `key: __proto__` would report the field missing;
+    // python's dict keeps the label like any other.
+    const fields = fieldsFromItem(makeItem([{ title: '__proto__', value: 'shh' }]))
+    expect(Object.hasOwn(fields, '__proto__')).toBe(true)
+    expect(fields.__proto__).toBe('shh')
+  })
+
   it('keeps a notesPlain field over the note', () => {
     expect(
       fieldsFromItem(makeItem([{ title: 'notesPlain', value: 'from-field' }], 'from-note')),

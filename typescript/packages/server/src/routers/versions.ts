@@ -184,7 +184,13 @@ export function registerVersionsRoutes(app: FastifyInstance, deps: VersionRoutes
       try {
         const version = await resolveRef(store, at)
         const { entries, meta } = await readVersion(store, version)
-        ws = await Workspace.fromState(toState(entries, meta))
+        // A version store holds no `secrets:` block either, so the
+        // live workspace this version came from supplies it.
+        const live = deps.registry.has(sourceId) ? deps.registry.get(sourceId).runner.ws : null
+        ws = await Workspace.fromState(
+          toState(entries, meta),
+          live !== null ? { secrets: live.declaredSources } : {},
+        )
       } catch (e) {
         if (e instanceof Errors.NotFoundError) {
           return reply.status(404).send({ detail: `version not found: ${at}` })

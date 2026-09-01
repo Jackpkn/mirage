@@ -172,7 +172,11 @@ export function registerWorkspacesRoutes(app: FastifyInstance, deps: WorkspaceRo
       }
       let ws: Workspace
       try {
-        ws = await Workspace.load(new Uint8Array(tarBuf), {}, overrides)
+        ws = await Workspace.load(
+          new Uint8Array(tarBuf),
+          override?.secrets !== undefined ? { secrets: override.secrets } : {},
+          overrides,
+        )
       } catch (e) {
         return reply.status(400).send({ detail: `load failed: ${(e as Error).message}` })
       }

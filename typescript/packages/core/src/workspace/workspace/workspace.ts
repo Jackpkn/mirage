@@ -1006,6 +1006,19 @@ export class Workspace {
    * fails every line, while an unreachable store still fails only the
    * names that want it.
    */
+  /**
+   * The `secrets:` declarations this workspace was built with.
+   *
+   * Read by the paths that rebuild a workspace from state: a snapshot
+   * never carries the block, because it is the deployment's
+   * credentials, so a same-process rebuild has to carry it across or
+   * the restored pointers name instances the new workspace never heard
+   * of.
+   */
+  get declaredSources(): Readonly<Record<string, SourceBlock>> {
+    return this.sourceBlocks
+  }
+
   private async secretSources(): Promise<Readonly<Record<string, ResolvedSource>>> {
     if (this.secretSourcesBuilt !== null) return this.secretSourcesBuilt
     // The in-flight resolution is cached, not just its result: two
