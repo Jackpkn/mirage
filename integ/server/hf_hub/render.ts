@@ -303,7 +303,13 @@ export function attachMarkdown(uri: string, path: string, mime: string, bytes: n
   ].join('\n')
 }
 
-export function statMarkdown(uri: string, kind: StatKind, path: string, size?: number): string {
+export function statMarkdown(
+  uri: string,
+  kind: StatKind,
+  path: string,
+  size?: number,
+  contentType?: string,
+): string {
   return [
     `# hf_fs stat`,
     '',
@@ -312,6 +318,11 @@ export function statMarkdown(uri: string, kind: StatKind, path: string, size?: n
     `- Type: \`${kind}\``,
     `- Path: \`${path}\``,
     ...(kind === 'file' && size !== undefined ? [`- Size: ${humanSize(size)}`] : []),
+    // AFTER the size here, and BEFORE the byte count in `catMarkdown`. The
+    // two orders are upstream's, captured separately, and neither is a typo:
+    // a repository file carries no Content-Type at all, and only the virtual
+    // documentation files declare one.
+    ...(contentType === undefined ? [] : [`- Content-Type: \`${contentType}\``]),
   ].join('\n')
 }
 
@@ -341,6 +352,7 @@ export function catMarkdown(
   path: string,
   content: Uint8Array,
   bounds: CatBounds,
+  contentType?: string,
 ): string {
   const text = Buffer.from(content).toString('utf8')
   const more = bounds.next < bounds.total
@@ -355,6 +367,7 @@ export function catMarkdown(
     '',
     `URI: \`${uri}\``,
     `Path: \`${path}\``,
+    ...(contentType === undefined ? [] : [`Content-Type: \`${contentType}\``]),
     `Bytes: ${String(content.length)}`,
     '',
     text,
@@ -369,6 +382,11 @@ export const FS_NOT_FOUND = 'HF_FS_NOT_FOUND'
 export const FS_INVALID = 'HF_FS_INVALID_ARGUMENT'
 export const FS_TEXT_ONLY = 'HF_FS_TEXT_ONLY'
 export const FS_NOT_A_FILE = 'HF_FS_NOT_A_FILE'
+// The mirror of NOT_A_FILE, for the commands that need a directory and were
+// handed a file. Only reachable on `hf://README.md` today -- inside a
+// repository the tree route answers a file path with no rows, which `ls` has
+// always reported as an empty listing rather than an error.
+export const FS_NOT_A_DIRECTORY = 'HF_FS_NOT_A_DIRECTORY'
 // `attach`'s own three. It refuses more precisely than `cat` does, because it
 // returns a whole file and cannot truncate: a text file is the wrong KIND of
 // thing (use cat), a non-image binary is unsupported media, and an image over
@@ -387,6 +405,8 @@ const RECOVERY: Record<string, string> = {
     'Use stat for metadata or ls on the parent directory. Do not use cat for binary or non-UTF-8 content.',
   [FS_NOT_A_FILE]:
     'Use stat to confirm the target is a file, or ls/find to discover a returned file URI.',
+  [FS_NOT_A_DIRECTORY]:
+    'Use stat to inspect the target, then run ls or find only on a directory-like scope.',
   [FS_IMAGE_ONLY]: 'Use cat to read this text file, or stat for metadata.',
   [FS_UNSUPPORTED_MEDIA]:
     'Attach supports only files ending in .jpg, .jpeg, .png, or .webp. Use stat for metadata.',
@@ -408,6 +428,7 @@ const SUGGESTED: Record<string, string> = {
   [FS_NOT_FOUND]: 'stat',
   [FS_TEXT_ONLY]: 'stat',
   [FS_NOT_A_FILE]: 'stat',
+  [FS_NOT_A_DIRECTORY]: 'stat',
   [FS_UNSUPPORTED_MEDIA]: 'stat',
   [FS_IMAGE_TOO_LARGE]: 'stat',
   // The one that is not `stat`. A text file asked for as an image is not an
