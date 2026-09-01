@@ -177,6 +177,26 @@ async function mcpChecks(): Promise<void> {
       const content = out.content as { type: string; text?: string }[]
       return content.map((one) => one.text ?? '').join('')
     }
+    // The whole tool result, not just its prose: `isError` lives beside the
+    // content and the per-operation error objects live inside
+    // structuredContent, and neither is visible in the rendered markdown.
+    const call = async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<Record<string, JsonValue>> =>
+      (await client.callTool({ name, arguments: args })) as Record<string, JsonValue>
+    const errorOf = (out: Record<string, JsonValue>, i = 0): Record<string, JsonValue> => {
+      const structured = (out.structuredContent ?? {}) as Record<string, JsonValue>
+      const rows = (structured.results ?? []) as Record<string, JsonValue>[]
+      return ((rows[i] ?? {}).error ?? {}) as Record<string, JsonValue>
+    }
+    const ops = (...list: Record<string, unknown>[]): Record<string, unknown> => ({
+      operations: list,
+    })
+    const catOp = (uri: string, ...rest: string[]): Record<string, unknown> => ({
+      cmd: 'cat',
+      args: [uri, ...rest],
+    })
 
     const who = await text('hf_whoami', {})
     check(
@@ -391,6 +411,10 @@ async function mcpChecks(): Promise<void> {
         // can be. Pushed twice under two names, because upstream decides by
         // the NAME: `.bin` is refused unread, while the same bytes under a
         // text extension are served and have to be bounded instead.
+        // A file inside a directory, so the repository HAS one: `cat` and
+        // `stat` both have to tell a directory from a missing path, and a
+        // flat repo cannot prove either.
+        JSON.stringify({ key: 'file', value: { path: 'nested/note.txt', content: 'in a dir\n' } }),
         ...['binary.bin', 'invalid.txt'].map((path) =>
           JSON.stringify({
             key: 'file',
@@ -494,6 +518,120 @@ async function mcpChecks(): Promise<void> {
       'a run of continuation bytes does not carry the read past the bound',
       blob.includes('Bytes: 11') && blob.includes('Content truncated. Resume with offset 11.'),
       blob.slice(0, 260),
+    )
+
+    // ---- the error envelope
+    //
+    // Every line below was read off https://huggingface.co/mcp. None of it is
+    // visible in the rendered markdown, and an agent that branches on a code
+    // or on `isError` sees only this.
+    const noSuchFile = await call('hf_fs', ops(catOp('hf://models/integ/card-model/nope.txt')))
+    eq('a missing file is HF_FS_NOT_FOUND', errorOf(noSuchFile).code ?? null, 'HF_FS_NOT_FOUND')
+    // `stat` answers a missing path, a directory and a binary blob without
+    // erroring on any of them, so it is the command upstream names for all
+    // three -- and names for nothing else.
+    eq('and suggests stat', errorOf(noSuchFile).suggestedOperation ?? null, 'stat')
+    eq('and the whole result is an error', noSuchFile.isError ?? null, true)
+
+    const binary = await call('hf_fs', ops(catOp('hf://models/integ/card-model/binary.bin')))
+    eq('a binary name is HF_FS_TEXT_ONLY', errorOf(binary).code ?? null, 'HF_FS_TEXT_ONLY')
+    eq('and suggests stat too', errorOf(binary).suggestedOperation ?? null, 'stat')
+
+    // Three shapes of "that is not a file", each with its own sentence.
+    const atRepo = await call('hf_fs', ops(catOp('hf://models/integ/card-model')))
+    eq('a repo root is HF_FS_NOT_A_FILE', errorOf(atRepo).code ?? null, 'HF_FS_NOT_A_FILE')
+    eq(
+      'and says so in upstream words',
+      errorOf(atRepo).message ?? null,
+      'cat requires a URI that points to a file path.',
+    )
+    const atNamespace = await call('hf_fs', ops(catOp('hf://models/integ')))
+    eq(
+      'a namespace is HF_FS_NOT_A_FILE as well',
+      errorOf(atNamespace).message ?? null,
+      'cat requires a URI that points to a file path, not a namespace.',
+    )
+    const atDir = await call('hf_fs', ops(catOp('hf://models/integ/card-model/nested')))
+    eq(
+      'and a directory names itself',
+      errorOf(atDir).message ?? null,
+      'cat requires a file path, got dir: nested',
+    )
+    eq('all three suggest stat', errorOf(atDir).suggestedOperation ?? null, 'stat')
+
+    // A malformed argument is the caller's to fix, so upstream suggests
+    // nothing -- the key is absent rather than null.
+    const flag = await call('hf_fs', ops(catOp('hf://models/integ/card-model/README.md', '--nope')))
+    eq('a bad flag is HF_FS_INVALID_ARGUMENT', errorOf(flag).code ?? null, 'HF_FS_INVALID_ARGUMENT')
+    check(
+      'and suggests nothing at all',
+      !('suggestedOperation' in errorOf(flag)),
+      JSON.stringify(errorOf(flag)),
+    )
+    const scheme = await call('hf_fs', ops(catOp('/not/a/uri')))
+    eq(
+      'a URI without the scheme says so upstream way',
+      errorOf(scheme).message ?? null,
+      'EINVAL: URI must start with hf://',
+    )
+    const bogus = await call('hf_fs', ops(catOp('hf://bogus/x/y')))
+    eq(
+      'and a type upstream does not have is named against upstream list',
+      errorOf(bogus).message ?? null,
+      "EINVAL: Invalid URI type 'bogus'. Must be one of models, datasets, spaces, buckets, collections, papers.",
+    )
+    // `papers` IS one of upstream's roots; this fake simply holds no rows for
+    // it, and saying that is more use than calling the name invalid.
+    const unserved = await call('hf_fs', ops(catOp('hf://papers/2502.16161/metadata.json')))
+    check(
+      'a real root the fake does not serve says which it serves',
+      String(errorOf(unserved).message ?? '').includes('the mirage hf_hub fake serves'),
+      JSON.stringify(errorOf(unserved).message ?? null),
+    )
+
+    // `isError` is the whole batch's, and one success clears it.
+    const bothBad = await call(
+      'hf_fs',
+      ops(catOp('hf://models/integ/card-model/nope.txt'), catOp('/not/a/uri')),
+    )
+    eq('a batch where everything failed is an error', bothBad.isError ?? null, true)
+    const mixed = await call(
+      'hf_fs',
+      ops(
+        catOp('hf://models/integ/card-model/README.md'),
+        catOp('hf://models/integ/card-model/nope.txt'),
+      ),
+    )
+    check('but one success clears it', !('isError' in mixed), JSON.stringify(mixed.isError ?? null))
+
+    // ---- stat tells four things apart, which is why upstream recommends it
+    // for "an uncertain target type". A repository is `repo` and not `dir`,
+    // and a path that is not there is `missing` and not a directory -- the
+    // fake reported both wrongly until the tree's ROWS became the test.
+    const statRepo = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model'] }],
+    })
+    check(
+      'stat calls a repository a repo',
+      statRepo.includes('- Type: `repo`'),
+      statRepo.slice(0, 200),
+    )
+    const statDir = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/nested'] }],
+    })
+    check('and a directory a dir', statDir.includes('- Type: `dir`'), statDir.slice(0, 200))
+    const statGone = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/nope.txt'] }],
+    })
+    check(
+      'and a path that is not there missing',
+      statGone.includes('- Exists: no') && statGone.includes('- Type: `missing`'),
+      statGone.slice(0, 200),
+    )
+    check(
+      'and prints the path even then',
+      statGone.includes('- Path: `nope.txt`'),
+      statGone.slice(0, 200),
     )
 
     const stat = await text('hf_fs', {

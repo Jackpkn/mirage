@@ -261,16 +261,23 @@ export function listingMarkdown(cmd: string, uri: string, rows: FsEntry[]): stri
  *   - Path: `config.json`
  *   - Size: 570 bytes
  */
-export function statMarkdown(uri: string, entry: FsEntry | null, path: string): string {
-  const out = [`# hf_fs stat`, '', `- URI: \`${uri}\``]
-  if (entry === null) {
-    out.push('- Exists: no')
-    return out.join('\n')
-  }
-  out.push('- Exists: yes', `- Type: \`${entry.type === 'dir' ? 'dir' : 'file'}\``)
-  out.push(`- Path: \`${path}\``)
-  if (entry.type !== 'dir') out.push(`- Size: ${humanSize(entry.size)}`)
-  return out.join('\n')
+// The four things a URI can be, which is one more than this renderer used to
+// admit and one more than the fake used to compute. A repository is not a
+// directory upstream, and a path that is not there is `missing` rather than an
+// absent Type line -- both are printed, and both are printed for every
+// outcome, so a reader never has to infer a field from its absence.
+export type StatKind = 'file' | 'dir' | 'repo' | 'missing'
+
+export function statMarkdown(uri: string, kind: StatKind, path: string, size?: number): string {
+  return [
+    `# hf_fs stat`,
+    '',
+    `- URI: \`${uri}\``,
+    `- Exists: ${kind === 'missing' ? 'no' : 'yes'}`,
+    `- Type: \`${kind}\``,
+    `- Path: \`${path}\``,
+    ...(kind === 'file' && size !== undefined ? [`- Size: ${humanSize(size)}`] : []),
+  ].join('\n')
 }
 
 /**
@@ -326,6 +333,7 @@ export function catMarkdown(
 export const FS_NOT_FOUND = 'HF_FS_NOT_FOUND'
 export const FS_INVALID = 'HF_FS_INVALID_ARGUMENT'
 export const FS_TEXT_ONLY = 'HF_FS_TEXT_ONLY'
+export const FS_NOT_A_FILE = 'HF_FS_NOT_A_FILE'
 
 const RECOVERY: Record<string, string> = {
   [FS_NOT_FOUND]:
@@ -334,6 +342,24 @@ const RECOVERY: Record<string, string> = {
     'Correct the URI or flags using the operation grammar and route-specific option guidance.',
   [FS_TEXT_ONLY]:
     'Use stat for metadata or ls on the parent directory. Do not use cat for binary or non-UTF-8 content.',
+  [FS_NOT_A_FILE]:
+    'Use stat to confirm the target is a file, or ls/find to discover a returned file URI.',
+}
+
+// The live server names a DIFFERENT command in the error object when one
+// would help, and names none when nothing would: `stat` answers all three of
+// the codes below -- it reports a missing path, a directory and a binary blob
+// without erroring on any of them -- while a malformed flag or a bad URI is
+// the caller's to fix and gets no suggestion at all. Read off the live
+// server for each code rather than assigned by taste.
+const SUGGESTED: Record<string, string> = {
+  [FS_NOT_FOUND]: 'stat',
+  [FS_TEXT_ONLY]: 'stat',
+  [FS_NOT_A_FILE]: 'stat',
+}
+
+export function fsSuggested(code: string): string | undefined {
+  return SUGGESTED[code]
 }
 
 export function fsRecovery(code: string): string {

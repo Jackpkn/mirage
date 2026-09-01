@@ -45,6 +45,7 @@ import { hfHubFake } from './fake.ts'
 import { hfHubRoutes } from './routes.ts'
 import {
   FS_INVALID,
+  FS_NOT_A_FILE,
   FS_NOT_FOUND,
   FS_TEXT_ONLY,
   catMarkdown,
@@ -52,6 +53,7 @@ import {
   detailsMarkdown,
   fsError,
   fsRecovery,
+  fsSuggested,
   listingMarkdown,
   operationsMarkdown,
   searchMarkdown,
@@ -164,6 +166,11 @@ const PLURAL: Record<string, string> = {
 interface Answer {
   text: string
   structured?: JsonValue
+  // MCP's own flag on the tool result, which the live server sets when EVERY
+  // operation in the batch failed and omits the moment one succeeds. Omitted
+  // rather than false, because that is what upstream sends and a client may
+  // read the key's presence.
+  isError?: boolean
 }
 
 async function whoamiAnswer(at: Dispatch): Promise<Answer> {
@@ -296,20 +303,42 @@ interface Refusal {
   message: string
 }
 
-function locate(uri: string): Located | Refusal {
+// Every root the live server addresses, which is more than this fake holds
+// rows for. The distinction matters in exactly one place: a type that is not
+// on this list is wrong ANYWHERE and earns upstream's own sentence, while one
+// that is on it but missing from KINDS is a real root that this fake does not
+// serve, and saying so is more use than pretending the name is invalid.
+const UPSTREAM_KINDS = ['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers']
+
+function locate(uri: string, cmd: string): Located | Refusal {
   const bad = (message: string): Refusal => ({ code: FS_INVALID, message })
-  if (!uri.startsWith('hf://')) {
-    return bad(`EINVAL: first argument must be an hf:// URI: ${uri}`)
-  }
+  if (!uri.startsWith('hf://')) return bad('EINVAL: URI must start with hf://')
   const parts = uri
     .slice('hf://'.length)
     .split('/')
     .filter((one) => one !== '')
   const kind = parts[0] ?? ''
+  if (kind === '') return bad('EINVAL: Missing repository or bucket type in URI.')
+  if (!UPSTREAM_KINDS.includes(kind)) {
+    return bad(`EINVAL: Invalid URI type '${kind}'. Must be one of ${UPSTREAM_KINDS.join(', ')}.`)
+  }
   if (!KINDS.includes(kind)) {
     return bad(`EINVAL: the mirage hf_hub fake serves ${KINDS.join(', ')} only: ${uri}`)
   }
-  if (parts.length < 3) return bad(`EINVAL: expected hf://${kind}/<namespace>/<name>: ${uri}`)
+  // A URI naming a root or an owner is a NAMESPACE, and asking `cat` for one
+  // is not a malformed argument -- it is a URI that points at the wrong kind
+  // of thing, which is what NOT_A_FILE says. The live server answers that
+  // code here, and an agent branching on the code should not be told it
+  // mistyped a flag. Every other command still gets the fake's own sentence,
+  // because a namespace listing is a thing this fake genuinely cannot do.
+  if (parts.length < 3) {
+    return cmd === 'cat'
+      ? {
+          code: FS_NOT_A_FILE,
+          message: 'cat requires a URI that points to a file path, not a namespace.',
+        }
+      : bad(`EINVAL: expected hf://${kind}/<namespace>/<name>: ${uri}`)
+  }
   return { kind, id: `${parts[1] ?? ''}/${parts[2] ?? ''}`, path: parts.slice(3).join('/') }
 }
 
@@ -518,7 +547,7 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
     )
   }
   const uri = args[0] ?? ''
-  const where = locate(uri)
+  const where = locate(uri, cmd)
   if (!('kind' in where)) return fsFail(where.code, where.message)
   const rest = args.slice(1)
   // Every other command here takes the URI alone. `cat` takes the two flags
@@ -549,14 +578,21 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
     }
   }
   if (cmd === 'stat') {
-    // A path is a file if the repo's recursive tree names it, and a directory
-    // if listing it answers at all. Asked in that order because only the
-    // listing can tell an empty directory from a missing one.
+    // Four outcomes, in the order that can tell them apart. A repository root
+    // is answered first and without a lookup, because upstream calls it
+    // `repo` and not `dir` -- the distinction is the whole reason stat is
+    // recommended for "an uncertain target type".
+    if (where.path === '') {
+      return {
+        text: statMarkdown(uri, 'repo', ''),
+        result: { uri, op: 'stat', exists: true, type: 'repo', path: '' },
+      }
+    }
     const all = entriesOfFull(await treeAt(at, { ...where, path: '' }, true))
     const hit = all.find((one) => one.full === where.path)
     if (hit !== undefined) {
       return {
-        text: statMarkdown(uri, { ...hit.entry, type: 'file' }, where.path),
+        text: statMarkdown(uri, 'file', where.path, hit.entry.size),
         result: {
           uri,
           op: 'stat',
@@ -567,20 +603,30 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
         },
       }
     }
+    // Rows, not merely a reply: the tree route answers 200 with nothing for a
+    // path that is not there, so `ok` alone reported every missing file as a
+    // directory that exists.
     const listed = await treeAt(at, where, false)
-    if (ok(listed)) {
+    if (ok(listed) && entriesOf(listed).length > 0) {
       return {
-        text: statMarkdown(uri, { type: 'dir', path: where.path, size: 0, lfs: false }, where.path),
+        text: statMarkdown(uri, 'dir', where.path),
         result: { uri, op: 'stat', exists: true, type: 'dir', path: where.path },
       }
     }
     return {
-      text: statMarkdown(uri, null, where.path),
-      result: { uri, op: 'stat', exists: false, path: where.path },
+      text: statMarkdown(uri, 'missing', where.path),
+      result: { uri, op: 'stat', exists: false, type: 'missing', path: where.path },
     }
   }
   if (cmd === 'cat') {
-    if (where.path === '') return fsFail(FS_INVALID, `EINVAL: cat needs a file path: ${uri}`)
+    // A repo root is not a malformed argument either -- it is a URI naming a
+    // repository where a file was wanted, and the live server distinguishes
+    // the three by wording alone: this sentence for a repository, the
+    // "not a namespace" one above for a root or an owner, and "got dir"
+    // below for a directory inside a repository.
+    if (where.path === '') {
+      return fsFail(FS_NOT_A_FILE, 'cat requires a URI that points to a file path.')
+    }
     const flags = catArgs(rest)
     if ('code' in flags) return fsFail(flags.code, flags.message)
     if (binaryName(where.path)) {
@@ -597,6 +643,19 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
       `/${where.kind === 'models' ? '' : `${where.kind}/`}${where.id}/resolve/main/${where.path}`,
     )
     if (reply.status !== 200 || !Buffer.isBuffer(reply.body)) {
+      // A path that does not resolve is either missing or a DIRECTORY, and
+      // the live server tells them apart. Only asked on the miss path, so a
+      // read that succeeds still costs one request; and asked of the tree
+      // rather than guessed from the name, because a directory is not
+      // required to look like one.
+      // A listing that ANSWERS is not a directory -- the tree route replies
+      // 200 with no rows for a path that is not there at all, so the rows are
+      // the test. A directory in git always holds something; an empty one
+      // cannot be committed.
+      const listed = await treeAt(at, where, false)
+      if (ok(listed) && entriesOf(listed).length > 0) {
+        return fsFail(FS_NOT_A_FILE, `cat requires a file path, got dir: ${where.path}`)
+      }
       return fsFail(FS_NOT_FOUND, `File does not exist: ${where.path}`)
     }
     // The whole file is fetched and then sliced, because the resolve route
@@ -657,22 +716,33 @@ async function fsAnswer(at: Dispatch, args: Record<string, JsonValue>): Promise<
   for (const [i, one] of ops.entries()) {
     const out = await fsOne(at, String(one.cmd ?? ''), strList(one.args))
     texts.push(out.text)
-    results.push(
-      out.error === undefined
-        ? { index: i, status: 'success', result: out.result ?? {} }
-        : {
-            index: i,
-            status: 'error',
-            error: {
-              code: out.error.code,
-              message: out.error.message,
-              recovery: fsRecovery(out.error.code),
-              retryable: false,
-            },
-          },
-    )
+    if (out.error === undefined) {
+      results.push({ index: i, status: 'success', result: out.result ?? {} })
+      continue
+    }
+    const error: Record<string, JsonValue> = {
+      code: out.error.code,
+      message: out.error.message,
+      recovery: fsRecovery(out.error.code),
+      retryable: false,
+    }
+    // Assigned rather than spread, so the key is absent when there is no
+    // suggestion instead of present and undefined -- which is what upstream
+    // sends, and the difference a client checking `in` would see.
+    const suggested = fsSuggested(out.error.code)
+    if (suggested !== undefined) error.suggestedOperation = suggested
+    results.push({ index: i, status: 'error', error })
   }
-  return { text: operationsMarkdown(texts), structured: { results } }
+  // A batch of nothing is not a batch of failures. The captured schema puts
+  // `minItems: 1` on operations, so this cannot arrive from a conforming
+  // caller, but `every` on an empty array is true and would report a batch
+  // that ran nothing as a batch where everything failed.
+  const failed = ops.length > 0 && ops.every((_, i) => obj(results[i]).status === 'error')
+  return {
+    text: operationsMarkdown(texts),
+    structured: { results },
+    ...(failed ? { isError: true } : {}),
+  }
 }
 
 // ---------------------------------------------------------------- assembly
@@ -704,6 +774,7 @@ function buildMcpServer(at: Dispatch, doc: ToolDoc): McpServer {
     return {
       content: [{ type: 'text', text: answer.text }],
       ...(answer.structured === undefined ? {} : { structuredContent: answer.structured }),
+      ...(answer.isError === true ? { isError: true } : {}),
     }
   })
   return server
