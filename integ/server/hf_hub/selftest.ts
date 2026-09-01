@@ -817,6 +817,72 @@ async function mcpChecks(): Promise<void> {
       ((pagedRows.entries ?? []) as JsonValue[]).length === PAGED,
       String(((pagedRows.entries ?? []) as JsonValue[]).length),
     )
+    // ---- and the listing is bounded, by upstream's number
+    //
+    // 1,000 entries by default and 10,000 at most. The bound matters twice:
+    // it is what upstream answers, and it is what stops an arbitrarily large
+    // repository being aggregated whole in order to throw most of it away.
+    const capped = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ/paged-model', '--limit', '10'] }),
+    )
+    const cappedRow = (
+      (((capped.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+        string,
+        JsonValue
+      >[]
+    )[0]
+    const cappedResult = (cappedRow ?? {}).result as Record<string, JsonValue>
+    eq('--limit bounds the listing', ((cappedResult.entries ?? []) as JsonValue[]).length, 10)
+    eq('and says it was cut', cappedResult.truncated ?? null, true)
+    eq('in the schema own vocabulary', cappedResult.truncation_reason ?? null, 'entry_limit')
+    const cappedText = ((capped.content ?? []) as Record<string, JsonValue>[])
+      .map((one) => String(one.text ?? ''))
+      .join('')
+    check(
+      'and after the table, the way upstream places it',
+      cappedText.includes(
+        'Result truncated after reaching the entry limit. Rerun with a larger --limit, up to 10000.',
+      ),
+      cappedText.slice(-200),
+    )
+    // A listing that FITS is not cut, and says nothing about limits.
+    const uncut = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ/paged-model', '--limit', '60'] }),
+    )
+    const uncutResult = (
+      (
+        (((uncut.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+          string,
+          JsonValue
+        >[]
+      )[0] ?? {}
+    ).result as Record<string, JsonValue>
+    check(
+      'a listing that fits is not marked truncated',
+      !('truncated' in uncutResult),
+      JSON.stringify(Object.keys(uncutResult)),
+    )
+    const badLimit = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ/paged-model', '--limit', '20000'] }),
+    )
+    eq(
+      'a limit past the ceiling names the ceiling',
+      errorOf(badLimit).message ?? null,
+      'EINVAL: limit must be between 1 and 10000 for this command',
+    )
+    const otherFlag = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ/paged-model', '--sort', 'downloads'] }),
+    )
+    eq(
+      'and a flag the fake has nothing behind is still an honest EINVAL',
+      errorOf(otherFlag).message ?? null,
+      'EINVAL: unexpected argument for ls: --sort',
+    )
+
     const statLate = await text('hf_fs', {
       operations: [{ cmd: 'stat', args: [`hf://models/integ/paged-model/${lastFile}`] }],
     })

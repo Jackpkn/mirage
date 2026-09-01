@@ -240,13 +240,25 @@ export interface FsEntry {
  * a value only for the entry kinds this fake has none of, so they are rendered
  * empty rather than dropped -- the column count is part of what was captured.
  */
-export function listingMarkdown(cmd: string, uri: string, rows: FsEntry[]): string {
+// What upstream says when a listing stopped at the entry limit, and it says
+// it after the table rather than in the header -- the same placement as
+// cat's resume notice.
+export const LIST_TRUNCATED =
+  'Result truncated after reaching the entry limit. Rerun with a larger --limit, up to 10000.'
+
+export function listingMarkdown(
+  cmd: string,
+  uri: string,
+  rows: FsEntry[],
+  truncated = false,
+): string {
   const out = [`# hf_fs ${cmd}`, '', `URI: \`${uri}\``, '']
   out.push('| Type | Path | URI | Target | Details |', '|---|---|---|---|---|')
   for (const row of rows) {
     const details = row.type === 'dir' ? '' : `${row.lfs ? 'lfs, ' : ''}size=${humanSize(row.size)}`
     out.push(`| ${row.type} | ${escapeCell(row.path)} |  |  | ${details} |`)
   }
+  if (truncated) out.push('', LIST_TRUNCATED)
   return out.join('\n')
 }
 

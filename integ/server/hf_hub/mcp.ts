@@ -59,6 +59,7 @@ import {
   attachMarkdown,
   fsRecovery,
   fsSuggested,
+  LIST_TRUNCATED,
   listingMarkdown,
   operationsMarkdown,
   searchMarkdown,
@@ -397,7 +398,12 @@ function entriesOf(reply: Reply): FsEntry[] {
  * where it is discovered rather than returning a shorter tree that reads
  * exactly like a complete one.
  */
-async function treeAt(at: Dispatch, where: Located, recursive: boolean): Promise<Reply> {
+async function treeAt(
+  at: Dispatch,
+  where: Located,
+  recursive: boolean,
+  cap = Number.POSITIVE_INFINITY,
+): Promise<Reply> {
   const suffix = where.path === '' ? '' : `/${where.path}`
   const path = `/api/${where.kind}/${where.id}/tree/main${suffix}`
   const query: Record<string, string> = recursive ? { recursive: 'true' } : {}
@@ -418,6 +424,11 @@ async function treeAt(at: Dispatch, where: Located, recursive: boolean): Promise
     const next = await callRoute(at, 'GET', path, { ...query, cursor: decodeURIComponent(cursor) })
     if (!ok(next) || !Array.isArray(next.body)) break
     all.push(...next.body)
+    // Stopped at the caller's ceiling rather than at every page there is.
+    // One row past it is enough to know the listing was cut, and it is what
+    // keeps an arbitrarily large repository from being aggregated whole in
+    // order to throw most of it away.
+    if (all.length > cap) break
     link = (next.headers ?? {}).Link
   }
   return { ...first, body: all, headers: { ...(first.headers ?? {}) } }
@@ -453,6 +464,38 @@ const CAT_MAX_BYTES = 80_000
 interface CatArgs {
   offset: number
   maxBytes: number
+}
+
+// `ls` and `find` are BOUNDED upstream too, and by a documented number
+// rather than by however much the tree turned out to hold: 1,000 entries by
+// default and 10,000 at most. Past it the listing stops and says so, which
+// is why the schema carries `truncated` and `truncation_reason` for these
+// commands as well as for cat.
+const LIST_DEFAULT_LIMIT = 1000
+const LIST_MAX_LIMIT = 10000
+
+function listArgs(cmd: string, rest: string[]): number | Refusal {
+  const bad = (message: string): Refusal => ({ code: FS_INVALID, message })
+  let limit = LIST_DEFAULT_LIMIT
+  for (let i = 0; i < rest.length; i += 2) {
+    const flag = rest[i] ?? ''
+    // The other flags this command advertises -- --recursive, --glob, --sort,
+    // --name, --path, --type -- are still refused by name below, because the
+    // fake has no filtering behind them and a silently ignored flag is worse
+    // than an honest EINVAL.
+    if (flag !== '--limit') return bad(`EINVAL: unexpected argument for ${cmd}: ${flag}`)
+    const raw = rest[i + 1]
+    if (raw === undefined) return bad(`EINVAL: ${flag} needs a value`)
+    if (!/^-?\d+$/.test(raw)) return bad(`EINVAL: ${flag} requires an integer`)
+    const value = Number(raw)
+    // "for this command", because upstream's other listings have their own
+    // ceilings -- search is 1,000 and documentation search 25.
+    if (value < 1 || value > LIST_MAX_LIMIT) {
+      return bad(`EINVAL: limit must be between 1 and ${String(LIST_MAX_LIMIT)} for this command`)
+    }
+    limit = value
+  }
+  return limit
 }
 
 function catArgs(rest: string[]): CatArgs | Refusal {
@@ -682,23 +725,44 @@ async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget):
   const where = locate(uri, cmd)
   if (!('kind' in where)) return fsFail(where.code, where.message)
   const rest = args.slice(1)
-  // Every other command here takes the URI alone. `cat` takes the two flags
-  // its own captured grammar advertises and `attach` the one, and each
-  // refuses the rest itself below.
-  if (cmd !== 'cat' && cmd !== 'attach' && rest.length > 0) {
+  // `stat` is the only command that takes the URI alone; cat, attach, ls and
+  // find each parse their own flags below and refuse the rest by name there.
+  // Listing the exceptions here was a standing trap -- attach and then ls
+  // were each given a flag and then refused it by a guard written when they
+  // had none -- so the condition names the one command that has no grammar
+  // rather than the growing set that does.
+  if (cmd === 'stat' && rest.length > 0) {
     return fsFail(FS_INVALID, `EINVAL: unexpected argument for ${cmd}: ${rest[0] ?? ''}`)
   }
+
   if (cmd === 'ls' || cmd === 'find') {
-    const reply = await treeAt(at, where, cmd === 'find')
+    const limit = listArgs(cmd, rest)
+    if (typeof limit !== 'number') return fsFail(limit.code, limit.message)
+    // One past the limit, so a listing that exactly fills it is not reported
+    // as cut and one that overflows is -- without reading the rest of a tree
+    // whose tail is going to be dropped anyway.
+    const reply = await treeAt(at, where, cmd === 'find', limit)
     if (!ok(reply)) {
       return fsFail(FS_NOT_FOUND, `${where.path} does not exist on "main". URI: ${uri}`)
     }
-    const entries = entriesOf(reply)
+    const found = entriesOf(reply)
+    const truncated = found.length > limit
+    const entries = truncated ? found.slice(0, limit) : found
     return {
-      text: listingMarkdown(cmd, uri, entries),
+      text: listingMarkdown(cmd, uri, entries, truncated),
       result: {
         uri,
         op: cmd,
+        // The schema's own three, and the same vocabulary cat uses -- with
+        // `entry_limit` where cat says `max_bytes`, because that is the enum
+        // value upstream answers for a listing.
+        ...(truncated
+          ? {
+              truncated: true,
+              truncation_reason: 'entry_limit',
+              truncation_message: LIST_TRUNCATED,
+            }
+          : {}),
         // A directory entry carries no `size`, which is the live server's own
         // shape rather than a zero: the schema makes size optional precisely
         // because a Hub directory has none.
