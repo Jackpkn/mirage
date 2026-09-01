@@ -68,7 +68,7 @@ services:
       echo minio-init-done"
 
   langfuse-worker:
-    image: langfuse/langfuse-worker:3
+    image: langfuse/langfuse-worker:3.225.5
     depends_on:
       langfuse-postgres:
         condition: service_healthy
@@ -100,7 +100,7 @@ services:
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
 
   langfuse-web:
-    image: langfuse/langfuse:3
+    image: langfuse/langfuse:3.225.5
     depends_on:
       langfuse-worker:
         condition: service_started
