@@ -27,16 +27,3 @@ export class SecretsError extends Error {
     this.name = 'SecretsError'
   }
 }
-
-/**
- * What kind of thing was thrown, and nothing it said.
- *
- * `type(exc).__name__` in Python's spelling. Every refusal in this
- * package logs this instead of the throwable itself: a source is free
- * to quote the value it was handed, and a log line is a copy nobody
- * redacted. The words ride the `cause` chain, which only a host that
- * prints one ever renders.
- */
-export function errorKind(caught: unknown): string {
-  return caught instanceof Error ? caught.name : typeof caught
-}

@@ -16,7 +16,7 @@ import { invokedEnvNames, suppliedEnvNames } from '../../commands/cli/walk.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import type { RouteDecision } from '../../runtime/routing/index.ts'
 import { VFSRuntime } from '../../runtime/table.ts'
-import { SecretsError, errorKind } from '../../secrets/errors.ts'
+import { SecretsError } from '../../secrets/errors.ts'
 import { fieldSummary } from '../../secrets/summary.ts'
 import { fetchSecret } from '../../secrets/registry.ts'
 import type { ResolvedSource } from '../../secrets/types.ts'
@@ -666,9 +666,9 @@ export async function fillEnv(
     try {
       secret = await fetchSecret(source, ref, sources)
     } catch (caught) {
-      // The kind, never the source's own words: a log is a copy
-      // nobody redacted, and the words ride the `cause` chain.
-      console.warn(`secret fetch for ${listed} from ${source} failed: ${errorKind(caught)}`)
+      // Not logged, the rule the whole secrets plane keeps: a log is a
+      // copy nobody redacted, and the source's own words ride the
+      // `cause` chain.
       throw new SecretsError(`${listed}: cannot fetch from ${source}`, { cause: caught })
     }
     for (const { name, key, record } of members) {

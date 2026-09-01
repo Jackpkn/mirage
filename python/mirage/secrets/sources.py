@@ -12,7 +12,6 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -23,8 +22,6 @@ from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import fetch_secret, source_for
 from mirage.secrets.summary import field_summary
 from mirage.secrets.types import ResolvedSecret, ResolvedSource
-
-logger = logging.getLogger(__name__)
 
 
 async def config_value(
@@ -59,9 +56,10 @@ async def config_value(
             for the same reason: a dotenv miss renders the host path it
             looked for, and a custom source shadowing ``env`` renders
             whatever it likes. The source's own words ride the
-            exception chain, never a log line: a log is a copy nobody
-            redacted, and a source is free to quote the value it was
-            handed.
+            exception chain and are never logged: this plane writes no
+            log line at all, because a log is a copy nobody redacted
+            and a source is free to quote the value it was handed. A
+            host that wants the detail prints the traceback.
     """
     seen = fetched.get((ref.provider, ref.ref))
     if seen is not None:
@@ -69,8 +67,6 @@ async def config_value(
     try:
         secret = await fetch_secret(ref.provider, ref.ref, sources)
     except Exception as exc:
-        logger.warning("%s: fetch from %s failed: %s", label, ref.provider,
-                       type(exc).__name__)
         raise SecretsError(
             f"{label}: cannot fetch from {ref.provider}") from exc
     fetched[(ref.provider, ref.ref)] = secret
@@ -136,14 +132,11 @@ async def resolve_sources(
         try:
             config = config_model.model_validate(values)
         except ValidationError as exc:
-            # The error TYPE, never pydantic's rendered message, in the
-            # raised error AND in the log: a custom source's own
-            # validator may spell the rejected input, and `values` is
-            # where a fetched credential has just landed. The field
-            # path and the code say what is wrong; the words stay on
-            # the exception chain, which only a host that prints a
-            # traceback ever renders.
-            logger.warning("secrets.%s: config refused", name)
+            # The error TYPE, never pydantic's rendered message: a
+            # custom source's own validator may spell the rejected
+            # input, and `values` is where a fetched credential has
+            # just landed. The field path and the code say what is
+            # wrong.
             detail = "; ".join(
                 f"{'.'.join(str(part) for part in err['loc'])}: {err['type']}"
                 for err in exc.errors())
@@ -152,10 +145,8 @@ async def resolve_sources(
             # A validator that RAISES rather than returning a
             # validation error never becomes an issue list, and
             # pydantic only wraps ValueError and AssertionError. Its
-            # words are over a value just fetched, so only its type is
-            # logged.
-            logger.warning("secrets.%s: config validation raised: %s", name,
-                           type(exc).__name__)
+            # words are over a value just fetched, so they stay on the
+            # chain like every other source's.
             raise SecretsError(f"secrets.{name}: config refused") from exc
         out[name] = ResolvedSource(block.source, config, fetch)
     return out

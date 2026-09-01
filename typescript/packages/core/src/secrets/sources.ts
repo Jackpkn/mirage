@@ -20,7 +20,7 @@ import {
   type SecretEntries,
   type SecretRef,
 } from './config.ts'
-import { SecretsError, errorKind } from './errors.ts'
+import { SecretsError } from './errors.ts'
 import { fieldSummary } from './summary.ts'
 import { fetchSecret, sourceFor } from './registry.ts'
 import type { ResolvedSecret, ResolvedSource } from './types.ts'
@@ -44,7 +44,9 @@ function isSecretRef(value: unknown): value is SecretRef {
  * That is the boundary `fillEnv` draws and it is drawn for the same
  * reason: a dotenv miss renders the host path it looked for, and a
  * custom source shadowing `env` renders whatever it likes. The
- * source's own words ride the `cause` chain, never a log line.
+ * source's own words ride the `cause` chain and are never logged: this
+ * plane writes no log line at all, because a log is a copy nobody
+ * redacted and a source is free to quote the value it was handed.
  */
 export async function configValue(
   label: string,
@@ -59,7 +61,6 @@ export async function configValue(
   try {
     secret = await fetchSecret(ref.from, ref.ref, sources)
   } catch (caught) {
-    console.warn(`${label}: fetch from ${ref.from} failed: ${errorKind(caught)}`)
     throw new SecretsError(`${label}: cannot fetch from ${ref.from}`, { cause: caught })
   }
   fetched.set(cacheKey, secret)
@@ -234,17 +235,15 @@ export async function resolveSources(
     } catch (caught) {
       // A refinement that THROWS never becomes an issue list, and
       // safeParse does not catch it. Its words are over a value just
-      // fetched, so only its kind is logged.
-      console.warn(`secrets.${name}: config validation threw: ${errorKind(caught)}`)
+      // fetched, so they stay on the `cause` chain like every other
+      // source's.
       throw new SecretsError(`secrets.${name}: config refused`, { cause: caught })
     }
     if (!parsed.success) {
-      // The issue CODE, never zod's rendered message, in the thrown
-      // error AND in the log: a custom source's own refinement may
-      // spell the rejected input, and `values` is where a fetched
-      // credential has just landed. The field path and the code say
-      // what is wrong; the words stay on the `cause` chain.
-      console.warn(`secrets.${name}: config refused`)
+      // The issue CODE, never zod's rendered message: a custom
+      // source's own refinement may spell the rejected input, and
+      // `values` is where a fetched credential has just landed. The
+      // field path and the code say what is wrong.
       const detail = parsed.error.issues.map(issueDetail).join('; ')
       throw new SecretsError(`secrets.${name}: ${detail}`)
     }
