@@ -75,6 +75,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies
@@ -217,6 +218,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Create venv and install only the target extra
@@ -266,6 +268,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Cache the CPython WASI build
@@ -391,6 +394,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Audit dependencies for known vulnerabilities (informational)
