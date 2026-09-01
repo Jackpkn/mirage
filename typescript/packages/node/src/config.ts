@@ -23,7 +23,12 @@ import type { Resource } from '@struktoai/mirage-core/resource/base'
 import type { RuntimeEntry } from '@struktoai/mirage-core/runtime/base'
 import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/index'
 import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
-import { EnvVarSchema, type EnvEntries } from '@struktoai/mirage-core/secrets/config'
+import {
+  EnvVarSchema,
+  SourceBlockSchema,
+  type EnvEntries,
+  type SourceEntries,
+} from '@struktoai/mirage-core/secrets/config'
 import {
   ConsistencyPolicy,
   KERNEL_BACKENDS,
@@ -161,6 +166,7 @@ const TOP_LEVEL_KEYS = [
   'store',
   'console',
   'env',
+  'secrets',
 ] as const
 const MOUNT_KEYS = [
   'resource',
@@ -170,6 +176,10 @@ const MOUNT_KEYS = [
   'backend',
   'mountpoint',
 ] as const
+// A source instance is a type beside a config, the way a mount is. Its
+// `config:` block has no table for the same reason `mounts.*.config`
+// has none: each source owns its own model and validates there.
+const SOURCE_KEYS = ['source', 'config'] as const
 const CACHE_KEYS: Record<string, readonly string[]> = {
   ram: ['type', 'limit', 'max_drain_bytes'],
   redis: ['type', 'limit', 'max_drain_bytes', 'url', 'key_prefix'],
@@ -358,6 +368,29 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
   validateConsoleValues(raw.console)
   validateStoreBlock(raw.store)
   validateEnvBlock(raw.env)
+  validateSecretsBlock(raw.secrets)
+}
+
+/**
+ * The source table: one map, instance name -> declaration. Blocks
+ * validate through the core schema (the same one the workspace applies
+ * at build), so a pointer at a source that cannot bootstrap another
+ * fails at load naming the instance. The block travels raw: an
+ * instance name must not be camelized, and a source's own config keys
+ * are snake_case for the same reason a mount's are.
+ */
+function validateSecretsBlock(value: unknown): void {
+  if (value === undefined || value === null) return
+  if (!isPlainObject(value)) throw new Error('config `secrets` must be a mapping')
+  for (const [name, block] of Object.entries(value)) {
+    if (!isPlainObject(block)) throw new Error(`config \`secrets.${name}\` must be a mapping`)
+    rejectUnknownKeys(block, SOURCE_KEYS, `config \`secrets.${name}\``)
+    const parsed = SourceBlockSchema.safeParse(block)
+    if (!parsed.success) {
+      const detail = parsed.error.issues[0]?.message ?? parsed.error.message
+      throw new Error(`config \`secrets.${name}\`: ${detail}`)
+    }
+  }
 }
 
 /**
@@ -664,6 +697,13 @@ export interface WorkspaceConfigRaw {
    * workspace.
    */
   env?: Record<string, unknown> | null
+  /**
+   * The source table: one map, instance name -> declaration, spelled
+   * the way `mounts:` is. A managed env entry's `from` names an
+   * instance here, or a source directly when the deployment has one
+   * account of it and nothing to configure.
+   */
+  secrets?: Record<string, unknown> | null
 }
 
 function readProcessEnv(): Record<string, string> {
@@ -956,6 +996,11 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       // env-plane fetching is async at command time, so no fetching
       // here (the workspace translates and validates sources).
       ...(cfg.env !== undefined && cfg.env !== null ? { env: cfg.env as EnvEntries } : {}),
+      // Same reason: building a source reads its bootstrap pointers,
+      // which the workspace does once, before its first fetch.
+      ...(cfg.secrets !== undefined && cfg.secrets !== null
+        ? { secrets: cfg.secrets as SourceEntries }
+        : {}),
     },
     kernelMounts,
   }

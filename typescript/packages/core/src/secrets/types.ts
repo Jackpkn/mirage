@@ -32,3 +32,16 @@ export interface ResolvedSecret {
  * (the same contract Python spells with `Any`).
  */
 export type SecretFetchFn<C = never> = (config: C, ref: string) => Promise<ResolvedSecret>
+
+/**
+ * One declared instance, ready to fetch from.
+ *
+ * The config plane's output: the source's config parsed and its
+ * pointers read, paired with the fetch that takes it. Held for the
+ * workspace's lifetime, so a config value is read once rather than per
+ * line, and never written anywhere a session serializes.
+ */
+export interface ResolvedSource {
+  readonly config: unknown
+  readonly fetch: SecretFetchFn
+}

@@ -17,8 +17,8 @@ from pydantic import BaseModel
 from mirage.secrets.constants import BUILTINS
 
 
-def test_builtin_names_are_the_three_v1_sources():
-    assert sorted(BUILTINS) == ["aws-sm", "dotenv", "env"]
+def test_builtin_names_are_the_v1_sources():
+    assert sorted(BUILTINS) == ["1password", "aws-sm", "dotenv", "env"]
 
 
 def test_builtin_entries_pair_a_config_model_with_an_import_path():

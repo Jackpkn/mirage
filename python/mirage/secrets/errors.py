@@ -12,6 +12,33 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Mapping
+
+# Past this many, what came back is not a secret's shape: the `env`
+# source answers with the whole process environment, and reciting a
+# host's variable names back to the agent is neither a useful hint nor
+# ours to print.
+MAX_LISTED_FIELDS = 12
+
+
+def field_summary(fields: Mapping[str, str]) -> str:
+    """How a refusal names the fields the secret did carry.
+
+    Lives beside the error it words because both the config plane and
+    the env plane raise it, from different packages.
+
+    Args:
+        fields (Mapping[str, str]): the fetched secret's fields.
+
+    Returns:
+        str: what follows "has" in the message -- the labels for a
+            secret of ordinary size, a bare count for one big enough to
+            be a process environment.
+    """
+    if len(fields) > MAX_LISTED_FIELDS:
+        return f"{len(fields)} fields"
+    return "{" + ", ".join(sorted(fields)) + "}"
+
 
 class SecretsError(Exception):
     """A secrets source could not answer, or was addressed wrongly.

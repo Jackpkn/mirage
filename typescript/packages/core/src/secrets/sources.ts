@@ -1,0 +1,83 @@
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
+
+import type { SecretRef, SourceBlock } from './config.ts'
+import { SecretsError, fieldSummary } from './errors.ts'
+import { fetchSecret, sourceFor } from './registry.ts'
+import type { ResolvedSource } from './types.ts'
+
+/**
+ * Whether one config value is a pointer rather than a literal.
+ *
+ * The same rule the block's own schema applies, restated for a value
+ * that reached us already parsed: a mapping carrying `from` is a
+ * pointer, everything else belongs to the source's own model.
+ */
+function isSecretRef(value: unknown): value is SecretRef {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && 'from' in value
+}
+
+/**
+ * Read one source-config value from its bootstrap source.
+ *
+ * Throws SecretsError naming the field wanted and the labels present,
+ * never a value, the same way the env plane's fill does.
+ */
+export async function configValue(name: string, field: string, ref: SecretRef): Promise<string> {
+  const secret = await fetchSecret(ref.from, ref.ref)
+  const value = secret.fields[ref.key]
+  if (value === undefined) {
+    throw new SecretsError(
+      `secrets.${name}.config.${field}: wanted field '${ref.key}', ` +
+        `the ${ref.from} secret has ${fieldSummary(secret.fields)}`,
+    )
+  }
+  return value
+}
+
+/**
+ * Build every declared instance, reading its pointers.
+ *
+ * Runs once per workspace, before the first fetch, and reaches only
+ * bootstrap sources -- the process env and dotenv files -- so a
+ * declaration this cannot satisfy is a config error and rightly fails
+ * every line, while a source that is merely unreachable still fails
+ * only the names that want it.
+ *
+ * Throws SecretsError for an unknown source, a missing bootstrap
+ * field, or config the source's own model refuses. A refusal is
+ * reported by field and reason only; the values are never in the
+ * message.
+ */
+export async function resolveSources(
+  blocks: Readonly<Record<string, SourceBlock>>,
+): Promise<Record<string, ResolvedSource>> {
+  const out: Record<string, ResolvedSource> = {}
+  for (const [name, block] of Object.entries(blocks)) {
+    const { configModel, fetch } = sourceFor(block.source)
+    const values: Record<string, unknown> = {}
+    for (const [field, value] of Object.entries(block.config)) {
+      values[field] = isSecretRef(value) ? await configValue(name, field, value) : value
+    }
+    const parsed = configModel.safeParse(values)
+    if (!parsed.success) {
+      const detail = parsed.error.issues
+        .map((issue) => `${issue.path.map(String).join('.')}: ${issue.message}`)
+        .join('; ')
+      throw new SecretsError(`secrets.${name}: ${detail}`)
+    }
+    out[name] = { config: parsed.data, fetch }
+  }
+  return out
+}

@@ -16,7 +16,7 @@ import type { z } from 'zod'
 
 import { compareCodePoints } from '../utils/sort.ts'
 import { SecretsError } from './errors.ts'
-import type { ResolvedSecret, SecretFetchFn } from './types.ts'
+import type { ResolvedSecret, ResolvedSource, SecretFetchFn } from './types.ts'
 
 /** One resolvable source: its config model and its fetch function. */
 export interface SourceEntry {
@@ -73,12 +73,23 @@ export function sourceFor(name: string): SourceEntry {
 /**
  * Fetch one secret from a named source.
  *
- * The whole call path: resolve the source, construct its config from
- * ambient defaults (per-source config blocks are a later PR), run its
+ * The whole call path: resolve the source, take its config, run its
  * fetch. Pure and module-level -- there is no resolver class, and no
  * cache: fetched values live only on session vars.
+ *
+ * `source` names a declared instance first and a source second, so a
+ * deployment with one account of a platform can leave the `secrets:`
+ * block out entirely and still spell `from: aws-sm`. An undeclared
+ * name builds its config from ambient defaults, which is what every
+ * source did before the block existed.
  */
-export async function fetchSecret(source: string, ref: string): Promise<ResolvedSecret> {
+export async function fetchSecret(
+  source: string,
+  ref: string,
+  sources?: Readonly<Record<string, ResolvedSource>>,
+): Promise<ResolvedSecret> {
+  const entry = sources?.[source]
+  if (entry !== undefined) return entry.fetch(entry.config as never, ref)
   const { configModel, fetch } = sourceFor(source)
   return fetch(configModel.parse({}) as never, ref)
 }

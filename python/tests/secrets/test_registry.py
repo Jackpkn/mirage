@@ -24,7 +24,7 @@ from mirage.secrets.constants import BUILTINS
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import (fetch_secret, known_sources,
                                      register_secrets, source_for)
-from mirage.secrets.types import ResolvedSecret
+from mirage.secrets.types import ResolvedSecret, ResolvedSource
 
 
 class VaultConfig(BaseModel):
@@ -72,7 +72,7 @@ def test_unknown_source_raises_naming_the_known_ones():
 
 def test_known_sources_merges_builtin_and_custom():
     register_secrets("vault", VaultConfig, fetch_vault)
-    assert known_sources() == ["aws-sm", "dotenv", "env", "vault"]
+    assert known_sources() == ["1password", "aws-sm", "dotenv", "env", "vault"]
 
 
 def test_builtin_resolves_lazily_through_the_table(monkeypatch):
@@ -117,3 +117,34 @@ async def test_fetch_secret_constructs_the_config_and_passes_the_ref():
 async def test_fetch_secret_unknown_source_raises():
     with pytest.raises(SecretsError, match="unknown secrets source"):
         await fetch_secret("nope", "r")
+
+
+@pytest.mark.asyncio
+async def test_fetch_secret_prefers_a_declared_instance():
+    seen: list[str] = []
+
+    async def fetch(config: VaultConfig, ref: str) -> ResolvedSecret:
+        seen.append(ref)
+        return ResolvedSecret(fields={"token": "instance"})
+
+    register_secrets("vault", VaultConfig, fetch_vault)
+    sources = {"prod": ResolvedSource(config=VaultConfig(), fetch=fetch)}
+    secret = await fetch_secret("prod", "r", sources)
+    assert secret.fields == {"token": "instance"}
+    assert seen == ["r"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_secret_falls_back_to_the_source_of_that_name():
+    register_secrets("vault", VaultConfig, fetch_vault)
+    sources = {
+        "prod": ResolvedSource(config=VaultConfig(), fetch=fetch_override)
+    }
+    secret = await fetch_secret("vault", "r", sources)
+    assert secret.fields == {"token": "t"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_secret_with_no_table_is_the_ambient_default():
+    register_secrets("vault", VaultConfig, fetch_vault)
+    assert (await fetch_secret("vault", "r")).fields == {"token": "t"}

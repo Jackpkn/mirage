@@ -17,7 +17,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 from mirage import Action, CommandContext, Deny, MountMode, Policy, Workspace
 from mirage.commands.cli.types import CLISpec
@@ -1633,5 +1633,170 @@ async def test_session_write_policy_disables_masking():
         io = await ws.execute("TOKEN=local; printenv TOKEN")
         assert (await io.stdout_str()) == "local\n"
         assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+class AccountConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    account: str = "default"
+    token: SecretStr | None = None
+
+
+def account_source() -> FetchFn:
+
+    async def fetch(config: AccountConfig, ref: str) -> ResolvedSecret:
+        seen = config.token.get_secret_value() if config.token else "none"
+        return ResolvedSecret(
+            fields={"credential": f"{config.account}:{ref}:{seen}"})
+
+    return fetch
+
+
+@pytest.mark.asyncio
+async def test_a_declared_instance_carries_its_config_to_the_fetch():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={"prod": {
+                 "source": "acct",
+                 "config": {
+                     "account": "a1"
+                 }
+             }})
+    try:
+        out = await ws.execute('echo "$TOKEN"')
+        assert out.stdout == b"a1:r:none\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_two_instances_of_one_source_stay_apart():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws(
+        {
+            "A": {
+                "from": "prod",
+                "ref": "r",
+                "key": "credential"
+            },
+            "B": {
+                "from": "test",
+                "ref": "r",
+                "key": "credential"
+            },
+        },
+        secrets={
+            "prod": {
+                "source": "acct",
+                "config": {
+                    "account": "a1"
+                }
+            },
+            "test": {
+                "source": "acct",
+                "config": {
+                    "account": "a2"
+                }
+            },
+        })
+    try:
+        out = await ws.execute('echo "$A"; echo "$B"')
+        assert out.stdout == b"a1:r:none\na2:r:none\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_an_instance_config_reads_its_bootstrap_source(monkeypatch):
+    monkeypatch.setenv("FILL_PROBE_TOKEN", "s3cr3t")
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={
+                 "prod": {
+                     "source": "acct",
+                     "config": {
+                         "token": {
+                             "from": "env",
+                             "key": "FILL_PROBE_TOKEN"
+                         }
+                     },
+                 }
+             })
+    try:
+        out = await ws.execute('echo "$TOKEN"')
+        assert out.stdout == b"default:r:s3cr3t\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bare_source_name_still_uses_ambient_defaults():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "acct",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={"prod": {
+                 "source": "acct",
+                 "config": {
+                     "account": "a1"
+                 }
+             }})
+    try:
+        out = await ws.execute('echo "$TOKEN"')
+        assert out.stdout == b"default:r:none\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_an_instance_naming_an_unknown_source_fails_at_construction():
+    with pytest.raises(SecretsError, match="unknown secrets source"):
+        _ws({}, secrets={"prod": {"source": "nope"}})
+
+
+@pytest.mark.asyncio
+async def test_a_pointer_naming_an_instance_needs_no_source_of_that_name():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={"prod": {
+                 "source": "acct"
+             }})
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bad_instance_config_fails_every_line():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={"prod": {
+                 "source": "acct",
+                 "config": {
+                     "nonesuch": "x"
+                 }
+             }})
+    try:
+        out = await ws.execute("echo hi")
+        assert out.exit_code == 1
+        assert b"secrets.prod" in out.stderr
     finally:
         await ws.close()

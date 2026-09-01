@@ -164,6 +164,7 @@ jobs:
             integ/truth/custom_cli.json
             integ/truth/python/filetype.json
             integ/truth/version_branching.json
+            integ/truth/secrets_local.json
           )
           printf '%s\n' "${independent[@]}" \
             | xargs -P 4 -I{} python3 integ/check_example.py {} --variant python \

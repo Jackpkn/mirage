@@ -12,9 +12,17 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import (BaseModel, ConfigDict, Field, SecretStr, field_validator,
+                      model_validator)
+
+# The sources a source's own config may read from: those that take no
+# config themselves, so the table bottoms out instead of needing a
+# dependency graph. Everything else declares its credentials here and
+# is reached through this block.
+BOOTSTRAP_SOURCES = frozenset({"env", "dotenv"})
 
 
 class EnvVar(BaseModel):
@@ -114,3 +122,90 @@ class EnvConfig(BaseModel):
     this source must leave `ref` empty.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class OnePasswordConfig(BaseModel):
+    """1Password source config: the service account token.
+
+    Args:
+        token (SecretStr | None): a service account token (`ops_...`).
+            Absent falls back to `OP_SERVICE_ACCOUNT_TOKEN` in the host
+            process env, the variable 1Password's own CLI and SDKs
+            read, so a deployment with one account needs no config at
+            all -- the same shape `aws-sm` has, where an empty config
+            reads the ambient AWS settings.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    token: SecretStr | None = None
+
+
+class SecretRef(BaseModel):
+    """A source-config value read from a bootstrap source.
+
+    The config plane's pointer, spelled with the same three keys the
+    env plane's managed entry uses, so one grammar covers both. Only a
+    bootstrap source may back one: those take no config of their own,
+    which is what stops the table from needing a dependency graph.
+
+    Args:
+        provider (str): the bootstrap source, `env` or `dotenv`.
+            Spelled `from:` in YAML (python keyword), via alias.
+        ref (str): the source's address, a file path for `dotenv`.
+        key (str): which of the secret's fields holds the value.
+    """
+    model_config = ConfigDict(frozen=True,
+                              extra="forbid",
+                              populate_by_name=True)
+
+    provider: str = Field(alias="from")
+    ref: str = ""
+    key: str
+
+    @model_validator(mode="after")
+    def _bootstrap_only(self) -> "SecretRef":
+        if self.provider not in BOOTSTRAP_SOURCES:
+            known = ", ".join(sorted(BOOTSTRAP_SOURCES))
+            raise ValueError(
+                f"a source config reads from {known}, not {self.provider!r}; "
+                "only a source that needs no config of its own can bootstrap "
+                "another")
+        return self
+
+
+class SourceBlock(BaseModel):
+    """One declared source instance: which source, and its config.
+
+    The `secrets:` block is one map, instance name -> block, spelled
+    the way `mounts:` and `clis:` are: a type beside a config. The
+    instance name is what a managed env entry's `from:` names, so two
+    accounts of one platform are two instances, and an instance named
+    after its source reads as that source configured.
+
+    The config map is untyped here, the way `mounts.*.config` is: each
+    source owns its own model, and this block only has to tell a
+    pointer from a literal. It does that the way the env plane does,
+    by the presence of `from`, so a mapping carrying one is validated
+    as a `SecretRef` and every other value passes through to the
+    source's model.
+
+    Args:
+        source (str): the registered source this instance speaks to.
+        config (dict[str, Any]): the source's own config fields; a
+            value may be a literal or a `SecretRef`.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source: str
+    config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("config", mode="before")
+    @classmethod
+    def _v_config(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        return {
+            name: (SecretRef.model_validate(item)
+                   if isinstance(item, Mapping) and "from" in item else item)
+            for name, item in value.items()
+        }

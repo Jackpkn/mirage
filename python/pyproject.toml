@@ -124,6 +124,7 @@ email    = ["aioimaplib>=2.0.1", "aiosmtplib>=5.1.0"]
 # --- secrets sources ---
 dotenv   = ["python-dotenv>=1.2.2"]
 aws-sm   = ["aioboto3>=13.0"]
+1password = ["onepassword-sdk>=0.4.1"]
 
 # --- data ---
 

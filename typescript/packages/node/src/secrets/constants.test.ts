@@ -23,7 +23,7 @@ describe('builtin registration', () => {
     delete process.env.MIRAGE_TEST_BUILTIN_SECRET
   })
 
-  it('importing the module arms the three builtin sources', () => {
+  it('importing the module arms every builtin source', () => {
     for (const name of BUILTIN_SOURCE_NAMES) {
       expect(knownSources()).toContain(name)
       expect(sourceFor(name).fetch).toBeTypeOf('function')

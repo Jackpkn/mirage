@@ -16,6 +16,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedSecret:
@@ -37,3 +39,20 @@ class ResolvedSecret:
 # model; the registry pairs it with that model so the call site always
 # hands the right one.
 SecretFetchFn = Callable[[Any, str], Awaitable[ResolvedSecret]]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSource:
+    """One declared instance, ready to fetch from.
+
+    The config plane's output: the source's config built and its
+    pointers read, paired with the fetch that takes it. Held for the
+    workspace's lifetime, so a config value is read once rather than
+    per line, and never written anywhere a session serializes.
+
+    Args:
+        config (BaseModel): the source's own config, already built.
+        fetch (SecretFetchFn): the source's fetch function.
+    """
+    config: BaseModel
+    fetch: SecretFetchFn

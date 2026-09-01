@@ -237,7 +237,8 @@ async def execute_line(
                     effective_session,
                     fill_names(effective_session, [ast],
                                whole=True,
-                               cli_env_names=frozenset()))
+                               cli_env_names=frozenset()), await
+                    ws._secret_sources())
             io = await run_whole_line(
                 line_runtime, command, stdin, effective_session,
                 ws._registry.mounts(), ws._registry.policies,
@@ -268,6 +269,11 @@ async def execute_line(
             # approval left for the gate to spend. A deny only the
             # value gate can see still follows the fetch, because
             # expansion is what consumes the values.
+            # Built before the plan, not inside it: a declaration this
+            # cannot satisfy is a deployment error, so it fails every
+            # line the way a bad env entry would, rather than waiting
+            # for the first line that happens to read a secret.
+            sources = await ws._secret_sources()
             nodes = line_nodes(ast, effective_session)
             policies = ws._registry.policies
             writes_gated = (policies is not None
@@ -300,7 +306,7 @@ async def execute_line(
                 # names only, so every pass fetches names the last one
                 # could not see and the loop settles.
                 while names:
-                    await fill_env(effective_session, names)
+                    await fill_env(effective_session, names, sources)
                     names = plan_names(nodes)
         io, _ = await run_command_tree(
             ws.dispatch,

@@ -38,8 +38,10 @@ from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.routing import RouteDecision, RoutePolicy
-from mirage.secrets.config import EnvVar
+from mirage.secrets.config import EnvVar, SourceBlock
 from mirage.secrets.registry import source_for
+from mirage.secrets.sources import resolve_sources
+from mirage.secrets.types import ResolvedSource
 from mirage.shell import parse
 from mirage.shell.job_table import ConsoleFactory, JobTable
 from mirage.types import (ConsistencyPolicy, DriftPolicy, FileEvent, FileStat,
@@ -119,6 +121,7 @@ class Workspace:
         clis: dict[str, tuple[str | CLISpec, dict[str, Any] | None]]
         | None = None,
         env: Mapping[str, str | EnvVar | Mapping[str, Any]] | None = None,
+        secrets: Mapping[str, SourceBlock | Mapping[str, Any]] | None = None,
     ) -> None:
         self._registry = MountRegistry()
         # The permission profiles: one per name, and the one a session
@@ -166,9 +169,22 @@ class Workspace:
         # resolved now, so a typo'd name or a missing optional
         # dependency fails at construction, naming the known sources,
         # rather than at the first fetch.
+        # The source table, kept as declarations: building one reads
+        # its bootstrap pointers, which is I/O, and this constructor is
+        # sync. `_secret_sources` builds them once, before the first
+        # fetch.
+        self._secret_blocks: dict[str, SourceBlock] = {
+            name: (block if isinstance(block, SourceBlock) else
+                   SourceBlock.model_validate(block))
+            for name, block in (secrets or {}).items()
+        }
+        self._secret_sources_built: dict[str, ResolvedSource] | None = None
+        for block in self._secret_blocks.values():
+            source_for(block.source)
         seed_vars = vars_from_entries(env) if env else None
         for var in (seed_vars or {}).values():
-            if var.managed is not None:
+            if (var.managed is not None
+                    and var.managed.source not in self._secret_blocks):
                 source_for(var.managed.source)
         self._session_mgr = SessionManager(session_id,
                                            store=stores.sessions,
@@ -305,6 +321,22 @@ class Workspace:
         session = self.get_session(session_id or self.default_session_id)
         return await explain_line(parse(line), session, self._registry,
                                   self._namespace)
+
+    async def _secret_sources(self) -> Mapping[str, ResolvedSource]:
+        """The declared source instances, built once.
+
+        Deferred rather than done in the constructor because building
+        one reads its bootstrap pointers, and a dotenv file is I/O. The
+        first line that fills pays for it; every later line reads the
+        table. Resolution touches only the process env and dotenv
+        files, never a remote store, so a failure here is a bad
+        declaration and rightly fails every line, while an unreachable
+        store still fails only the names that want it.
+        """
+        if self._secret_sources_built is None:
+            self._secret_sources_built = await resolve_sources(
+                self._secret_blocks)
+        return self._secret_sources_built
 
     @property
     def _has_managed_env(self) -> bool:

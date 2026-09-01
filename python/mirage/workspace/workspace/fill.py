@@ -21,8 +21,9 @@ from mirage.commands.cli.walk import invoked_env_names, supplied_env_names
 from mirage.runtime.base import Runtime
 from mirage.runtime.routing import RouteDecision
 from mirage.runtime.table import VFSRuntime
-from mirage.secrets.errors import SecretsError
+from mirage.secrets.errors import SecretsError, field_summary
 from mirage.secrets.registry import fetch_secret
+from mirage.secrets.types import ResolvedSource
 from mirage.shell.constants import SHOPT_DEFAULTS
 from mirage.shell.parse import (arith_reads, assignment_values,
                                 command_invocations, command_words, env_reads,
@@ -638,7 +639,10 @@ def fill_names(session: Session,
                    writes_gated)
 
 
-async def fill_env(session: Session, names: frozenset[str]) -> None:
+async def fill_env(
+        session: Session,
+        names: frozenset[str],
+        sources: Mapping[str, ResolvedSource] | None = None) -> None:
     """Fetch the named managed values into the session.
 
     The session is the truth, not the workspace's declaration: it may
@@ -661,6 +665,10 @@ async def fill_env(session: Session, names: frozenset[str]) -> None:
     Args:
         session (Session): the session the line runs in, written here.
         names (frozenset[str]): the fetch set (``fill_names``).
+        sources (Mapping[str, ResolvedSource] | None): the workspace's
+            declared instances. A pointer naming one fetches through
+            its configured source; a pointer naming none falls back to
+            the source of that name, built from ambient defaults.
     """
     if not names:
         return
@@ -673,7 +681,7 @@ async def fill_env(session: Session, names: frozenset[str]) -> None:
     for (source, ref), group in groups.items():
         listed = ", ".join(group)
         try:
-            secret = await fetch_secret(source, ref)
+            secret = await fetch_secret(source, ref, sources)
         except Exception as exc:
             logger.warning("secret fetch for %s from %s failed: %s", listed,
                            source, exc)
@@ -683,8 +691,7 @@ async def fill_env(session: Session, names: frozenset[str]) -> None:
             key = pending[name].key
             value = secret.fields.get(key)
             if value is None:
-                had = ", ".join(sorted(secret.fields))
                 raise SecretsError(
                     f"{name}: wanted field {key!r}, the {source} secret "
-                    f"has {{{had}}}")
+                    f"has {field_summary(secret.fields)}")
             session.vars[name] = with_value(records[name], value)

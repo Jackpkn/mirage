@@ -14,9 +14,31 @@
 
 import pytest
 
-from mirage.secrets.errors import SecretsError
+from mirage.secrets.errors import (MAX_LISTED_FIELDS, SecretsError,
+                                   field_summary)
 
 
 def test_secrets_error_is_an_exception_with_a_message():
     with pytest.raises(SecretsError, match="dead source"):
         raise SecretsError("dead source")
+
+
+def test_field_summary_lists_a_secret_sized_secret():
+    assert field_summary({"credential": "x", "username": "u"}) == \
+        "{credential, username}"
+
+
+def test_field_summary_lists_nothing_for_an_empty_secret():
+    assert field_summary({}) == "{}"
+
+
+def test_field_summary_lists_up_to_the_cap():
+    fields = {f"f{i:02d}": "v" for i in range(MAX_LISTED_FIELDS)}
+    assert field_summary(fields) == "{" + ", ".join(sorted(fields)) + "}"
+
+
+def test_field_summary_counts_a_process_environment_instead():
+    fields = {f"f{i:02d}": "v" for i in range(MAX_LISTED_FIELDS + 1)}
+    summary = field_summary(fields)
+    assert summary == f"{MAX_LISTED_FIELDS + 1} fields"
+    assert "f00" not in summary

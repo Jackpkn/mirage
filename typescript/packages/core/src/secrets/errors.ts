@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { compareCodePoints } from '../utils/sort.ts'
+
 /**
  * A secrets source could not answer, or was addressed wrongly.
  *
@@ -26,4 +28,24 @@ export class SecretsError extends Error {
     super(message, options)
     this.name = 'SecretsError'
   }
+}
+
+// Past this many, what came back is not a secret's shape: the `env`
+// source answers with the whole process environment, and reciting a
+// host's variable names back to the agent is neither a useful hint nor
+// ours to print.
+export const MAX_LISTED_FIELDS = 12
+
+/**
+ * How a refusal names the fields the secret did carry.
+ *
+ * Lives beside the error it words because both the config plane and
+ * the env plane raise it, from different packages. Returns what
+ * follows "has" in the message: the labels for a secret of ordinary
+ * size, a bare count for one big enough to be a process environment.
+ */
+export function fieldSummary(fields: Readonly<Record<string, string>>): string {
+  const names = Object.keys(fields)
+  if (names.length > MAX_LISTED_FIELDS) return `${String(names.length)} fields`
+  return `{${names.sort(compareCodePoints).join(', ')}}`
 }

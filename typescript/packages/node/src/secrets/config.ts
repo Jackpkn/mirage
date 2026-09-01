@@ -26,13 +26,41 @@ import { z } from '@struktoai/mirage-core/resource/secrets'
  * source alone. The `ref` of a managed entry is the SecretId; it rides
  * the fetch call, not this config.
  */
-export const AWSSMConfig = z.strictObject({
-  region: z.string().optional(),
-  awsAccessKeyId: z.string().optional(),
-  awsSecretAccessKey: z.string().optional(),
-  awsSessionToken: z.string().optional(),
-  awsProfile: z.string().optional(),
-})
+const AWS_SM_KEYS: Readonly<Record<string, string>> = {
+  aws_access_key_id: 'awsAccessKeyId',
+  aws_secret_access_key: 'awsSecretAccessKey',
+  aws_session_token: 'awsSessionToken',
+  aws_profile: 'awsProfile',
+}
+
+/**
+ * Accept the snake_case spellings a `secrets:` block arrives in.
+ *
+ * A source's config keys travel raw out of yaml, spelled python's way
+ * like a mount's are, so the four prefixed AWS keys reach this schema
+ * as `aws_profile` and friends. The rename lives here rather than in
+ * the config door because the door would impose it on every source's
+ * model, a custom one included; this one is the only builtin whose
+ * fields are more than a single word. Camel keys pass through, so a
+ * TS caller building the config directly is unaffected.
+ */
+function normalizeAwsSmKeys(input: unknown): unknown {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return input
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(input)) out[AWS_SM_KEYS[key] ?? key] = value
+  return out
+}
+
+export const AWSSMConfig = z.preprocess(
+  normalizeAwsSmKeys,
+  z.strictObject({
+    region: z.string().optional(),
+    awsAccessKeyId: z.string().optional(),
+    awsSecretAccessKey: z.string().optional(),
+    awsSessionToken: z.string().optional(),
+    awsProfile: z.string().optional(),
+  }),
+)
 export type AWSSMConfig = z.infer<typeof AWSSMConfig>
 
 /**
@@ -52,3 +80,17 @@ export type DotenvConfig = z.infer<typeof DotenvConfig>
  */
 export const EnvConfig = z.strictObject({})
 export type EnvConfig = z.infer<typeof EnvConfig>
+
+/**
+ * 1Password source config: the service account token.
+ *
+ * Absent, the token falls back to `OP_SERVICE_ACCOUNT_TOKEN` in the
+ * host process env, the variable 1Password's own CLI and SDKs read, so
+ * a deployment with one account needs no config at all -- the same
+ * shape `aws-sm` has, where an empty config reads the ambient AWS
+ * settings.
+ */
+export const OnePasswordConfig = z.strictObject({
+  token: z.string().optional(),
+})
+export type OnePasswordConfig = z.infer<typeof OnePasswordConfig>

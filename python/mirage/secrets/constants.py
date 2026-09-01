@@ -14,7 +14,8 @@
 
 from pydantic import BaseModel
 
-from mirage.secrets.config import AWSSMConfig, DotenvConfig, EnvConfig
+from mirage.secrets.config import (AWSSMConfig, DotenvConfig, EnvConfig,
+                                   OnePasswordConfig)
 
 # Builtin fetchers are import paths, not imports, so a source's SDK
 # loads only when a workspace actually uses it (`build_resource`'s
@@ -24,4 +25,6 @@ BUILTINS: dict[str, tuple[type[BaseModel], str]] = {
     "env": (EnvConfig, "mirage.secrets.env:fetch_env"),
     "dotenv": (DotenvConfig, "mirage.secrets.dotenv:fetch_dotenv"),
     "aws-sm": (AWSSMConfig, "mirage.secrets.aws:fetch_aws_sm"),
+    "1password":
+    (OnePasswordConfig, "mirage.secrets.onepassword:fetch_onepassword"),
 }

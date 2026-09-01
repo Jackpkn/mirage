@@ -45,6 +45,7 @@ import type { SessionManager } from '../session/manager.ts'
 import type { Session } from '../session/session.ts'
 import type { ExecutionNode } from '../types.ts'
 import { failureResult, isControlFlowError } from './failure.ts'
+import type { ResolvedSource } from '../../secrets/types.ts'
 import { cliEnvNames, fillEnv, fillNames, guestBound, lineNodes } from './fill.ts'
 import { admitLine } from '../node/admission.ts'
 import { runWholeLine } from './line.ts'
@@ -76,6 +77,7 @@ export interface ExecuteEnv {
   workspaceId: string
   runtimes: Runtimes
   router: Router
+  secretSources(): Promise<Readonly<Record<string, ResolvedSource>>>
   registerCloser(fn: () => Promise<void>): void
   ensureOpen(resource: Resource): Promise<void>
   invalidateAllAfterRemote(): Promise<void>
@@ -351,6 +353,11 @@ async function runParsedLine(
     probeText: boolean,
   ): Promise<ExecuteResult | null> => {
     try {
+      // Built before the plan, not inside it: a declaration this
+      // cannot satisfy is a deployment error, so it fails every line
+      // the way a bad env entry would, rather than waiting for the
+      // first line that happens to read a secret.
+      const sources = await env.secretSources()
       let planNodes = nodes
       let planWhole = whole
       let planCli = lineCliEnvNames
@@ -382,7 +389,7 @@ async function runParsedLine(
       // fillNames returns pending names only, so every pass fetches
       // names the last one could not see and the loop settles.
       while (names.size > 0) {
-        await fillEnv(effectiveSession, names)
+        await fillEnv(effectiveSession, names, sources)
         names = fillNames(effectiveSession, planNodes, planWhole, planCli, writesGated)
       }
       return null

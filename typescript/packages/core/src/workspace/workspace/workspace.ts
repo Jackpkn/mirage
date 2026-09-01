@@ -69,7 +69,10 @@ import { explainLine } from '../node/explain.ts'
 import { provisionNode } from '../node/provision_node.ts'
 import { buildFilePrompt } from '../file_prompt.ts'
 import { getCurrentSessionFor } from '../../context/session_context.ts'
+import { SourceBlockSchema, type SourceBlock } from '../../secrets/config.ts'
 import { sourceFor } from '../../secrets/registry.ts'
+import { resolveSources } from '../../secrets/sources.ts'
+import type { ResolvedSource } from '../../secrets/types.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import { varsFromEntries, type Session } from '../session/session.ts'
@@ -133,6 +136,8 @@ export class Workspace {
   }
   private readonly watchManager: WatchManager
   private readonly runtimes: Runtimes
+  private readonly secretBlocks: Readonly<Record<string, SourceBlock>>
+  private secretSourcesBuilt: Readonly<Record<string, ResolvedSource>> | null = null
   private readonly router: Router
   private readonly routePolicy: RoutePolicy | null
   private readonly scriptPolicy: ScriptPolicy
@@ -173,9 +178,21 @@ export class Workspace {
     // resolved now, so a typo'd name (or a source nothing registered)
     // fails at construction, naming the known sources, rather than at
     // the first fetch.
+    // The source table, kept as declarations: building one reads its
+    // bootstrap pointers, which is I/O, and this constructor is sync.
+    // `secretSources` builds them once, before the first fetch.
+    this.secretBlocks = Object.fromEntries(
+      Object.entries(options.secrets ?? {}).map(([name, block]) => [
+        name,
+        SourceBlockSchema.parse(block),
+      ]),
+    )
+    for (const block of Object.values(this.secretBlocks)) sourceFor(block.source)
     const seedVars = options.env !== undefined ? varsFromEntries(options.env) : undefined
     for (const seeded of Object.values(seedVars ?? {})) {
-      if (seeded.managed !== undefined) sourceFor(seeded.managed.source)
+      if (seeded.managed !== undefined && !(seeded.managed.source in this.secretBlocks)) {
+        sourceFor(seeded.managed.source)
+      }
     }
     this.sessionManager = new SessionManager(
       options.sessionId ?? newSessionId(),
@@ -973,6 +990,22 @@ export class Workspace {
     )
   }
 
+  /**
+   * The declared source instances, built once.
+   *
+   * Deferred rather than done in the constructor because building one
+   * reads its bootstrap pointers, and a dotenv file is I/O. The first
+   * line that fills pays for it; every later line reads the table.
+   * Resolution touches only the process env and dotenv files, never a
+   * remote store, so a failure here is a bad declaration and rightly
+   * fails every line, while an unreachable store still fails only the
+   * names that want it.
+   */
+  private async secretSources(): Promise<Readonly<Record<string, ResolvedSource>>> {
+    this.secretSourcesBuilt ??= await resolveSources(this.secretBlocks)
+    return this.secretSourcesBuilt
+  }
+
   /** Everything the module-level executor needs, assembled from this workspace. */
   private executeEnv(): ExecuteEnv {
     return {
@@ -991,6 +1024,7 @@ export class Workspace {
       workspaceId: this.wsId,
       runtimes: this.runtimes,
       router: this.router,
+      secretSources: () => this.secretSources(),
       registerCloser: (fn) => {
         this.closers.push(fn)
       },

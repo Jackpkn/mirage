@@ -17,7 +17,7 @@ import { z } from 'zod'
 
 import { SecretsError } from './errors.ts'
 import { fetchSecret, knownSources, registerSecrets, sourceFor } from './registry.ts'
-import type { ResolvedSecret } from './types.ts'
+import type { ResolvedSecret, ResolvedSource } from './types.ts'
 
 const VaultConfig = z.strictObject({ host: z.string().default('local') })
 type VaultConfig = z.infer<typeof VaultConfig>
@@ -67,5 +67,33 @@ describe('secrets registry', () => {
 
   it('fetchSecret on an unknown source throws SecretsError', async () => {
     await expect(fetchSecret('never-registered', 'r')).rejects.toThrowError(SecretsError)
+  })
+
+  it('fetchSecret prefers a declared instance', async () => {
+    const seen: string[] = []
+    registerSecrets('vault-instance', VaultConfig, () => Promise.resolve({ fields: {} }))
+    const sources: Record<string, ResolvedSource> = {
+      prod: {
+        config: { host: 'declared' },
+        fetch: ((config: VaultConfig, ref: string) => {
+          seen.push(`${config.host}:${ref}`)
+          return Promise.resolve({ fields: { token: 'instance' } })
+        }) as never,
+      },
+    }
+    const secret = await fetchSecret('prod', 'r', sources)
+    expect(secret.fields).toEqual({ token: 'instance' })
+    expect(seen).toEqual(['declared:r'])
+  })
+
+  it('fetchSecret falls back to the source of that name', async () => {
+    registerSecrets('vault-fallback', VaultConfig, () =>
+      Promise.resolve({ fields: { token: 'ambient' } }),
+    )
+    const sources: Record<string, ResolvedSource> = {
+      prod: { config: {}, fetch: (() => Promise.resolve({ fields: {} })) as never },
+    }
+    const secret = await fetchSecret('vault-fallback', 'r', sources)
+    expect(secret.fields).toEqual({ token: 'ambient' })
   })
 })

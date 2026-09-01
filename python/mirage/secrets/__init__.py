@@ -13,10 +13,12 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 from mirage.secrets.config import (AWSAuth, AWSSMConfig, DotenvConfig,
-                                   EnvConfig, EnvVar)
+                                   EnvConfig, EnvVar, OnePasswordConfig,
+                                   SecretRef, SourceBlock)
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import known_sources, register_secrets, source_for
-from mirage.secrets.types import ResolvedSecret, SecretFetchFn
+from mirage.secrets.sources import resolve_sources
+from mirage.secrets.types import ResolvedSecret, ResolvedSource, SecretFetchFn
 
 __all__ = [
     "AWSAuth",
@@ -24,10 +26,15 @@ __all__ = [
     "DotenvConfig",
     "EnvConfig",
     "EnvVar",
+    "OnePasswordConfig",
     "ResolvedSecret",
+    "ResolvedSource",
     "SecretFetchFn",
+    "SecretRef",
     "SecretsError",
+    "SourceBlock",
     "known_sources",
     "register_secrets",
+    "resolve_sources",
     "source_for",
 ]
