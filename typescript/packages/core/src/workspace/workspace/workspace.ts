@@ -69,7 +69,7 @@ import { explainLine } from '../node/explain.ts'
 import { provisionNode } from '../node/provision_node.ts'
 import { buildFilePrompt } from '../file_prompt.ts'
 import { getCurrentSessionFor } from '../../context/session_context.ts'
-import { SourceBlockSchema, type SourceBlock } from '../../secrets/config.ts'
+import { SecretSourceSchema, type SecretSource } from '../../secrets/config.ts'
 import { SecretsError } from '../../secrets/errors.ts'
 import { sourceFor } from '../../secrets/registry.ts'
 import { resolveSources } from '../../secrets/sources.ts'
@@ -138,7 +138,7 @@ export class Workspace {
   private readonly watchManager: WatchManager
   private readonly runtimes: Runtimes
   // Named for what it holds: the source declarations, never a secret.
-  private readonly sourceBlocks: Readonly<Record<string, SourceBlock>>
+  private readonly declaredSecretSources: Readonly<Record<string, SecretSource>>
   private secretSourcesBuilt: Readonly<Record<string, ResolvedSource>> | null = null
   private secretSourcesPending: Promise<Record<string, ResolvedSource>> | null = null
   private readonly router: Router
@@ -199,18 +199,18 @@ export class Workspace {
     ) {
       throw new SecretsError('config `secrets` must be a mapping')
     }
-    this.sourceBlocks = Object.fromEntries(
+    this.declaredSecretSources = Object.fromEntries(
       Object.entries(options.secrets ?? {}).map(([name, block]) => [
         name,
-        SourceBlockSchema.parse(block),
+        SecretSourceSchema.parse(block),
       ]),
     )
-    for (const block of Object.values(this.sourceBlocks)) sourceFor(block.source)
+    for (const block of Object.values(this.declaredSecretSources)) sourceFor(block.source)
     const seedVars = options.env !== undefined ? varsFromEntries(options.env) : undefined
     for (const seeded of Object.values(seedVars ?? {})) {
       if (
         seeded.managed !== undefined &&
-        !Object.hasOwn(this.sourceBlocks, seeded.managed.source)
+        !Object.hasOwn(this.declaredSecretSources, seeded.managed.source)
       ) {
         sourceFor(seeded.managed.source)
       }
@@ -1031,8 +1031,8 @@ export class Workspace {
    * the restored pointers name instances the new workspace never heard
    * of.
    */
-  get declaredSources(): Readonly<Record<string, SourceBlock>> {
-    return this.sourceBlocks
+  get declaredSources(): Readonly<Record<string, SecretSource>> {
+    return this.declaredSecretSources
   }
 
   private async secretSources(): Promise<Readonly<Record<string, ResolvedSource>>> {
@@ -1043,7 +1043,7 @@ export class Workspace {
     // rotation between the two reads would leave the loser's config on
     // one of the lines. Cleared either way, so a failed resolution is
     // retried by the next line rather than pinned forever.
-    const pending = this.secretSourcesPending ?? resolveSources(this.sourceBlocks)
+    const pending = this.secretSourcesPending ?? resolveSources(this.declaredSecretSources)
     this.secretSourcesPending = pending
     let built
     try {
@@ -1220,7 +1220,7 @@ export class Workspace {
       // install does: an env pointer restores from state naming its
       // instance, and without the block the copy would answer the
       // first read with "unknown secrets source".
-      secrets: options.secrets ?? this.sourceBlocks,
+      secrets: options.secrets ?? this.declaredSecretSources,
     }
     const copyAgentId = options.agentId ?? this.agentId
     if (copyAgentId !== null) opts.agentId = copyAgentId

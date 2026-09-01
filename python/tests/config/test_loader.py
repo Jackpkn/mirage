@@ -1012,8 +1012,8 @@ def test_env_entry_refusals_surface_as_config_errors():
     base = {"mounts": {"/": {"resource": "ram"}}}
     with pytest.raises(ValueError, match="not both"):
         load_config({**base, "env": {"X": {"value": "v", "from": "env"}}})
-    with pytest.raises(ValueError, match="readonly"):
-        load_config({**base, "env": {"X": {"from": "env", "readonly": True}}})
+    with pytest.raises(ValueError, match="always exported"):
+        load_config({**base, "env": {"X": {"from": "env", "export": False}}})
     with pytest.raises(ValueError, match="managed entries"):
         load_config({**base, "env": {"X": {"value": "v", "key": "k"}}})
 

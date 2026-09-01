@@ -1111,8 +1111,8 @@ describe('env block', () => {
       /env\.X.*not both/,
     )
     expect(() =>
-      loadWorkspaceConfig({ ...base, env: { X: { from: 'env', readonly: true } } }),
-    ).toThrow(/readonly/)
+      loadWorkspaceConfig({ ...base, env: { X: { from: 'env', export: false } } }),
+    ).toThrow(/always exported/)
     expect(() => loadWorkspaceConfig({ ...base, env: { X: { value: 'v', key: 'k' } } })).toThrow(
       /managed entries/,
     )
@@ -1175,6 +1175,58 @@ describe('the secrets block', () => {
       /secrets\.sm.*must be a mapping/,
     )
     expect(() => loadWorkspaceConfig({ ...base, secrets: 'nope' })).toThrow(/must be a mapping/)
+  })
+})
+
+describe('a mount or CLI credential from the secrets plane', () => {
+  it('resolves a mount pointer against a declared instance', async () => {
+    process.env.CONFIG_DOOR_PROBE = 'xoxb-from-env'
+    const args = await configToWorkspaceArgs(
+      loadWorkspaceConfig({
+        mounts: {
+          '/slack': {
+            resource: 'slack',
+            config: { token: { from: 'ambient', key: 'CONFIG_DOOR_PROBE' } },
+          },
+        },
+        secrets: { ambient: { source: 'env' } },
+      }),
+    )
+    const entry = args.resources['/slack']
+    expect(entry).toBeDefined()
+    expect(JSON.stringify(entry?.[0])).not.toContain('CONFIG_DOOR_PROBE')
+  })
+
+  it('resolves a CLI pointer against the same instances', async () => {
+    // The sources reached mount construction and not `buildCliEntries`,
+    // so the CLI's config model was handed the pointer itself.
+    process.env.CONFIG_DOOR_CLI_PROBE = 'xoxb-for-the-cli'
+    const args = await configToWorkspaceArgs(
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        clis: {
+          sl: {
+            cli: 'slack',
+            config: { token: { from: 'ambient', key: 'CONFIG_DOOR_CLI_PROBE' } },
+          },
+        },
+        secrets: { ambient: { source: 'env' } },
+      }),
+    )
+    expect(args.options.clis?.sl).toEqual(['slack', { token: 'xoxb-for-the-cli' }])
+  })
+
+  it('resolves a pointer with no secrets block at all', async () => {
+    process.env.CONFIG_DOOR_BARE_PROBE = 'xoxb-ambient'
+    const args = await configToWorkspaceArgs(
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        clis: {
+          sl: { cli: 'slack', config: { token: { from: 'env', key: 'CONFIG_DOOR_BARE_PROBE' } } },
+        },
+      }),
+    )
+    expect(args.options.clis?.sl).toEqual(['slack', { token: 'xoxb-ambient' }])
   })
 })
 

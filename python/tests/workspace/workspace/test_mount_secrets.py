@@ -20,7 +20,7 @@ from mirage.config import load_config, resolve_secrets
 from mirage.core.slack.config import SlackConfig
 from mirage.resource.slack import SlackResource
 from mirage.secrets import registry
-from mirage.secrets.config import SecretRef, SourceBlock
+from mirage.secrets.config import SecretRef, SecretSource
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import register_secrets
 from mirage.secrets.sources import resolve_config_secrets, resolve_sources
@@ -59,7 +59,7 @@ def fresh_custom(monkeypatch):
 
 async def demo_sources(account: str = "team"):
     return await resolve_sources(
-        {"op": SourceBlock(source="demo", config={"account": account})})
+        {"op": SecretSource(source="demo", config={"account": account})})
 
 
 def yaml_config(**config):
@@ -109,7 +109,7 @@ async def test_a_yaml_literal_needs_no_source_and_no_fetch():
 
 
 @pytest.mark.asyncio
-async def test_a_config_with_no_sources_declared_is_untouched():
+async def test_a_config_with_no_sources_declared_needs_no_fetch():
     cfg = load_config(
         {
             "mode": "READ",
@@ -124,8 +124,38 @@ async def test_a_config_with_no_sources_declared_is_untouched():
         },
         env={},
     )
-    assert await resolve_secrets(cfg) is cfg
+    assert await resolve_secrets(cfg) == cfg
     assert CALLS == []
+
+
+@pytest.mark.asyncio
+async def test_a_pointer_needs_no_secrets_block_to_name_a_builtin_source(
+        monkeypatch):
+    # `fetch_secret` builds an undeclared builtin from ambient
+    # defaults, so a deployment with one account writes no block.
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-ambient")
+    cfg = await resolve_secrets(
+        load_config(
+            {
+                "mode": "READ",
+                "mounts": {
+                    "/slack": {
+                        "resource": "slack",
+                        "config": {
+                            "token": {
+                                "from": "env",
+                                "key": "SLACK_BOT_TOKEN"
+                            }
+                        }
+                    }
+                },
+            },
+            env={},
+        ))
+    ws = Workspace(**cfg.to_workspace_kwargs())
+    token = ws._registry.mount_for_prefix("/slack").resource.config.token
+    assert token.get_secret_value() == "xoxb-ambient"
+    await ws.close()
 
 
 @pytest.mark.asyncio

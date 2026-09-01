@@ -19,12 +19,12 @@ from dotenv import load_dotenv
 
 from mirage import MountMode, Workspace
 from mirage.resource.slack import SlackConfig, SlackResource
-from mirage.secrets import (SecretRef, SourceBlock, resolve_config_secrets,
-                            resolve_sources)
+from mirage.secrets import (EnvVar, SecretRef, SecretSource,
+                            resolve_config_secrets, resolve_sources)
 
 load_dotenv(".env.development")
 
-OP = SourceBlock(
+OP = SecretSource(
     source="1password",
     config={
         "token": SecretRef(provider="env", key="OP_SERVICE_ACCOUNT_TOKEN")
@@ -43,9 +43,11 @@ LINES = [
     "ls /local | head -n 3",
     'echo "bot token: ${#SLACK_BOT_TOKEN} chars"',
     'echo "user token: ${#SLACK_USER_TOKEN} chars"',
-    # A session write beats the pointer; a mount keeps its own token.
     "export SLACK_BOT_TOKEN=overridden-in-session",
     'echo "bot token now: $SLACK_BOT_TOKEN"',
+    "SLACK_USER_TOKEN=overridden-in-session",
+    "unset SLACK_USER_TOKEN",
+    'echo "user token still: ${#SLACK_USER_TOKEN} chars"',
     "ls /remote | head -n 1",
 ]
 
@@ -70,30 +72,28 @@ async def show(ws: Workspace, line: str) -> None:
 
 async def main() -> None:
     sources = await resolve_sources({"op": OP})
-
-    # A mount whose credentials come from 1Password. The pointers are
-    # fetched here, so `SlackConfig` receives the tokens themselves.
     remote = await resolve_config_secrets({
         "token": BOT,
         "search_token": USER
     }, sources)
-
-    # And one from the dotenv this process already loaded. Nothing
-    # about the config differs; only where the string came from.
-    local = {"token": os.environ["SLACK_BOT_TOKEN"]}
-
     ws = Workspace(
         {
-            "/remote": SlackResource(config=SlackConfig(**remote)),
-            "/local": SlackResource(config=SlackConfig(**local)),
+            "/remote":
+            SlackResource(config=SlackConfig(**remote)),
+            "/local":
+            SlackResource(config=SlackConfig(
+                token=os.environ["SLACK_BOT_TOKEN"])),
         },
         mode=MountMode.READ,
         secrets={"op": OP},
-        # The same pointers again as session variables, so one object
-        # declares a mount credential and a variable.
         env={
-            "SLACK_BOT_TOKEN": BOT,
-            "SLACK_USER_TOKEN": USER
+            "SLACK_BOT_TOKEN":
+            BOT,
+            "SLACK_USER_TOKEN":
+            EnvVar(provider=USER.provider,
+                   ref=USER.ref,
+                   key=USER.key,
+                   readonly=True),
         },
     )
     for line in LINES:

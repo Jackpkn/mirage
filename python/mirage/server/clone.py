@@ -12,17 +12,21 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Mapping
 from typing import Any
 
 from mirage import Workspace
 from mirage.resource.history import HISTORY_PREFIX
 from mirage.resource.registry import build_resource
+from mirage.secrets.sources import resolve_config_secrets, resolve_sources
+from mirage.secrets.types import ResolvedSource
 from mirage.workspace.snapshot import requires_resource_override, to_state_dict
 from mirage.workspace.snapshot.utils import norm_mount_prefix
 
 
-def _build_override_resources(
-        override: dict[str, Any] | None) -> dict[str, Any]:
+async def _build_override_resources(
+        override: dict[str, Any] | None,
+        sources: Mapping[str, ResolvedSource] | None) -> dict[str, Any]:
     if not override:
         return {}
     if "mounts" not in override:
@@ -35,7 +39,12 @@ def _build_override_resources(
         config = block.get("config") or {}
         if resource_name is None:
             continue
-        out[norm_mount_prefix(prefix)] = build_resource(resource_name, config)
+        # An override mount reads a pointer the way a yaml one does:
+        # `build_resource` is sync, so the credential is fetched before
+        # it, against the declarations this clone will run with.
+        out[norm_mount_prefix(prefix)] = build_resource(
+            resource_name, await
+            resolve_config_secrets(config, sources, f"mounts.{prefix}.config"))
     return out
 
 
@@ -81,18 +90,22 @@ async def clone_workspace_with_override(src_ws: Workspace,
         Workspace: a new, independent workspace.
     """
     state = await to_state_dict(src_ws)
-    override_resources = _build_override_resources(override)
-    existing = _existing_redacted_resources(src_ws,
-                                            state,
-                                            skip=set(override_resources))
-    merged = {**existing, **override_resources}
     # Same-process, so the declarations travel with the clone the way
     # a reused remote resource does: the state carries the env
     # pointers but never the `secrets:` block behind them. An override
     # naming its own wins, the way a mount override does, so a staging
-    # clone does not keep reading production accounts.
+    # clone does not keep reading production accounts. Resolved before
+    # the mounts, because an override mount's credential may point at
+    # one of them.
     supplied = (override or {}).get("secrets")
     secrets = supplied if supplied is not None else src_ws.declared_sources
+    sources = (await resolve_sources(secrets)
+               if isinstance(secrets, Mapping) and secrets else None)
+    override_resources = await _build_override_resources(override, sources)
+    existing = _existing_redacted_resources(src_ws,
+                                            state,
+                                            skip=set(override_resources))
+    merged = {**existing, **override_resources}
     return await Workspace._from_state(state,
                                        resources=merged,
                                        secrets=secrets)

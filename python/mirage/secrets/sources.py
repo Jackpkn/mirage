@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from mirage.secrets.config import SecretRef, SourceBlock
+from mirage.secrets.config import SecretRef, SecretSource
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import fetch_secret, source_for
 from mirage.secrets.summary import field_summary
@@ -58,8 +58,10 @@ async def config_value(
             nothing else -- the same boundary ``fill_env`` draws, and
             for the same reason: a dotenv miss renders the host path it
             looked for, and a custom source shadowing ``env`` renders
-            whatever it likes. The source's own words go to the host
-            log instead.
+            whatever it likes. The source's own words ride the
+            exception chain, never a log line: a log is a copy nobody
+            redacted, and a source is free to quote the value it was
+            handed.
     """
     seen = fetched.get((ref.provider, ref.ref))
     if seen is not None:
@@ -68,7 +70,7 @@ async def config_value(
         secret = await fetch_secret(ref.provider, ref.ref, sources)
     except Exception as exc:
         logger.warning("%s: fetch from %s failed: %s", label, ref.provider,
-                       exc)
+                       type(exc).__name__)
         raise SecretsError(
             f"{label}: cannot fetch from {ref.provider}") from exc
     fetched[(ref.provider, ref.ref)] = secret
@@ -91,7 +93,8 @@ def _field(label: str, ref: SecretRef, secret: ResolvedSecret,
 
 
 async def resolve_sources(
-        blocks: Mapping[str, SourceBlock]) -> dict[str, ResolvedSource]:
+    declared: Mapping[str, "SecretSource | Mapping[str, Any]"]
+) -> dict[str, ResolvedSource]:
     """Build every declared instance, reading its pointers.
 
     Runs once per workspace, before the first fetch, and reaches only
@@ -100,15 +103,21 @@ async def resolve_sources(
     line, while a source that is merely unreachable still fails only
     the names that want it.
 
+    Takes the block parsed or raw, because the three callers hold
+    different things: the constructor validates eagerly so a bad
+    declaration fails there, the yaml door and a clone override hand
+    over what they were given.
+
     Args:
-        blocks (Mapping[str, SourceBlock]): the `secrets:` block,
-            instance name -> declaration.
+        declared (Mapping[str, SecretSource | Mapping[str, Any]]): the
+            `secrets:` block, name -> declaration.
 
     Raises:
         SecretsError: an unknown source, a missing bootstrap field, or
             config the source's own model refuses. A refusal is
             reported by field and reason only; the values are never in
             the message.
+        ValidationError: a declaration the block's own model refuses.
     """
     out: dict[str, ResolvedSource] = {}
     # One fetch per bootstrap secret for the whole resolution: two
@@ -116,7 +125,8 @@ async def resolve_sources(
     # generation of it, or a rotation between them pins a mismatched
     # pair for the workspace's life.
     fetched: dict[tuple[str, str], ResolvedSecret] = {}
-    for name, block in blocks.items():
+    for name, raw in declared.items():
+        block = SecretSource.model_validate(raw)
         config_model, fetch = source_for(block.source)
         values: dict[str, Any] = {}
         for field, value in block.config.items():
@@ -126,12 +136,14 @@ async def resolve_sources(
         try:
             config = config_model.model_validate(values)
         except ValidationError as exc:
-            logger.warning("secrets.%s: config refused: %s", name, exc)
-            # The error TYPE, never pydantic's rendered message: a
-            # custom source's own validator may spell the rejected
-            # input, and `values` is where a fetched credential has
-            # just landed. The field path and the code say what is
-            # wrong; the words go to the host log.
+            # The error TYPE, never pydantic's rendered message, in the
+            # raised error AND in the log: a custom source's own
+            # validator may spell the rejected input, and `values` is
+            # where a fetched credential has just landed. The field
+            # path and the code say what is wrong; the words stay on
+            # the exception chain, which only a host that prints a
+            # traceback ever renders.
+            logger.warning("secrets.%s: config refused", name)
             detail = "; ".join(
                 f"{'.'.join(str(part) for part in err['loc'])}: {err['type']}"
                 for err in exc.errors())
@@ -139,10 +151,11 @@ async def resolve_sources(
         except Exception as exc:
             # A validator that RAISES rather than returning a
             # validation error never becomes an issue list, and
-            # pydantic only wraps ValueError and AssertionError. The
-            # words are the validator's, over a value just fetched.
+            # pydantic only wraps ValueError and AssertionError. Its
+            # words are over a value just fetched, so only its type is
+            # logged.
             logger.warning("secrets.%s: config validation raised: %s", name,
-                           exc)
+                           type(exc).__name__)
             raise SecretsError(f"secrets.{name}: config refused") from exc
         out[name] = ResolvedSource(block.source, config, fetch)
     return out
@@ -182,10 +195,14 @@ async def _resolve_value(value: Any, label: str, fetched: dict[tuple[str, str],
             for key, child in value.items()
         }
     if isinstance(value, (list, tuple)):
-        return [
+        items = [
             await _resolve_value(item, f"{label}[{i}]", fetched, sources)
             for i, item in enumerate(value)
         ]
+        # A tuple stays a tuple: this walk runs over every config the
+        # yaml door loads, pointer or not, so it must hand a resource
+        # back what it was given.
+        return tuple(items) if isinstance(value, tuple) else items
     return value
 
 

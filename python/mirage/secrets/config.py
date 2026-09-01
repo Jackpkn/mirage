@@ -31,12 +31,18 @@ class EnvVar(BaseModel):
     The env block is one map, name -> entry. A bare string in the map
     is the literal short form and never reaches this model; a dict is
     validated through it. `value` and `from` are mutually exclusive and
-    one is required: `readonly`/`export` belong to a literal entry,
-    `ref`/`key`/`fetch` to a managed one.
+    one is required: `export` belongs to a literal entry, `ref`/`key`/
+    `fetch` to a managed one, and `readonly` to either.
 
     Args:
         value (str | None): the literal text; set = a literal entry.
-        readonly (bool): literal-only; compiles to `VarAttr.READONLY`.
+        readonly (bool): compiles to `VarAttr.READONLY`, so the agent
+            cannot assign to the name or unset it. Legal on a managed
+            entry too, and the point of one: the fetch writes the
+            record itself rather than going through the shell's
+            assignment gate, so mirage still fills a readonly
+            credential while a line that tries to overwrite it is
+            refused.
         export (bool): literal-only knob (default on); a managed entry
             is always exported.
         provider (str | None): registered source name; set = a managed
@@ -75,10 +81,6 @@ class EnvVar(BaseModel):
         if self.value is None and self.provider is None:
             raise ValueError("an env entry needs 'value' or 'from'")
         if self.provider is not None:
-            if self.readonly:
-                raise ValueError(
-                    "'readonly' is for literal entries; a readonly managed "
-                    "variable would change under refresh")
             if not self.export:
                 raise ValueError("'export' is for literal entries; a managed "
                                  "variable is always exported")
@@ -158,7 +160,7 @@ class SecretRef(BaseModel):
     a mount's credential, a CLI's.
 
     Where it may point is the *context's* rule, not this model's.
-    `SourceBlock` narrows a source's own config to `BOOTSTRAP_SOURCES`,
+    `SecretSource` narrows its own config to `BOOTSTRAP_SOURCES`,
     because that is what stops the source table from needing a
     dependency graph; a mount has no such limit, since every source is
     already built by the time one is read.
@@ -178,11 +180,11 @@ class SecretRef(BaseModel):
     key: str
 
 
-class SourceBlock(BaseModel):
+class SecretSource(BaseModel):
     """One declared source instance: which source, and its config.
 
-    The `secrets:` block is one map, instance name -> block, spelled
-    the way `mounts:` and `clis:` are: a type beside a config. The
+    The `secrets:` block is one map, name -> source, spelled the way
+    `mounts:` and `clis:` are: a type beside a config. The
     instance name is what a managed env entry's `from:` names, so two
     accounts of one platform are two instances, and an instance named
     after its source reads as that source configured.
@@ -216,7 +218,7 @@ class SourceBlock(BaseModel):
                 continue
             ref = SecretRef.model_validate(item)
             # The bootstrap restriction lives here, not on `SecretRef`:
-            # it is this block's reason, not the pointer's. A source
+            # it is this model's reason, not the pointer's. A source
             # needing config of its own cannot bootstrap another
             # without a dependency graph.
             if ref.provider not in BOOTSTRAP_SOURCES:

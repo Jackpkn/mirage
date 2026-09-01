@@ -18,7 +18,9 @@ import type { WorkspaceStateDict } from '@struktoai/mirage-core/workspace/snapsh
 import { normMountPrefix } from '@struktoai/mirage-core/workspace/snapshot/utils'
 import type { Workspace as CoreWorkspace } from '@struktoai/mirage-core/workspace/workspace/workspace'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
-import type { SourceEntries } from '@struktoai/mirage-core/secrets/config'
+import type { SecretEntries } from '@struktoai/mirage-core/secrets/config'
+import { resolveSources } from '@struktoai/mirage-core/secrets/sources'
+import type { ResolvedSource } from '@struktoai/mirage-core/secrets/types'
 import { Workspace, buildResource } from '@struktoai/mirage-node'
 
 interface OverrideMountBlock {
@@ -29,17 +31,20 @@ interface OverrideMountBlock {
 export interface OverrideShape {
   mounts?: Record<string, OverrideMountBlock>
   /** `secrets:` declarations for the restored env pointers. */
-  secrets?: SourceEntries
+  secrets?: SecretEntries
 }
 
 export async function buildOverrideResources(
   override: OverrideShape | null,
+  sources?: Readonly<Record<string, ResolvedSource>>,
 ): Promise<Record<string, Resource>> {
   const mounts = override?.mounts
   if (mounts === undefined) return {}
   const out: Record<string, Resource> = {}
   for (const [prefix, block] of Object.entries(mounts)) {
-    out[normMountPrefix(prefix)] = await buildResource(block.resource, block.config ?? {})
+    // An override mount reads a pointer the way a yaml one does, so it
+    // is built against the declarations this clone will run with.
+    out[normMountPrefix(prefix)] = await buildResource(block.resource, block.config ?? {}, sources)
   }
   return out
 }
@@ -69,15 +74,17 @@ export async function cloneWorkspaceWithOverride(
   src: CoreWorkspace,
   override: OverrideShape | null,
 ): Promise<Workspace> {
-  const overrideResources = await buildOverrideResources(override)
   const state = await toStateDict(src)
-  const existing = existingRedactedResources(src, state, new Set(Object.keys(overrideResources)))
-  const merged = { ...existing, ...overrideResources }
   // Same-process, so the declarations travel with the clone the way a
   // reused remote resource does: the state carries the env pointers
   // but never the `secrets:` block behind them. An override naming its
   // own wins, the way a mount override does, so a staging clone does
-  // not keep reading production accounts.
+  // not keep reading production accounts. Resolved before the mounts,
+  // because an override mount's credential may point at one of them.
   const secrets = override?.secrets ?? src.declaredSources
+  const sources = Object.keys(secrets).length > 0 ? await resolveSources(secrets) : undefined
+  const overrideResources = await buildOverrideResources(override, sources)
+  const existing = existingRedactedResources(src, state, new Set(Object.keys(overrideResources)))
+  const merged = { ...existing, ...overrideResources }
   return Workspace.fromState(state, { secrets }, merged)
 }

@@ -32,7 +32,7 @@ from mirage.resource.registry import build_resource
 from mirage.runtime.base import Runtime
 from mirage.runtime.table import build_runtime
 from mirage.runtime.types import Language, ScriptSource
-from mirage.secrets.config import EnvVar, SourceBlock
+from mirage.secrets.config import EnvVar, SecretSource
 from mirage.secrets.sources import resolve_config_secrets, resolve_sources
 from mirage.shell.console import JobConsole
 from mirage.shell.job_table import ConsoleFactory
@@ -546,7 +546,7 @@ class WorkspaceConfig(BaseModel):
     # the way `mounts:` is. A managed env entry's `from` names an
     # instance here, or a source directly when the deployment has one
     # account of it and nothing to configure.
-    secrets: dict[str, SourceBlock] | None = None
+    secrets: dict[str, SecretSource] | None = None
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -768,8 +768,10 @@ async def resolve_secrets(config: "WorkspaceConfig") -> "WorkspaceConfig":
     exists. Mirrors the TypeScript `configToWorkspaceArgs`, which does
     the same thing inline because it is async already.
 
-    A config declaring no sources is returned unchanged and reaches no
-    store, so every existing caller that skips this loses nothing.
+    A `secrets:` block is not required: `fetch_secret` builds an
+    undeclared builtin source from ambient defaults, so
+    `{from: env, key: TOKEN}` resolves with no block at all and the
+    walk runs either way. A config holding no pointer does no I/O.
 
     Args:
         config (WorkspaceConfig): the validated config.
@@ -778,17 +780,11 @@ async def resolve_secrets(config: "WorkspaceConfig") -> "WorkspaceConfig":
         WorkspaceConfig: the same config, pointers resolved.
 
     Raises:
-        SecretsError: a declared source could not answer, or answered
-            without the wanted field.
+        SecretsError: a source could not answer, or answered without
+            the wanted field.
     """
-    if config.secrets is None:
-        return config
-    blocks = {
-        name: (block if isinstance(block, SourceBlock) else
-               SourceBlock.model_validate(block))
-        for name, block in config.secrets.items()
-    }
-    sources = await resolve_sources(blocks)
+    sources = (await resolve_sources(config.secrets)
+               if config.secrets is not None else None)
     mounts = {
         prefix:
         block.model_copy(

@@ -17,14 +17,14 @@ import { fileURLToPath } from 'node:url'
 
 import dotenv from 'dotenv'
 
-import { SourceBlockSchema } from '@struktoai/mirage-core/secrets/config'
+import { SecretSourceSchema } from '@struktoai/mirage-core/secrets/config'
 import { resolveSources } from '@struktoai/mirage-core/secrets/sources'
 import { MountMode, Workspace, buildResource } from '@struktoai/mirage-node'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 dotenv.config({ path: resolve(HERE, '../../../.env.development') })
 
-const OP = SourceBlockSchema.parse({
+const OP = SecretSourceSchema.parse({
   source: '1password',
   config: { token: { from: 'env', key: 'OP_SERVICE_ACCOUNT_TOKEN' } },
 })
@@ -37,9 +37,11 @@ const LINES = [
   'ls /local | head -n 3',
   'echo "bot token: ${#SLACK_BOT_TOKEN} chars"',
   'echo "user token: ${#SLACK_USER_TOKEN} chars"',
-  // A session write beats the pointer; the mount keeps its own token.
   'export SLACK_BOT_TOKEN=overridden-in-session',
   'echo "bot token now: $SLACK_BOT_TOKEN"',
+  'SLACK_USER_TOKEN=overridden-in-session',
+  'unset SLACK_USER_TOKEN',
+  'echo "user token still: ${#SLACK_USER_TOKEN} chars"',
   'ls /remote | head -n 1',
 ]
 
@@ -59,14 +61,7 @@ async function show(ws: Workspace, line: string): Promise<void> {
 
 async function main(): Promise<void> {
   const sources = await resolveSources({ op: OP })
-
-  // A mount whose credentials come from 1Password. `buildResource` is
-  // async, so the pointers are fetched there; python resolves them in
-  // `resolve_secrets` before its sync `build_resource`. Same shape.
   const remote = await buildResource('slack', { token: BOT, searchToken: USER }, sources)
-
-  // And one from the dotenv this process already loaded. Nothing about
-  // the config differs; only where the string came from.
   const token = process.env.SLACK_BOT_TOKEN
   if (token === undefined || token === '') throw new Error('SLACK_BOT_TOKEN is required')
   const local = await buildResource('slack', { token })
@@ -76,7 +71,10 @@ async function main(): Promise<void> {
     {
       mode: MountMode.READ,
       secrets: { op: OP },
-      env: { SLACK_BOT_TOKEN: BOT, SLACK_USER_TOKEN: USER },
+      env: {
+        SLACK_BOT_TOKEN: BOT,
+        SLACK_USER_TOKEN: { ...USER, readonly: true },
+      },
     },
   )
   for (const line of LINES) await show(ws, line)

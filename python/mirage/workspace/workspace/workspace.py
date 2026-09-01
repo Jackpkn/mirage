@@ -38,7 +38,7 @@ from mirage.resource.history import HISTORY_PREFIX, HistoryViewResource
 from mirage.runtime.base import Runtime
 from mirage.runtime.resolver import PrefixResolver
 from mirage.runtime.routing import RouteDecision, RoutePolicy
-from mirage.secrets.config import EnvVar, SourceBlock
+from mirage.secrets.config import EnvVar, SecretSource
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import source_for
 from mirage.secrets.sources import resolve_sources
@@ -122,7 +122,7 @@ class Workspace:
         clis: dict[str, tuple[str | CLISpec, dict[str, Any] | None]]
         | None = None,
         env: Mapping[str, str | EnvVar | Mapping[str, Any]] | None = None,
-        secrets: Mapping[str, SourceBlock | Mapping[str, Any]] | None = None,
+        secrets: Mapping[str, SecretSource | Mapping[str, Any]] | None = None,
     ) -> None:
         self._registry = MountRegistry()
         # The permission profiles: one per name, and the one a session
@@ -186,20 +186,20 @@ class Workspace:
         if secrets is not None and not isinstance(secrets, Mapping):
             raise SecretsError("config `secrets` must be a mapping, got "
                                f"{type(secrets).__name__}")
-        self._source_blocks: dict[str, SourceBlock] = {
-            name: (block if isinstance(block, SourceBlock) else
-                   SourceBlock.model_validate(block))
+        self._declared_sources: dict[str, SecretSource] = {
+            name: (block if isinstance(block, SecretSource) else
+                   SecretSource.model_validate(block))
             for name, block in (secrets or {}).items()
         }
         self._secret_sources_built: dict[str, ResolvedSource] | None = None
         self._secret_sources_task: asyncio.Task[dict[
             str, ResolvedSource]] | None = None
-        for block in self._source_blocks.values():
+        for block in self._declared_sources.values():
             source_for(block.source)
         seed_vars = vars_from_entries(env) if env else None
         for var in (seed_vars or {}).values():
             if (var.managed is not None
-                    and var.managed.source not in self._source_blocks):
+                    and var.managed.source not in self._declared_sources):
                 source_for(var.managed.source)
         self._session_mgr = SessionManager(session_id,
                                            store=stores.sessions,
@@ -338,7 +338,7 @@ class Workspace:
                                   self._namespace)
 
     @property
-    def declared_sources(self) -> Mapping[str, SourceBlock]:
+    def declared_sources(self) -> Mapping[str, SecretSource]:
         """The `secrets:` declarations this workspace was built with.
 
         Read by the paths that rebuild a workspace from state: a
@@ -347,7 +347,7 @@ class Workspace:
         carry it across or the restored pointers name instances the new
         workspace never heard of.
         """
-        return self._source_blocks
+        return self._declared_sources
 
     async def _secret_sources(self) -> Mapping[str, ResolvedSource]:
         """The declared source instances, built once.
@@ -371,7 +371,8 @@ class Workspace:
         # forever.
         task = self._secret_sources_task
         if task is None:
-            task = asyncio.ensure_future(resolve_sources(self._source_blocks))
+            task = asyncio.ensure_future(
+                resolve_sources(self._declared_sources))
             self._secret_sources_task = task
         try:
             # Shielded: the task is shared, so a waiter whose own
@@ -708,7 +709,7 @@ class Workspace:
             *,
             resources: dict[str, Any] | None = None,
             clis: CLIOverrides | None = None,
-            secrets: Mapping[str, SourceBlock | Mapping[str, Any]]
+            secrets: Mapping[str, SecretSource | Mapping[str, Any]]
         | None = None,
             drift_policy: DriftPolicy = DriftPolicy.STRICT) -> "Workspace":
         """Reconstruct a Workspace from a tar.
@@ -760,7 +761,7 @@ class Workspace:
             *,
             resources: dict[str, Any] | None = None,
             clis: CLIOverrides | None = None,
-            secrets: Mapping[str, SourceBlock | Mapping[str, Any]]
+            secrets: Mapping[str, SecretSource | Mapping[str, Any]]
         | None = None,
             drift_policy: DriftPolicy = DriftPolicy.STRICT) -> "Workspace":
         """Reconstruct a Workspace directly from a state dict (no tar).
@@ -815,7 +816,7 @@ class Workspace:
         return await type(self)._from_state(state,
                                             resources=resources,
                                             clis=reusable_clis(self),
-                                            secrets=self._source_blocks)
+                                            secrets=self._declared_sources)
 
     @classmethod
     async def _from_state(
@@ -824,7 +825,7 @@ class Workspace:
         *,
         resources: dict[str, Any] | None = None,
         clis: CLIOverrides | None = None,
-        secrets: Mapping[str, SourceBlock | Mapping[str, Any]]
+        secrets: Mapping[str, SecretSource | Mapping[str, Any]]
         | None = None
     ) -> "Workspace":
         args = build_mount_args(state, resources, clis)

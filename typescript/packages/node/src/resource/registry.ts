@@ -404,11 +404,10 @@ export async function buildResource(
 ): Promise<Resource> {
   // A `{from, ref, key}` in the config is fetched here, before the
   // resource's own schema parses, so every credential reaches its
-  // client as the plain string it already reads. Python cannot do this
-  // -- its `build_resource` is sync by rule -- and arms a provider on
-  // the workspace's first admitted line instead; see
-  // `resolveConfigSecrets` for why the two differ and what stays the
-  // same. A config with no pointer does no I/O.
+  // client as the plain string it already reads. Python resolves one
+  // step earlier, in its config door (`resolve_secrets`), because
+  // `build_resource` is sync by rule there. A config with no pointer
+  // does no I/O.
   const resolved = await resolveConfigSecrets(config, sources, `mounts.${name}.config`)
   const factory = REGISTRY[name] ?? CUSTOM[name]
   if (factory !== undefined) return factory(resolved)

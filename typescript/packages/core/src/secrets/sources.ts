@@ -14,8 +14,13 @@
 
 import type { z } from 'zod'
 
-import { SecretRefSchema, type SecretRef, type SourceBlock } from './config.ts'
-import { SecretsError } from './errors.ts'
+import {
+  SecretRefSchema,
+  SecretSourceSchema,
+  type SecretEntries,
+  type SecretRef,
+} from './config.ts'
+import { SecretsError, errorKind } from './errors.ts'
 import { fieldSummary } from './summary.ts'
 import { fetchSecret, sourceFor } from './registry.ts'
 import type { ResolvedSecret, ResolvedSource } from './types.ts'
@@ -39,7 +44,7 @@ function isSecretRef(value: unknown): value is SecretRef {
  * That is the boundary `fillEnv` draws and it is drawn for the same
  * reason: a dotenv miss renders the host path it looked for, and a
  * custom source shadowing `env` renders whatever it likes. The
- * source's own words go to the host log instead.
+ * source's own words ride the `cause` chain, never a log line.
  */
 export async function configValue(
   label: string,
@@ -54,7 +59,7 @@ export async function configValue(
   try {
     secret = await fetchSecret(ref.from, ref.ref, sources)
   } catch (caught) {
-    console.warn(`${label}: fetch from ${ref.from} failed: ${String(caught)}`)
+    console.warn(`${label}: fetch from ${ref.from} failed: ${errorKind(caught)}`)
     throw new SecretsError(`${label}: cannot fetch from ${ref.from}`, { cause: caught })
   }
   fetched.set(cacheKey, secret)
@@ -87,15 +92,31 @@ function selectField(
 }
 
 /**
+ * Whether a value is a plain config mapping rather than an instance.
+ *
+ * Only an object literal or `Object.create(null)` counts. A class
+ * instance is left alone: a config field may hold a live object (a
+ * notion `authProvider`, a client someone constructed), and rebuilding
+ * one from its own entries drops every prototype method and accessor
+ * the resource then calls. Python needs no such check -- its walk asks
+ * `isinstance(value, Mapping)`, which an instance already fails.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const proto: unknown = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+/**
  * Whether a raw config value is a `{from, ref, key}` pointer.
  *
- * Strict: an object only counts when it parses as the pointer grammar
- * exactly, extra keys included, so an ordinary object-valued config
- * field that happens to carry a `from` is left alone.
+ * Strict: a plain mapping only counts when it parses as the pointer
+ * grammar exactly, extra keys included, so an ordinary object-valued
+ * config field that happens to carry a `from` is left alone.
  */
 export function isConfigPointer(value: unknown): boolean {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
-  if (!Object.hasOwn(value as Record<string, unknown>, 'from')) return false
+  if (!isPlainObject(value)) return false
+  if (!Object.hasOwn(value, 'from')) return false
   return SecretRefSchema.safeParse(value).success
 }
 
@@ -115,12 +136,12 @@ async function resolveValue(
     }
     return out
   }
-  if (value !== null && typeof value === 'object') {
+  if (isPlainObject(value)) {
     // fromEntries, not keyed assignment: a config key named
     // `__proto__` would otherwise assign through the prototype setter
     // and never reach the resource's own schema.
     const pairs: [string, unknown][] = []
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    for (const [key, child] of Object.entries(value)) {
       pairs.push([key, await resolveValue(child, `${label}.${key}`, fetched, sources)])
     }
     return Object.fromEntries(pairs)
@@ -172,13 +193,18 @@ function issueDetail(issue: z.core.$ZodIssue): string {
  * every line, while a source that is merely unreachable still fails
  * only the names that want it.
  *
+ * Takes the block parsed or raw, because the three callers hold
+ * different things: the constructor parses eagerly so a bad
+ * declaration fails there, the config door and a clone override hand
+ * over what they were given.
+ *
  * Throws SecretsError for an unknown source, a missing bootstrap
  * field, or config the source's own model refuses. A refusal is
  * reported by field and reason only; the values are never in the
  * message.
  */
 export async function resolveSources(
-  blocks: Readonly<Record<string, SourceBlock>>,
+  declared: Readonly<SecretEntries>,
 ): Promise<Record<string, ResolvedSource>> {
   const out: [string, ResolvedSource][] = []
   // One fetch per bootstrap secret for the whole resolution: two
@@ -186,7 +212,8 @@ export async function resolveSources(
   // generation of it, or a rotation between them pins a mismatched
   // pair for the workspace's life.
   const fetched = new Map<string, ResolvedSecret>()
-  for (const [name, block] of Object.entries(blocks)) {
+  for (const [name, raw] of Object.entries(declared)) {
+    const block = SecretSourceSchema.parse(raw)
     const { configModel, fetch } = sourceFor(block.source)
     // fromEntries, not keyed assignment: the block's schema now keeps
     // a `__proto__` config key, and this is where it would be lost on
@@ -206,18 +233,18 @@ export async function resolveSources(
       parsed = configModel.safeParse(values)
     } catch (caught) {
       // A refinement that THROWS never becomes an issue list, and
-      // safeParse does not catch it. The words are the refinement's,
-      // over a value just fetched.
-      console.warn(`secrets.${name}: config validation threw: ${String(caught)}`)
+      // safeParse does not catch it. Its words are over a value just
+      // fetched, so only its kind is logged.
+      console.warn(`secrets.${name}: config validation threw: ${errorKind(caught)}`)
       throw new SecretsError(`secrets.${name}: config refused`, { cause: caught })
     }
     if (!parsed.success) {
-      console.warn(`secrets.${name}: config refused: ${parsed.error.message}`)
-      // The issue CODE, never zod's rendered message: a custom
-      // source's own refinement may spell the rejected input, and
-      // `values` is where a fetched credential has just landed. The
-      // field path and the code say what is wrong; the words go to the
-      // host log.
+      // The issue CODE, never zod's rendered message, in the thrown
+      // error AND in the log: a custom source's own refinement may
+      // spell the rejected input, and `values` is where a fetched
+      // credential has just landed. The field path and the code say
+      // what is wrong; the words stay on the `cause` chain.
+      console.warn(`secrets.${name}: config refused`)
       const detail = parsed.error.issues.map(issueDetail).join('; ')
       throw new SecretsError(`secrets.${name}: ${detail}`)
     }

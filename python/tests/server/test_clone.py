@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 
 from mirage import MountMode, Workspace
 from mirage.resource.ram import RAMResource
+from mirage.resource.slack import SlackConfig, SlackResource
 from mirage.secrets.registry import register_secrets
 from mirage.secrets.types import ResolvedSecret
 from mirage.server.clone import clone_workspace_with_override
@@ -134,6 +135,53 @@ async def test_an_empty_override_drops_the_declared_instances():
         try:
             result = await clone.execute('echo "$TOKEN"')
             assert (await result.stdout_str()) == "default:r\n"
+        finally:
+            await clone.close()
+    finally:
+        await src.close()
+
+
+@pytest.mark.asyncio
+async def test_an_override_mount_reads_a_pointer():
+    """An override mount is built before the clone exists, so its
+    credential is fetched against the declarations the clone will run
+    with -- unresolved, the pointer reached `SlackConfig` as a
+    mapping and construction failed."""
+    register_secrets("acct-mount", AccountConfig, fetch_account)
+    src = Workspace(
+        {
+            "/": RAMResource(),
+            "/slack": SlackResource(config=SlackConfig(token="xoxb-src")),
+        },
+        mode=MountMode.WRITE)
+    try:
+        clone = await clone_workspace_with_override(
+            src, {
+                "secrets": {
+                    "prod": {
+                        "source": "acct-mount",
+                        "config": {
+                            "account": "live"
+                        },
+                    }
+                },
+                "mounts": {
+                    "/slack": {
+                        "resource": "slack",
+                        "config": {
+                            "token": {
+                                "from": "prod",
+                                "ref": "bot",
+                                "key": "credential"
+                            }
+                        },
+                    }
+                },
+            })
+        try:
+            mount = clone._registry.mount_for_prefix("/slack")
+            token = mount.resource.config.token
+            assert token.get_secret_value() == "live:bot"
         finally:
             await clone.close()
     finally:

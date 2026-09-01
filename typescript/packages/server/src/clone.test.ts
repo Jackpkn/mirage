@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { RAMResource } from '@struktoai/mirage-core/resource/ram/ram'
 import { MountMode } from '@struktoai/mirage-core/types'
-import { Workspace } from '@struktoai/mirage-node'
+import { Workspace, buildResource, type SlackResource } from '@struktoai/mirage-node'
 import { z } from '@struktoai/mirage-core/resource/secrets'
 import { registerSecrets } from '@struktoai/mirage-core/secrets/registry'
 import { cloneWorkspaceWithOverride } from './clone.ts'
@@ -78,6 +78,33 @@ describe('cloneWorkspaceWithOverride', () => {
       secrets: { prod: { source: 'acct-override', config: { account: 'staging' } } },
     })
     expect((await clone.execute('echo "$TOKEN"')).stdoutText.trim()).toBe('staging:r')
+    await src.close()
+    await clone.close()
+  })
+
+  it('reads a pointer in an override mount config', async () => {
+    // An override mount is built before the clone exists, so its
+    // credential is fetched against the declarations the clone will
+    // run with -- unresolved, the pointer reached the resource's own
+    // schema as a mapping.
+    registerSecrets('acct-mount', AccountConfig, (config: AccountConfig, ref: string) =>
+      Promise.resolve({ fields: { credential: `${config.account}:${ref}` } }),
+    )
+    const src = new Workspace(
+      { '/': new RAMResource(), '/slack': await buildResource('slack', { token: 'xoxb-src' }) },
+      { mode: MountMode.WRITE },
+    )
+    const clone = await cloneWorkspaceWithOverride(src, {
+      secrets: { prod: { source: 'acct-mount', config: { account: 'live' } } },
+      mounts: {
+        '/slack': {
+          resource: 'slack',
+          config: { token: { from: 'prod', ref: 'bot', key: 'credential' } },
+        },
+      },
+    })
+    const mounted = clone.mount('/slack').resource as SlackResource
+    expect(mounted.config.token).toBe('live:bot')
     await src.close()
     await clone.close()
   })

@@ -16,7 +16,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
 
 from mirage.secrets import registry
-from mirage.secrets.config import DotenvConfig, SourceBlock
+from mirage.secrets.config import DotenvConfig, SecretSource
 from mirage.secrets.dotenv import fetch_dotenv
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import register_secrets
@@ -42,8 +42,8 @@ def fresh_custom(monkeypatch):
     register_secrets("demo", DemoConfig, fetch_demo)
 
 
-def block(**config) -> SourceBlock:
-    return SourceBlock.model_validate({"source": "demo", "config": config})
+def block(**config) -> SecretSource:
+    return SecretSource.model_validate({"source": "demo", "config": config})
 
 
 @pytest.mark.asyncio
@@ -98,7 +98,7 @@ async def test_a_missing_bootstrap_field_names_the_field(monkeypatch):
 @pytest.mark.asyncio
 async def test_an_unknown_source_names_the_known_ones():
     with pytest.raises(SecretsError) as caught:
-        await resolve_sources({"prod": SourceBlock(source="nope", config={})})
+        await resolve_sources({"prod": SecretSource(source="nope", config={})})
     assert "unknown secrets source 'nope'" in str(caught.value)
 
 
@@ -141,7 +141,7 @@ async def test_a_failed_bootstrap_fetch_is_redacted(monkeypatch):
     with pytest.raises(SecretsError) as err:
         await resolve_sources({
             "prod":
-            SourceBlock.model_validate({
+            SecretSource.model_validate({
                 "source": "demo",
                 "config": {
                     "token": {
@@ -188,7 +188,7 @@ async def test_a_model_refusal_reports_the_code_not_the_words(monkeypatch):
     with pytest.raises(SecretsError) as caught:
         await resolve_sources({
             "prod":
-            SourceBlock.model_validate({
+            SecretSource.model_validate({
                 "source": "loud",
                 "config": {
                     "token": {
@@ -216,7 +216,7 @@ async def test_one_bootstrap_secret_is_fetched_once():
     register_secrets("dotenv", DotenvConfig, counting)
     built = await resolve_sources({
         "prod":
-        SourceBlock.model_validate({
+        SecretSource.model_validate({
             "source": "demo",
             "config": {
                 "account": {
@@ -257,7 +257,7 @@ async def test_a_validator_that_raises_is_redacted_too(monkeypatch):
     with pytest.raises(SecretsError) as caught:
         await resolve_sources({
             "prod":
-            SourceBlock.model_validate({
+            SecretSource.model_validate({
                 "source": "throwing",
                 "config": {
                     "token": {
@@ -280,7 +280,7 @@ async def test_a_bootstrap_field_named_after_a_dunder_is_absent(monkeypatch):
     with pytest.raises(SecretsError, match="wanted field 'constructor'"):
         await resolve_sources({
             "prod":
-            SourceBlock.model_validate({
+            SecretSource.model_validate({
                 "source": "demo",
                 "config": {
                     "token": {

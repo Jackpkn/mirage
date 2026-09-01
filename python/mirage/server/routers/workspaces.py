@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -20,6 +21,8 @@ from mirage import Workspace
 from mirage.config import resolve_secrets
 from mirage.resource.registry import build_resource
 from mirage.secrets.errors import SecretsError
+from mirage.secrets.sources import resolve_config_secrets, resolve_sources
+from mirage.secrets.types import ResolvedSource
 from mirage.server.clone import clone_workspace_with_override
 from mirage.server.paths import PathOutsideRootError, resolve_within_root
 from mirage.server.summary import make_brief, make_detail
@@ -171,9 +174,14 @@ async def load_workspace(req: LoadWorkspaceRequest,
     if req.id is not None and req.id in registry:
         raise HTTPException(status_code=409,
                             detail=f"workspace id already exists: {req.id!r}")
-    resources = _build_load_resources(req.override)
     secrets = _build_load_secrets(req.override)
     try:
+        # Before the resources, because an override mount's credential
+        # may be a pointer at one of these declarations. A container
+        # the constructor will reject is left for it to reject.
+        sources = (await resolve_sources(secrets)
+                   if isinstance(secrets, Mapping) and secrets else None)
+        resources = await _build_load_resources(req.override, sources)
         ws = await Workspace.load(str(safe_path),
                                   resources=resources,
                                   secrets=secrets)
@@ -209,8 +217,9 @@ def _build_load_secrets(
     return override.get("secrets")
 
 
-def _build_load_resources(
-        override: dict[str, Any] | None) -> dict[str, Any] | None:
+async def _build_load_resources(
+        override: dict[str, Any] | None,
+        sources: Mapping[str, ResolvedSource] | None) -> dict[str, Any] | None:
     if not override or "mounts" not in override:
         return None
     out: dict[str, Any] = {}
@@ -221,5 +230,10 @@ def _build_load_resources(
         config = block.get("config") or {}
         if resource_name is None:
             continue
-        out[norm_mount_prefix(prefix)] = build_resource(resource_name, config)
+        # An override mount reads a pointer the way a yaml one does:
+        # `build_resource` is sync, so the credential is fetched first,
+        # against the declarations this load supplies.
+        out[norm_mount_prefix(prefix)] = build_resource(
+            resource_name, await
+            resolve_config_secrets(config, sources, f"mounts.{prefix}.config"))
     return out or None

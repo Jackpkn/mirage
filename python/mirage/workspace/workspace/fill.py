@@ -689,8 +689,11 @@ async def fill_env(
         try:
             secret = await fetch_secret(source, ref, sources)
         except Exception as exc:
+            # The type, never the source's own words: a log is a copy
+            # nobody redacted, and the words ride `from exc`.
             logger.warning("secret fetch for %s from %s failed: %s", listed,
-                           source, exc)
+                           source,
+                           type(exc).__name__)
             raise SecretsError(
                 f"{listed}: cannot fetch from {source}") from exc
         for name in group:

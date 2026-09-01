@@ -15,7 +15,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { SourceBlockSchema } from './config.ts'
+import { SecretSourceSchema } from './config.ts'
 import { SecretsError } from './errors.ts'
 import { fetchSecret, registerSecrets } from './registry.ts'
 import { configValue, isConfigPointer, resolveConfigSecrets, resolveSources } from './sources.ts'
@@ -31,8 +31,8 @@ function fetchDemo(config: DemoConfig, _ref: string): Promise<ResolvedSecret> {
   return Promise.resolve({ fields: { credential: `${config.account}:${config.token ?? 'none'}` } })
 }
 
-function block(config: Record<string, unknown>): ReturnType<typeof SourceBlockSchema.parse> {
-  return SourceBlockSchema.parse({ source: 'demo-sources', config })
+function block(config: Record<string, unknown>): ReturnType<typeof SecretSourceSchema.parse> {
+  return SecretSourceSchema.parse({ source: 'demo-sources', config })
 }
 
 function instance(built: Record<string, ResolvedSource>, name: string): ResolvedSource {
@@ -58,6 +58,17 @@ describe('resolveSources', () => {
     registerSecrets('env', EnvConfig, () =>
       Promise.resolve({ fields: { ...process.env } as Record<string, string> }),
     )
+  })
+
+  it('takes a raw declaration, not only a parsed one', async () => {
+    // The config door and a clone override hand over what they were
+    // given; only the constructor parses eagerly.
+    const built = await resolveSources({
+      prod: { source: 'demo-sources', config: { account: 'raw' } },
+    })
+    const prod = instance(built, 'prod')
+    const secret = await prod.fetch(prod.config as never, 'r')
+    expect(secret.fields.credential).toBe('raw:none')
   })
 
   it('carries a literal config to the source', async () => {
@@ -107,7 +118,7 @@ describe('resolveSources', () => {
 
   it('names the known sources for an unknown one', async () => {
     await expect(
-      resolveSources({ prod: SourceBlockSchema.parse({ source: 'nope' }) }),
+      resolveSources({ prod: SecretSourceSchema.parse({ source: 'nope' }) }),
     ).rejects.toThrowError(SecretsError)
   })
 
@@ -165,7 +176,7 @@ describe('resolveSources', () => {
     process.env.SOURCES_LOUD = 's3cr3t-value'
     try {
       const caught = await resolveSources({
-        prod: SourceBlockSchema.parse({
+        prod: SecretSourceSchema.parse({
           source: 'loud-sources',
           config: { token: { from: 'env', key: 'SOURCES_LOUD' } },
         }),
@@ -189,7 +200,7 @@ describe('resolveSources', () => {
       return Promise.resolve({ fields: { A: 'a', B: 'b' } })
     })
     const built = await resolveSources({
-      prod: SourceBlockSchema.parse({
+      prod: SecretSourceSchema.parse({
         source: 'demo-sources',
         config: {
           account: { from: 'dotenv', ref: '/one/file', key: 'A' },
@@ -214,7 +225,7 @@ describe('resolveSources', () => {
     process.env.SOURCES_THROWN = 's3cr3t-value'
     try {
       const caught = await resolveSources({
-        prod: SourceBlockSchema.parse({
+        prod: SecretSourceSchema.parse({
           source: 'throwing-sources',
           config: { token: { from: 'env', key: 'SOURCES_THROWN' } },
         }),
@@ -232,7 +243,7 @@ describe('resolveSources', () => {
   it('reports a bootstrap field named after a prototype member absent', async () => {
     registerSecrets('dotenv', DeadConfig, () => Promise.resolve({ fields: { A: 'a' } }))
     const caught = await resolveSources({
-      prod: SourceBlockSchema.parse({
+      prod: SecretSourceSchema.parse({
         source: 'demo-sources',
         config: { token: { from: 'dotenv', ref: '/f', key: 'constructor' } },
       }),
@@ -248,7 +259,7 @@ describe('resolveSources', () => {
       Promise.reject(new SecretsError('dotenv file not found: /host/only/.env')),
     )
     const caught = await resolveSources({
-      prod: SourceBlockSchema.parse({
+      prod: SecretSourceSchema.parse({
         source: 'demo-sources',
         config: { token: { from: 'dotenv', ref: '/host/only/.env', key: 'TOKEN' } },
       }),
@@ -312,6 +323,32 @@ describe('resolveConfigSecrets', () => {
       n: 1,
     })
     expect(out).toEqual({ inner: { token: 'xoxb-fetched' }, n: 1 })
+  })
+
+  it('leaves a class instance whole', async () => {
+    // A config field may hold a live object: rebuilding it from its
+    // own entries drops the methods the resource then calls.
+    class AuthProvider {
+      readonly kind = 'oauth'
+      tokens(): string {
+        return 'from-the-provider'
+      }
+    }
+    const provider = new AuthProvider()
+    const out = await resolveConfigSecrets({ authProvider: provider })
+    expect(out.authProvider).toBe(provider)
+    expect((out.authProvider as AuthProvider).tokens()).toBe('from-the-provider')
+  })
+
+  it('leaves an instance carrying a `from` alone', async () => {
+    class Named {
+      readonly from = 'env'
+      readonly key = 'CONFIG_SECRETS_PROBE'
+    }
+    const named = new Named()
+    expect(isConfigPointer(named)).toBe(false)
+    const out = await resolveConfigSecrets({ authProvider: named })
+    expect(out.authProvider).toBe(named)
   })
 
   it('labels an error with the config field path', async () => {
