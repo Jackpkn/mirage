@@ -24,6 +24,7 @@ import { type WorkspaceRegistry } from '../registry.ts'
 import { z } from '@struktoai/mirage-core/resource/secrets'
 import { SecretsError } from '@struktoai/mirage-core/secrets/errors'
 import { buildOverrideResources, cloneWorkspaceWithOverride, type OverrideShape } from '../clone.ts'
+import { resolveSources } from '@struktoai/mirage-core/secrets/sources'
 import {
   configToWorkspaceArgs,
   loadWorkspaceConfig,
@@ -168,7 +169,16 @@ export function registerWorkspacesRoutes(app: FastifyInstance, deps: WorkspaceRo
       }
       let overrides: Record<string, Resource>
       try {
-        overrides = await buildOverrideResources(override ?? null)
+        // Before the mounts, because an override mount's credential may
+        // be a pointer at one of these declarations. Mirrors the python
+        // load route; a container the constructor will reject is left
+        // for it to reject.
+        const declared = override?.secrets
+        const sources =
+          declared !== undefined && !Array.isArray(declared) && Object.keys(declared).length > 0
+            ? await resolveSources(declared)
+            : undefined
+        overrides = await buildOverrideResources(override ?? null, sources)
       } catch (e) {
         return reply.status(400).send({ detail: `override build failed: ${(e as Error).message}` })
       }
