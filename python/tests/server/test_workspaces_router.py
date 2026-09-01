@@ -473,3 +473,21 @@ async def test_create_with_an_unresolvable_secrets_block_is_a_bad_request():
         r = await client.post("/v1/workspaces", json=body)
         assert r.status_code == 400, r.text
         assert "nope" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_clone_with_a_bad_secrets_override_is_a_bad_request():
+    """The clone route was the last one answering 500 where create,
+    load and the historical clone all answer 400."""
+    app, _ = _make_app_with_short_grace(grace=10.0)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport,
+                           base_url="http://test") as client:
+        r = await client.post("/v1/workspaces", json=_minimal_config())
+        wid = r.json()["id"]
+        for bad in ({"prod": {"source": "nope"}}, {"prod": {"nosource": 1}}):
+            r = await client.post(f"/v1/workspaces/{wid}/clone",
+                                  json={"override": {
+                                      "secrets": bad
+                                  }})
+            assert r.status_code == 400, r.text

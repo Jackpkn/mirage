@@ -119,8 +119,14 @@ async def clone_workspace(workspace_id: str, req: CloneWorkspaceRequest,
         raise HTTPException(status_code=409,
                             detail=f"workspace id already exists: {req.id!r}")
     src_entry = registry.get(workspace_id)
-    new_ws = await src_entry.runner.call(
-        clone_workspace_with_override(src_entry.runner.ws, req.override))
+    try:
+        new_ws = await src_entry.runner.call(
+            clone_workspace_with_override(src_entry.runner.ws, req.override))
+    except (SecretsError, ValueError) as e:
+        # An override naming a source the host cannot resolve, or a
+        # block the schema refuses, is the caller's mistake -- the
+        # answer create, load and the historical clone already give.
+        raise HTTPException(status_code=400, detail=str(e))
     try:
         entry = registry.add(new_ws, workspace_id=req.id)
     except ValueError as e:

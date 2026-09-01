@@ -1638,6 +1638,32 @@ describe('declared source instances', () => {
     ).rejects.toThrowError(/unknown secrets source/)
   })
 
+  it('never resolves the block for a denied line', async () => {
+    // The managed source was already out of reach for a refused line;
+    // so is the bootstrap source the declarations themselves read.
+    const calls: string[] = []
+    registerSecrets('env', FakeConfig, (_config: unknown, ref: string) => {
+      calls.push(ref)
+      return Promise.resolve({ fields: { TOKEN: 't' } })
+    })
+    registerSecrets('acct-denied', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      [new DenyNamed('printenv')],
+      undefined,
+      { prod: { source: 'acct-denied', config: { token: { from: 'env', key: 'TOKEN' } } } },
+    )
+    try {
+      const denied = await ws.execute('printenv TOKEN')
+      expect(denied.exitCode).toBe(126)
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('echo "$TOKEN"'))).toBe('default:r:t\n')
+      expect(calls).toEqual([''])
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('redacts like env when an instance aliases it', async () => {
     // The summary is told the source behind the instance: an instance
     // name is the deployment's word, and `{prod: {source: env}}` must
@@ -1735,7 +1761,12 @@ describe('declared source instances', () => {
     await ws.close()
   })
 
-  it('fails every line on a bad instance config', async () => {
+  it('fails the lines that read a bad instance config', async () => {
+    // Only those lines: the declarations are read when an admitted
+    // node wants a value, so a line naming no secret runs and one the
+    // per-command gate refuses never reaches a bootstrap source. An
+    // unknown source name still fails at construction; what is left
+    // for resolution to find is a config the source refuses.
     registerSecrets('acct-bad', AccountConfig, accountSource())
     const ws = await makeWs(
       { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
@@ -1744,7 +1775,8 @@ describe('declared source instances', () => {
       { prod: { source: 'acct-bad', config: { nonesuch: 'x' } } },
     )
     try {
-      const out = await ws.execute('echo hi')
+      expect((await ws.execute('echo hi')).exitCode).toBe(0)
+      const out = await ws.execute('echo "$TOKEN"')
       expect(out.exitCode).toBe(1)
       expect(stderrStr(out)).toContain('secrets.prod')
     } finally {

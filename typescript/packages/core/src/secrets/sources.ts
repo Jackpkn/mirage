@@ -114,10 +114,17 @@ export async function resolveSources(
   const fetched = new Map<string, ResolvedSecret>()
   for (const [name, block] of Object.entries(blocks)) {
     const { configModel, fetch } = sourceFor(block.source)
-    const values: Record<string, unknown> = {}
+    // fromEntries, not keyed assignment: the block's schema now keeps
+    // a `__proto__` config key, and this is where it would be lost on
+    // the way to the source's own model.
+    const pairs: [string, unknown][] = []
     for (const [field, value] of Object.entries(block.config)) {
-      values[field] = isSecretRef(value) ? await configValue(name, field, value, fetched) : value
+      pairs.push([
+        field,
+        isSecretRef(value) ? await configValue(name, field, value, fetched) : value,
+      ])
     }
+    const values = Object.fromEntries(pairs)
     let parsed
     try {
       parsed = configModel.safeParse(values)

@@ -1773,6 +1773,44 @@ async def slow_bootstrap(calls: list[str]) -> FetchFn:
 
 
 @pytest.mark.asyncio
+async def test_a_denied_line_never_resolves_the_block():
+    """The managed source was already out of reach for a refused line;
+    so is the bootstrap source the declarations themselves read."""
+    calls: list[str] = []
+    register_secrets("env", FakeConfig, await slow_bootstrap(calls))
+    register_secrets("acct-denied", AccountConfig, account_source())
+    ws = Workspace(
+        {"/": RAMResource()},
+        mode=MountMode.WRITE,
+        policies=[DenyNamed("printenv")],
+        secrets={
+            "prod": {
+                "source": "acct-denied",
+                "config": {
+                    "token": {
+                        "from": "env",
+                        "key": "TOKEN"
+                    }
+                },
+            }
+        },
+        env={"TOKEN": {
+            "from": "prod",
+            "ref": "r",
+            "key": "credential"
+        }})
+    try:
+        io = await ws.execute("printenv TOKEN")
+        assert io.exit_code == 126
+        assert calls == []
+        io = await ws.execute('echo "$TOKEN"')
+        assert (await io.stdout_str()) == "default:r:t\n"
+        assert calls == [""]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_a_cancelled_waiter_leaves_the_shared_resolution_alone():
     """The resolution task is shared, so a waiter whose own execute()
     is cancelled must not take the other session's line down with it."""
@@ -1981,7 +2019,12 @@ async def test_a_pointer_naming_an_instance_needs_no_source_of_that_name():
 
 
 @pytest.mark.asyncio
-async def test_a_bad_instance_config_fails_every_line():
+async def test_a_bad_instance_config_fails_the_lines_that_read_it():
+    """Only those lines: the declarations are read when an admitted
+    node wants a value, so a line naming no secret runs and one the
+    per-command gate refuses never reaches a bootstrap source. An
+    unknown source name still fails at construction; what is left for
+    resolution to find is a config the source refuses."""
     register_secrets("acct", AccountConfig, account_source())
     ws = _ws({"TOKEN": {
         "from": "prod",
@@ -1995,7 +2038,8 @@ async def test_a_bad_instance_config_fails_every_line():
                  }
              }})
     try:
-        out = await ws.execute("echo hi")
+        assert (await ws.execute("echo hi")).exit_code == 0
+        out = await ws.execute('echo "$TOKEN"')
         assert out.exit_code == 1
         assert b"secrets.prod" in out.stderr
     finally:

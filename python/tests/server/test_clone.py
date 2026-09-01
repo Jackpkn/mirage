@@ -106,3 +106,35 @@ async def test_an_override_replaces_the_declared_instances():
             await clone.close()
     finally:
         await src.close()
+
+
+@pytest.mark.asyncio
+async def test_an_empty_override_drops_the_declared_instances():
+    """An explicit `{}` says "no declarations, use ambient", which a
+    truthiness fallback read as "none supplied"."""
+    register_secrets("aws-sm", AccountConfig, fetch_account)
+    src = Workspace(
+        {"/": RAMResource()},
+        mode=MountMode.WRITE,
+        secrets={
+            "aws-sm": {
+                "source": "aws-sm",
+                "config": {
+                    "account": "declared"
+                },
+            }
+        },
+        env={"TOKEN": {
+            "from": "aws-sm",
+            "ref": "r",
+            "key": "credential"
+        }})
+    try:
+        clone = await clone_workspace_with_override(src, {"secrets": {}})
+        try:
+            result = await clone.execute('echo "$TOKEN"')
+            assert (await result.stdout_str()) == "default:r\n"
+        finally:
+            await clone.close()
+    finally:
+        await src.close()

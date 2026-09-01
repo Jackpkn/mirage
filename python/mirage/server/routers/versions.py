@@ -168,8 +168,8 @@ async def clone_workspace_version(req: CloneRequest,
         # otherwise the live workspace supplies them.
         live = registry.get(
             req.source_id) if req.source_id in registry else None
-        secrets = req.secrets or (live.runner.ws.declared_sources
-                                  if live else None)
+        secrets = (req.secrets if req.secrets is not None else
+                   (live.runner.ws.declared_sources if live else None))
         try:
             ws = await Workspace.from_state(to_state(entries, meta),
                                             secrets=secrets)
