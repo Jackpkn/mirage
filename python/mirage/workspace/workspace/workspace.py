@@ -365,9 +365,18 @@ class Workspace:
             task = asyncio.ensure_future(resolve_sources(self._source_blocks))
             self._secret_sources_task = task
         try:
-            built = await task
+            # Shielded: the task is shared, so a waiter whose own
+            # execute() is cancelled (a wait_for timeout) must not take
+            # the resolution down with it and cancel the other session
+            # too.
+            built = await asyncio.shield(task)
         finally:
-            self._secret_sources_task = None
+            # Cleared only once the shared task itself is finished. A
+            # cancelled waiter dropping the handle would leave the next
+            # caller starting a second resolution beside the one still
+            # running.
+            if task.done():
+                self._secret_sources_task = None
         self._secret_sources_built = built
         return built
 

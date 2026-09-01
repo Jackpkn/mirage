@@ -17,6 +17,7 @@ import { Errors } from 'isomorphic-git'
 import { toStateDict } from '@struktoai/mirage-core/workspace/snapshot/state'
 import { Workspace } from '@struktoai/mirage-node'
 import type { SourceEntries } from '@struktoai/mirage-core/secrets/config'
+import { z } from '@struktoai/mirage-core/resource/secrets'
 import { SecretsError } from '@struktoai/mirage-core/secrets/errors'
 import { cloneWorkspaceWithOverride } from '../clone.ts'
 import type { WorkspaceRegistry } from '../registry.ts'
@@ -206,9 +207,11 @@ export function registerVersionsRoutes(app: FastifyInstance, deps: VersionRoutes
         if (e instanceof Errors.NotFoundError) {
           return reply.status(404).send({ detail: `version not found: ${at}` })
         }
-        if (e instanceof SecretsError) {
-          // A declarations override naming a source the host cannot
-          // resolve is a bad request, not a 500.
+        if (e instanceof SecretsError || e instanceof z.ZodError) {
+          // A declarations override the host cannot resolve, or a
+          // block the schema refuses, is a bad request, not a 500.
+          // The python twin catches ValueError for the same pair,
+          // pydantic's ValidationError being one.
           return reply.status(400).send({ detail: e.message })
         }
         throw e

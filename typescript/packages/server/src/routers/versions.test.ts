@@ -181,6 +181,15 @@ describe('versions router', () => {
     })
     expect(bad.statusCode).toBe(400)
     expect(bad.json<{ detail: string }>().detail).toContain('nope')
+
+    // A block the schema itself refuses throws a zod error rather than
+    // a SecretsError, and is the same bad request.
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/v1/workspaces/clone',
+      payload: { sourceId: id, at: version, secrets: { prod: { nosource: true } } },
+    })
+    expect(malformed.statusCode).toBe(400)
   })
 
   it('returns empty log before any commit', async () => {

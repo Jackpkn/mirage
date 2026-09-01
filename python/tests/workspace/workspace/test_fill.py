@@ -1773,6 +1773,48 @@ async def slow_bootstrap(calls: list[str]) -> FetchFn:
 
 
 @pytest.mark.asyncio
+async def test_a_cancelled_waiter_leaves_the_shared_resolution_alone():
+    """The resolution task is shared, so a waiter whose own execute()
+    is cancelled must not take the other session's line down with it."""
+    calls: list[str] = []
+    register_secrets("env", FakeConfig, await slow_bootstrap(calls))
+    register_secrets("acct-cancel", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={
+                 "prod": {
+                     "source": "acct-cancel",
+                     "config": {
+                         "token": {
+                             "from": "env",
+                             "key": "TOKEN"
+                         }
+                     },
+                 }
+             })
+    ws.create_session("a")
+    ws.create_session("b")
+    try:
+        doomed = asyncio.create_task(
+            ws.execute('echo "$TOKEN"', session_id="a"))
+        survivor = asyncio.create_task(
+            ws.execute('echo "$TOKEN"', session_id="b"))
+        await asyncio.sleep(0)
+        doomed.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await doomed
+        result = await survivor
+        assert result.exit_code == 0
+        assert (await result.stdout_str()) == "default:r:t\n"
+        assert calls == [""]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
 async def test_an_instance_aliasing_env_redacts_like_env():
     """The summary is told the source behind the instance: an instance
     name is the deployment's word, and `{prod: {source: env}}` must
