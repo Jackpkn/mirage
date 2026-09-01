@@ -53,9 +53,7 @@ ws = Workspace(
 await ws.execute("grep -rln session /redis /tmp")
 
 # 运行存放在 Slack 里的脚本，把报告写入 Redis
-await ws.execute(
-    "python3 /slack/channels/general__C0.../files/example__F0....py > /redis/report.txt"
-)
+await ws.execute("python3 /slack/channels/general_.../files/example__F....py > /redis/report.txt")
 
 # 以头部命令名安装一个类型化 CLI：按名称分发，而不是按路径，
 # 并且像其他程序一样可以通过 `man`、`type`、`which` 发现
