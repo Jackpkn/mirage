@@ -1902,6 +1902,41 @@ async function main(): Promise<void> {
     const unauth = await fetch(`${fake.endpoint}/api/models`)
     check('an unauthenticated listing is refused', unauth.status === 401, String(unauth.status))
 
+    // ---- raw, which is resolve for a reader
+    // `/raw/` is how the Hub's own web view links a README and how anything
+    // holding a plain `requests.get` reads one: no redirect, `text/plain`,
+    // and -- the part that is not a synonym for resolve -- an LFS-tracked
+    // path answers with its POINTER rather than its bytes. Probed against
+    // huggingface.co, where `/datasets/lockon/ToolACE/raw/main/data.json`
+    // is 133 bytes of `version https://git-lfs...` against 37MB through
+    // resolve. No client inside mirage sends this request, so the battery
+    // cannot reach it and the endpoint would otherwise ship untested.
+    const rawCard = ['---', 'license: mit', '---', '', '# Raw', ''].join('\n')
+    await repoWithCard(fake.endpoint, 'datasets', 'raw-dataset', rawCard)
+    const raw = await fetch(`${fake.endpoint}/datasets/${TENANT}/raw-dataset/raw/main/README.md`, {
+      headers: { Authorization: `Bearer ${TENANT}` },
+    })
+    check('raw serves the file', raw.status === 200, String(raw.status))
+    eq('raw serves it verbatim', await raw.text(), rawCard)
+    check(
+      'raw is text/plain, where resolve is a download',
+      (raw.headers.get('content-type') ?? '').startsWith('text/plain'),
+      raw.headers.get('content-type') ?? '',
+    )
+    check('raw names the commit', (raw.headers.get('x-repo-commit') ?? '') !== '', '')
+
+    const rawResolve = await fetch(
+      `${fake.endpoint}/datasets/${TENANT}/raw-dataset/resolve/main/README.md`,
+      { headers: { Authorization: `Bearer ${TENANT}` } },
+    )
+    eq('and resolve still answers the same bytes', await rawResolve.text(), rawCard)
+
+    const rawMissing = await fetch(
+      `${fake.endpoint}/datasets/${TENANT}/raw-dataset/raw/main/nope.txt`,
+      { headers: { Authorization: `Bearer ${TENANT}` } },
+    )
+    check('raw 404s a path that is not there', rawMissing.status === 404, String(rawMissing.status))
+
     await mcpChecks()
     await launchChecks()
 
