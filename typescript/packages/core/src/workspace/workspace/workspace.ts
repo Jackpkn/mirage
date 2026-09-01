@@ -190,7 +190,10 @@ export class Workspace {
     for (const block of Object.values(this.secretBlocks)) sourceFor(block.source)
     const seedVars = options.env !== undefined ? varsFromEntries(options.env) : undefined
     for (const seeded of Object.values(seedVars ?? {})) {
-      if (seeded.managed !== undefined && !(seeded.managed.source in this.secretBlocks)) {
+      if (
+        seeded.managed !== undefined &&
+        !Object.hasOwn(this.secretBlocks, seeded.managed.source)
+      ) {
         sourceFor(seeded.managed.source)
       }
     }

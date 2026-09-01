@@ -1638,6 +1638,12 @@ describe('declared source instances', () => {
     ).rejects.toThrowError(/unknown secrets source/)
   })
 
+  it('validates a pointer named after a prototype member', async () => {
+    await expect(
+      makeWs({ TOKEN: { from: 'constructor', ref: '', key: 'credential' } }),
+    ).rejects.toThrowError(/unknown secrets source/)
+  })
+
   it('needs no source of the instance name', async () => {
     registerSecrets('acct-named', AccountConfig, accountSource())
     const ws = await makeWs(

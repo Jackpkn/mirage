@@ -5842,6 +5842,7 @@ all = [
     { name = "langfuse" },
     { name = "mem0ai" },
     { name = "mfusepy" },
+    { name = "onepassword-sdk" },
     { name = "openai" },
     { name = "openai-agents" },
     { name = "opendal" },
@@ -6023,6 +6024,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "mem0ai", marker = "extra == 'mem0'", specifier = ">=2.0.6" },
     { name = "mfusepy", marker = "extra == 'fuse'", specifier = ">=1.0.0" },
+    { name = "mirage-ai", extras = ["1password"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["agno"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["anthropic"], marker = "extra == 'all'" },
     { name = "mirage-ai", extras = ["aws-sm"], marker = "extra == 'all'" },
@@ -6096,7 +6098,7 @@ requires-dist = [
     { name = "wasmtime", marker = "extra == 'quickjs'", specifier = ">=46" },
     { name = "wasmtime", marker = "extra == 'wasi'", specifier = ">=46" },
 ]
-provides-extras = ["monty", "wasi", "quickjs", "s3", "r2", "gcs", "oci", "databricks", "ssh", "nextcloud", "hf-buckets", "fuse", "mongodb", "gridfs", "postgres", "redis", "email", "dotenv", "aws-sm", "langfuse", "chroma", "qdrant", "anthropic", "openai", "pydantic-ai", "deepagents", "openhands", "agno", "claude-agent-sdk", "camel", "daytona", "all", "sandbox", "lancedb", "mem0", "e2b", "1password"]
+provides-extras = ["monty", "wasi", "quickjs", "s3", "r2", "gcs", "oci", "databricks", "ssh", "nextcloud", "hf-buckets", "fuse", "mongodb", "gridfs", "postgres", "redis", "email", "dotenv", "aws-sm", "1password", "langfuse", "chroma", "qdrant", "anthropic", "openai", "pydantic-ai", "deepagents", "openhands", "agno", "claude-agent-sdk", "camel", "daytona", "all", "sandbox", "lancedb", "mem0", "e2b"]
 
 [package.metadata.requires-dev]
 dev = [

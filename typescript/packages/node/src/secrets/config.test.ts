@@ -47,6 +47,15 @@ describe('source configs', () => {
     expect(cfg.awsProfile).toBe('dev')
   })
 
+  it('aws-sm refuses both spellings of one field', () => {
+    // Insertion order would otherwise decide which credential wins,
+    // and the two hosts would disagree; python refuses the same config
+    // from the other side, its camel key being the extra one there.
+    expect(() =>
+      AWSSMConfig.parse({ aws_profile: 'from-yaml', awsProfile: 'from-code' }),
+    ).toThrowError(/aws_profile/)
+  })
+
   // A `secrets:` block spells a source's config python's way, so this
   // schema has to answer to both spellings; only aws-sm has a field
   // long enough for the two to differ.

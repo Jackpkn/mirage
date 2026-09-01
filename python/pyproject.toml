@@ -200,6 +200,7 @@ all = [
     "mirage-ai[email]",
     "mirage-ai[dotenv]",
     "mirage-ai[aws-sm]",
+    "mirage-ai[1password]",
     "mirage-ai[langfuse]",
     "mirage-ai[mem0]",
     "mirage-ai[chroma]",

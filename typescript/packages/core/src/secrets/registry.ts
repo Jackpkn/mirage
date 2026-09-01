@@ -88,7 +88,12 @@ export async function fetchSecret(
   ref: string,
   sources?: Readonly<Record<string, ResolvedSource>>,
 ): Promise<ResolvedSecret> {
-  const entry = sources?.[source]
+  // Own properties only, which is what Python's dict lookup does: a
+  // plain object answers `sources['constructor']` with a prototype
+  // member, and an undeclared source named after one would reach
+  // `.fetch` on it instead of falling through to the registry.
+  const entry =
+    sources !== undefined && Object.hasOwn(sources, source) ? sources[source] : undefined
   if (entry !== undefined) return entry.fetch(entry.config as never, ref)
   const { configModel, fetch } = sourceFor(source)
   return fetch(configModel.parse({}) as never, ref)

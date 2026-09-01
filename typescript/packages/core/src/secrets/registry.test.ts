@@ -86,6 +86,16 @@ describe('secrets registry', () => {
     expect(seen).toEqual(['declared:r'])
   })
 
+  it('a source named after a prototype member is unknown, not inherited', async () => {
+    const sources: Record<string, ResolvedSource> = {
+      prod: { config: {}, fetch: (() => Promise.resolve({ fields: {} })) as never },
+    }
+    for (const name of ['constructor', 'toString', 'hasOwnProperty']) {
+      await expect(fetchSecret(name, '', sources)).rejects.toThrowError(SecretsError)
+      await expect(fetchSecret(name, '', sources)).rejects.toThrowError(/unknown secrets source/)
+    }
+  })
+
   it('fetchSecret falls back to the source of that name', async () => {
     registerSecrets('vault-fallback', VaultConfig, () =>
       Promise.resolve({ fields: { token: 'ambient' } }),

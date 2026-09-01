@@ -1767,6 +1767,14 @@ async def test_an_instance_naming_an_unknown_source_fails_at_construction():
 
 
 @pytest.mark.asyncio
+async def test_a_pointer_named_after_a_prototype_member_is_unknown():
+    """Free in python; the TypeScript twin needs an own-property check,
+    since a plain object answers to `constructor` from its prototype."""
+    with pytest.raises(SecretsError, match="unknown secrets source"):
+        _ws({"TOKEN": {"from": "constructor", "ref": "", "key": "credential"}})
+
+
+@pytest.mark.asyncio
 async def test_a_pointer_naming_an_instance_needs_no_source_of_that_name():
     register_secrets("acct", AccountConfig, account_source())
     ws = _ws({"TOKEN": {

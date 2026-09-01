@@ -47,7 +47,16 @@ const AWS_SM_KEYS: Readonly<Record<string, string>> = {
 function normalizeAwsSmKeys(input: unknown): unknown {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return input
   const out: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(input)) out[AWS_SM_KEYS[key] ?? key] = value
+  for (const [key, value] of Object.entries(input)) {
+    const camel = AWS_SM_KEYS[key]
+    // A config carrying both spellings of one field is refused rather
+    // than settled by insertion order: the snake key is left in place
+    // and the strict object reports it as unrecognized. Python refuses
+    // the same config from the other side, its camel key being the
+    // extra one there.
+    if (camel === undefined || Object.hasOwn(input, camel)) out[key] = value
+    else out[camel] = value
+  }
   return out
 }
 
