@@ -19,30 +19,34 @@ from dotenv import load_dotenv
 
 from mirage import MountMode, Workspace
 from mirage.resource.slack import SlackConfig, SlackResource
+from mirage.secrets import (SecretRef, SourceBlock, resolve_config_secrets,
+                            resolve_sources)
 
-# The application's own environment, loaded first. It carries two
-# different credentials for two different planes: the slack token the
-# mount is built from here, and the 1Password service account token
-# the `op` source authenticates with.
 load_dotenv(".env.development")
 
-resource = SlackResource(config=SlackConfig(
-    token=os.environ["SLACK_BOT_TOKEN"],
-    search_token=os.environ.get("SLACK_USER_TOKEN"),
-))
+OP = SourceBlock(
+    source="1password",
+    config={
+        "token": SecretRef(provider="env", key="OP_SERVICE_ACCOUNT_TOKEN")
+    },
+)
+
+BOT = SecretRef(provider="op",
+                ref="op://mirage/SLACK_BOT_TOKEN",
+                key="credential")
+USER = SecretRef(provider="op",
+                 ref="op://mirage/SLACK_USER_TOKEN",
+                 key="credential")
 
 LINES = [
-    # The mount, built from the dotenv value above.
-    "ls /slack | head -n 3",
-    # The session's own variables, fetched from 1Password by the line
-    # that reads them. Lengths, not values.
+    "ls /remote | head -n 3",
+    "ls /local | head -n 3",
     'echo "bot token: ${#SLACK_BOT_TOKEN} chars"',
     'echo "user token: ${#SLACK_USER_TOKEN} chars"',
-    # A session write beats the pointer and outlives the line. The
-    # mount keeps the token it was built with either way.
+    # A session write beats the pointer; a mount keeps its own token.
     "export SLACK_BOT_TOKEN=overridden-in-session",
     'echo "bot token now: $SLACK_BOT_TOKEN"',
-    "ls /slack | head -n 1",
+    "ls /remote | head -n 1",
 ]
 
 
@@ -65,33 +69,31 @@ async def show(ws: Workspace, line: str) -> None:
 
 
 async def main() -> None:
+    sources = await resolve_sources({"op": OP})
+
+    # A mount whose credentials come from 1Password. The pointers are
+    # fetched here, so `SlackConfig` receives the tokens themselves.
+    remote = await resolve_config_secrets({
+        "token": BOT,
+        "search_token": USER
+    }, sources)
+
+    # And one from the dotenv this process already loaded. Nothing
+    # about the config differs; only where the string came from.
+    local = {"token": os.environ["SLACK_BOT_TOKEN"]}
+
     ws = Workspace(
-        {"/slack": resource},
-        mode=MountMode.READ,
-        # The source's own credential comes from the process env that
-        # load_dotenv just filled.
-        secrets={
-            "op": {
-                "source": "1password",
-                "config": {
-                    "token": {
-                        "from": "env",
-                        "key": "OP_SERVICE_ACCOUNT_TOKEN"
-                    },
-                },
-            },
+        {
+            "/remote": SlackResource(config=SlackConfig(**remote)),
+            "/local": SlackResource(config=SlackConfig(**local)),
         },
+        mode=MountMode.READ,
+        secrets={"op": OP},
+        # The same pointers again as session variables, so one object
+        # declares a mount credential and a variable.
         env={
-            "SLACK_BOT_TOKEN": {
-                "from": "op",
-                "ref": "op://mirage/SLACK_BOT_TOKEN",
-                "key": "credential",
-            },
-            "SLACK_USER_TOKEN": {
-                "from": "op",
-                "ref": "op://mirage/SLACK_USER_TOKEN",
-                "key": "credential",
-            },
+            "SLACK_BOT_TOKEN": BOT,
+            "SLACK_USER_TOKEN": USER
         },
     )
     for line in LINES:

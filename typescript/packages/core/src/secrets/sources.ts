@@ -14,7 +14,7 @@
 
 import type { z } from 'zod'
 
-import type { SecretRef, SourceBlock } from './config.ts'
+import { SecretRefSchema, type SecretRef, type SourceBlock } from './config.ts'
 import { SecretsError } from './errors.ts'
 import { fieldSummary } from './summary.ts'
 import { fetchSecret, sourceFor } from './registry.ts'
@@ -42,41 +42,114 @@ function isSecretRef(value: unknown): value is SecretRef {
  * source's own words go to the host log instead.
  */
 export async function configValue(
-  name: string,
-  field: string,
+  label: string,
   ref: SecretRef,
   fetched: Map<string, ResolvedSecret>,
+  sources?: Readonly<Record<string, ResolvedSource>>,
 ): Promise<string> {
   const cacheKey = `${ref.from}\u0000${ref.ref}`
   const seen = fetched.get(cacheKey)
-  if (seen !== undefined) return selectField(name, field, ref, seen)
+  if (seen !== undefined) return selectField(label, ref, seen, sources)
   let secret
   try {
-    secret = await fetchSecret(ref.from, ref.ref)
+    secret = await fetchSecret(ref.from, ref.ref, sources)
   } catch (caught) {
-    console.warn(
-      `secrets.${name}.config.${field}: fetch from ${ref.from} failed: ${String(caught)}`,
-    )
-    throw new SecretsError(`secrets.${name}.config.${field}: cannot fetch from ${ref.from}`, {
-      cause: caught,
-    })
+    console.warn(`${label}: fetch from ${ref.from} failed: ${String(caught)}`)
+    throw new SecretsError(`${label}: cannot fetch from ${ref.from}`, { cause: caught })
   }
   fetched.set(cacheKey, secret)
-  return selectField(name, field, ref, secret)
+  return selectField(label, ref, secret, sources)
 }
 
-function selectField(name: string, field: string, ref: SecretRef, secret: ResolvedSecret): string {
+function selectField(
+  label: string,
+  ref: SecretRef,
+  secret: ResolvedSecret,
+  sources?: Readonly<Record<string, ResolvedSource>>,
+): string {
   // Own properties only, the check `fillEnv` already makes: a plain
   // object answers `fields['constructor']` with a prototype member,
   // and that would reach the source's config model as a value.
   const value = Object.hasOwn(secret.fields, ref.key) ? secret.fields[ref.key] : undefined
   if (value === undefined) {
+    // A declared instance is named by the deployment, so the summary
+    // is told the source behind it: `{prod: {source: env}}` must
+    // redact like `env`, not like an unknown name.
+    const declared =
+      sources !== undefined && Object.hasOwn(sources, ref.from) ? sources[ref.from] : undefined
+    const provider = declared?.source ?? ref.from
     throw new SecretsError(
-      `secrets.${name}.config.${field}: wanted field '${ref.key}', ` +
-        `the ${ref.from} secret has ${fieldSummary(secret.fields, ref.from)}`,
+      `${label}: wanted field '${ref.key}', ` +
+        `the ${ref.from} secret has ${fieldSummary(secret.fields, provider)}`,
     )
   }
   return value
+}
+
+/**
+ * Whether a raw config value is a `{from, ref, key}` pointer.
+ *
+ * Strict: an object only counts when it parses as the pointer grammar
+ * exactly, extra keys included, so an ordinary object-valued config
+ * field that happens to carry a `from` is left alone.
+ */
+export function isConfigPointer(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  if (!Object.hasOwn(value as Record<string, unknown>, 'from')) return false
+  return SecretRefSchema.safeParse(value).success
+}
+
+async function resolveValue(
+  value: unknown,
+  label: string,
+  fetched: Map<string, ResolvedSecret>,
+  sources?: Readonly<Record<string, ResolvedSource>>,
+): Promise<unknown> {
+  if (isConfigPointer(value)) {
+    return configValue(label, SecretRefSchema.parse(value), fetched, sources)
+  }
+  if (Array.isArray(value)) {
+    const out: unknown[] = []
+    for (const [i, item] of value.entries()) {
+      out.push(await resolveValue(item, `${label}[${String(i)}]`, fetched, sources))
+    }
+    return out
+  }
+  if (value !== null && typeof value === 'object') {
+    // fromEntries, not keyed assignment: a config key named
+    // `__proto__` would otherwise assign through the prototype setter
+    // and never reach the resource's own schema.
+    const pairs: [string, unknown][] = []
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      pairs.push([key, await resolveValue(child, `${label}.${key}`, fetched, sources)])
+    }
+    return Object.fromEntries(pairs)
+  }
+  return value
+}
+
+/**
+ * A raw mount or CLI config with every pointer read from its source.
+ *
+ * The same `configValue` a source's own config goes through, over the
+ * config of a thing that reaches one. Resolved **before** the config is
+ * parsed, so a credential stays the plain `string` its client already
+ * reads and no resource, accessor or backend learns this plane exists.
+ *
+ * One `fetched` cache spans the whole config, so two fields naming one
+ * secret cost one call and cannot straddle a rotation.
+ */
+export async function resolveConfigSecrets(
+  config: Record<string, unknown>,
+  sources?: Readonly<Record<string, ResolvedSource>>,
+  label = 'config',
+): Promise<Record<string, unknown>> {
+  const fetched = new Map<string, ResolvedSecret>()
+  const pairs: [string, unknown][] = []
+  for (const [key, value] of Object.entries(config)) {
+    pairs.push([key, await resolveValue(value, `${label}.${key}`, fetched, sources)])
+  }
+  return Object.fromEntries(pairs)
 }
 
 // The field path and the error code, never the rendered message: a
@@ -122,7 +195,9 @@ export async function resolveSources(
     for (const [field, value] of Object.entries(block.config)) {
       pairs.push([
         field,
-        isSecretRef(value) ? await configValue(name, field, value, fetched) : value,
+        isSecretRef(value)
+          ? await configValue(`secrets.${name}.config.${field}`, value, fetched)
+          : value,
       ])
     }
     const values = Object.fromEntries(pairs)

@@ -20,28 +20,22 @@ from mirage.config import load_config
 
 CONFIG = Path(__file__).with_name("workspace.yaml")
 
-# What the declared instance reads for its own credential. The dotenv
-# path in the yaml is cwd-relative, so run this from the repo root the
-# way every other example is run.
+# The dotenv path in the yaml is cwd-relative, so run from the repo root.
 DOTENV = Path(".env.development")
 NEEDS = ("OP_SERVICE_ACCOUNT_TOKEN", )
 
-# Every line the agent runs here is ordinary bash: a managed variable
-# is spelled `$SLACK_BOT_TOKEN`, never as a pointer, so nothing on the
-# line tells the model a secret is involved. What each line prints is
-# a length or a prefix, never a whole value -- the point is to show
-# the real secret arrived, not to put it on a terminal.
+# A managed variable is spelled `$NAME`, never as a pointer, so nothing
+# on the line tells the model a secret is involved. Lengths and
+# prefixes only, never a whole value.
 LINES = [
-    # A literal needs no source and no fetch.
     'echo "environment: $MIRAGE_ENV"',
-    # A line naming no secret fetches nothing at all.
     "echo 'this line reads no secret' > /data/note.txt; cat /data/note.txt",
-    # An item reference read through `key: credential`. A slack bot
-    # token starts `xoxb-`, so the prefix is proof the value is real.
+    # A slack bot token starts `xoxb-`, so the prefix proves it is real.
     'printf %s "$SLACK_BOT_TOKEN" | cut -c1-5',
     'echo "bot token: ${#SLACK_BOT_TOKEN} chars"',
-    # A field reference, the shape 1Password copies out of the app.
     'echo "user token: ${#SLACK_USER_TOKEN} chars"',
+    # The mount's own credentials, which no line names.
+    "ls /slack | head -n 3",
 ]
 
 
@@ -64,8 +58,6 @@ async def show(ws: Workspace, line: str) -> None:
 
 
 async def main() -> None:
-    # The same file either CLI would load, so the sources and the
-    # variables are declared once and this script only runs lines.
     if not DOTENV.exists():
         print(f"no {DOTENV} at the cwd. Every line below will fail on the "
               "source's own config rather than on the line, which is what "

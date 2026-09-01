@@ -59,6 +59,15 @@ class EnvVar(BaseModel):
     key: str | None = None
     fetch: Literal["lazy", "eager"] = "lazy"
 
+    @model_validator(mode="before")
+    @classmethod
+    def _from_ref(cls, value: Any) -> Any:
+        # A managed entry is a `SecretRef` plus this block's own knobs,
+        # so one can be handed here directly rather than spelled twice.
+        if isinstance(value, SecretRef):
+            return {"from": value.provider, "ref": value.ref, "key": value.key}
+        return value
+
     @model_validator(mode="after")
     def _one_kind(self) -> "EnvVar":
         if self.value is not None and self.provider is not None:
@@ -141,12 +150,18 @@ class OnePasswordConfig(BaseModel):
 
 
 class SecretRef(BaseModel):
-    """A source-config value read from a bootstrap source.
+    """A configured value read from a source instead of written down.
 
-    The config plane's pointer, spelled with the same three keys the
-    env plane's managed entry uses, so one grammar covers both. Only a
-    bootstrap source may back one: those take no config of their own,
-    which is what stops the table from needing a dependency graph.
+    The plane's one declarative pointer, spelled with the same three
+    keys the env plane's managed entry uses, so one grammar covers
+    every place a deployment points at a secret: a source's own config,
+    a mount's credential, a CLI's.
+
+    Where it may point is the *context's* rule, not this model's.
+    `SourceBlock` narrows a source's own config to `BOOTSTRAP_SOURCES`,
+    because that is what stops the source table from needing a
+    dependency graph; a mount has no such limit, since every source is
+    already built by the time one is read.
 
     Args:
         provider (str): the bootstrap source, `env` or `dotenv`.
@@ -161,16 +176,6 @@ class SecretRef(BaseModel):
     provider: str = Field(alias="from")
     ref: str = ""
     key: str
-
-    @model_validator(mode="after")
-    def _bootstrap_only(self) -> "SecretRef":
-        if self.provider not in BOOTSTRAP_SOURCES:
-            known = ", ".join(sorted(BOOTSTRAP_SOURCES))
-            raise ValueError(
-                f"a source config reads from {known}, not {self.provider!r}; "
-                "only a source that needs no config of its own can bootstrap "
-                "another")
-        return self
 
 
 class SourceBlock(BaseModel):
@@ -204,8 +209,21 @@ class SourceBlock(BaseModel):
     def _v_config(cls, value: Any) -> Any:
         if not isinstance(value, Mapping):
             return value
-        return {
-            name: (SecretRef.model_validate(item)
-                   if isinstance(item, Mapping) and "from" in item else item)
-            for name, item in value.items()
-        }
+        out: dict[str, Any] = {}
+        for name, item in value.items():
+            if not (isinstance(item, Mapping) and "from" in item):
+                out[name] = item
+                continue
+            ref = SecretRef.model_validate(item)
+            # The bootstrap restriction lives here, not on `SecretRef`:
+            # it is this block's reason, not the pointer's. A source
+            # needing config of its own cannot bootstrap another
+            # without a dependency graph.
+            if ref.provider not in BOOTSTRAP_SOURCES:
+                known = ", ".join(sorted(BOOTSTRAP_SOURCES))
+                raise ValueError(
+                    f"{name}: a source config reads from {known}, not "
+                    f"{ref.provider!r}; only a source that needs no config "
+                    "of its own can bootstrap another")
+            out[name] = ref
+        return out

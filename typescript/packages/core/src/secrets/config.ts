@@ -88,12 +88,7 @@ export type EnvEntries = Record<string, string | z.input<typeof EnvVarSchema>>
  * which is what stops the table from needing a dependency graph.
  */
 export const SecretRefSchema = z.strictObject({
-  from: z.string().refine((name) => BOOTSTRAP_SOURCES.includes(name), {
-    message:
-      `a source config reads from ${BOOTSTRAP_SOURCES.join(', ')}, ` +
-      'not that source; only a source that needs no config of its own can ' +
-      'bootstrap another',
-  }),
+  from: z.string(),
   ref: z.string().default(''),
   key: z.string(),
 })
@@ -145,6 +140,22 @@ export const SourceBlockSchema = z.strictObject({
           for (const issue of parsed.error.issues) {
             ctx.addIssue({ code: 'custom', message: issue.message, path: [name, ...issue.path] })
           }
+          continue
+        }
+        // The restriction lives here, not on `SecretRefSchema`: it is
+        // this block's reason, not the pointer's. A source that needs
+        // config of its own cannot bootstrap another without a
+        // dependency graph, while a mount reads from any declared
+        // instance because they are all built before it.
+        if (!BOOTSTRAP_SOURCES.includes(parsed.data.from)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [name],
+            message:
+              `a source config reads from ${BOOTSTRAP_SOURCES.join(', ')}, ` +
+              'not that source; only a source that needs no config of its own can ' +
+              'bootstrap another',
+          })
           continue
         }
         out.push([name, parsed.data])

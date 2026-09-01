@@ -129,7 +129,7 @@ async def test_a_refusal_never_carries_the_value(monkeypatch):
 async def test_config_value_reads_one_field(monkeypatch):
     monkeypatch.setenv("SOURCES_PROBE", "v")
     ref = block(token={"from": "env", "key": "SOURCES_PROBE"}).config["token"]
-    assert await config_value("prod", "token", ref, {}) == "v"
+    assert await config_value("secrets.prod.config.token", ref, {}) == "v"
 
 
 @pytest.mark.asyncio

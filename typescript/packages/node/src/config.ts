@@ -49,6 +49,7 @@ import { isModulePath, loadAttr, splitRef } from './resource/loader.ts'
 // The config door is a workspace entry point of its own (the daemon
 // builds from here), so it arms the builtin secrets sources like the
 // node Workspace module does.
+import { resolveSources } from '@struktoai/mirage-core/secrets/sources'
 import './secrets/constants.ts'
 import { buildResource } from './resource/registry.ts'
 import { RedisConsoleStore } from './shell/console/redis/index.ts'
@@ -957,8 +958,22 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   const consistency = coerceConsistency(cfg.consistency)
   const resources: Record<string, [Resource, MountMode, Record<string, Limit>]> = {}
   const kernelMounts: Record<string, [MountBackend, string | undefined]> = {}
+  // Built before the mounts, because a mount's config may point at one:
+  // `resolveConfigSecrets` inside `buildResource` fetches through these.
+  // A file declaring no sources builds none and reaches no store.
+  const sources =
+    cfg.secrets !== undefined && cfg.secrets !== null
+      ? await resolveSources(
+          Object.fromEntries(
+            Object.entries(cfg.secrets).map(([name, block]) => [
+              name,
+              SourceBlockSchema.parse(block),
+            ]),
+          ),
+        )
+      : undefined
   for (const [prefix, block] of Object.entries(cfg.mounts)) {
-    const r = await buildResource(block.resource, block.config ?? {})
+    const r = await buildResource(block.resource, block.config ?? {}, sources)
     const m = coerceMountMode(block.mode, wsMode)
     resources[prefix] = [r, m, parseLimits(block.command_limits)]
     const backend = (block.backend ?? MountBackend.VFS) as MountBackend

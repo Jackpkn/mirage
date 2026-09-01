@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from mirage import Workspace
+from mirage.config import resolve_secrets
 from mirage.resource.registry import build_resource
 from mirage.secrets.errors import SecretsError
 from mirage.server.clone import clone_workspace_with_override
@@ -45,8 +46,9 @@ async def create_workspace(req: CreateWorkspaceRequest,
         # Map runtime entries construct their instances here, so a bad
         # entry (a wasi build dir that does not exist, an unknown
         # option) fails the create like any other config mistake.
-        kwargs = req.config.to_workspace_kwargs()
-    except (FileNotFoundError, ImportError, ValueError, TypeError) as e:
+        kwargs = (await resolve_secrets(req.config)).to_workspace_kwargs()
+    except (FileNotFoundError, ImportError, SecretsError, ValueError,
+            TypeError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     # The registry id and the state-store scope must be the same identity,
     # so resolve it before construction: explicit REST id, then the

@@ -17,36 +17,30 @@ import { fileURLToPath } from 'node:url'
 
 import dotenv from 'dotenv'
 
-import { MountMode, SlackResource, Workspace } from '@struktoai/mirage-node'
+import { SourceBlockSchema } from '@struktoai/mirage-core/secrets/config'
+import { resolveSources } from '@struktoai/mirage-core/secrets/sources'
+import { MountMode, Workspace, buildResource } from '@struktoai/mirage-node'
 
-// The application's own environment, loaded first. It carries two
-// different credentials for two different planes: the slack token the
-// mount is built from here, and the 1Password service account token
-// the `op` source authenticates with.
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 dotenv.config({ path: resolve(HERE, '../../../.env.development') })
 
-const token = process.env.SLACK_BOT_TOKEN
-if (token === undefined || token === '') throw new Error('SLACK_BOT_TOKEN is required')
-const searchToken = process.env.SLACK_USER_TOKEN
-
-const resource = new SlackResource({
-  token,
-  ...(searchToken !== undefined && searchToken !== '' ? { searchToken } : {}),
+const OP = SourceBlockSchema.parse({
+  source: '1password',
+  config: { token: { from: 'env', key: 'OP_SERVICE_ACCOUNT_TOKEN' } },
 })
 
+const BOT = { from: 'op', ref: 'op://mirage/SLACK_BOT_TOKEN', key: 'credential' }
+const USER = { from: 'op', ref: 'op://mirage/SLACK_USER_TOKEN', key: 'credential' }
+
 const LINES = [
-  // The mount, built from the dotenv value above.
-  'ls /slack | head -n 3',
-  // The session's own variables, fetched from 1Password by the line
-  // that reads them. Lengths, not values.
+  'ls /remote | head -n 3',
+  'ls /local | head -n 3',
   'echo "bot token: ${#SLACK_BOT_TOKEN} chars"',
   'echo "user token: ${#SLACK_USER_TOKEN} chars"',
-  // A session write beats the pointer and outlives the line. The
-  // mount keeps the token it was built with either way.
+  // A session write beats the pointer; the mount keeps its own token.
   'export SLACK_BOT_TOKEN=overridden-in-session',
   'echo "bot token now: $SLACK_BOT_TOKEN"',
-  'ls /slack | head -n 1',
+  'ls /remote | head -n 1',
 ]
 
 const dec = new TextDecoder()
@@ -64,22 +58,25 @@ async function show(ws: Workspace, line: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const sources = await resolveSources({ op: OP })
+
+  // A mount whose credentials come from 1Password. `buildResource` is
+  // async, so the pointers are fetched there; python resolves them in
+  // `resolve_secrets` before its sync `build_resource`. Same shape.
+  const remote = await buildResource('slack', { token: BOT, searchToken: USER }, sources)
+
+  // And one from the dotenv this process already loaded. Nothing about
+  // the config differs; only where the string came from.
+  const token = process.env.SLACK_BOT_TOKEN
+  if (token === undefined || token === '') throw new Error('SLACK_BOT_TOKEN is required')
+  const local = await buildResource('slack', { token })
+
   const ws = new Workspace(
-    { '/slack': resource },
+    { '/remote': remote, '/local': local },
     {
       mode: MountMode.READ,
-      // The source's own credential comes from the process env that
-      // dotenv just filled.
-      secrets: {
-        op: {
-          source: '1password',
-          config: { token: { from: 'env', key: 'OP_SERVICE_ACCOUNT_TOKEN' } },
-        },
-      },
-      env: {
-        SLACK_BOT_TOKEN: { from: 'op', ref: 'op://mirage/SLACK_BOT_TOKEN', key: 'credential' },
-        SLACK_USER_TOKEN: { from: 'op', ref: 'op://mirage/SLACK_USER_TOKEN', key: 'credential' },
-      },
+      secrets: { op: OP },
+      env: { SLACK_BOT_TOKEN: BOT, SLACK_USER_TOKEN: USER },
     },
   )
   for (const line of LINES) await show(ws, line)

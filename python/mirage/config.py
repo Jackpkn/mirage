@@ -33,6 +33,7 @@ from mirage.runtime.base import Runtime
 from mirage.runtime.table import build_runtime
 from mirage.runtime.types import Language, ScriptSource
 from mirage.secrets.config import EnvVar, SourceBlock
+from mirage.secrets.sources import resolve_config_secrets, resolve_sources
 from mirage.shell.console import JobConsole
 from mirage.shell.job_table import ConsoleFactory
 from mirage.types import (KERNEL_BACKENDS, ConsistencyPolicy, Limit,
@@ -754,6 +755,63 @@ def _build_state_store(block: StoreBlock) -> WorkspaceStateStore:
     return RAMWorkspaceStateStore(namespace=namespace,
                                   observer=observer,
                                   workspace=workspace)
+
+
+async def resolve_secrets(config: "WorkspaceConfig") -> "WorkspaceConfig":
+    """A config with every mount and CLI pointer replaced by its secret.
+
+    The async half of the YAML door, and the reason
+    :meth:`WorkspaceConfig.to_workspace_kwargs` can stay sync: a
+    `{from, ref, key}` in `mounts.*.config` or `clis.*.config` is
+    fetched here, so `build_resource` receives the credential itself
+    and no resource config, client or backend learns that this plane
+    exists. Mirrors the TypeScript `configToWorkspaceArgs`, which does
+    the same thing inline because it is async already.
+
+    A config declaring no sources is returned unchanged and reaches no
+    store, so every existing caller that skips this loses nothing.
+
+    Args:
+        config (WorkspaceConfig): the validated config.
+
+    Returns:
+        WorkspaceConfig: the same config, pointers resolved.
+
+    Raises:
+        SecretsError: a declared source could not answer, or answered
+            without the wanted field.
+    """
+    if config.secrets is None:
+        return config
+    blocks = {
+        name: (block if isinstance(block, SourceBlock) else
+               SourceBlock.model_validate(block))
+        for name, block in config.secrets.items()
+    }
+    sources = await resolve_sources(blocks)
+    mounts = {
+        prefix:
+        block.model_copy(
+            update={
+                "config":
+                await resolve_config_secrets(block.config, sources,
+                                             f"mounts.{prefix}.config")
+            })
+        for prefix, block in config.mounts.items()
+    }
+    update: dict[str, Any] = {"mounts": mounts}
+    if config.clis is not None:
+        update["clis"] = {
+            name:
+            block.model_copy(
+                update={
+                    "config":
+                    await resolve_config_secrets(block.config, sources,
+                                                 f"clis.{name}.config")
+                })
+            for name, block in config.clis.items()
+        }
+    return config.model_copy(update=update)
 
 
 def load_config(source: str | Path | dict[str, Any],
