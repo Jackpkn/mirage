@@ -657,6 +657,8 @@ class Workspace:
             *,
             resources: dict[str, Any] | None = None,
             clis: CLIOverrides | None = None,
+            secrets: Mapping[str, SourceBlock | Mapping[str, Any]]
+        | None = None,
             drift_policy: DriftPolicy = DriftPolicy.STRICT) -> "Workspace":
         """Reconstruct a Workspace from a tar.
 
@@ -685,6 +687,11 @@ class Workspace:
                 redacted config secrets; a (spec, config) tuple also
                 carries a live spec (how copy() shares directly
                 installed programs).
+            secrets: {instance: declaration} for the restored env
+                pointers. A snapshot never carries the `secrets:` block
+                (it is the deployment's credentials), so a pointer at a
+                declared instance needs the block supplied here, the
+                way a redacted mount needs `resources`.
             drift_policy: STRICT (default) raises on mismatch. OFF
                 disables drift checking and evicts snapshot cache for
                 fingerprinted paths.
@@ -692,6 +699,7 @@ class Workspace:
         return await cls.from_state(read_tar(source),
                                     resources=resources,
                                     clis=clis,
+                                    secrets=secrets,
                                     drift_policy=drift_policy)
 
     @classmethod
@@ -701,6 +709,8 @@ class Workspace:
             *,
             resources: dict[str, Any] | None = None,
             clis: CLIOverrides | None = None,
+            secrets: Mapping[str, SourceBlock | Mapping[str, Any]]
+        | None = None,
             drift_policy: DriftPolicy = DriftPolicy.STRICT) -> "Workspace":
         """Reconstruct a Workspace directly from a state dict (no tar).
 
@@ -718,11 +728,16 @@ class Workspace:
                 redacted config secrets; a (spec, config) tuple also
                 carries a live spec (how copy() shares directly
                 installed programs).
+            secrets: {instance: declaration} for the restored env
+                pointers; a snapshot never carries the `secrets:` block.
             drift_policy: STRICT (default) raises on mismatch. OFF
                 disables drift checking and evicts snapshot cache for
                 fingerprinted paths.
         """
-        ws = await cls._from_state(state, resources=resources, clis=clis)
+        ws = await cls._from_state(state,
+                                   resources=resources,
+                                   clis=clis,
+                                   secrets=secrets)
         install_fingerprints(ws,
                              state.get(StateKey.FINGERPRINTS) or [],
                              drift_policy)
@@ -742,22 +757,32 @@ class Workspace:
         """
         state = await to_state_dict(self)
         resources = reusable_resources(self._registry.mounts(), state)
+        # The declarations travel with the copy the way a live CLI
+        # install does: an env pointer restores from state naming its
+        # instance, and without the block the copy would answer the
+        # first read with "unknown secrets source".
         return await type(self)._from_state(state,
                                             resources=resources,
-                                            clis=reusable_clis(self))
+                                            clis=reusable_clis(self),
+                                            secrets=self._secret_blocks)
 
     @classmethod
-    async def _from_state(cls,
-                          state: dict[str, Any],
-                          *,
-                          resources: dict[str, Any] | None = None,
-                          clis: CLIOverrides | None = None) -> "Workspace":
+    async def _from_state(
+        cls,
+        state: dict[str, Any],
+        *,
+        resources: dict[str, Any] | None = None,
+        clis: CLIOverrides | None = None,
+        secrets: Mapping[str, SourceBlock | Mapping[str, Any]]
+        | None = None
+    ) -> "Workspace":
         args = build_mount_args(state, resources, clis)
         ws = cls(args.mount_args,
                  consistency=args.consistency,
                  session_id=args.default_session_id,
                  agent_id=args.default_agent_id,
-                 clis=args.clis)
+                 clis=args.clis,
+                 secrets=secrets)
         if resources:
             ws._shared_resources = {id(r) for r in resources.values()}
         await apply_state_dict(ws, state)

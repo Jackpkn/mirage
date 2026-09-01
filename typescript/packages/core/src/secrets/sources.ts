@@ -31,11 +31,25 @@ function isSecretRef(value: unknown): value is SecretRef {
 /**
  * Read one source-config value from its bootstrap source.
  *
- * Throws SecretsError naming the field wanted and the labels present,
- * never a value, the same way the env plane's fill does.
+ * Throws SecretsError naming the instance, the field and the source,
+ * and nothing else, whether the fetch failed or the field is absent.
+ * That is the boundary `fillEnv` draws and it is drawn for the same
+ * reason: a dotenv miss renders the host path it looked for, and a
+ * custom source shadowing `env` renders whatever it likes. The
+ * source's own words go to the host log instead.
  */
 export async function configValue(name: string, field: string, ref: SecretRef): Promise<string> {
-  const secret = await fetchSecret(ref.from, ref.ref)
+  let secret
+  try {
+    secret = await fetchSecret(ref.from, ref.ref)
+  } catch (caught) {
+    console.warn(
+      `secrets.${name}.config.${field}: fetch from ${ref.from} failed: ${String(caught)}`,
+    )
+    throw new SecretsError(`secrets.${name}.config.${field}: cannot fetch from ${ref.from}`, {
+      cause: caught,
+    })
+  }
   const value = secret.fields[ref.key]
   if (value === undefined) {
     throw new SecretsError(

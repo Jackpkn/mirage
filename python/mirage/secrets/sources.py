@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -21,6 +22,8 @@ from mirage.secrets.config import SecretRef, SourceBlock
 from mirage.secrets.errors import SecretsError, field_summary
 from mirage.secrets.registry import fetch_secret, source_for
 from mirage.secrets.types import ResolvedSource
+
+logger = logging.getLogger(__name__)
 
 
 async def config_value(name: str, field: str, ref: SecretRef) -> str:
@@ -32,11 +35,21 @@ async def config_value(name: str, field: str, ref: SecretRef) -> str:
         ref (SecretRef): the pointer the field declared.
 
     Raises:
-        SecretsError: the bootstrap source has no such field. The
-            wording names the field wanted and the labels present,
-            never a value, the same way the env plane's fill does.
+        SecretsError: the bootstrap source could not answer, or has no
+            such field. Both wordings name the instance, the field and
+            the source, and nothing else -- the same boundary
+            ``fill_env`` draws, and for the same reason: a dotenv miss
+            renders the host path it looked for, and a custom source
+            shadowing ``env`` renders whatever it likes. The source's
+            own words go to the host log instead.
     """
-    secret = await fetch_secret(ref.provider, ref.ref)
+    try:
+        secret = await fetch_secret(ref.provider, ref.ref)
+    except Exception as exc:
+        logger.warning("secrets.%s.config.%s: fetch from %s failed: %s", name,
+                       field, ref.provider, exc)
+        raise SecretsError(f"secrets.{name}.config.{field}: cannot fetch "
+                           f"from {ref.provider}") from exc
     value = secret.fields.get(ref.key)
     if value is None:
         raise SecretsError(f"secrets.{name}.config.{field}: wanted field "

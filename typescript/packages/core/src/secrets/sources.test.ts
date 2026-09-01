@@ -47,6 +47,11 @@ function instance(built: Record<string, ResolvedSource>, name: string): Resolved
 // secret's fields.
 const EnvConfig = z.strictObject({})
 
+// Registered over `dotenv` for one test: a bootstrap source whose
+// failure carries words the agent must never read, which is what the
+// real dotenv source does with the host path it looked for.
+const DeadConfig = z.strictObject({})
+
 describe('resolveSources', () => {
   beforeEach(() => {
     registerSecrets('demo-sources', DemoConfig, fetchDemo)
@@ -136,5 +141,23 @@ describe('resolveSources', () => {
     } finally {
       delete process.env.SOURCES_PROBE
     }
+  })
+
+  it('redacts a failed bootstrap fetch', async () => {
+    registerSecrets('dotenv', DeadConfig, () =>
+      Promise.reject(new SecretsError('dotenv file not found: /host/only/.env')),
+    )
+    const caught = await resolveSources({
+      prod: SourceBlockSchema.parse({
+        source: 'demo-sources',
+        config: { token: { from: 'dotenv', ref: '/host/only/.env', key: 'TOKEN' } },
+      }),
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(caught).toBeInstanceOf(SecretsError)
+    expect(String(caught)).toContain('secrets.prod.config.token: cannot fetch from dotenv')
+    expect(String(caught)).not.toContain('/host/only/.env')
   })
 })

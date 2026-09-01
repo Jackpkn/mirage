@@ -1638,6 +1638,28 @@ describe('declared source instances', () => {
     ).rejects.toThrowError(/unknown secrets source/)
   })
 
+  it('a copy keeps the declared instances', async () => {
+    registerSecrets('acct-copy', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      {
+        prod: { source: 'acct-copy', config: { account: 'a1' } },
+      },
+    )
+    try {
+      const copy = await ws.copy()
+      try {
+        expect(stdoutStr(await copy.execute('echo "$TOKEN"'))).toBe('a1:r:none\n')
+      } finally {
+        await copy.close()
+      }
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('validates a pointer named after a prototype member', async () => {
     await expect(
       makeWs({ TOKEN: { from: 'constructor', ref: '', key: 'credential' } }),

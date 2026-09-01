@@ -1170,6 +1170,11 @@ export class Workspace {
     const state = await toStateDict(this)
     const opts: WorkspaceOptions = {
       mode: options.mode ?? MountMode.WRITE,
+      // The declarations travel with the copy the way a live CLI
+      // install does: an env pointer restores from state naming its
+      // instance, and without the block the copy would answer the
+      // first read with "unknown secrets source".
+      secrets: options.secrets ?? this.secretBlocks,
     }
     const copyAgentId = options.agentId ?? this.agentId
     if (copyAgentId !== null) opts.agentId = copyAgentId

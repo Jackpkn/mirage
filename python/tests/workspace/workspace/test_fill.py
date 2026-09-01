@@ -34,6 +34,7 @@ from mirage.secrets.types import ResolvedSecret
 from mirage.shell.parse import parse
 from mirage.shell.variable import ManagedRef, ShellVar, VarAttr
 from mirage.types import HiddenVars
+from mirage.workspace.snapshot.state import to_state_dict
 
 FetchFn = Callable[[Any, str], Coroutine[Any, Any, ResolvedSecret]]
 
@@ -1758,6 +1759,74 @@ async def test_a_bare_source_name_still_uses_ambient_defaults():
         assert out.stdout == b"default:r:none\n"
     finally:
         await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_copy_keeps_the_declared_instances():
+    """A snapshot never carries the `secrets:` block, but a copy is
+    same-process, so the declarations travel with it; without them the
+    restored pointer names an instance no source table knows."""
+    register_secrets("acct-copy", AccountConfig, account_source())
+    ws = _ws(
+        {"TOKEN": {
+            "from": "prod",
+            "ref": "r",
+            "key": "credential"
+        }},
+        secrets={"prod": {
+            "source": "acct-copy",
+            "config": {
+                "account": "a1"
+            }
+        }})
+    try:
+        copy = await ws.copy()
+        try:
+            result = await copy.execute('echo "$TOKEN"')
+            assert result.exit_code == 0
+            assert (await result.stdout_str()) == "a1:r:none\n"
+        finally:
+            await copy.close()
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_from_state_takes_the_block_the_deployment_supplies():
+    register_secrets("acct-state", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={
+                 "prod": {
+                     "source": "acct-state",
+                     "config": {
+                         "account": "a1"
+                     }
+                 }
+             })
+    try:
+        state = await to_state_dict(ws)
+    finally:
+        await ws.close()
+    restored = await Workspace.from_state(state,
+                                          resources={"/": RAMResource()},
+                                          secrets={
+                                              "prod": {
+                                                  "source": "acct-state",
+                                                  "config": {
+                                                      "account": "a2"
+                                                  }
+                                              }
+                                          })
+    try:
+        result = await restored.execute('echo "$TOKEN"')
+        assert result.exit_code == 0
+        assert (await result.stdout_str()) == "a2:r:none\n"
+    finally:
+        await restored.close()
 
 
 @pytest.mark.asyncio
