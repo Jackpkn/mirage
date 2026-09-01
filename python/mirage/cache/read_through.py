@@ -174,23 +174,3 @@ def cache_aware_read(raw: PolymorphicReadFn) -> PolymorphicReadFn:
         return result
 
     return reader
-
-
-async def cached_prefix_bytes(path: PathSpec, n: int | None) -> bytes | None:
-    """Return the first ``n`` cached bytes of ``path`` when warm, else None.
-
-    Lets a range-read fast path (e.g. ``head -c N``) serve from a fully
-    cached file without a partial backend fetch. ``n=None`` returns the
-    whole cached blob.
-
-    Args:
-        path (PathSpec): the path to look up.
-        n (int | None): byte count, or None for the whole file.
-    """
-    manager = active_cache_manager()
-    if manager is None:
-        return None
-    cached = await manager.cached_bytes(path)
-    if cached is None:
-        return None
-    return cached if n is None else cached[:n]

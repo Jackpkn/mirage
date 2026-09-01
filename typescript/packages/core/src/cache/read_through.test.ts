@@ -19,12 +19,7 @@ import { PathSpec } from '../types.ts'
 import { runWithCacheManager } from './context.ts'
 import { RAMFileCacheStore } from './file/ram.ts'
 import { CacheManager } from './manager.ts'
-import {
-  cacheAwareReadBytes,
-  cacheAwareReadStream,
-  cacheAwareStreamEager,
-  cachedPrefixBytes,
-} from './read_through.ts'
+import { cacheAwareReadBytes, cacheAwareReadStream, cacheAwareStreamEager } from './read_through.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
@@ -147,24 +142,5 @@ describe('cacheAwareStreamEager', () => {
     const out = await drain(wrapped(spec()))
     expect(DEC.decode(out)).toBe('payload')
     expect(backend.streamCalls).toBe(0)
-  })
-})
-
-describe('cachedPrefixBytes', () => {
-  it('slices the cached blob when warm', async () => {
-    const manager = await warmManager(ENC.encode('payload'))
-    const [prefix, whole] = await runWithCacheManager(manager, async () => [
-      await cachedPrefixBytes(spec(), 4),
-      await cachedPrefixBytes(spec(), null),
-    ])
-    expect(prefix === null ? '' : DEC.decode(prefix)).toBe('payl')
-    expect(whole === null ? '' : DEC.decode(whole)).toBe('payload')
-  })
-
-  it('returns null on miss and with no manager', async () => {
-    const manager = new CacheManager(new RAMFileCacheStore(), null, '/s3/', true)
-    const miss = await runWithCacheManager(manager, () => cachedPrefixBytes(spec(), 4))
-    expect(miss).toBeNull()
-    expect(await cachedPrefixBytes(spec(), 4)).toBeNull()
   })
 })

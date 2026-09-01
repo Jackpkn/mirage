@@ -203,13 +203,6 @@ export class RedisFileCacheStore extends RedisResource implements FileCache {
     }
   }
 
-  async allCached(keys: readonly string[]): Promise<boolean> {
-    for (const k of keys) {
-      if (!(await this.exists(k))) return false
-    }
-    return true
-  }
-
   async multiGet(keys: readonly string[]): Promise<(Uint8Array | null)[]> {
     const out: (Uint8Array | null)[] = []
     for (const k of keys) out.push(await this.get(k))

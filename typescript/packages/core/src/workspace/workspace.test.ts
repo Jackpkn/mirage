@@ -154,9 +154,6 @@ describe('Workspace custom cache option', () => {
       this.store.clear()
       return Promise.resolve()
     }
-    allCached(keys: readonly string[]): Promise<boolean> {
-      return Promise.resolve(keys.every((k) => this.store.has(k)))
-    }
     multiGet(keys: readonly string[]): Promise<(Uint8Array | null)[]> {
       return Promise.resolve(keys.map((k) => this.store.get(k) ?? null))
     }

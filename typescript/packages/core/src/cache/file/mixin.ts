@@ -47,7 +47,6 @@ export interface FileCache {
   exists(key: string | PathSpec): Promise<boolean>
   isFresh(key: string, remoteFingerprint: string): Promise<boolean>
   clear(): Promise<void>
-  allCached(keys: readonly string[]): Promise<boolean>
   multiGet(keys: readonly string[]): Promise<(Uint8Array | null)[]>
   // Cached bytes / entry count; null (or absent) for stores that don't
   // track them client-side (e.g. redis owns its own keyspace).

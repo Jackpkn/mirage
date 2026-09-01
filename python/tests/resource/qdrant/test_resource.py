@@ -10,10 +10,9 @@ def _resource(**kw) -> QdrantResource:
     return QdrantResource(QdrantConfig(**base))
 
 
-def test_resource_name_and_remote():
+def test_resource_name_and_snapshot():
     res = _resource()
     assert res.name == "qdrant"
-    assert res.is_remote is True
     assert res.SUPPORTS_SNAPSHOT is False
 
 

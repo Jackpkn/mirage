@@ -101,15 +101,6 @@ class FileCacheMixin:
     async def multi_get(self, keys: list[str]) -> list[bytes | None]:
         return [await self.get(k) for k in keys]
 
-    async def multi_set(
-        self,
-        items: list[tuple[str, bytes]],
-        fingerprint: str | None = None,
-        ttl: int | None = None,
-    ) -> None:
-        for key, data in items:
-            await self.set(key, data, fingerprint=fingerprint, ttl=ttl)
-
     @property
     def cache_size(self) -> int | None:
         """Cached bytes; None for stores that don't track them."""

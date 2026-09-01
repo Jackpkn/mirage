@@ -15,7 +15,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   type ShellArray,
-  arrayAppend,
   arrayCount,
   arrayExtent,
   arrayGet,
@@ -80,21 +79,6 @@ describe('shell array', () => {
     arrayUnset(arr, 5)
     arrayUnset(arr, -1)
     expect(arr).toEqual(['x'])
-  })
-
-  it('append starts at the extent', () => {
-    const arr = makeArray(['x', 'y', 'z'])
-    arrayUnset(arr, 1)
-    arrayAppend(arr, ['w'])
-    expect(arr).toEqual(['x', null, 'z', 'w'])
-    expect(arrayIndices(arr)).toEqual([0, 2, 3])
-  })
-
-  it('append refills a trailing hole', () => {
-    const arr = makeArray(['x', 'y', 'z'])
-    arrayUnset(arr, 2)
-    arrayAppend(arr, ['w'])
-    expect(arr).toEqual(['x', 'y', 'w'])
   })
 
   it('a hole can be reassigned', () => {

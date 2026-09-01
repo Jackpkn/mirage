@@ -66,13 +66,6 @@ describe('RAMFileCacheStore', () => {
     expect(await c.exists('/a')).toBe(true)
   })
 
-  it('allCached returns true only when all keys present', async () => {
-    const c = new RAMFileCacheStore()
-    await c.set('/a', encode('x'))
-    expect(await c.allCached(['/a'])).toBe(true)
-    expect(await c.allCached(['/a', '/b'])).toBe(false)
-  })
-
   it('evicts oldest entries when over limit', async () => {
     const c = new RAMFileCacheStore({ limit: 10 })
     await c.set('/a', encode('aaaaa'))

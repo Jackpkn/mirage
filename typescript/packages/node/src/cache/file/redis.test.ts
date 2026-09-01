@@ -100,6 +100,16 @@ describe.skipIf(skip)('RedisFileCacheStore', () => {
     expect(await cache.get('k')).toBeNull()
   })
 
+  it('multiGet returns [bytes|null] in order', async () => {
+    await cache.set('a', new Uint8Array([1]))
+    await cache.set('c', new Uint8Array([3]))
+    const out = await cache.multiGet(['a', 'b', 'c'])
+    expect(out).toHaveLength(3)
+    expect(out[0]).toEqual(new Uint8Array([1]))
+    expect(out[1]).toBeNull()
+    expect(out[2]).toEqual(new Uint8Array([3]))
+  })
+
   it('isFresh matches fingerprint', async () => {
     const data = new Uint8Array([1, 1, 1])
     const fp = defaultFingerprint(data)
@@ -113,22 +123,6 @@ describe.skipIf(skip)('RedisFileCacheStore', () => {
     expect(await cache.get('k')).not.toBeNull()
     await new Promise((r) => setTimeout(r, 1100))
     expect(await cache.get('k')).toBeNull()
-  })
-
-  it('multiGet returns [bytes|null] in order', async () => {
-    await cache.set('a', new Uint8Array([1]))
-    await cache.set('c', new Uint8Array([3]))
-    const out = await cache.multiGet(['a', 'b', 'c'])
-    expect(out).toHaveLength(3)
-    expect(out[0]).toEqual(new Uint8Array([1]))
-    expect(out[1]).toBeNull()
-    expect(out[2]).toEqual(new Uint8Array([3]))
-  })
-
-  it('allCached true only when every key present', async () => {
-    await cache.set('a', new Uint8Array([1]))
-    expect(await cache.allCached(['a'])).toBe(true)
-    expect(await cache.allCached(['a', 'b'])).toBe(false)
   })
 
   it('clear removes everything under the prefix', async () => {

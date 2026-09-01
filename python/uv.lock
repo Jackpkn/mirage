@@ -3285,6 +3285,18 @@ wheels = [
 ]
 
 [[package]]
+name = "deadcode"
+version = "2.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tomli" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/ab/1122e6d6392f7860718f16e931b1976d5e579433486a84b09333811e3a6b/deadcode-2.4.1.tar.gz", hash = "sha256:1ba1e22425cf53c4b3f5ddd46e62a86d98479b47f2ac3430ae60910ac8cb318d", size = 37734, upload-time = "2024-08-09T18:12:58.58Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/46/cc/9c27bb3a1224a66740b25d8153cd41051240103fa9aaee119688362c32b6/deadcode-2.4.1-py3-none-any.whl", hash = "sha256:a16b28b601a82d5dc7ebfcab464a6f65e22a99d5684ec4c7907bdb75f8f64050", size = 44621, upload-time = "2024-08-09T18:12:56.433Z" },
+]
+
+[[package]]
 name = "deepagents"
 version = "0.7.6"
 source = { registry = "https://pypi.org/simple" }
@@ -5979,6 +5991,7 @@ wasi = [
 [package.dev-dependencies]
 dev = [
     { name = "aioresponses" },
+    { name = "deadcode" },
     { name = "grpcio" },
     { name = "grpcio-tools" },
     { name = "moto", extra = ["s3", "server"] },
@@ -6103,6 +6116,7 @@ provides-extras = ["monty", "wasi", "quickjs", "s3", "r2", "gcs", "oci", "databr
 [package.metadata.requires-dev]
 dev = [
     { name = "aioresponses", specifier = ">=0.7.6" },
+    { name = "deadcode", specifier = ">=2.4.1" },
     { name = "grpcio", specifier = ">=1.78.0" },
     { name = "grpcio-tools", specifier = ">=1.78.0" },
     { name = "moto", extras = ["s3", "server"], specifier = ">=5.1.22" },

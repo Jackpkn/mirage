@@ -142,13 +142,6 @@ async def wc(src: bytes | AsyncIterator[bytes]) -> WCCounts:
     )
 
 
-async def wc_lines(src: bytes | AsyncIterator[bytes]) -> int:
-    count = 0
-    async for chunk in ensure_stream(src):
-        count += chunk.count(b"\n")
-    return count
-
-
 def _selected_values(
     counts: WCCounts,
     *,
@@ -223,24 +216,6 @@ def format_wc_lines(
         body = " ".join(str(n).rjust(width) for n in nums)
         out.append(body if label is None else f"{body} {label}")
     return out
-
-
-def format_wc(
-    counts: WCCounts,
-    *,
-    lines: bool = False,
-    words: bool = False,
-    bytes_: bool = False,
-    chars: bool = False,
-    max_line_length: bool = False,
-    label: str | None = None,
-) -> str:
-    return format_wc_lines([(counts, label)],
-                           lines=lines,
-                           words=words,
-                           bytes_=bytes_,
-                           chars=chars,
-                           max_line_length=max_line_length)[0]
 
 
 def format_count_rows(
