@@ -24,6 +24,7 @@ mount or drive that service; it does not imply endorsement or affiliation.
 | `pyodide.svg`   | [`pyodide-logo-light.svg`](https://github.com/pyodide/pyodide/blob/main/docs/_static/img/pyodide-logo-light.svg)           | Pyodide (MPL-2.0)      |
 | `himalaya.png`  | [github.com/pimalaya](https://github.com/pimalaya) organization avatar                                                     | Pimalaya Himalaya      |
 | `quickjs.png`   | [github.com/quickjs-ng](https://github.com/quickjs-ng) organization avatar                                                 | QuickJS-ng             |
+| `terminal.svg`  | [lucide `terminal`](https://lucide.dev/icons/terminal) on the figure's neutral slate                                       | Lucide (ISC)           |
 
 PNGs are normalized to 128 px on the long edge; the README renders every icon at
 20 px high with a width set from the icon's own aspect ratio.

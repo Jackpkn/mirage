@@ -53,9 +53,7 @@ ws = Workspace(
 await ws.execute("grep -rln session /redis /tmp")
 
 # exécute un script hébergé dans Slack, écrit le rapport dans Redis
-await ws.execute(
-    "python3 /slack/channels/general__C0.../files/example__F0....py > /redis/report.txt"
-)
+await ws.execute("python3 /slack/channels/general_.../files/example__F....py > /redis/report.txt")
 
 # installe un CLI typé sous un mot-clé : dispatché par nom, pas par chemin,
 # et découvrable via `man`, `type` et `which` comme tout autre programme

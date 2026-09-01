@@ -53,9 +53,7 @@ ws = Workspace(
 await ws.execute("grep -rln session /redis /tmp")
 
 # chạy script nằm trong Slack, ghi báo cáo vào Redis
-await ws.execute(
-    "python3 /slack/channels/general__C0.../files/example__F0....py > /redis/report.txt"
-)
+await ws.execute("python3 /slack/channels/general_.../files/example__F....py > /redis/report.txt")
 
 # cài một CLI có kiểu dưới một từ khóa: điều phối theo tên, không theo đường dẫn,
 # và có thể khám phá qua `man`, `type`, `which` như mọi chương trình khác
