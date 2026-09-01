@@ -42,6 +42,13 @@ export type SecretFetchFn<C = never> = (config: C, ref: string) => Promise<Resol
  * line, and never written anywhere a session serializes.
  */
 export interface ResolvedSource {
+  /**
+   * The registered source this instance speaks to. Kept because an
+   * instance is named by the deployment, so the instance name alone
+   * cannot say whether the fields behind it are a secret's shape or
+   * the host's.
+   */
+  readonly source: string
   readonly config: unknown
   readonly fetch: SecretFetchFn
 }

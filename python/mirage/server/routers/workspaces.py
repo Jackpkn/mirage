@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from mirage import Workspace
 from mirage.resource.registry import build_resource
+from mirage.secrets.errors import SecretsError
 from mirage.server.clone import clone_workspace_with_override
 from mirage.server.paths import PathOutsideRootError, resolve_within_root
 from mirage.server.summary import make_brief, make_detail
@@ -170,7 +171,10 @@ async def load_workspace(req: LoadWorkspaceRequest,
     except FileNotFoundError:
         raise HTTPException(status_code=400,
                             detail=f"snapshot not found: {req.path}")
-    except ValueError as e:
+    except (SecretsError, ValueError) as e:
+        # A secrets override naming an unknown source, or one whose
+        # optional dependency is absent, is a bad request like any
+        # other override the deployment got wrong.
         raise HTTPException(status_code=400, detail=str(e))
     try:
         entry = registry.add(ws, workspace_id=req.id)

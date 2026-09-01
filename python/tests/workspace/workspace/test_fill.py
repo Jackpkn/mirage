@@ -1773,6 +1773,38 @@ async def slow_bootstrap(calls: list[str]) -> FetchFn:
 
 
 @pytest.mark.asyncio
+async def test_an_instance_aliasing_env_redacts_like_env():
+    """The summary is told the source behind the instance: an instance
+    name is the deployment's word, and `{prod: {source: env}}` must
+    hide the host's variable names however few of them there are."""
+    register_secrets("env", FakeConfig, small_env({"HOME": "/root"}))
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "",
+        "key": "NOPE"
+    }},
+             secrets={"prod": {
+                 "source": "env"
+             }})
+    try:
+        result = await ws.execute('echo "$TOKEN"')
+        assert result.exit_code == 1
+        message = await result.stderr_str()
+        assert "1 fields" in message
+        assert "HOME" not in message
+    finally:
+        await ws.close()
+
+
+def small_env(fields: dict[str, str]) -> FetchFn:
+
+    async def fetch(config: FakeConfig, ref: str) -> ResolvedSecret:
+        return ResolvedSecret(fields=dict(fields))
+
+    return fetch
+
+
+@pytest.mark.asyncio
 async def test_concurrent_first_lines_resolve_the_block_once():
     """Two sessions filling at once must share one resolution: the memo
     is written after an await, so caching only the result lets both

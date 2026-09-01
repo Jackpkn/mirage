@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from mirage import Workspace
+from mirage.secrets.errors import SecretsError
 from mirage.server.clone import clone_workspace_with_override
 from mirage.server.summary import make_detail
 from mirage.server.version.api import (branch, checkout, commit_state,
@@ -169,8 +170,13 @@ async def clone_workspace_version(req: CloneRequest,
             req.source_id) if req.source_id in registry else None
         secrets = req.secrets or (live.runner.ws.declared_sources
                                   if live else None)
-        ws = await Workspace.from_state(to_state(entries, meta),
-                                        secrets=secrets)
+        try:
+            ws = await Workspace.from_state(to_state(entries, meta),
+                                            secrets=secrets)
+        except SecretsError as e:
+            # A secrets override naming an unknown source, or one whose
+            # optional dependency is absent, is a bad request.
+            raise HTTPException(status_code=400, detail=str(e))
     else:
         if req.source_id not in registry:
             raise HTTPException(status_code=404, detail="workspace not found")

@@ -126,7 +126,7 @@ export async function resolveSources(
       const detail = parsed.error.issues.map(issueDetail).join('; ')
       throw new SecretsError(`secrets.${name}: ${detail}`)
     }
-    out.push([name, { config: parsed.data, fetch }])
+    out.push([name, { source: block.source, config: parsed.data, fetch }])
   }
   // Object.fromEntries, not a keyed object literal: an instance named
   // `__proto__` assigns through the prototype setter and leaves no own

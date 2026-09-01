@@ -128,7 +128,11 @@ async def test_fetch_secret_prefers_a_declared_instance():
         return ResolvedSecret(fields={"token": "instance"})
 
     register_secrets("vault", VaultConfig, fetch_vault)
-    sources = {"prod": ResolvedSource(config=VaultConfig(), fetch=fetch)}
+    sources = {
+        "prod": ResolvedSource(source="vault",
+                               config=VaultConfig(),
+                               fetch=fetch)
+    }
     secret = await fetch_secret("prod", "r", sources)
     assert secret.fields == {"token": "instance"}
     assert seen == ["r"]
@@ -138,7 +142,10 @@ async def test_fetch_secret_prefers_a_declared_instance():
 async def test_fetch_secret_falls_back_to_the_source_of_that_name():
     register_secrets("vault", VaultConfig, fetch_vault)
     sources = {
-        "prod": ResolvedSource(config=VaultConfig(), fetch=fetch_override)
+        "prod":
+        ResolvedSource(source="vault",
+                       config=VaultConfig(),
+                       fetch=fetch_override)
     }
     secret = await fetch_secret("vault", "r", sources)
     assert secret.fields == {"token": "t"}

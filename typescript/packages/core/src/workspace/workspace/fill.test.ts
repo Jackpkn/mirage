@@ -1638,6 +1638,30 @@ describe('declared source instances', () => {
     ).rejects.toThrowError(/unknown secrets source/)
   })
 
+  it('redacts like env when an instance aliases it', async () => {
+    // The summary is told the source behind the instance: an instance
+    // name is the deployment's word, and `{prod: {source: env}}` must
+    // hide the host's variable names however few of them there are.
+    registerSecrets('env', FakeConfig, () => Promise.resolve({ fields: { HOME: '/root' } }))
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: '', key: 'NOPE' } },
+      undefined,
+      undefined,
+      {
+        prod: { source: 'env' },
+      },
+    )
+    try {
+      const io = await ws.execute('echo "$TOKEN"')
+      expect(io.exitCode).toBe(1)
+      const message = stderrStr(io)
+      expect(message).toContain('1 fields')
+      expect(message).not.toContain('HOME')
+    } finally {
+      await ws.close()
+    }
+  })
+
   it('resolves the block once for concurrent first lines', async () => {
     // The memo is written after an await, so caching only the result
     // lets both sessions read every bootstrap source, and a rotation

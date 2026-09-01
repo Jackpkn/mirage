@@ -113,5 +113,5 @@ async def resolve_sources(
                 f"{'.'.join(str(part) for part in err['loc'])}: {err['type']}"
                 for err in exc.errors())
             raise SecretsError(f"secrets.{name}: {detail}") from exc
-        out[name] = ResolvedSource(config, fetch)
+        out[name] = ResolvedSource(block.source, config, fetch)
     return out

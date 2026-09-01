@@ -36,7 +36,7 @@ def test_resolved_source_pairs_a_config_with_a_fetch():
         return ResolvedSecret(fields={})
 
     config = EnvConfig()
-    source = ResolvedSource(config=config, fetch=fetch)
+    source = ResolvedSource(source="env", config=config, fetch=fetch)
     assert source.config is config
     assert source.fetch is fetch
 
@@ -46,6 +46,6 @@ def test_resolved_source_is_frozen():
     async def fetch(config, ref):
         return ResolvedSecret(fields={})
 
-    source = ResolvedSource(config=EnvConfig(), fetch=fetch)
+    source = ResolvedSource(source="env", config=EnvConfig(), fetch=fetch)
     with pytest.raises(Exception):
         source.config = EnvConfig()  # type: ignore[misc]

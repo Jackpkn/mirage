@@ -51,8 +51,13 @@ class ResolvedSource:
     per line, and never written anywhere a session serializes.
 
     Args:
+        source (str): the registered source this instance speaks to.
+            Kept because an instance is named by the deployment, so
+            the instance name alone cannot say whether the fields
+            behind it are a secret's shape or the host's.
         config (BaseModel): the source's own config, already built.
         fetch (SecretFetchFn): the source's fetch function.
     """
+    source: str
     config: BaseModel
     fetch: SecretFetchFn

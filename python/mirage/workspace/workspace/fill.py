@@ -680,6 +680,11 @@ async def fill_env(
         groups.setdefault((pointer.source, pointer.ref), []).append(name)
     for (source, ref), group in groups.items():
         listed = ", ".join(group)
+        # A declared instance is named by the deployment, so the
+        # summary is told the source behind it: `{prod: {source: env}}`
+        # must redact like `env`, not like an unknown name.
+        declared = sources.get(source) if sources else None
+        provider = declared.source if declared is not None else source
         try:
             secret = await fetch_secret(source, ref, sources)
         except Exception as exc:
@@ -693,5 +698,5 @@ async def fill_env(
             if value is None:
                 raise SecretsError(
                     f"{name}: wanted field {key!r}, the {source} secret "
-                    f"has {field_summary(secret.fields, source)}")
+                    f"has {field_summary(secret.fields, provider)}")
             session.vars[name] = with_value(records[name], value)

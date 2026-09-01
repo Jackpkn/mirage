@@ -74,6 +74,7 @@ describe('secrets registry', () => {
     registerSecrets('vault-instance', VaultConfig, () => Promise.resolve({ fields: {} }))
     const sources: Record<string, ResolvedSource> = {
       prod: {
+        source: 'vault-instance',
         config: { host: 'declared' },
         fetch: ((config: VaultConfig, ref: string) => {
           seen.push(`${config.host}:${ref}`)
@@ -88,7 +89,11 @@ describe('secrets registry', () => {
 
   it('a source named after a prototype member is unknown, not inherited', async () => {
     const sources: Record<string, ResolvedSource> = {
-      prod: { config: {}, fetch: (() => Promise.resolve({ fields: {} })) as never },
+      prod: {
+        source: 'vault-x',
+        config: {},
+        fetch: (() => Promise.resolve({ fields: {} })) as never,
+      },
     }
     for (const name of ['constructor', 'toString', 'hasOwnProperty']) {
       await expect(fetchSecret(name, '', sources)).rejects.toThrowError(SecretsError)
@@ -101,7 +106,11 @@ describe('secrets registry', () => {
       Promise.resolve({ fields: { token: 'ambient' } }),
     )
     const sources: Record<string, ResolvedSource> = {
-      prod: { config: {}, fetch: (() => Promise.resolve({ fields: {} })) as never },
+      prod: {
+        source: 'vault-x',
+        config: {},
+        fetch: (() => Promise.resolve({ fields: {} })) as never,
+      },
     }
     const secret = await fetchSecret('vault-fallback', 'r', sources)
     expect(secret.fields).toEqual({ token: 'ambient' })

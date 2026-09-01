@@ -655,6 +655,12 @@ export async function fillEnv(
   }
   for (const { source, ref, members } of groups.values()) {
     const listed = members.map((m) => m.name).join(', ')
+    // A declared instance is named by the deployment, so the summary
+    // is told the source behind it: `{prod: {source: env}}` must
+    // redact like `env`, not like an unknown name.
+    const declared =
+      sources !== undefined && Object.hasOwn(sources, source) ? sources[source] : undefined
+    const provider = declared?.source ?? source
     let secret
     try {
       secret = await fetchSecret(source, ref, sources)
@@ -667,7 +673,7 @@ export async function fillEnv(
       if (value === undefined) {
         throw new SecretsError(
           `${name}: wanted field '${key}', the ${source} secret has ` +
-            fieldSummary(secret.fields, source),
+            fieldSummary(secret.fields, provider),
         )
       }
       setSessionEntry(session.vars, name, withValue(record, value))
