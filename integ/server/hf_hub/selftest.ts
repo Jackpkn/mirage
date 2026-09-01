@@ -988,6 +988,40 @@ async function mcpChecks(): Promise<void> {
     check('stat reports existence', stat.includes('- Exists: yes'), stat.slice(0, 200))
     check('stat reports a size', stat.includes('- Size: '), stat.slice(0, 200))
 
+    // A file one level down, which is the case stat reads a PARENT listing
+    // for rather than the repository root. It used to walk the whole recursive
+    // tree to find this row, and paid the repository to keep one entry.
+    const statNested = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/nested/note.txt'] }],
+    })
+    check(
+      'stat finds a file inside a directory, with its size',
+      statNested.includes('- Type: `file`') &&
+        statNested.includes('- Path: `nested/note.txt`') &&
+        /- Size: \d/.test(statNested),
+      statNested.slice(0, 220),
+    )
+    // Absent from a directory that IS there -- the listing consulted has to be
+    // the parent's, and a row missing from it is what `missing` means.
+    const statNestedGone = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/nested/nope.txt'] }],
+    })
+    check(
+      'and calls a name absent from an existing directory missing',
+      statNestedGone.includes('- Type: `missing`') && statNestedGone.includes('- Exists: no'),
+      statNestedGone.slice(0, 220),
+    )
+    // A directory below the root is a `dir` too, which only the parent's
+    // synthesized row can say: git commits no directory object of its own.
+    const statNestedDir = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/assets.png'] }],
+    })
+    check(
+      'and a directory whose name looks like a file is still a dir',
+      statNestedDir.includes('- Type: `dir`'),
+      statNestedDir.slice(0, 220),
+    )
+
     // Both error codes are the live server's own, captured rather than coined,
     // because an agent may branch on the bracketed code.
     const missing = await text('hf_fs', {

@@ -374,7 +374,7 @@ function entriesOf(reply: Reply): FsEntry[] {
 }
 
 /**
- * A repository tree, WHOLE.
+ * The pages of a repository tree, in order.
  *
  * The REST arm answers one page and puts the cursor in a `Link` header, the
  * way the Hub's own API does. Reading only the first page made this fake
@@ -384,19 +384,52 @@ function entriesOf(reply: Reply): FsEntry[] {
  * recursive tree it searched stopped before reaching it.
  *
  * Followed here rather than at each call site because every caller wants the
- * same thing -- the tree -- and only one of them was even aware there were
- * pages.
+ * cursor followed, and only one of them was even aware there were pages. A
+ * generator rather than a list because they do not all want the same amount
+ * of it: a caller after ONE row can stop on the page that holds it, where a
+ * function returning the tree would buy the whole repository to throw it away.
  *
- * There is no page cap. One was written, at 200, and it was the same bug a
- * size larger: a repository past it would have been truncated in silence,
- * which is the failure this function exists to end rather than to raise the
- * threshold of. What a cap was reaching for is termination, and termination
- * is guaranteed by the cursor instead -- a page whose cursor has already
- * been seen cannot advance, and is the only way a well-formed loop fails to
- * end. That state means the REST arm on the other side of `callRoute` is
- * broken, which is this repo's own bug and not a caller's, so it throws
- * where it is discovered rather than returning a shorter tree that reads
- * exactly like a complete one.
+ * Termination is the cursor's, not a page cap's. A cap was written, at 200,
+ * and it was the same bug a size larger: a repository past it would have been
+ * truncated in silence, which is the failure this loop exists to end rather
+ * than to raise the threshold of. A page whose cursor has already been seen
+ * cannot advance, and is the only way a well-formed loop fails to end; that
+ * state means the REST arm on the other side of `callRoute` is broken, which
+ * is this repo's own bug and not a caller's, so it throws where it is
+ * discovered rather than handing back a shorter tree that reads exactly like
+ * a complete one.
+ */
+async function* treePages(at: Dispatch, where: Located, recursive: boolean): AsyncGenerator<Reply> {
+  const suffix = where.path === '' ? '' : `/${where.path}`
+  const path = `/api/${where.kind}/${where.id}/tree/main${suffix}`
+  const query: Record<string, string> = recursive ? { recursive: 'true' } : {}
+  const seen = new Set<string>()
+  let page = await callRoute(at, 'GET', path, query)
+  for (;;) {
+    yield page
+    if (!ok(page) || !Array.isArray(page.body)) return
+    const link = (page.headers ?? {}).Link
+    if (link === undefined) return
+    const cursor = /[?&]cursor=([^&>]+)/.exec(link)?.[1]
+    if (cursor === undefined) return
+    if (seen.has(cursor)) {
+      throw new Error(
+        `mock hf mcp: ${path} handed back cursor ${cursor} twice; the tree route is not advancing`,
+      )
+    }
+    seen.add(cursor)
+    page = await callRoute(at, 'GET', path, { ...query, cursor: decodeURIComponent(cursor) })
+  }
+}
+
+/**
+ * A repository tree, up to `cap` rows.
+ *
+ * For the callers that want the rows in hand: `ls` and `find`, which print
+ * them, and the two existence tests, which want one page and read no further.
+ * `cap` is the listing's `--limit` -- paging stops one row past it, which is
+ * enough to report the listing as truncated without holding a tail that is
+ * only going to be dropped.
  */
 async function treeAt(
   at: Dispatch,
@@ -404,34 +437,20 @@ async function treeAt(
   recursive: boolean,
   cap = Number.POSITIVE_INFINITY,
 ): Promise<Reply> {
-  const suffix = where.path === '' ? '' : `/${where.path}`
-  const path = `/api/${where.kind}/${where.id}/tree/main${suffix}`
-  const query: Record<string, string> = recursive ? { recursive: 'true' } : {}
-  const first = await callRoute(at, 'GET', path, query)
-  if (!ok(first) || !Array.isArray(first.body)) return first
-  const all = [...first.body]
-  const seen = new Set<string>()
-  let link = (first.headers ?? {}).Link
-  while (link !== undefined) {
-    const cursor = /[?&]cursor=([^&>]+)/.exec(link)?.[1]
-    if (cursor === undefined) break
-    if (seen.has(cursor)) {
-      throw new Error(
-        `mock hf mcp: ${path} handed back cursor ${cursor} twice; the tree route is not advancing`,
-      )
-    }
-    seen.add(cursor)
-    const next = await callRoute(at, 'GET', path, { ...query, cursor: decodeURIComponent(cursor) })
-    if (!ok(next) || !Array.isArray(next.body)) break
-    all.push(...next.body)
-    // Stopped at the caller's ceiling rather than at every page there is.
-    // One row past it is enough to know the listing was cut, and it is what
-    // keeps an arbitrarily large repository from being aggregated whole in
-    // order to throw most of it away.
+  const all: JsonValue[] = []
+  let head: Reply | undefined
+  for await (const page of treePages(at, where, recursive)) {
+    head ??= page
+    if (!ok(page) || !Array.isArray(page.body)) break
+    all.push(...page.body)
     if (all.length > cap) break
-    link = (next.headers ?? {}).Link
   }
-  return { ...first, body: all, headers: { ...(first.headers ?? {}) } }
+  // `treePages` yields its first reply before testing anything, so `head` is
+  // always set by the time the loop ends.
+  if (head === undefined || !ok(head) || !Array.isArray(head.body)) {
+    return head ?? { status: 502, body: null }
+  }
+  return { ...head, body: all, headers: { ...(head.headers ?? {}) } }
 }
 
 // One operation answers twice over: the markdown a reader sees, and the
@@ -684,8 +703,37 @@ function imageMime(path: string): string | undefined {
 // are the test, and this is the only place that knows it.
 async function isDirectory(at: Dispatch, where: Located): Promise<boolean> {
   if (where.path === '') return false
-  const listed = await treeAt(at, where, false)
+  // One page: the question is whether there is a row, not what the rows are.
+  const listed = await treeAt(at, where, false, 1)
   return ok(listed) && entriesOf(listed).length > 0
+}
+
+/**
+ * The tree row for ONE path, or nothing where the repository has no entry.
+ *
+ * The PARENT directory is listed, not the repository. git names a path's type
+ * and size in the entry its own directory holds, so the parent is the smallest
+ * listing guaranteed to carry the answer, and paging stops on the page the row
+ * is on -- a hit costs one request far more often than it costs the directory.
+ *
+ * `stat` used to walk the whole recursive tree and then search it, which cost
+ * the entire repository to keep a single row; a batch of the 30 operations one
+ * call allows paid that thirty times over.
+ */
+async function rowAt(at: Dispatch, where: Located): Promise<FsEntry | undefined> {
+  const cut = where.path.lastIndexOf('/')
+  const parent = cut === -1 ? '' : where.path.slice(0, cut)
+  for await (const page of treePages(at, { ...where, path: parent }, false)) {
+    const hit = rows(page).find((one) => String(one.path ?? '') === where.path)
+    if (hit === undefined) continue
+    return {
+      type: String(hit.type ?? 'file') === 'directory' ? 'dir' : 'file',
+      path: where.path,
+      size: typeof hit.size === 'number' ? hit.size : 0,
+      lfs: hit.lfs !== undefined,
+    }
+  }
+  return undefined
 }
 
 function attachArgs(rest: string[]): number | Refusal {
@@ -790,7 +838,8 @@ async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget):
       // as opposed to private. This fake is always authenticated as the
       // tenant and does know, so it says so in stat's own vocabulary; that
       // divergence is the one place it prefers the truth it has.
-      const exists = ok(await treeAt(at, { ...where, path: '' }, false))
+      // One page: only the status is read, never the rows.
+      const exists = ok(await treeAt(at, { ...where, path: '' }, false, 1))
       return {
         text: statMarkdown(uri, exists ? 'repo' : 'missing', ''),
         result: exists
@@ -798,33 +847,28 @@ async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget):
           : { uri, op: 'stat', exists: false, type: 'missing', path: '' },
       }
     }
-    const all = entriesOfFull(await treeAt(at, { ...where, path: '' }, true))
-    const hit = all.find((one) => one.full === where.path)
-    if (hit !== undefined) {
+    // One row answers all three of the remaining outcomes: the parent's
+    // listing names the type, and for a file the size, which is every field
+    // stat prints. A row absent from the directory it would have to be in is
+    // what `missing` means -- read from the rows and not from the status,
+    // because the tree route answers 200 with nothing for a path that is not
+    // there, and `ok` alone called every missing file a directory.
+    const row = await rowAt(at, where)
+    if (row === undefined) {
       return {
-        text: statMarkdown(uri, 'file', where.path, hit.entry.size),
-        result: {
-          uri,
-          op: 'stat',
-          exists: true,
-          type: 'file',
-          path: where.path,
-          size: hit.entry.size,
-        },
+        text: statMarkdown(uri, 'missing', where.path),
+        result: { uri, op: 'stat', exists: false, type: 'missing', path: where.path },
       }
     }
-    // Rows, not merely a reply: the tree route answers 200 with nothing for a
-    // path that is not there, so `ok` alone reported every missing file as a
-    // directory that exists.
-    if (await isDirectory(at, where)) {
+    if (row.type === 'dir') {
       return {
         text: statMarkdown(uri, 'dir', where.path),
         result: { uri, op: 'stat', exists: true, type: 'dir', path: where.path },
       }
     }
     return {
-      text: statMarkdown(uri, 'missing', where.path),
-      result: { uri, op: 'stat', exists: false, type: 'missing', path: where.path },
+      text: statMarkdown(uri, 'file', where.path, row.size),
+      result: { uri, op: 'stat', exists: true, type: 'file', path: where.path, size: row.size },
     }
   }
   if (cmd === 'attach') {
@@ -962,25 +1006,6 @@ async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget):
     }
   }
   return fsFail(FS_INVALID, `EINVAL: unknown command: ${cmd}`)
-}
-
-// The recursive listing keeps the FULL path beside the leaf, which `stat`
-// needs and `ls` must not print.
-function entriesOfFull(reply: Reply): { full: string; entry: FsEntry }[] {
-  return rows(reply)
-    .filter((one) => String(one.type ?? '') !== 'directory')
-    .map((one) => ({
-      full: String(one.path ?? ''),
-      entry: {
-        type: 'file',
-        path:
-          String(one.path ?? '')
-            .split('/')
-            .pop() ?? '',
-        size: typeof one.size === 'number' ? one.size : 0,
-        lfs: one.lfs !== undefined,
-      },
-    }))
 }
 
 async function fsAnswer(at: Dispatch, args: Record<string, JsonValue>): Promise<Answer> {
