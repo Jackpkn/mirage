@@ -517,7 +517,14 @@ async function blobFor(ctx: Ctx<C>): Promise<Found | Reply> {
   const revision = ctx.params.rev ?? DEFAULT_REVISION
   const sha = await resolveRevision(ctx.db, ctx.tenant, key, revision)
   if (sha === null) return revisionNotFound(revision)
-  const path = decodeURIComponent(ctx.params.path ?? '')
+  // Not decoded here. The kit router already decodes every captured
+  // parameter, `*path` included, so a second pass is a second decode:
+  // `100%.txt` is requested as `100%25.txt`, arrives as `100%.txt`, and
+  // `decodeURIComponent` throws on the bare `%` -- a 500 where the file
+  // exists. The quieter half is worse: a file literally named `a%20b.txt`
+  // is requested as `a%2520b.txt`, arrives as `a%20b.txt`, and decodes
+  // again to `a b.txt` -- a DIFFERENT file, served with a 200.
+  const path = ctx.params.path ?? ''
   const blob = await blobAt(ctx.db, ctx.tenant, key, sha, path)
   if (blob === null) return entryNotFound()
   return { sha, blob }
