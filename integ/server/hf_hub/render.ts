@@ -470,6 +470,11 @@ export const FS_IMAGE_ONLY = 'HF_FS_IMAGE_ONLY'
 export const FS_UNSUPPORTED_MEDIA = 'HF_FS_UNSUPPORTED_MEDIA'
 export const FS_IMAGE_TOO_LARGE = 'HF_FS_IMAGE_TOO_LARGE'
 export const FS_BUDGET = 'HF_FS_ATTACHMENT_BUDGET_EXCEEDED'
+// Not "you asked wrongly" but "not here": the command and the URI are both
+// valid and the combination is refused. Captured from
+// `find hf://models/trending`, which upstream answers with this code and a
+// sentence naming the command that WOULD work.
+export const FS_UNSUPPORTED_OP = 'HF_FS_UNSUPPORTED_OPERATION'
 
 const RECOVERY: Record<string, string> = {
   [FS_NOT_FOUND]:
@@ -487,6 +492,8 @@ const RECOVERY: Record<string, string> = {
     'Attach supports only files ending in .jpg, .jpeg, .png, or .webp. Use stat for metadata.',
   [FS_IMAGE_TOO_LARGE]:
     'Use stat for metadata. Attach cannot truncate images or exceed its configured complete-file limit.',
+  [FS_UNSUPPORTED_OP]:
+    'Follow the supported operation named in the error. Otherwise narrow the URI scope or remove the unsupported option.',
   // Upstream's own sentence, curly apostrophe included -- it is bytes the
   // model is charged for, so it is copied rather than tidied.
   [FS_BUDGET]:

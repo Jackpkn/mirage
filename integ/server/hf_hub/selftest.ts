@@ -1074,13 +1074,91 @@ async function mcpChecks(): Promise<void> {
     )
     eq('a discovery scope holds no files', entriesOf(typed).length, 0)
 
-    // The one discovery URI this fake still refuses, and it refuses it for
-    // what it does not hold rather than by calling the URI wrong.
-    const trending = await call('hf_fs', ops({ cmd: 'ls', args: ['hf://models'] }))
+    // ---- `trending` is RESERVED, not an owner
+    //
+    // `ls hf://models/trending --limit 10` is the first example the captured
+    // tool description prints, so a model WILL send it. Classified as a
+    // namespace it would query `author=trending`, match nothing, and answer
+    // an empty listing with status 200 -- a successful-looking reply that
+    // says the Hub has no trending repositories. Every check below exists to
+    // keep that from being the answer.
+    const feed = await call('hf_fs', ops({ cmd: 'ls', args: ['hf://models/trending'] }))
+    check(
+      'ls on the feed is refused, not answered empty',
+      'error' in
+        ((
+          (((feed.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+            string,
+            JsonValue
+          >[]
+        )[0] ?? {}),
+      JSON.stringify(resultOf(feed)),
+    )
+    check(
+      'and it names what is missing and what works instead',
+      String(errorOf(feed).message ?? '').includes('no trending feed: hf://models/trending'),
+      String(errorOf(feed).message ?? ''),
+    )
+    // The other three commands on the feed need no feed at all, so they are
+    // upstream's answers rather than this fake's.
+    const feedStat = await call('hf_fs', ops({ cmd: 'stat', args: ['hf://datasets/trending'] }))
+    eq('stat calls the feed a dir', resultOf(feedStat).type ?? null, 'dir')
+    eq('and the feed names itself as the path', resultOf(feedStat).path ?? null, 'trending')
+    const feedFind = await call('hf_fs', ops({ cmd: 'find', args: ['hf://models/trending'] }))
+    eq(
+      'find on the feed is ENOTSUP, not EINVAL',
+      errorOf(feedFind).code ?? null,
+      'HF_FS_UNSUPPORTED_OPERATION',
+    )
+    eq(
+      'and names the command that works',
+      errorOf(feedFind).message ?? null,
+      'ENOTSUP: find is not supported on hf://models/trending; use ls',
+    )
+    const feedCat = await call('hf_fs', ops(catOp('hf://models/trending')))
+    eq(
+      'cat on the feed says directory, where a namespace says file path',
+      errorOf(feedCat).message ?? null,
+      'EISDIR: hf://models/trending is a directory',
+    )
+    const feedSearch = await call(
+      'hf_fs',
+      ops({ cmd: 'search', args: ['hf://models/trending', 'llama'] }),
+    )
+    check(
+      'search on the feed is refused the way it is on a repository',
+      String(errorOf(feedSearch).message ?? '').startsWith('EINVAL: search requires hf://models'),
+      String(errorOf(feedSearch).message ?? ''),
+    )
+    // A third segment is an ordinary repository again, owned by someone
+    // called `trending`: upstream resolves `hf://models/trending/foo` through
+    // the repository route, so the reservation is exactly two segments deep.
+    const deeper = await call('hf_fs', ops({ cmd: 'ls', args: ['hf://models/trending/foo'] }))
+    eq('and the reservation is two segments deep', errorOf(deeper).code ?? null, 'HF_FS_NOT_FOUND')
+
+    // The kind roots part company between the two listing commands, because
+    // upstream does: `ls hf://models` succeeds there with the feed as its one
+    // row, and `find hf://models` refuses outright.
+    const rootLs = await call('hf_fs', ops({ cmd: 'ls', args: ['hf://models'] }))
     check(
       'ls on a kind root says what is missing and what works',
-      String(errorOf(trending).message ?? '').includes('no trending feed behind hf://models'),
-      String(errorOf(trending).message ?? ''),
+      String(errorOf(rootLs).message ?? '').includes('no trending feed: hf://models'),
+      String(errorOf(rootLs).message ?? ''),
+    )
+    const rootFind = await call('hf_fs', ops({ cmd: 'find', args: ['hf://models'] }))
+    eq(
+      'and find on one is refused in upstream words',
+      errorOf(rootFind).message ?? null,
+      'Listing models requires an explicit owner. Use hf://models/<owner>.',
+    )
+
+    // `attach` says the same thing at every non-file URI, which is upstream's
+    // sentence and not the EINVAL this fake used to invent.
+    const attachNs = await call('hf_fs', ops({ cmd: 'attach', args: ['hf://models/integ'] }))
+    eq(
+      'attach on a namespace is NOT_A_FILE in upstream words',
+      errorOf(attachNs).message ?? null,
+      'attach requires a direct repository or bucket file URI.',
     )
 
     // ---- the shared attachment budget

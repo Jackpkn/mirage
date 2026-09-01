@@ -53,6 +53,7 @@ import {
   FS_NOT_FOUND,
   FS_TEXT_ONLY,
   FS_UNSUPPORTED_MEDIA,
+  FS_UNSUPPORTED_OP,
   catMarkdown,
   type CatBounds,
   detailsMarkdown,
@@ -333,6 +334,7 @@ interface RepoAt {
 type Located =
   | ({ scope: 'repo' } & RepoAt)
   | { scope: 'namespace'; kind: string; namespace: string }
+  | { scope: 'trending'; kind: string }
   | { scope: 'kind'; kind: string }
 
 // What the fake cannot answer, said in a sentence rather than guessed at. It
@@ -379,6 +381,14 @@ function locate(uri: string): Located | Refusal {
   // answer is the command's question, not this function's -- `cat` wants a
   // file and `search` refuses one, and neither can be decided here.
   if (parts.length === 1) return { scope: 'kind', kind }
+  // RESERVED, and it has to be reserved HERE. `trending` is a virtual
+  // directory upstream, not an owner, and it is the first example the captured
+  // tool description prints: `ls hf://models/trending --limit 10`. Classified
+  // as a namespace it would query `author=trending`, match nothing, and answer
+  // an empty listing with status 200 -- a successful-looking reply that says
+  // the Hub has no trending repositories. That is worse than the refusal this
+  // whole change exists to remove, because a refusal is at least visible.
+  if (parts.length === 2 && parts[1] === TRENDING) return { scope: 'trending', kind }
   if (parts.length === 2) return { scope: 'namespace', kind, namespace: parts[1] ?? '' }
   return {
     scope: 'repo',
@@ -398,6 +408,20 @@ function locate(uri: string): Located | Refusal {
 // document promises does not measure a tool surface, it measures the fake.
 const SEARCH_DEFAULT_LIMIT = 100
 const SEARCH_MAX_LIMIT = 1000
+
+// The one segment that is not an owner. Upstream exposes it under each of the
+// three kinds, and it is the only part of this fake's Hub with no rows behind
+// it at all: a trending feed is a global ranking, and a seeded fixture has no
+// such thing to rank.
+const TRENDING = 'trending'
+
+// Upstream's refusal for `search` aimed anywhere that is not a discovery
+// root -- a repository or the trending feed. One sentence, two callers, and
+// it names every scope that WOULD have worked rather than the one that did
+// not.
+const SEARCH_SCOPES =
+  'EINVAL: search requires hf://models|datasets|spaces[/OWNER], ' +
+  'hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers'
 
 // The document spells a repo type singular in a Details cell and the routes
 // spell it plural in a path, the same split `PLURAL` bridges the other way.
@@ -1068,23 +1092,44 @@ async function discoverOne(
   rest: string[],
 ): Promise<FsOut> {
   const owner = where.scope === 'namespace' ? where.namespace : ''
-  // A namespace is not a file, and saying so with NOT_A_FILE rather than
-  // EINVAL is upstream's own answer: an agent branching on the code should
-  // not be told it mistyped a flag.
+  const trending = where.scope === 'trending'
+  // The one refusal in this function that is this fake's own rather than
+  // upstream's, because it is the one thing here upstream HAS and the fake
+  // does not. It names what works instead, which is the whole difference
+  // between an honest refusal and a dead end.
+  const noFeed = (): FsOut =>
+    fsFail(
+      FS_INVALID,
+      `EINVAL: the mirage hf_hub fake has no trending feed: ${uri}; ` +
+        `use search hf://${where.kind} or ls hf://${where.kind}/<namespace>`,
+    )
+  // Three different sentences for what looks like one situation, and all
+  // three are the live server's: `cat` on a namespace says it wanted a file
+  // PATH, `cat` on `trending` says the target IS a directory, and `attach`
+  // says the same thing at every non-file URI.
   if (cmd === 'cat') {
-    return fsFail(FS_NOT_A_FILE, 'cat requires a URI that points to a file path, not a namespace.')
+    return trending
+      ? fsFail(FS_NOT_A_FILE, `EISDIR: ${uri} is a directory`)
+      : fsFail(FS_NOT_A_FILE, 'cat requires a URI that points to a file path, not a namespace.')
   }
   if (cmd === 'attach') {
-    return fsFail(FS_INVALID, `EINVAL: expected hf://${where.kind}/<namespace>/<name>: ${uri}`)
+    return fsFail(FS_NOT_A_FILE, 'attach requires a direct repository or bucket file URI.')
   }
   if (cmd === 'stat') {
     if (rest.length > 0) {
       return fsFail(FS_INVALID, `EINVAL: unexpected argument for ${cmd}: ${rest[0] ?? ''}`)
     }
-    // Neither answer is looked up. Captured: `stat hf://models/<anything>`
-    // reports `exists: yes, type: namespace` for an owner that does not
-    // exist, because the server is describing the URI's shape rather than
-    // the Hub's contents.
+    // None of the three is looked up, and the three differ in the Path they
+    // report: `trending` names itself, a kind root and a namespace report an
+    // empty one. Captured: `stat hf://models/<anything>` reports `exists:
+    // yes, type: namespace` for an owner that does not exist, because the
+    // server describes the URI's shape rather than the Hub's contents.
+    if (trending) {
+      return {
+        text: statMarkdown(uri, 'dir', TRENDING),
+        result: { uri, op: 'stat', exists: true, type: 'dir', path: TRENDING },
+      }
+    }
     if (where.scope === 'kind') {
       return {
         text: statMarkdown(uri, 'dir', ''),
@@ -1099,16 +1144,31 @@ async function discoverOne(
   if (cmd !== 'ls' && cmd !== 'find' && cmd !== 'search') {
     return fsFail(FS_INVALID, `EINVAL: unknown command: ${cmd}`)
   }
-  // `ls hf://<kind>` lists one virtual `trending` directory upstream, and a
-  // trending feed is the one thing behind these roots that this fake has no
-  // rows for. Answering with an entry whose own listing then fails would be
-  // worse than saying so, so it says so and names what does work.
-  if (cmd !== 'search' && where.scope === 'kind') {
-    return fsFail(
-      FS_INVALID,
-      `EINVAL: the mirage hf_hub fake has no trending feed behind hf://${where.kind}; ` +
-        `use search hf://${where.kind} or ${cmd} hf://${where.kind}/<namespace>`,
-    )
+  // `search` is discovery and `trending` is already a ranking, so upstream
+  // refuses it there with the same sentence it refuses a repository with.
+  if (cmd === 'search' && trending) return fsFail(FS_INVALID, SEARCH_SCOPES)
+  // Upstream refuses `find` on the feed and names `ls` instead, under a code
+  // that says "not here" rather than "you asked wrongly". Reproducible
+  // without a feed, so it is reproduced rather than approximated.
+  if (cmd === 'find' && trending) {
+    return fsFail(FS_UNSUPPORTED_OP, `ENOTSUP: find is not supported on ${uri}; use ls`)
+  }
+  if (trending) return noFeed()
+  if (where.scope === 'kind') {
+    // The two roots part company here. `ls hf://<kind>` SUCCEEDS upstream,
+    // with exactly one row -- the virtual `trending` directory -- so the
+    // honest answer for a fake with no feed is to refuse rather than to list
+    // a directory that will not open. `find` upstream refuses outright, in a
+    // sentence this copies. (The envelope diverges: upstream answers that one
+    // as a whole-call rejection with no `results` array, where this stays a
+    // per-operation error like every other refusal here.)
+    if (cmd === 'find') {
+      return fsFail(
+        FS_INVALID,
+        `Listing ${where.kind} requires an explicit owner. Use hf://${where.kind}/<owner>.`,
+      )
+    }
+    if (cmd === 'ls') return noFeed()
   }
   const flags = discoveryArgs(cmd, rest, cmd === 'search')
   if (!('limit' in flags)) return fsFail(flags.code, flags.message)
@@ -1147,13 +1207,7 @@ async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget):
   // Upstream's own sentence, and it names every scope rather than this one:
   // search is discovery, and a repository is the one URI that is already
   // discovered.
-  if (cmd === 'search') {
-    return fsFail(
-      FS_INVALID,
-      'EINVAL: search requires hf://models|datasets|spaces[/OWNER], ' +
-        'hf://collections[/OWNER], any hf://docs scope, or exactly hf://papers',
-    )
-  }
+  if (cmd === 'search') return fsFail(FS_INVALID, SEARCH_SCOPES)
   // `stat` is the only command that takes the URI alone; cat, attach, ls and
   // find each parse their own flags below and refuse the rest by name there.
   // Listing the exceptions here was a standing trap -- attach and then ls
