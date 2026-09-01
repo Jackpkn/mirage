@@ -518,10 +518,6 @@ export function getDeclarationKeyword(node: TSNodeLike): string {
   return node.children[0]?.type ?? ''
 }
 
-export function getUnsetNames(node: TSNodeLike): string[] {
-  return node.namedChildren.filter((c) => c.type === NT.VARIABLE_NAME).map((c) => getText(c))
-}
-
 /**
  * Split a whitespace-separated operand string, honoring single and
  * double quotes the way the shell does. Returns null on an unbalanced

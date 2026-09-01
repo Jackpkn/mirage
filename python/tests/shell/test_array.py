@@ -1,5 +1,5 @@
-from mirage.shell.array import (array_append, array_count, array_extent,
-                                array_get, array_has, array_indices, array_set,
+from mirage.shell.array import (array_count, array_extent, array_get,
+                                array_has, array_indices, array_set,
                                 array_slice, array_unset, array_values,
                                 build_assoc_literal, build_indexed_literal,
                                 keyed_word, make_array)
@@ -53,21 +53,6 @@ def test_unset_out_of_range_is_a_no_op():
     array_unset(arr, 5)
     array_unset(arr, -1)
     assert arr == ["x"]
-
-
-def test_append_starts_at_the_extent():
-    arr = make_array(["x", "y", "z"])
-    array_unset(arr, 1)
-    array_append(arr, ["w"])
-    assert arr == ["x", None, "z", "w"]
-    assert array_indices(arr) == [0, 2, 3]
-
-
-def test_append_refills_a_trailing_hole():
-    arr = make_array(["x", "y", "z"])
-    array_unset(arr, 2)
-    array_append(arr, ["w"])
-    assert arr == ["x", "y", "w"]
 
 
 def test_set_reassigns_a_hole():

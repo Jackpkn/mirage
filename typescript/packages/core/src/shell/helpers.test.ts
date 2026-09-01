@@ -33,7 +33,6 @@ import {
   getSubshellBody,
   getText,
   getTestArgv,
-  getUnsetNames,
   getWhileParts,
   literalWord,
   splitEnvPrefix,
@@ -323,7 +322,7 @@ describe('getIfBranches', () => {
   })
 })
 
-describe('getDeclaration* / getUnsetNames / getCommandAssignments', () => {
+describe('getDeclaration* / getCommandAssignments', () => {
   it('getDeclarationAssignments collects VARIABLE_ASSIGNMENT children', () => {
     const n = node('declaration_command', '', {
       namedChildren: [
@@ -339,13 +338,6 @@ describe('getDeclaration* / getUnsetNames / getCommandAssignments', () => {
       children: [node(NT.EXPORT, 'export', { isNamed: false })],
     })
     expect(getDeclarationKeyword(n)).toBe('export')
-  })
-
-  it('getUnsetNames picks VARIABLE_NAME children', () => {
-    const n = node('unset_command', '', {
-      namedChildren: [node(NT.VARIABLE_NAME, 'FOO'), node(NT.VARIABLE_NAME, 'BAR')],
-    })
-    expect(getUnsetNames(n)).toEqual(['FOO', 'BAR'])
   })
 
   it('getCommandAssignments matches VARIABLE_ASSIGNMENT', () => {

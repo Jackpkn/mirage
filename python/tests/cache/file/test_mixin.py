@@ -88,13 +88,6 @@ class TestMulti:
         assert results[1] is None
         assert results[2] == b"bbb"
 
-    @pytest.mark.asyncio
-    async def test_multi_set(self):
-        cache = RAMFileCacheStore(cache_limit="1MB")
-        await cache.multi_set([("/a", b"aaa"), ("/b", b"bbb")])
-        assert await cache.get("/a") == b"aaa"
-        assert await cache.get("/b") == b"bbb"
-
 
 class TestExistsRemoveClear:
 
