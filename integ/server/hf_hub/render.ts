@@ -268,6 +268,29 @@ export function listingMarkdown(cmd: string, uri: string, rows: FsEntry[]): stri
 // outcome, so a reader never has to infer a field from its absence.
 export type StatKind = 'file' | 'dir' | 'repo' | 'missing'
 
+/**
+ * Captured:
+ *
+ *   # hf_fs attach
+ *
+ *   - URI: `hf://datasets/OWNER/NAME/fig.png`
+ *   - Path: `fig.png`
+ *   - MIME type: `image/png`
+ *   - Bytes: 2104615
+ *
+ * The bytes themselves ride beside this as an MCP image block, not in it.
+ */
+export function attachMarkdown(uri: string, path: string, mime: string, bytes: number): string {
+  return [
+    `# hf_fs attach`,
+    '',
+    `- URI: \`${uri}\``,
+    `- Path: \`${path}\``,
+    `- MIME type: \`${mime}\``,
+    `- Bytes: ${String(bytes)}`,
+  ].join('\n')
+}
+
 export function statMarkdown(uri: string, kind: StatKind, path: string, size?: number): string {
   return [
     `# hf_fs stat`,
@@ -334,6 +357,13 @@ export const FS_NOT_FOUND = 'HF_FS_NOT_FOUND'
 export const FS_INVALID = 'HF_FS_INVALID_ARGUMENT'
 export const FS_TEXT_ONLY = 'HF_FS_TEXT_ONLY'
 export const FS_NOT_A_FILE = 'HF_FS_NOT_A_FILE'
+// `attach`'s own three. It refuses more precisely than `cat` does, because it
+// returns a whole file and cannot truncate: a text file is the wrong KIND of
+// thing (use cat), a non-image binary is unsupported media, and an image over
+// the limit is simply too large.
+export const FS_IMAGE_ONLY = 'HF_FS_IMAGE_ONLY'
+export const FS_UNSUPPORTED_MEDIA = 'HF_FS_UNSUPPORTED_MEDIA'
+export const FS_IMAGE_TOO_LARGE = 'HF_FS_IMAGE_TOO_LARGE'
 
 const RECOVERY: Record<string, string> = {
   [FS_NOT_FOUND]:
@@ -344,6 +374,11 @@ const RECOVERY: Record<string, string> = {
     'Use stat for metadata or ls on the parent directory. Do not use cat for binary or non-UTF-8 content.',
   [FS_NOT_A_FILE]:
     'Use stat to confirm the target is a file, or ls/find to discover a returned file URI.',
+  [FS_IMAGE_ONLY]: 'Use cat to read this text file, or stat for metadata.',
+  [FS_UNSUPPORTED_MEDIA]:
+    'Attach supports only files ending in .jpg, .jpeg, .png, or .webp. Use stat for metadata.',
+  [FS_IMAGE_TOO_LARGE]:
+    'Use stat for metadata. Attach cannot truncate images or exceed its configured complete-file limit.',
 }
 
 // The live server names a DIFFERENT command in the error object when one
@@ -356,6 +391,12 @@ const SUGGESTED: Record<string, string> = {
   [FS_NOT_FOUND]: 'stat',
   [FS_TEXT_ONLY]: 'stat',
   [FS_NOT_A_FILE]: 'stat',
+  [FS_UNSUPPORTED_MEDIA]: 'stat',
+  [FS_IMAGE_TOO_LARGE]: 'stat',
+  // The one that is not `stat`. A text file asked for as an image is not an
+  // uncertain target -- it is a known one, reached with the wrong command,
+  // and upstream names the right command instead of the diagnostic one.
+  [FS_IMAGE_ONLY]: 'cat',
 }
 
 export function fsSuggested(code: string): string | undefined {

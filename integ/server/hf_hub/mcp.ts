@@ -45,13 +45,17 @@ import { hfHubFake } from './fake.ts'
 import { hfHubRoutes } from './routes.ts'
 import {
   FS_INVALID,
+  FS_IMAGE_ONLY,
+  FS_IMAGE_TOO_LARGE,
   FS_NOT_A_FILE,
   FS_NOT_FOUND,
   FS_TEXT_ONLY,
+  FS_UNSUPPORTED_MEDIA,
   catMarkdown,
   type CatBounds,
   detailsMarkdown,
   fsError,
+  attachMarkdown,
   fsRecovery,
   fsSuggested,
   listingMarkdown,
@@ -166,6 +170,8 @@ const PLURAL: Record<string, string> = {
 interface Answer {
   text: string
   structured?: JsonValue
+  // `attach` returns the file itself, as MCP image blocks beside the prose.
+  images?: { mimeType: string; data: string }[]
   // MCP's own flag on the tool result, which the live server sets when EVERY
   // operation in the batch failed and omits the moment one succeeds. Omitted
   // rather than false, because that is what upstream sends and a client may
@@ -310,6 +316,15 @@ interface Refusal {
 // serve, and saying so is more use than pretending the name is invalid.
 const UPSTREAM_KINDS = ['models', 'datasets', 'spaces', 'buckets', 'collections', 'papers']
 
+// `docs` is a root too, and is NOT in the sentence above: `ls hf://docs`
+// answers with entries. That sentence describes what upstream says when it
+// rejects a TYPE; it is not the list of what the server addresses, and
+// reading it as one turned two working URIs into errors. `hf://README.md` is
+// the other -- a root-level page, where the live server documents its own
+// limits. Both are refused below as things this fake does not hold, which is
+// true, rather than as bad names, which is not.
+const UPSTREAM_ROOTS = [...UPSTREAM_KINDS, 'docs', 'README.md']
+
 function locate(uri: string, cmd: string): Located | Refusal {
   const bad = (message: string): Refusal => ({ code: FS_INVALID, message })
   if (!uri.startsWith('hf://')) return bad('EINVAL: URI must start with hf://')
@@ -319,7 +334,7 @@ function locate(uri: string, cmd: string): Located | Refusal {
     .filter((one) => one !== '')
   const kind = parts[0] ?? ''
   if (kind === '') return bad('EINVAL: Missing repository or bucket type in URI.')
-  if (!UPSTREAM_KINDS.includes(kind)) {
+  if (!UPSTREAM_ROOTS.includes(kind)) {
     return bad(`EINVAL: Invalid URI type '${kind}'. Must be one of ${UPSTREAM_KINDS.join(', ')}.`)
   }
   if (!KINDS.includes(kind)) {
@@ -372,6 +387,7 @@ async function treeAt(at: Dispatch, where: Located, recursive: boolean): Promise
 interface FsOut {
   text: string
   result?: Record<string, JsonValue>
+  image?: { mimeType: string; data: string }
   error?: { code: string; message: string }
 }
 
@@ -539,8 +555,63 @@ function binaryName(path: string): boolean {
   return BINARY_SUFFIX.some((suffix) => name.endsWith(suffix))
 }
 
+// `attach` returns a COMPLETE file and cannot truncate one, so its bound is a
+// refusal rather than a cut: 8MiB, which is upstream's documented default and
+// maximum both. Zero is invalid here, where `cat --max-bytes 0` means the
+// maximum -- the two commands genuinely differ, and each was read off the
+// live server rather than assumed from the other.
+const ATTACH_MAX_BYTES = 8 * 1024 * 1024
+
+// Upstream matches these case-insensitively and by extension alone: "bytes
+// are opaque, are never inspected or altered before MCP encoding".
+const IMAGE_MIME: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+}
+
+function imageMime(path: string): string | undefined {
+  const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase()
+  const at = name.lastIndexOf('.')
+  return at === -1 ? undefined : IMAGE_MIME[name.slice(at)]
+}
+
+// Whether a path inside a repository is a DIRECTORY. Rows, not merely a
+// reply: the tree route answers 200 with nothing for a path that is not
+// there, so `ok` alone calls every miss a directory. A directory in git
+// always holds something -- an empty one cannot be committed -- so the rows
+// are the test, and this is the only place that knows it.
+async function isDirectory(at: Dispatch, where: Located): Promise<boolean> {
+  if (where.path === '') return false
+  const listed = await treeAt(at, where, false)
+  return ok(listed) && entriesOf(listed).length > 0
+}
+
+function attachArgs(rest: string[]): number | Refusal {
+  const bad = (message: string): Refusal => ({ code: FS_INVALID, message })
+  let bound = ATTACH_MAX_BYTES
+  for (let i = 0; i < rest.length; i += 2) {
+    const flag = rest[i] ?? ''
+    // Only one flag, where cat has two: `--offset` is meaningless for a file
+    // that arrives whole, and upstream refuses it by name.
+    if (flag !== '--max-bytes') {
+      return bad(`EINVAL: unexpected argument for attach: ${flag}`)
+    }
+    const raw = rest[i + 1]
+    if (raw === undefined) return bad(`EINVAL: ${flag} needs a value`)
+    if (!/^-?\d+$/.test(raw)) return bad(`EINVAL: ${flag} requires an integer`)
+    const value = Number(raw)
+    if (value < 1 || value > ATTACH_MAX_BYTES) {
+      return bad(`EINVAL: attach max_bytes must be between 1 and ${String(ATTACH_MAX_BYTES)}`)
+    }
+    bound = value
+  }
+  return bound
+}
+
 async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> {
-  if (cmd === 'attach' || cmd === 'search') {
+  if (cmd === 'search') {
     return fsFail(
       FS_INVALID,
       `EINVAL: ${cmd} is not served by the mirage hf_hub fake; use ls, cat, stat or find`,
@@ -551,8 +622,9 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
   if (!('kind' in where)) return fsFail(where.code, where.message)
   const rest = args.slice(1)
   // Every other command here takes the URI alone. `cat` takes the two flags
-  // its own captured grammar advertises, and refuses the rest below.
-  if (cmd !== 'cat' && rest.length > 0) {
+  // its own captured grammar advertises and `attach` the one, and each
+  // refuses the rest itself below.
+  if (cmd !== 'cat' && cmd !== 'attach' && rest.length > 0) {
     return fsFail(FS_INVALID, `EINVAL: unexpected argument for ${cmd}: ${rest[0] ?? ''}`)
   }
   if (cmd === 'ls' || cmd === 'find') {
@@ -583,9 +655,22 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
     // `repo` and not `dir` -- the distinction is the whole reason stat is
     // recommended for "an uncertain target type".
     if (where.path === '') {
+      // Looked up, not assumed. Returning `repo` without asking made every
+      // syntactically valid URI a repository that exists -- and on a task
+      // whose Hub starts EMPTY, an agent that stats the repository it is
+      // about to create would be told it is already there.
+      //
+      // Upstream answers HF_FS_ACCESS_DENIED here rather than `missing`,
+      // because anonymously it will not confirm that a repository is absent
+      // as opposed to private. This fake is always authenticated as the
+      // tenant and does know, so it says so in stat's own vocabulary; that
+      // divergence is the one place it prefers the truth it has.
+      const exists = ok(await treeAt(at, { ...where, path: '' }, false))
       return {
-        text: statMarkdown(uri, 'repo', ''),
-        result: { uri, op: 'stat', exists: true, type: 'repo', path: '' },
+        text: statMarkdown(uri, exists ? 'repo' : 'missing', ''),
+        result: exists
+          ? { uri, op: 'stat', exists: true, type: 'repo', path: '' }
+          : { uri, op: 'stat', exists: false, type: 'missing', path: '' },
       }
     }
     const all = entriesOfFull(await treeAt(at, { ...where, path: '' }, true))
@@ -606,8 +691,7 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
     // Rows, not merely a reply: the tree route answers 200 with nothing for a
     // path that is not there, so `ok` alone reported every missing file as a
     // directory that exists.
-    const listed = await treeAt(at, where, false)
-    if (ok(listed) && entriesOf(listed).length > 0) {
+    if (await isDirectory(at, where)) {
       return {
         text: statMarkdown(uri, 'dir', where.path),
         result: { uri, op: 'stat', exists: true, type: 'dir', path: where.path },
@@ -616,6 +700,60 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
     return {
       text: statMarkdown(uri, 'missing', where.path),
       result: { uri, op: 'stat', exists: false, type: 'missing', path: where.path },
+    }
+  }
+  if (cmd === 'attach') {
+    const bound = attachArgs(rest)
+    if (typeof bound !== 'number') return fsFail(bound.code, bound.message)
+    const mime = imageMime(where.path)
+    const name = where.path.slice(where.path.lastIndexOf('/') + 1)
+    const unsupported = (): FsOut =>
+      fsFail(
+        FS_UNSUPPORTED_MEDIA,
+        `Unsupported attachment media: ${name === '' ? where.id : name}. ` +
+          `The file extension is not .jpg, .jpeg, .png, or .webp.`,
+      )
+    if (mime === undefined) {
+      // Three answers, and the classifier is the one `cat` uses read the other
+      // way round. A known binary -- and a DIRECTORY, which has no extension
+      // to match -- is unsupported media; anything else is a file upstream
+      // calls text and sends you to `cat` for.
+      if (where.path === '' || binaryName(where.path) || (await isDirectory(at, where))) {
+        return unsupported()
+      }
+      return fsFail(
+        FS_IMAGE_ONLY,
+        `Refusing to attach known text file: ${name}. Attach returns supported image files only.`,
+      )
+    }
+    const reply = await callRoute(
+      at,
+      'GET',
+      `/${where.kind === 'models' ? '' : `${where.kind}/`}${where.id}/resolve/main/${where.path}`,
+    )
+    if (reply.status !== 200 || !Buffer.isBuffer(reply.body)) {
+      // A name is not a promise of a file. `assets.png` can be a DIRECTORY,
+      // and the extension branch above would have taken it for an image; a
+      // resolve that fails is where the two become distinguishable again.
+      // NOT_FOUND here would assert that something which exists does not,
+      // and a directory is the one thing upstream can be OBSERVED calling
+      // unsupported media -- no repository reachable from here holds a
+      // directory named `*.png` to ask about directly.
+      if (await isDirectory(at, where)) return unsupported()
+      return fsFail(FS_NOT_FOUND, `File does not exist: ${where.path}`)
+    }
+    const whole = reply.body
+    if (whole.length > bound) {
+      return fsFail(
+        FS_IMAGE_TOO_LARGE,
+        `Image is too large to attach: ${where.path} is ${String(whole.length)} bytes; ` +
+          `complete-file limit is ${String(bound)} bytes.`,
+      )
+    }
+    return {
+      text: attachMarkdown(uri, where.path, mime, whole.length),
+      result: { op: 'attach', uri, path: where.path, mime_type: mime, bytes: whole.length },
+      image: { mimeType: mime, data: whole.toString('base64') },
     }
   }
   if (cmd === 'cat') {
@@ -652,8 +790,7 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
       // 200 with no rows for a path that is not there at all, so the rows are
       // the test. A directory in git always holds something; an empty one
       // cannot be committed.
-      const listed = await treeAt(at, where, false)
-      if (ok(listed) && entriesOf(listed).length > 0) {
+      if (await isDirectory(at, where)) {
         return fsFail(FS_NOT_A_FILE, `cat requires a file path, got dir: ${where.path}`)
       }
       return fsFail(FS_NOT_FOUND, `File does not exist: ${where.path}`)
@@ -713,9 +850,11 @@ async function fsAnswer(at: Dispatch, args: Record<string, JsonValue>): Promise<
   const ops = Array.isArray(args.operations) ? args.operations.map((one) => obj(one)) : []
   const texts: string[] = []
   const results: JsonValue[] = []
+  const images: { mimeType: string; data: string }[] = []
   for (const [i, one] of ops.entries()) {
     const out = await fsOne(at, String(one.cmd ?? ''), strList(one.args))
     texts.push(out.text)
+    if (out.image !== undefined) images.push(out.image)
     if (out.error === undefined) {
       results.push({ index: i, status: 'success', result: out.result ?? {} })
       continue
@@ -742,6 +881,9 @@ async function fsAnswer(at: Dispatch, args: Record<string, JsonValue>): Promise<
     text: operationsMarkdown(texts),
     structured: { results },
     ...(failed ? { isError: true } : {}),
+    // One block per attachment, after the prose, which is the order upstream
+    // sends them in: the text names what arrived and the block is what did.
+    ...(images.length > 0 ? { images } : {}),
   }
 }
 
@@ -772,7 +914,14 @@ function buildMcpServer(at: Dispatch, doc: ToolDoc): McpServer {
       obj((req.params.arguments ?? {}) as JsonValue),
     )
     return {
-      content: [{ type: 'text', text: answer.text }],
+      content: [
+        { type: 'text', text: answer.text },
+        ...(answer.images ?? []).map((one) => ({
+          type: 'image' as const,
+          mimeType: one.mimeType,
+          data: one.data,
+        })),
+      ],
       ...(answer.structured === undefined ? {} : { structuredContent: answer.structured }),
       ...(answer.isError === true ? { isError: true } : {}),
     }

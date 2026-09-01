@@ -62,6 +62,11 @@ function eq(name: string, got: JsonValue, want: JsonValue): void {
   check(name, a === b, a === b ? a : `got ${a} want ${b}`)
 }
 
+// A 1x1 PNG. Written out rather than generated so the bytes in the fixture
+// are the bytes an image decoder accepts, signature included.
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
 interface Fake {
   child: ChildProcessByStdio<null, Readable, Readable>
   endpoint: string
@@ -415,6 +420,16 @@ async function mcpChecks(): Promise<void> {
         // `stat` both have to tell a directory from a missing path, and a
         // flat repo cannot prove either.
         JSON.stringify({ key: 'file', value: { path: 'nested/note.txt', content: 'in a dir\n' } }),
+        // A REAL 1x1 PNG, header and all, because attach returns the bytes
+        // untouched and a caller decodes them.
+        JSON.stringify({
+          key: 'file',
+          value: { path: 'figures/fig1.png', encoding: 'base64', content: PNG_1X1 },
+        }),
+        // A DIRECTORY whose name ends in an image extension. Nothing stops a
+        // repository holding one, and it is the one shape where classifying
+        // on the name alone gives the wrong answer.
+        JSON.stringify({ key: 'file', value: { path: 'assets.png/inside.txt', content: 'x\n' } }),
         ...['binary.bin', 'invalid.txt'].map((path) =>
           JSON.stringify({
             key: 'file',
@@ -603,6 +618,145 @@ async function mcpChecks(): Promise<void> {
       ),
     )
     check('but one success clears it', !('isError' in mixed), JSON.stringify(mixed.isError ?? null))
+
+    // ---- attach
+    //
+    // The live server returns a COMPLETE image and cannot truncate one, so
+    // every refusal below is a refusal rather than a cut. All four codes and
+    // all four sentences were read off https://huggingface.co/mcp.
+    const attach = (uri: string, ...rest: string[]): Record<string, unknown> => ({
+      cmd: 'attach',
+      args: [uri, ...rest],
+    })
+    const png = await call('hf_fs', ops(attach('hf://models/integ/card-model/figures/fig1.png')))
+    const blocks = (png.content ?? []) as Record<string, JsonValue>[]
+    check(
+      'attach returns the image beside the prose',
+      blocks.some((one) => one.type === 'image' && one.mimeType === 'image/png'),
+      JSON.stringify(blocks.map((one) => one.type)),
+    )
+    check(
+      'and the bytes are the file, decodable',
+      Buffer.from(String((blocks.find((one) => one.type === 'image') ?? {}).data ?? ''), 'base64')
+        .subarray(0, 8)
+        .toString('hex') === '89504e470d0a1a0a',
+      String((blocks.find((one) => one.type === 'image') ?? {}).data ?? '').slice(0, 24),
+    )
+    const attachText = blocks.map((one) => String(one.text ?? '')).join('')
+    check(
+      'and the prose names the MIME type',
+      attachText.includes('- MIME type: `image/png`'),
+      attachText.slice(0, 240),
+    )
+    check('and a whole-file byte count', attachText.includes('- Bytes: '), attachText.slice(0, 240))
+
+    // A text file is the wrong KIND of thing, and upstream names `cat` for it
+    // rather than the diagnostic `stat` it names everywhere else.
+    const asText = await call('hf_fs', ops(attach('hf://models/integ/card-model/README.md')))
+    eq('attaching text is HF_FS_IMAGE_ONLY', errorOf(asText).code ?? null, 'HF_FS_IMAGE_ONLY')
+    eq(
+      'and says so upstream way',
+      errorOf(asText).message ?? null,
+      'Refusing to attach known text file: README.md. Attach returns supported image files only.',
+    )
+    eq('and points at cat, not stat', errorOf(asText).suggestedOperation ?? null, 'cat')
+
+    const asBinary = await call('hf_fs', ops(attach('hf://models/integ/card-model/binary.bin')))
+    eq(
+      'a non-image binary is unsupported media',
+      errorOf(asBinary).code ?? null,
+      'HF_FS_UNSUPPORTED_MEDIA',
+    )
+    const asDir = await call('hf_fs', ops(attach('hf://models/integ/card-model/nested')))
+    eq('and so is a directory', errorOf(asDir).code ?? null, 'HF_FS_UNSUPPORTED_MEDIA')
+
+    const tooSmall = await call(
+      'hf_fs',
+      ops(attach('hf://models/integ/card-model/figures/fig1.png', '--max-bytes', '1')),
+    )
+    eq(
+      'a bound under the file size refuses rather than truncating',
+      errorOf(tooSmall).code ?? null,
+      'HF_FS_IMAGE_TOO_LARGE',
+    )
+    const overCeiling = await call(
+      'hf_fs',
+      ops(attach('hf://models/integ/card-model/figures/fig1.png', '--max-bytes', '25000000')),
+    )
+    // The bound an agent reached for when it tried to pull a 21MB file past
+    // cat's limit. Upstream names its ceiling; this fake used to answer that
+    // attach did not exist.
+    eq(
+      'and a bound over the ceiling names the ceiling',
+      errorOf(overCeiling).message ?? null,
+      'EINVAL: attach max_bytes must be between 1 and 8388608',
+    )
+    const zeroBound = await call(
+      'hf_fs',
+      ops(attach('hf://models/integ/card-model/figures/fig1.png', '--max-bytes', '0')),
+    )
+    // Zero is INVALID for attach where `cat --max-bytes 0` means the maximum.
+    // The two commands genuinely differ; each was read off the live server.
+    eq(
+      'zero is invalid here, unlike cat',
+      errorOf(zeroBound).message ?? null,
+      'EINVAL: attach max_bytes must be between 1 and 8388608',
+    )
+    const withOffset = await call(
+      'hf_fs',
+      ops(attach('hf://models/integ/card-model/figures/fig1.png', '--offset', '5')),
+    )
+    eq(
+      'and --offset is meaningless for a whole file',
+      errorOf(withOffset).message ?? null,
+      'EINVAL: unexpected argument for attach: --offset',
+    )
+    const goneImage = await call('hf_fs', ops(attach('hf://models/integ/card-model/nope.png')))
+    eq('a missing image is HF_FS_NOT_FOUND', errorOf(goneImage).code ?? null, 'HF_FS_NOT_FOUND')
+
+    // A directory that ends in `.png` is still a directory. Classified on the
+    // name alone it reads as an image, resolves to nothing, and would be
+    // reported as a file that does not exist -- of a path that does.
+    const dirNamedPng = await call('hf_fs', ops(attach('hf://models/integ/card-model/assets.png')))
+    eq(
+      'a directory named like an image is still unsupported media',
+      errorOf(dirNamedPng).code ?? null,
+      'HF_FS_UNSUPPORTED_MEDIA',
+    )
+    // `cat` answers TEXT_ONLY for the same path, and that is not an
+    // oversight: upstream refuses binary on the NAME, before it resolves
+    // anything -- "the file extension or MIME type is known to be binary" --
+    // so a directory called `assets.png` never reaches a directory check
+    // there either. attach differs because its name check is what SELECTS
+    // the image branch, so the mistake is only recoverable after the resolve.
+    const catDirPng = await call('hf_fs', ops(catOp('hf://models/integ/card-model/assets.png')))
+    eq(
+      'cat refuses it on the name, as upstream does',
+      errorOf(catDirPng).code ?? null,
+      'HF_FS_TEXT_ONLY',
+    )
+    const statDirPng = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: ['hf://models/integ/card-model/assets.png'] }],
+    })
+    check('and stat calls it a dir', statDirPng.includes('- Type: `dir`'), statDirPng.slice(0, 200))
+
+    // ---- roots the fake does not hold are not bad NAMES
+    //
+    // `docs` and `README.md` are addressable upstream -- `ls hf://docs`
+    // answers and `cat hf://README.md` is where it documents its limits --
+    // so calling them invalid types was wrong twice over.
+    const docs = await call('hf_fs', ops(catOp('hf://docs/transformers/index')))
+    check(
+      'an unserved root says which roots are served',
+      String(errorOf(docs).message ?? '').includes('the mirage hf_hub fake serves'),
+      JSON.stringify(errorOf(docs).message ?? null),
+    )
+    const readme = await call('hf_fs', ops(catOp('hf://README.md')))
+    check(
+      'and so does the root-level page',
+      String(errorOf(readme).message ?? '').includes('the mirage hf_hub fake serves'),
+      JSON.stringify(errorOf(readme).message ?? null),
+    )
 
     // ---- stat tells four things apart, which is why upstream recommends it
     // for "an uncertain target type". A repository is `repo` and not `dir`,
