@@ -233,11 +233,18 @@ async def execute_line(
                 # run (provision) returned above and never fetches. A
                 # SecretsError raises through to the generic fold
                 # below: the line exits 1 and never runs.
-                await fill_env(
-                    effective_session,
-                    fill_names(effective_session, [ast],
-                               whole=True,
-                               cli_env_names=frozenset()))
+                whole_names = fill_names(effective_session, [ast],
+                                         whole=True,
+                                         cli_env_names=frozenset())
+                # Names first, and the declarations only if there are
+                # any: both arguments would otherwise be evaluated, so
+                # a session with nothing pending (a profile hiding
+                # every managed name) still read a bootstrap source.
+                # The TypeScript twin shares one helper with the
+                # per-command path and skipped this by construction.
+                if whole_names:
+                    await fill_env(effective_session, whole_names, await
+                                   ws._secret_sources())
             io = await run_whole_line(
                 line_runtime, command, stdin, effective_session,
                 ws._registry.mounts(), ws._registry.policies,
@@ -300,7 +307,18 @@ async def execute_line(
                 # names only, so every pass fetches names the last one
                 # could not see and the loop settles.
                 while names:
-                    await fill_env(effective_session, names)
+                    # Built here, not above the plan: the declarations
+                    # are read only once an admitted node actually
+                    # wants a value, so a line the per-command gate
+                    # refuses never reaches a bootstrap source either.
+                    # An unknown source name already fails at
+                    # construction; what is left for this to discover
+                    # is an unreadable dotenv or a config the source
+                    # refuses, which is the same treatment an
+                    # unreachable store gets. Memoized, so the loop's
+                    # later passes cost one await.
+                    sources = await ws._secret_sources()
+                    await fill_env(effective_session, names, sources)
                     names = plan_names(nodes)
         io, _ = await run_command_tree(
             ws.dispatch,

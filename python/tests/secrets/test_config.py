@@ -17,7 +17,7 @@ from pydantic import SecretStr, ValidationError
 
 from mirage.accessor.s3 import S3Config
 from mirage.secrets.config import (AWSAuth, AWSSMConfig, DotenvConfig,
-                                   EnvConfig, EnvVar)
+                                   EnvConfig, EnvVar, SecretRef, SourceBlock)
 
 AUTH_KWARGS = {
     "region": "us-east-1",
@@ -138,3 +138,104 @@ def test_entry_is_frozen():
     entry = EnvVar(value="x")
     with pytest.raises(ValidationError):
         entry.value = "y"  # type: ignore[misc]
+
+
+def test_a_source_block_takes_a_type_and_a_config():
+    block = SourceBlock.model_validate({
+        "source": "aws-sm",
+        "config": {
+            "region": "us-east-2"
+        }
+    })
+    assert block.source == "aws-sm"
+    assert block.config == {"region": "us-east-2"}
+
+
+def test_a_config_value_carrying_from_becomes_a_pointer():
+    block = SourceBlock.model_validate({
+        "source": "aws-sm",
+        "config": {
+            "aws_access_key_id": {
+                "from": "env",
+                "key": "KEY_ID"
+            }
+        },
+    })
+    ref = block.config["aws_access_key_id"]
+    assert isinstance(ref, SecretRef)
+    assert (ref.provider, ref.ref, ref.key) == ("env", "", "KEY_ID")
+
+
+def test_a_config_value_without_from_stays_a_literal():
+    block = SourceBlock.model_validate({
+        "source": "aws-sm",
+        "config": {
+            "tags": {
+                "team": "infra"
+            }
+        },
+    })
+    assert block.config["tags"] == {"team": "infra"}
+
+
+def test_a_config_defaults_to_empty():
+    assert SourceBlock(source="env").config == {}
+
+
+@pytest.mark.parametrize("source", ["1password", "aws-sm", "auth0"])
+def test_only_a_bootstrap_source_can_back_a_config_value(source):
+    with pytest.raises(ValidationError, match="needs no config of its own"):
+        SourceBlock.model_validate({
+            "source": "aws-sm",
+            "config": {
+                "region": {
+                    "from": source,
+                    "key": "r"
+                }
+            },
+        })
+
+
+@pytest.mark.parametrize("source", ["env", "dotenv"])
+def test_both_bootstrap_sources_are_accepted(source):
+    block = SourceBlock.model_validate({
+        "source": "aws-sm",
+        "config": {
+            "region": {
+                "from": source,
+                "key": "r"
+            }
+        },
+    })
+    assert block.config["region"].provider == source
+
+
+def test_a_pointer_refuses_unknown_keys():
+    with pytest.raises(ValidationError):
+        SourceBlock.model_validate({
+            "source": "aws-sm",
+            "config": {
+                "region": {
+                    "from": "env",
+                    "key": "r",
+                    "sticky": True
+                }
+            },
+        })
+
+
+def test_a_source_block_refuses_unknown_keys():
+    with pytest.raises(ValidationError):
+        SourceBlock.model_validate({"source": "env", "account": "x"})
+
+
+def test_a_source_config_keeps_a_dunder_key():
+    """Free in python; the TypeScript twin had to drop `z.record`,
+    which builds by keyed assignment and loses `__proto__` outright."""
+    block = SourceBlock.model_validate({
+        "source": "demo",
+        "config": {
+            "__proto__": "kept"
+        },
+    })
+    assert block.config == {"__proto__": "kept"}

@@ -20,7 +20,7 @@ import type { JobConsole } from '../../shell/console/index.ts'
 import type { ObserverStore } from '../../observe/store.ts'
 import type { OpsRegistry } from '../../ops/registry.ts'
 import type { Resource } from '../../resource/base.ts'
-import type { EnvEntries } from '../../secrets/config.ts'
+import type { EnvEntries, SourceEntries } from '../../secrets/config.ts'
 import type { ConsoleFactory } from '../../shell/job_table/index.ts'
 import type { ShellParser } from '../../shell/parse/index.ts'
 import type { Limit, ConsistencyPolicy, DriftPolicy, MountMode } from '../../types.ts'
@@ -160,6 +160,13 @@ export interface WorkspaceOptions {
    * boundary and live only on session vars.
    */
   env?: EnvEntries
+  /**
+   * The source table: one map, instance name -> declaration, spelled
+   * the way `mounts:` is. A managed env entry's `from` names an
+   * instance here, or a source directly when the deployment has one
+   * account of it and nothing to configure.
+   */
+  secrets?: SourceEntries
 }
 
 export class ExecuteResult {

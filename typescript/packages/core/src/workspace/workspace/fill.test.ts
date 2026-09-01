@@ -21,7 +21,7 @@ import { RAMResource } from '../../resource/ram/ram.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import { VFSRuntime } from '../../runtime/table.ts'
 import { registerSecrets } from '../../secrets/registry.ts'
-import type { EnvEntries } from '../../secrets/config.ts'
+import type { EnvEntries, SourceEntries } from '../../secrets/config.ts'
 import type { ResolvedSecret } from '../../secrets/types.ts'
 import { VarAttr } from '../../shell/variable.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
@@ -80,6 +80,7 @@ async function makeWs(
   env: EnvEntries | undefined,
   policies?: Policy[],
   onAsk?: AskHandler,
+  secrets?: SourceEntries,
 ): Promise<Workspace> {
   const parser = await getTestParser()
   return new Workspace(
@@ -90,6 +91,7 @@ async function makeWs(
       ...(env !== undefined ? { env } : {}),
       ...(policies !== undefined ? { policies } : {}),
       ...(onAsk !== undefined ? { onAsk } : {}),
+      ...(secrets !== undefined ? { secrets } : {}),
     },
   )
 }
@@ -1539,5 +1541,256 @@ describe('guestBound', () => {
     const decision = { bindings: { echo: guest }, fallback: null } as never
     expect(guestBound([node], decision, {})).toBe(true)
     expect(guestBound([node], null, { echo: null })).toBe(false)
+  })
+})
+
+const AccountConfig = z.strictObject({
+  account: z.string().default('default'),
+  token: z.string().optional(),
+})
+type AccountConfig = z.infer<typeof AccountConfig>
+
+function accountSource(): (config: AccountConfig, ref: string) => Promise<ResolvedSecret> {
+  return (config, ref) =>
+    Promise.resolve({
+      fields: { credential: `${config.account}:${ref}:${config.token ?? 'none'}` },
+    })
+}
+
+describe('declared source instances', () => {
+  it('carries an instance config to the fetch', async () => {
+    registerSecrets('acct-one', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      { prod: { source: 'acct-one', config: { account: 'a1' } } },
+    )
+    try {
+      expect(stdoutStr(await ws.execute('echo "$TOKEN"'))).toBe('a1:r:none\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('keeps two instances of one source apart', async () => {
+    registerSecrets('acct-two', AccountConfig, accountSource())
+    const ws = await makeWs(
+      {
+        A: { from: 'prod', ref: 'r', key: 'credential' },
+        B: { from: 'test', ref: 'r', key: 'credential' },
+      },
+      undefined,
+      undefined,
+      {
+        prod: { source: 'acct-two', config: { account: 'a1' } },
+        test: { source: 'acct-two', config: { account: 'a2' } },
+      },
+    )
+    try {
+      expect(stdoutStr(await ws.execute('echo "$A"; echo "$B"'))).toBe('a1:r:none\na2:r:none\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('reads an instance config from its bootstrap source', async () => {
+    registerSecrets('acct-boot', AccountConfig, accountSource())
+    registerSecrets('env', z.strictObject({}), () =>
+      Promise.resolve({ fields: { FILL_PROBE_TOKEN: 's3cr3t' } }),
+    )
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      {
+        prod: {
+          source: 'acct-boot',
+          config: { token: { from: 'env', key: 'FILL_PROBE_TOKEN' } },
+        },
+      },
+    )
+    try {
+      expect(stdoutStr(await ws.execute('echo "$TOKEN"'))).toBe('default:r:s3cr3t\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('leaves a bare source name on ambient defaults', async () => {
+    registerSecrets('acct-bare', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'acct-bare', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      { prod: { source: 'acct-bare', config: { account: 'a1' } } },
+    )
+    try {
+      expect(stdoutStr(await ws.execute('echo "$TOKEN"'))).toBe('default:r:none\n')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('refuses a non-mapping secrets block', async () => {
+    // An untyped REST override can hand over an array, and
+    // Object.entries on one yields nothing -- the declarations would
+    // vanish silently and every restored pointer would read as an
+    // unknown source.
+    await expect(makeWs({}, undefined, undefined, [] as never)).rejects.toThrowError(
+      /must be a mapping/,
+    )
+  })
+
+  it('fails at construction for an instance naming an unknown source', async () => {
+    await expect(
+      makeWs({}, undefined, undefined, { prod: { source: 'nope' } }),
+    ).rejects.toThrowError(/unknown secrets source/)
+  })
+
+  it('never resolves the block for a denied line', async () => {
+    // The managed source was already out of reach for a refused line;
+    // so is the bootstrap source the declarations themselves read.
+    const calls: string[] = []
+    registerSecrets('env', FakeConfig, (_config: unknown, ref: string) => {
+      calls.push(ref)
+      return Promise.resolve({ fields: { TOKEN: 't' } })
+    })
+    registerSecrets('acct-denied', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      [new DenyNamed('printenv')],
+      undefined,
+      { prod: { source: 'acct-denied', config: { token: { from: 'env', key: 'TOKEN' } } } },
+    )
+    try {
+      const denied = await ws.execute('printenv TOKEN')
+      expect(denied.exitCode).toBe(126)
+      expect(calls).toEqual([])
+      expect(stdoutStr(await ws.execute('echo "$TOKEN"'))).toBe('default:r:t\n')
+      expect(calls).toEqual([''])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('redacts like env when an instance aliases it', async () => {
+    // The summary is told the source behind the instance: an instance
+    // name is the deployment's word, and `{prod: {source: env}}` must
+    // hide the host's variable names however few of them there are.
+    registerSecrets('env', FakeConfig, () => Promise.resolve({ fields: { HOME: '/root' } }))
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: '', key: 'NOPE' } },
+      undefined,
+      undefined,
+      {
+        prod: { source: 'env' },
+      },
+    )
+    try {
+      const io = await ws.execute('echo "$TOKEN"')
+      expect(io.exitCode).toBe(1)
+      const message = stderrStr(io)
+      expect(message).toContain('1 fields')
+      expect(message).not.toContain('HOME')
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('resolves the block once for concurrent first lines', async () => {
+    // The memo is written after an await, so caching only the result
+    // lets both sessions read every bootstrap source, and a rotation
+    // between the two reads leaves the loser's config on one line.
+    const calls: string[] = []
+    registerSecrets('env', FakeConfig, async (_config: unknown, ref: string) => {
+      calls.push(ref)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return { fields: { TOKEN: 't' } }
+    })
+    registerSecrets('acct-race', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      {
+        prod: { source: 'acct-race', config: { token: { from: 'env', key: 'TOKEN' } } },
+      },
+    )
+    ws.createSession('a')
+    ws.createSession('b')
+    try {
+      const [first, second] = await Promise.all([
+        ws.execute('echo "$TOKEN"', { sessionId: 'a' }),
+        ws.execute('echo "$TOKEN"', { sessionId: 'b' }),
+      ])
+      expect(stdoutStr(first)).toBe('default:r:t\n')
+      expect(stdoutStr(second)).toBe('default:r:t\n')
+      expect(calls).toEqual([''])
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('a copy keeps the declared instances', async () => {
+    registerSecrets('acct-copy', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      {
+        prod: { source: 'acct-copy', config: { account: 'a1' } },
+      },
+    )
+    try {
+      const copy = await ws.copy()
+      try {
+        expect(stdoutStr(await copy.execute('echo "$TOKEN"'))).toBe('a1:r:none\n')
+      } finally {
+        await copy.close()
+      }
+    } finally {
+      await ws.close()
+    }
+  })
+
+  it('validates a pointer named after a prototype member', async () => {
+    await expect(
+      makeWs({ TOKEN: { from: 'constructor', ref: '', key: 'credential' } }),
+    ).rejects.toThrowError(/unknown secrets source/)
+  })
+
+  it('needs no source of the instance name', async () => {
+    registerSecrets('acct-named', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      { prod: { source: 'acct-named' } },
+    )
+    await ws.close()
+  })
+
+  it('fails the lines that read a bad instance config', async () => {
+    // Only those lines: the declarations are read when an admitted
+    // node wants a value, so a line naming no secret runs and one the
+    // per-command gate refuses never reaches a bootstrap source. An
+    // unknown source name still fails at construction; what is left
+    // for resolution to find is a config the source refuses.
+    registerSecrets('acct-bad', AccountConfig, accountSource())
+    const ws = await makeWs(
+      { TOKEN: { from: 'prod', ref: 'r', key: 'credential' } },
+      undefined,
+      undefined,
+      { prod: { source: 'acct-bad', config: { nonesuch: 'x' } } },
+    )
+    try {
+      expect((await ws.execute('echo hi')).exitCode).toBe(0)
+      const out = await ws.execute('echo "$TOKEN"')
+      expect(out.exitCode).toBe(1)
+      expect(stderrStr(out)).toContain('secrets.prod')
+    } finally {
+      await ws.close()
+    }
   })
 })

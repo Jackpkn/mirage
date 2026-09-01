@@ -1122,3 +1122,73 @@ describe('env block', () => {
     expect(() => loadWorkspaceConfig({ ...base, env: 'nope' })).toThrow(/must be a mapping/)
   })
 })
+
+describe('the secrets block', () => {
+  it('declares instances and keeps their config keys verbatim', () => {
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/': { resource: 'ram' } },
+      secrets: {
+        sm: {
+          source: 'aws-sm',
+          config: { region: 'us-east-2', aws_access_key_id: { from: 'env', key: 'KEY_ID' } },
+        },
+      },
+    })
+    expect(cfg.secrets).toEqual({
+      sm: {
+        source: 'aws-sm',
+        config: { region: 'us-east-2', aws_access_key_id: { from: 'env', key: 'KEY_ID' } },
+      },
+    })
+  })
+
+  it('is absent by default', async () => {
+    const cfg = loadWorkspaceConfig({ mounts: { '/': { resource: 'ram' } } })
+    expect(cfg.secrets).toBeUndefined()
+    const args = await configToWorkspaceArgs(cfg)
+    expect('secrets' in args.options).toBe(false)
+  })
+
+  it('passes the block through to the workspace options', async () => {
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/': { resource: 'ram' } },
+      secrets: { sm: { source: 'aws-sm', config: { region: 'us-east-2' } } },
+    })
+    const args = await configToWorkspaceArgs(cfg)
+    expect(args.options.secrets).toEqual({
+      sm: { source: 'aws-sm', config: { region: 'us-east-2' } },
+    })
+  })
+
+  it('surfaces refusals as config errors naming the instance', () => {
+    const base = { mounts: { '/': { resource: 'ram' } } }
+    expect(() =>
+      loadWorkspaceConfig({
+        ...base,
+        secrets: { sm: { source: 'aws-sm', config: { region: { from: 'aws-sm', key: 'r' } } } },
+      }),
+    ).toThrow(/secrets\.sm.*needs no config of its own/s)
+    expect(() => loadWorkspaceConfig({ ...base, secrets: { sm: { kind: 'aws-sm' } } })).toThrow(
+      /secrets\.sm/,
+    )
+    expect(() => loadWorkspaceConfig({ ...base, secrets: { sm: 5 } })).toThrow(
+      /secrets\.sm.*must be a mapping/,
+    )
+    expect(() => loadWorkspaceConfig({ ...base, secrets: 'nope' })).toThrow(/must be a mapping/)
+  })
+})
+
+describe('config interpolation', () => {
+  it('keeps a __proto__ key through the walk', () => {
+    // The copy walks the whole config, so keyed assignment would drop
+    // a `__proto__` source instance or config field before anything
+    // downstream saw it.
+    const cfg = Object.fromEntries([
+      ['__proto__', 'kept'],
+      ['plain', 'v'],
+    ])
+    const out = interpolateEnv(cfg, {})
+    expect(Object.hasOwn(out, '__proto__')).toBe(true)
+    expect((out as Record<string, unknown>).__proto__).toBe('kept')
+  })
+})

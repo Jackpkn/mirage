@@ -17,7 +17,9 @@ import type { Runtime } from '../../runtime/base.ts'
 import type { RouteDecision } from '../../runtime/routing/index.ts'
 import { VFSRuntime } from '../../runtime/table.ts'
 import { SecretsError } from '../../secrets/errors.ts'
+import { fieldSummary } from '../../secrets/summary.ts'
 import { fetchSecret } from '../../secrets/registry.ts'
+import type { ResolvedSource } from '../../secrets/types.ts'
 import { SHOPT_DEFAULTS } from '../../shell/constants.ts'
 import {
   arithReads,
@@ -621,8 +623,16 @@ export function fillNames(
  * stderr is the agent's to read). The executor folds it into the
  * line's result (exit 1), so a dead source fails exactly the commands
  * that need it.
+ *
+ * `sources` is the workspace's declared instances. A pointer naming
+ * one fetches through its configured source; a pointer naming none
+ * falls back to the source of that name, built from ambient defaults.
  */
-export async function fillEnv(session: Session, names: ReadonlySet<string>): Promise<void> {
+export async function fillEnv(
+  session: Session,
+  names: ReadonlySet<string>,
+  sources?: Readonly<Record<string, ResolvedSource>>,
+): Promise<void> {
   if (names.size === 0) return
   const pending = pendingOf(session)
   interface Member {
@@ -646,9 +656,15 @@ export async function fillEnv(session: Session, names: ReadonlySet<string>): Pro
   }
   for (const { source, ref, members } of groups.values()) {
     const listed = members.map((m) => m.name).join(', ')
+    // A declared instance is named by the deployment, so the summary
+    // is told the source behind it: `{prod: {source: env}}` must
+    // redact like `env`, not like an unknown name.
+    const declared =
+      sources !== undefined && Object.hasOwn(sources, source) ? sources[source] : undefined
+    const provider = declared?.source ?? source
     let secret
     try {
-      secret = await fetchSecret(source, ref)
+      secret = await fetchSecret(source, ref, sources)
     } catch (caught) {
       console.warn(`secret fetch for ${listed} from ${source} failed: ${String(caught)}`)
       throw new SecretsError(`${listed}: cannot fetch from ${source}`, { cause: caught })
@@ -656,8 +672,10 @@ export async function fillEnv(session: Session, names: ReadonlySet<string>): Pro
     for (const { name, key, record } of members) {
       const value = Object.hasOwn(secret.fields, key) ? secret.fields[key] : undefined
       if (value === undefined) {
-        const had = Object.keys(secret.fields).sort(compareCodePoints).join(', ')
-        throw new SecretsError(`${name}: wanted field '${key}', the ${source} secret has {${had}}`)
+        throw new SecretsError(
+          `${name}: wanted field '${key}', the ${source} secret has ` +
+            fieldSummary(secret.fields, provider),
+        )
       }
       setSessionEntry(session.vars, name, withValue(record, value))
     }

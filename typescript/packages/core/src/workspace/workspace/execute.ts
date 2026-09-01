@@ -45,6 +45,7 @@ import type { SessionManager } from '../session/manager.ts'
 import type { Session } from '../session/session.ts'
 import type { ExecutionNode } from '../types.ts'
 import { failureResult, isControlFlowError } from './failure.ts'
+import type { ResolvedSource } from '../../secrets/types.ts'
 import { cliEnvNames, fillEnv, fillNames, guestBound, lineNodes } from './fill.ts'
 import { admitLine } from '../node/admission.ts'
 import { runWholeLine } from './line.ts'
@@ -76,6 +77,7 @@ export interface ExecuteEnv {
   workspaceId: string
   runtimes: Runtimes
   router: Router
+  secretSources(): Promise<Readonly<Record<string, ResolvedSource>>>
   registerCloser(fn: () => Promise<void>): void
   ensureOpen(resource: Resource): Promise<void>
   invalidateAllAfterRemote(): Promise<void>
@@ -382,7 +384,16 @@ async function runParsedLine(
       // fillNames returns pending names only, so every pass fetches
       // names the last one could not see and the loop settles.
       while (names.size > 0) {
-        await fillEnv(effectiveSession, names)
+        // Built here, not above the plan: the declarations are read
+        // only once an admitted node actually wants a value, so a line
+        // the per-command gate refuses never reaches a bootstrap
+        // source either. An unknown source name already fails at
+        // construction; what is left for this to discover is an
+        // unreadable dotenv or a config the source refuses, which is
+        // the same treatment an unreachable store gets. Memoized, so
+        // the loop's later passes cost one await.
+        const sources = await env.secretSources()
+        await fillEnv(effectiveSession, names, sources)
         names = fillNames(effectiveSession, planNodes, planWhole, planCli, writesGated)
       }
       return null

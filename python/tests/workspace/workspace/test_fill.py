@@ -12,12 +12,13 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import asyncio
 import dataclasses
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 from mirage import Action, CommandContext, Deny, MountMode, Policy, Workspace
 from mirage.commands.cli.types import CLISpec
@@ -27,6 +28,9 @@ from mirage.policy import Ask
 from mirage.policy.match import Outcome
 from mirage.policy.types import Decision, Scope
 from mirage.resource.ram import RAMResource
+from mirage.runtime.base import Runtime
+from mirage.runtime.mixin import LineExecutorMixin
+from mirage.runtime.types import RunResult
 from mirage.secrets import registry
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import register_secrets
@@ -34,6 +38,7 @@ from mirage.secrets.types import ResolvedSecret
 from mirage.shell.parse import parse
 from mirage.shell.variable import ManagedRef, ShellVar, VarAttr
 from mirage.types import HiddenVars
+from mirage.workspace.snapshot.state import to_state_dict
 
 FetchFn = Callable[[Any, str], Coroutine[Any, Any, ResolvedSecret]]
 
@@ -1633,5 +1638,468 @@ async def test_session_write_policy_disables_masking():
         io = await ws.execute("TOKEN=local; printenv TOKEN")
         assert (await io.stdout_str()) == "local\n"
         assert calls == ["r"]
+    finally:
+        await ws.close()
+
+
+class AccountConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    account: str = "default"
+    token: SecretStr | None = None
+
+
+def account_source() -> FetchFn:
+
+    async def fetch(config: AccountConfig, ref: str) -> ResolvedSecret:
+        seen = config.token.get_secret_value() if config.token else "none"
+        return ResolvedSecret(
+            fields={"credential": f"{config.account}:{ref}:{seen}"})
+
+    return fetch
+
+
+@pytest.mark.asyncio
+async def test_a_declared_instance_carries_its_config_to_the_fetch():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={"prod": {
+                 "source": "acct",
+                 "config": {
+                     "account": "a1"
+                 }
+             }})
+    try:
+        out = await ws.execute('echo "$TOKEN"')
+        assert out.stdout == b"a1:r:none\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_two_instances_of_one_source_stay_apart():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws(
+        {
+            "A": {
+                "from": "prod",
+                "ref": "r",
+                "key": "credential"
+            },
+            "B": {
+                "from": "test",
+                "ref": "r",
+                "key": "credential"
+            },
+        },
+        secrets={
+            "prod": {
+                "source": "acct",
+                "config": {
+                    "account": "a1"
+                }
+            },
+            "test": {
+                "source": "acct",
+                "config": {
+                    "account": "a2"
+                }
+            },
+        })
+    try:
+        out = await ws.execute('echo "$A"; echo "$B"')
+        assert out.stdout == b"a1:r:none\na2:r:none\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_an_instance_config_reads_its_bootstrap_source(monkeypatch):
+    monkeypatch.setenv("FILL_PROBE_TOKEN", "s3cr3t")
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={
+                 "prod": {
+                     "source": "acct",
+                     "config": {
+                         "token": {
+                             "from": "env",
+                             "key": "FILL_PROBE_TOKEN"
+                         }
+                     },
+                 }
+             })
+    try:
+        out = await ws.execute('echo "$TOKEN"')
+        assert out.stdout == b"default:r:s3cr3t\n"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bare_source_name_still_uses_ambient_defaults():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "acct",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={"prod": {
+                 "source": "acct",
+                 "config": {
+                     "account": "a1"
+                 }
+             }})
+    try:
+        out = await ws.execute('echo "$TOKEN"')
+        assert out.stdout == b"default:r:none\n"
+    finally:
+        await ws.close()
+
+
+async def slow_bootstrap(calls: list[str]) -> FetchFn:
+
+    async def fetch(config: FakeConfig, ref: str) -> ResolvedSecret:
+        calls.append(ref)
+        await asyncio.sleep(0.01)
+        return ResolvedSecret(fields={"TOKEN": "t"})
+
+    return fetch
+
+
+class LineBox(Runtime, LineExecutorMixin):
+    name = "sandbox"
+    captures = ("*", )
+
+    async def run_line(self, line: str, stdin: bytes | None,
+                       env: dict[str, str], cwd: str) -> RunResult:
+        return RunResult(stdout=b"box", stderr=None, exit_code=0)
+
+
+@pytest.mark.asyncio
+async def test_a_whole_line_with_nothing_pending_resolves_nothing():
+    """A whole-line program may read any name, so the walk is skipped
+    -- but a session with nothing pending still has nothing to fetch,
+    and evaluating both arguments read a bootstrap source anyway."""
+    calls: list[str] = []
+    register_secrets("env", FakeConfig, await slow_bootstrap(calls))
+    register_secrets("acct-whole", AccountConfig, account_source())
+    ws = Workspace(
+        {"/ram": RAMResource()},
+        mode=MountMode.EXEC,
+        runtimes=[LineBox(), "vfs"],
+        secrets={
+            "prod": {
+                "source": "acct-whole",
+                "config": {
+                    "token": {
+                        "from": "env",
+                        "key": "TOKEN"
+                    }
+                },
+            }
+        },
+        env={"TOKEN": {
+            "from": "prod",
+            "ref": "r",
+            "key": "credential"
+        }})
+    try:
+        session = ws.get_session(ws.default_session_id)
+        session.hidden_vars = HiddenVars(names=("TOKEN", ))
+        io = await ws.execute("nvidia-smi -L")
+        assert io.exit_code == 0
+        assert calls == []
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_denied_line_never_resolves_the_block():
+    """The managed source was already out of reach for a refused line;
+    so is the bootstrap source the declarations themselves read."""
+    calls: list[str] = []
+    register_secrets("env", FakeConfig, await slow_bootstrap(calls))
+    register_secrets("acct-denied", AccountConfig, account_source())
+    ws = Workspace(
+        {"/": RAMResource()},
+        mode=MountMode.WRITE,
+        policies=[DenyNamed("printenv")],
+        secrets={
+            "prod": {
+                "source": "acct-denied",
+                "config": {
+                    "token": {
+                        "from": "env",
+                        "key": "TOKEN"
+                    }
+                },
+            }
+        },
+        env={"TOKEN": {
+            "from": "prod",
+            "ref": "r",
+            "key": "credential"
+        }})
+    try:
+        io = await ws.execute("printenv TOKEN")
+        assert io.exit_code == 126
+        assert calls == []
+        io = await ws.execute('echo "$TOKEN"')
+        assert (await io.stdout_str()) == "default:r:t\n"
+        assert calls == [""]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_waiter_leaves_the_shared_resolution_alone():
+    """The resolution task is shared, so a waiter whose own execute()
+    is cancelled must not take the other session's line down with it."""
+    calls: list[str] = []
+    register_secrets("env", FakeConfig, await slow_bootstrap(calls))
+    register_secrets("acct-cancel", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={
+                 "prod": {
+                     "source": "acct-cancel",
+                     "config": {
+                         "token": {
+                             "from": "env",
+                             "key": "TOKEN"
+                         }
+                     },
+                 }
+             })
+    ws.create_session("a")
+    ws.create_session("b")
+    try:
+        doomed = asyncio.create_task(
+            ws.execute('echo "$TOKEN"', session_id="a"))
+        survivor = asyncio.create_task(
+            ws.execute('echo "$TOKEN"', session_id="b"))
+        await asyncio.sleep(0)
+        doomed.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await doomed
+        result = await survivor
+        assert result.exit_code == 0
+        assert (await result.stdout_str()) == "default:r:t\n"
+        assert calls == [""]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_an_instance_aliasing_env_redacts_like_env():
+    """The summary is told the source behind the instance: an instance
+    name is the deployment's word, and `{prod: {source: env}}` must
+    hide the host's variable names however few of them there are."""
+    register_secrets("env", FakeConfig, small_env({"HOME": "/root"}))
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "",
+        "key": "NOPE"
+    }},
+             secrets={"prod": {
+                 "source": "env"
+             }})
+    try:
+        result = await ws.execute('echo "$TOKEN"')
+        assert result.exit_code == 1
+        message = await result.stderr_str()
+        assert "1 fields" in message
+        assert "HOME" not in message
+    finally:
+        await ws.close()
+
+
+def small_env(fields: dict[str, str]) -> FetchFn:
+
+    async def fetch(config: FakeConfig, ref: str) -> ResolvedSecret:
+        return ResolvedSecret(fields=dict(fields))
+
+    return fetch
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_lines_resolve_the_block_once():
+    """Two sessions filling at once must share one resolution: the memo
+    is written after an await, so caching only the result lets both
+    read every bootstrap source, and a rotation between the two reads
+    would leave the loser's config on one of the lines."""
+    calls: list[str] = []
+    register_secrets("env", FakeConfig, await slow_bootstrap(calls))
+    register_secrets("acct-race", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={
+                 "prod": {
+                     "source": "acct-race",
+                     "config": {
+                         "token": {
+                             "from": "env",
+                             "key": "TOKEN"
+                         }
+                     },
+                 }
+             })
+    ws.create_session("a")
+    ws.create_session("b")
+    try:
+        first, second = await asyncio.gather(
+            ws.execute('echo "$TOKEN"', session_id="a"),
+            ws.execute('echo "$TOKEN"', session_id="b"))
+        assert (await first.stdout_str()) == "default:r:t\n"
+        assert (await second.stdout_str()) == "default:r:t\n"
+        assert calls == [""]
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_copy_keeps_the_declared_instances():
+    """A snapshot never carries the `secrets:` block, but a copy is
+    same-process, so the declarations travel with it; without them the
+    restored pointer names an instance no source table knows."""
+    register_secrets("acct-copy", AccountConfig, account_source())
+    ws = _ws(
+        {"TOKEN": {
+            "from": "prod",
+            "ref": "r",
+            "key": "credential"
+        }},
+        secrets={"prod": {
+            "source": "acct-copy",
+            "config": {
+                "account": "a1"
+            }
+        }})
+    try:
+        copy = await ws.copy()
+        try:
+            result = await copy.execute('echo "$TOKEN"')
+            assert result.exit_code == 0
+            assert (await result.stdout_str()) == "a1:r:none\n"
+        finally:
+            await copy.close()
+    finally:
+        await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_from_state_takes_the_block_the_deployment_supplies():
+    register_secrets("acct-state", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={
+                 "prod": {
+                     "source": "acct-state",
+                     "config": {
+                         "account": "a1"
+                     }
+                 }
+             })
+    try:
+        state = await to_state_dict(ws)
+    finally:
+        await ws.close()
+    restored = await Workspace.from_state(state,
+                                          resources={"/": RAMResource()},
+                                          secrets={
+                                              "prod": {
+                                                  "source": "acct-state",
+                                                  "config": {
+                                                      "account": "a2"
+                                                  }
+                                              }
+                                          })
+    try:
+        result = await restored.execute('echo "$TOKEN"')
+        assert result.exit_code == 0
+        assert (await result.stdout_str()) == "a2:r:none\n"
+    finally:
+        await restored.close()
+
+
+@pytest.mark.asyncio
+async def test_a_non_mapping_secrets_block_is_refused():
+    """An untyped REST override can hand over a list, and `.items()`
+    on one yields nothing -- the declarations would vanish silently and
+    every restored pointer would read as an unknown source."""
+    with pytest.raises(SecretsError, match="must be a mapping"):
+        _ws({}, secrets=[])
+
+
+@pytest.mark.asyncio
+async def test_an_instance_naming_an_unknown_source_fails_at_construction():
+    with pytest.raises(SecretsError, match="unknown secrets source"):
+        _ws({}, secrets={"prod": {"source": "nope"}})
+
+
+@pytest.mark.asyncio
+async def test_a_pointer_named_after_a_prototype_member_is_unknown():
+    """Free in python; the TypeScript twin needs an own-property check,
+    since a plain object answers to `constructor` from its prototype."""
+    with pytest.raises(SecretsError, match="unknown secrets source"):
+        _ws({"TOKEN": {"from": "constructor", "ref": "", "key": "credential"}})
+
+
+@pytest.mark.asyncio
+async def test_a_pointer_naming_an_instance_needs_no_source_of_that_name():
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={"prod": {
+                 "source": "acct"
+             }})
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bad_instance_config_fails_the_lines_that_read_it():
+    """Only those lines: the declarations are read when an admitted
+    node wants a value, so a line naming no secret runs and one the
+    per-command gate refuses never reaches a bootstrap source. An
+    unknown source name still fails at construction; what is left for
+    resolution to find is a config the source refuses."""
+    register_secrets("acct", AccountConfig, account_source())
+    ws = _ws({"TOKEN": {
+        "from": "prod",
+        "ref": "r",
+        "key": "credential"
+    }},
+             secrets={"prod": {
+                 "source": "acct",
+                 "config": {
+                     "nonesuch": "x"
+                 }
+             }})
+    try:
+        assert (await ws.execute("echo hi")).exit_code == 0
+        out = await ws.execute('echo "$TOKEN"')
+        assert out.exit_code == 1
+        assert b"secrets.prod" in out.stderr
     finally:
         await ws.close()

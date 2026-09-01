@@ -12,6 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+from collections.abc import Mapping
 from importlib import import_module
 from typing import NamedTuple
 
@@ -19,7 +20,7 @@ from pydantic import BaseModel
 
 from mirage.secrets.constants import BUILTINS
 from mirage.secrets.errors import SecretsError
-from mirage.secrets.types import ResolvedSecret, SecretFetchFn
+from mirage.secrets.types import ResolvedSecret, ResolvedSource, SecretFetchFn
 
 
 class SourceEntry(NamedTuple):
@@ -87,21 +88,35 @@ def source_for(name: str) -> SourceEntry:
     return SourceEntry(config_model, getattr(module, attr))
 
 
-async def fetch_secret(source: str, ref: str) -> ResolvedSecret:
+async def fetch_secret(
+        source: str,
+        ref: str,
+        sources: Mapping[str, ResolvedSource] | None = None) -> ResolvedSecret:
     """Fetch one secret from a named source.
 
-    The whole call path: resolve the source, construct its config from
-    ambient defaults (per-source config blocks are a later PR), run its
+    The whole call path: resolve the source, take its config, run its
     fetch. Pure and module-level -- there is no resolver class, and no
     cache: fetched values live only on session vars.
 
+    ``source`` names a declared instance first and a source second, so
+    a deployment with one account of a platform can leave the
+    ``secrets:`` block out entirely and still spell ``from: aws-sm``.
+    An undeclared name builds its config from ambient defaults, which
+    is what every source did before the block existed.
+
     Args:
-        source (str): a managed env entry's ``from`` value.
+        source (str): a managed env entry's ``from`` value: an instance
+            name, or a source name for the ambient default.
         ref (str): the source's address for the secret.
+        sources (Mapping[str, ResolvedSource] | None): the workspace's
+            declared instances, already built.
 
     Raises:
         SecretsError: the source is unknown, its dependency is missing,
             or its fetch refused the ref.
     """
+    entry = sources.get(source) if sources else None
+    if entry is not None:
+        return await entry.fetch(entry.config, ref)
     config_model, fetch = source_for(source)
     return await fetch(config_model(), ref)

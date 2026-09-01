@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { EnvVarSchema } from './config.ts'
+import { EnvVarSchema, SourceBlockSchema } from './config.ts'
 
 describe('EnvVarSchema', () => {
   it('parses a literal entry with defaults', () => {
@@ -56,5 +56,75 @@ describe('EnvVarSchema', () => {
 
   it('rejects an unknown key', () => {
     expect(() => EnvVarSchema.parse({ value: 'v', bogus: 1 })).toThrowError()
+  })
+})
+
+describe('SourceBlockSchema', () => {
+  it('keeps a __proto__ config key as an own property', () => {
+    // Keyed assignment would run the prototype setter and the key
+    // would never reach the source's own model; python's dict passes
+    // it through like any other.
+    const block = SourceBlockSchema.parse({
+      source: 'demo',
+      config: Object.fromEntries([['__proto__', 'kept']]),
+    })
+    expect(Object.hasOwn(block.config, '__proto__')).toBe(true)
+    expect(block.config.__proto__).toBe('kept')
+  })
+
+  it('takes a type and a config', () => {
+    const block = SourceBlockSchema.parse({
+      source: 'aws-sm',
+      config: { region: 'us-east-2' },
+    })
+    expect(block.source).toBe('aws-sm')
+    expect(block.config).toEqual({ region: 'us-east-2' })
+  })
+
+  it('reads a config value carrying from as a pointer', () => {
+    const block = SourceBlockSchema.parse({
+      source: 'aws-sm',
+      config: { aws_access_key_id: { from: 'env', key: 'KEY_ID' } },
+    })
+    expect(block.config.aws_access_key_id).toEqual({ from: 'env', ref: '', key: 'KEY_ID' })
+  })
+
+  it('leaves a config value without from a literal', () => {
+    const block = SourceBlockSchema.parse({
+      source: 'aws-sm',
+      config: { tags: { team: 'infra' } },
+    })
+    expect(block.config.tags).toEqual({ team: 'infra' })
+  })
+
+  it('defaults the config to empty', () => {
+    expect(SourceBlockSchema.parse({ source: 'env' }).config).toEqual({})
+  })
+
+  it.each(['1password', 'aws-sm', 'auth0'])('refuses %s as a config source', (source) => {
+    expect(() =>
+      SourceBlockSchema.parse({ source: 'aws-sm', config: { region: { from: source, key: 'r' } } }),
+    ).toThrowError(/needs no config of its own/)
+  })
+
+  it.each(['env', 'dotenv'])('accepts %s as a config source', (source) => {
+    const block = SourceBlockSchema.parse({
+      source: 'aws-sm',
+      config: { region: { from: source, key: 'r' } },
+    })
+    expect((block.config.region as { from: string }).from).toBe(source)
+  })
+
+  it('refuses an unknown key on a pointer', () => {
+    expect(() =>
+      SourceBlockSchema.parse({
+        source: 'aws-sm',
+        config: { region: { from: 'env', key: 'r', sticky: true } },
+      }),
+    ).toThrowError()
+  })
+
+  it('refuses an unknown key on the block', () => {
+    expect(() => SourceBlockSchema.parse({ source: 'env', account: 'x' })).toThrowError()
   })
 })
