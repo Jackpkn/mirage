@@ -45,6 +45,7 @@ import { hfHubFake } from './fake.ts'
 import { hfHubRoutes } from './routes.ts'
 import {
   FS_INVALID,
+  FS_BUDGET,
   FS_IMAGE_ONLY,
   FS_IMAGE_TOO_LARGE,
   FS_NOT_A_FILE,
@@ -371,14 +372,55 @@ function entriesOf(reply: Reply): FsEntry[] {
   }))
 }
 
+/**
+ * A repository tree, WHOLE.
+ *
+ * The REST arm answers one page and puts the cursor in a `Link` header, the
+ * way the Hub's own API does. Reading only the first page made this fake
+ * quietly disagree with itself on any repository over DEFAULT_LIMIT files:
+ * `ls` showed a prefix and said nothing about the rest, `find` missed
+ * matches, and `stat` reported a file that exists as `missing` because the
+ * recursive tree it searched stopped before reaching it.
+ *
+ * Followed here rather than at each call site because every caller wants the
+ * same thing -- the tree -- and only one of them was even aware there were
+ * pages.
+ *
+ * There is no page cap. One was written, at 200, and it was the same bug a
+ * size larger: a repository past it would have been truncated in silence,
+ * which is the failure this function exists to end rather than to raise the
+ * threshold of. What a cap was reaching for is termination, and termination
+ * is guaranteed by the cursor instead -- a page whose cursor has already
+ * been seen cannot advance, and is the only way a well-formed loop fails to
+ * end. That state means the REST arm on the other side of `callRoute` is
+ * broken, which is this repo's own bug and not a caller's, so it throws
+ * where it is discovered rather than returning a shorter tree that reads
+ * exactly like a complete one.
+ */
 async function treeAt(at: Dispatch, where: Located, recursive: boolean): Promise<Reply> {
   const suffix = where.path === '' ? '' : `/${where.path}`
-  return callRoute(
-    at,
-    'GET',
-    `/api/${where.kind}/${where.id}/tree/main${suffix}`,
-    recursive ? { recursive: 'true' } : {},
-  )
+  const path = `/api/${where.kind}/${where.id}/tree/main${suffix}`
+  const query: Record<string, string> = recursive ? { recursive: 'true' } : {}
+  const first = await callRoute(at, 'GET', path, query)
+  if (!ok(first) || !Array.isArray(first.body)) return first
+  const all = [...first.body]
+  const seen = new Set<string>()
+  let link = (first.headers ?? {}).Link
+  while (link !== undefined) {
+    const cursor = /[?&]cursor=([^&>]+)/.exec(link)?.[1]
+    if (cursor === undefined) break
+    if (seen.has(cursor)) {
+      throw new Error(
+        `mock hf mcp: ${path} handed back cursor ${cursor} twice; the tree route is not advancing`,
+      )
+    }
+    seen.add(cursor)
+    const next = await callRoute(at, 'GET', path, { ...query, cursor: decodeURIComponent(cursor) })
+    if (!ok(next) || !Array.isArray(next.body)) break
+    all.push(...next.body)
+    link = (next.headers ?? {}).Link
+  }
+  return { ...first, body: all, headers: { ...(first.headers ?? {}) } }
 }
 
 // One operation answers twice over: the markdown a reader sees, and the
@@ -562,6 +604,21 @@ function binaryName(path: string): boolean {
 // live server rather than assumed from the other.
 const ATTACH_MAX_BYTES = 8 * 1024 * 1024
 
+// And the same number again, as a budget shared by every attachment in ONE
+// call. The captured schema allows 30 operations, so without this a valid
+// request could ask for 30 x 8MiB and be answered with a quarter of a
+// gigabyte of base64. Upstream documents the cap at hf://README.md and
+// answers HF_FS_ATTACHMENT_BUDGET_EXCEEDED for each attachment it drops.
+//
+// Admission here is in the order the operations were written. Upstream's is
+// not: probed with four images it dropped the FIRST and returned the other
+// three, which is what "attachment admission is best-effort" means when the
+// fetches run in parallel and whichever lands first reserves. Its own advice
+// -- "Split attachments across separate calls when deterministic inclusion is
+// required" -- is an admission that the choice is not promised, so this fake
+// makes the deterministic choice rather than simulating a race.
+const ATTACH_BATCH_BYTES = 8 * 1024 * 1024
+
 // Upstream matches these case-insensitively and by extension alone: "bytes
 // are opaque, are never inspected or altered before MCP encoding".
 const IMAGE_MIME: Record<string, string> = {
@@ -610,7 +667,11 @@ function attachArgs(rest: string[]): number | Refusal {
   return bound
 }
 
-async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> {
+interface Budget {
+  left: number
+}
+
+async function fsOne(at: Dispatch, cmd: string, args: string[], budget: Budget): Promise<FsOut> {
   if (cmd === 'search') {
     return fsFail(
       FS_INVALID,
@@ -750,6 +811,18 @@ async function fsOne(at: Dispatch, cmd: string, args: string[]): Promise<FsOut> 
           `complete-file limit is ${String(bound)} bytes.`,
       )
     }
+    // Checked against what the BATCH has left, and checked here rather than
+    // after the loop so an over-budget image is released instead of retained:
+    // the cost this cap exists to prevent is the response, and the buffer is
+    // most of it.
+    if (whole.length > budget.left) {
+      return fsFail(
+        FS_BUDGET,
+        `Attachment omitted because the batch exceeds the cumulative response limit of ` +
+          `${String(ATTACH_BATCH_BYTES)} bytes.`,
+      )
+    }
+    budget.left -= whole.length
     return {
       text: attachMarkdown(uri, where.path, mime, whole.length),
       result: { op: 'attach', uri, path: where.path, mime_type: mime, bytes: whole.length },
@@ -851,8 +924,9 @@ async function fsAnswer(at: Dispatch, args: Record<string, JsonValue>): Promise<
   const texts: string[] = []
   const results: JsonValue[] = []
   const images: { mimeType: string; data: string }[] = []
+  const budget: Budget = { left: ATTACH_BATCH_BYTES }
   for (const [i, one] of ops.entries()) {
-    const out = await fsOne(at, String(one.cmd ?? ''), strList(one.args))
+    const out = await fsOne(at, String(one.cmd ?? ''), strList(one.args), budget)
     texts.push(out.text)
     if (out.image !== undefined) images.push(out.image)
     if (out.error === undefined) {

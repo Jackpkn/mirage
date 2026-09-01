@@ -364,6 +364,7 @@ export const FS_NOT_A_FILE = 'HF_FS_NOT_A_FILE'
 export const FS_IMAGE_ONLY = 'HF_FS_IMAGE_ONLY'
 export const FS_UNSUPPORTED_MEDIA = 'HF_FS_UNSUPPORTED_MEDIA'
 export const FS_IMAGE_TOO_LARGE = 'HF_FS_IMAGE_TOO_LARGE'
+export const FS_BUDGET = 'HF_FS_ATTACHMENT_BUDGET_EXCEEDED'
 
 const RECOVERY: Record<string, string> = {
   [FS_NOT_FOUND]:
@@ -379,6 +380,10 @@ const RECOVERY: Record<string, string> = {
     'Attach supports only files ending in .jpg, .jpeg, .png, or .webp. Use stat for metadata.',
   [FS_IMAGE_TOO_LARGE]:
     'Use stat for metadata. Attach cannot truncate images or exceed its configured complete-file limit.',
+  // Upstream's own sentence, curly apostrophe included -- it is bytes the
+  // model is charged for, so it is copied rather than tidied.
+  [FS_BUDGET]:
+    'This attachment was omitted because other attachments already reserved the call\u2019s shared 8 MiB payload budget. Retry it in a separate hf_fs call.',
 }
 
 // The live server names a DIFFERENT command in the error object when one
@@ -397,6 +402,9 @@ const SUGGESTED: Record<string, string> = {
   // uncertain target -- it is a known one, reached with the wrong command,
   // and upstream names the right command instead of the diagnostic one.
   [FS_IMAGE_ONLY]: 'cat',
+  // `attach` again: the operation was not wrong, only unlucky in its batch,
+  // so the thing to do is the same thing in a call of its own.
+  [FS_BUDGET]: 'attach',
 }
 
 export function fsSuggested(code: string): string | undefined {

@@ -758,6 +758,134 @@ async function mcpChecks(): Promise<void> {
       JSON.stringify(errorOf(readme).message ?? null),
     )
 
+    // ---- a repository past one page
+    //
+    // The REST arm pages at DEFAULT_LIMIT and puts the cursor in a `Link`
+    // header. Reading only page one made this fake disagree with itself on
+    // any repository bigger than that: `ls` showed a prefix in silence, and
+    // `stat` called a file that exists `missing`, because the recursive tree
+    // it searched stopped before reaching it. 60 files is one page and a
+    // remainder.
+    const PAGED = 60
+    await fetch(`${mcp.rest.endpoint}/api/repos/create`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEFAULT_TENANT}`,
+        'Content-Type': 'application/json',
+      },
+      // The namespace is the repo's OWNER, which the create route takes from
+      // `organization` and otherwise from the bearer -- and the bearer here
+      // is the default tenant, not `integ`.
+      body: JSON.stringify({ name: 'paged-model', type: 'model', organization: 'integ' }),
+    })
+    const pushedMany = await fetch(
+      `${mcp.rest.endpoint}/api/models/integ/paged-model/commit/main`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${DEFAULT_TENANT}`,
+          'Content-Type': 'application/x-ndjson',
+        },
+        body: [
+          JSON.stringify({ key: 'header', value: { summary: 'more than one page' } }),
+          ...Array.from({ length: PAGED }, (_unused, i) =>
+            JSON.stringify({
+              key: 'file',
+              value: { path: `f${String(i).padStart(3, '0')}.txt`, content: `row ${String(i)}\n` },
+            }),
+          ),
+        ].join('\n'),
+      },
+    )
+    check(
+      'a repository of 60 files is pushed',
+      pushedMany.status === 200,
+      String(pushedMany.status),
+    )
+    const lastFile = `f${String(PAGED - 1).padStart(3, '0')}.txt`
+    const paged = await call('hf_fs', ops({ cmd: 'ls', args: ['hf://models/integ/paged-model'] }))
+    const pagedRows = (
+      (
+        (((paged.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+          string,
+          JsonValue
+        >[]
+      )[0] ?? {}
+    ).result as Record<string, JsonValue>
+    check(
+      'ls returns every page, not the first',
+      ((pagedRows.entries ?? []) as JsonValue[]).length === PAGED,
+      String(((pagedRows.entries ?? []) as JsonValue[]).length),
+    )
+    const statLate = await text('hf_fs', {
+      operations: [{ cmd: 'stat', args: [`hf://models/integ/paged-model/${lastFile}`] }],
+    })
+    check(
+      'and stat finds a file past the first page',
+      statLate.includes('- Type: `file`') && statLate.includes('- Exists: yes'),
+      statLate.slice(0, 220),
+    )
+
+    // ---- the shared attachment budget
+    //
+    // 8MiB across ONE call, whatever the per-file bound allows. The captured
+    // schema permits 30 operations, so without this a valid request could ask
+    // for 30 x 8MiB. Two 5MiB images are one over.
+    const FIVE_MIB = 5 * 1024 * 1024
+    const bigPng = Buffer.concat([
+      Buffer.from(PNG_1X1, 'base64'),
+      Buffer.alloc(FIVE_MIB, 0),
+    ]).toString('base64')
+    const pushedBig = await fetch(`${mcp.rest.endpoint}/api/models/integ/card-model/commit/main`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEFAULT_TENANT}`,
+        'Content-Type': 'application/x-ndjson',
+      },
+      body: [
+        JSON.stringify({ key: 'header', value: { summary: 'two large images' } }),
+        JSON.stringify({
+          key: 'file',
+          value: { path: 'figures/big1.png', encoding: 'base64', content: bigPng },
+        }),
+        JSON.stringify({
+          key: 'file',
+          value: { path: 'figures/big2.png', encoding: 'base64', content: bigPng },
+        }),
+      ].join('\n'),
+    })
+    check('two 5MiB images are pushed', pushedBig.status === 200, String(pushedBig.status))
+    const twoBig = await call(
+      'hf_fs',
+      ops(
+        attach('hf://models/integ/card-model/figures/big1.png'),
+        attach('hf://models/integ/card-model/figures/big2.png'),
+      ),
+    )
+    const rowsOf = (out: Record<string, JsonValue>): Record<string, JsonValue>[] =>
+      (((out.structuredContent ?? {}) as Record<string, JsonValue>).results ?? []) as Record<
+        string,
+        JsonValue
+      >[]
+    eq('the first attachment is admitted', (rowsOf(twoBig)[0] ?? {}).status ?? null, 'success')
+    eq(
+      'and the second is dropped on the shared budget',
+      errorOf(twoBig, 1).code ?? null,
+      'HF_FS_ATTACHMENT_BUDGET_EXCEEDED',
+    )
+    eq(
+      'with upstream sentence',
+      errorOf(twoBig, 1).message ?? null,
+      'Attachment omitted because the batch exceeds the cumulative response limit of 8388608 bytes.',
+    )
+    eq('and told to retry it alone', errorOf(twoBig, 1).suggestedOperation ?? null, 'attach')
+    check(
+      'only the admitted image rides along',
+      ((twoBig.content ?? []) as Record<string, JsonValue>[]).filter((one) => one.type === 'image')
+        .length === 1,
+      JSON.stringify(((twoBig.content ?? []) as Record<string, JsonValue>[]).map((o) => o.type)),
+    )
+
     // ---- stat tells four things apart, which is why upstream recommends it
     // for "an uncertain target type". A repository is `repo` and not `dir`,
     // and a path that is not there is `missing` and not a directory -- the
