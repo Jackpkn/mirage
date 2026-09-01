@@ -21,17 +21,18 @@ import {
   runWithRecording,
   runWithRevisions,
   runWithMountPrefix,
+  startOp,
   withMountPrefix,
 } from './context.ts'
 
 describe('runWithRecording / record / runWithMountPrefix', () => {
   it('record outside recording scope is a no-op', () => {
-    record('read', '/a.txt', 's3', 100, 0)
+    record('read', '/a.txt', 's3', 100, startOp())
   })
 
   it('captures a single record within scope', async () => {
     const [, records] = await runWithRecording(async () => {
-      record('read', '/a.txt', 's3', 100, 0)
+      record('read', '/a.txt', 's3', 100, startOp())
     })
     expect(records).toHaveLength(1)
     expect(records[0]?.op).toBe('read')
@@ -40,16 +41,16 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
 
   it('records after scope ends are dropped', async () => {
     const [, records] = await runWithRecording(async () => {
-      record('read', '/a.txt', 's3', 100, 0)
+      record('read', '/a.txt', 's3', 100, startOp())
     })
-    record('read', '/b.txt', 's3', 200, 0)
+    record('read', '/b.txt', 's3', 200, startOp())
     expect(records).toHaveLength(1)
   })
 
   it('captures multiple records with correct sources', async () => {
     const [, records] = await runWithRecording(async () => {
-      record('read', '/a.txt', 's3', 100, 0)
-      record('write', '/b.txt', 'ram', 50, 0)
+      record('read', '/a.txt', 's3', 100, startOp())
+      record('write', '/b.txt', 'ram', 50, startOp())
     })
     expect(records).toHaveLength(2)
     expect(records[0]?.source).toBe('s3')
@@ -59,7 +60,7 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
   it('prepends virtual prefix when path lacks it', async () => {
     const [, records] = await runWithRecording(() =>
       runWithMountPrefix('/s3', async () => {
-        record('read', '/data/file.json', 's3', 100, 0)
+        record('read', '/data/file.json', 's3', 100, startOp())
       }),
     )
     expect(records[0]?.path).toBe('/s3/data/file.json')
@@ -67,7 +68,7 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
 
   it('leaves path unchanged when prefix is empty', async () => {
     const [, records] = await runWithRecording(async () => {
-      record('read', '/data/file.json', 's3', 100, 0)
+      record('read', '/data/file.json', 's3', 100, startOp())
     })
     expect(records[0]?.path).toBe('/data/file.json')
   })
@@ -75,7 +76,7 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
   it('does not double-apply prefix when path already has it', async () => {
     const [, records] = await runWithRecording(() =>
       runWithMountPrefix('/s3', async () => {
-        record('read', '/s3/data/file.json', 's3', 100, 0)
+        record('read', '/s3/data/file.json', 's3', 100, startOp())
       }),
     )
     expect(records[0]?.path).toBe('/s3/data/file.json')
@@ -86,7 +87,7 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
   it('prefixes a filename that merely shares the prefix leading text', async () => {
     const [, records] = await runWithRecording(() =>
       runWithMountPrefix('/s3', async () => {
-        record('read', '/s3-report.txt', 's3', 1, 0)
+        record('read', '/s3-report.txt', 's3', 1, startOp())
       }),
     )
     expect(records[0]?.path).toBe('/s3/s3-report.txt')
@@ -96,9 +97,9 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
     const [, records] = await runWithRecording(() =>
       runWithMountPrefix('/s3', async () => {
         await runWithMountPrefix('/db', async () => {
-          record('read', '/a.txt', 'postgres', 1, 0)
+          record('read', '/a.txt', 'postgres', 1, startOp())
         })
-        record('read', '/b.txt', 's3', 1, 0)
+        record('read', '/b.txt', 's3', 1, startOp())
       }),
     )
     expect(records.map((r) => r.path)).toEqual(['/db/a.txt', '/s3/b.txt'])
@@ -114,7 +115,7 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
       await runWithMountPrefix(prefix, async () => {
         gate[key] = true
         while (!gate[other]) await new Promise((r) => setTimeout(r, 0))
-        record('read', file, key, 1, 0)
+        record('read', file, key, 1, startOp())
       })
     }
     const [, records] = await runWithRecording(async () => {
@@ -128,7 +129,7 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
 
   it('withMountPrefix carries the prefix into a stream consumed after the scope', async () => {
     const lazy = async function* (): AsyncGenerator<Uint8Array> {
-      record('read', '/a.txt', 's3', 3, 0)
+      record('read', '/a.txt', 's3', 3, startOp())
       yield new Uint8Array([1, 2, 3])
     }
     const [, records] = await runWithRecording(async () => {
@@ -142,7 +143,7 @@ describe('runWithRecording / record / runWithMountPrefix', () => {
 describe('OpRecord: fingerprint + revision', () => {
   it('record() persists fingerprint and revision on the OpRecord', async () => {
     const [, records] = await runWithRecording(async () => {
-      record('read', '/a.txt', 's3', 100, performance.now(), {
+      record('read', '/a.txt', 's3', 100, startOp(), {
         fingerprint: 'abc',
         revision: 'v1',
       })
@@ -154,7 +155,7 @@ describe('OpRecord: fingerprint + revision', () => {
 
   it('record() defaults fingerprint and revision to null', async () => {
     const [, records] = await runWithRecording(async () => {
-      record('read', '/a.txt', 's3', 100, performance.now())
+      record('read', '/a.txt', 's3', 100, startOp())
     })
     expect(records[0]?.fingerprint).toBeNull()
     expect(records[0]?.revision).toBeNull()

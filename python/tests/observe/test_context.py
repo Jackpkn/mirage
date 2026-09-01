@@ -16,7 +16,7 @@ import pytest
 
 from mirage.observe.context import (RecordingScope, push_mount_prefix,
                                     push_revisions, record, record_stream,
-                                    reset_revisions, revision_for,
+                                    reset_revisions, revision_for, start_op,
                                     with_mount_prefix, with_revisions)
 
 
@@ -40,13 +40,13 @@ class ClosingIterator:
 
 
 def test_record_no_context():
-    record("read", "/a.txt", "s3", 100, 0)
+    record("read", "/a.txt", "s3", 100, start_op())
 
 
 def test_recording_scope_collects_records():
     scope = RecordingScope()
     records = scope.records
-    record("read", "/a.txt", "s3", 100, 0)
+    record("read", "/a.txt", "s3", 100, start_op())
     scope.close()
     assert len(records) == 1
     assert records[0].op == "read"
@@ -56,17 +56,17 @@ def test_recording_scope_collects_records():
 def test_record_after_stop_is_noop():
     scope = RecordingScope()
     records = scope.records
-    record("read", "/a.txt", "s3", 100, 0)
+    record("read", "/a.txt", "s3", 100, start_op())
     scope.close()
-    record("read", "/b.txt", "s3", 200, 0)
+    record("read", "/b.txt", "s3", 200, start_op())
     assert len(records) == 1
 
 
 def test_multiple_records():
     scope = RecordingScope()
     records = scope.records
-    record("read", "/a.txt", "s3", 100, 0)
-    record("write", "/b.txt", "ram", 50, 0)
+    record("read", "/a.txt", "s3", 100, start_op())
+    record("write", "/b.txt", "ram", 50, start_op())
     scope.close()
     assert len(records) == 2
     assert records[0].source == "s3"
@@ -77,7 +77,7 @@ def test_record_with_virtual_prefix():
     scope = RecordingScope()
     records = scope.records
     push_mount_prefix("/s3")
-    record("read", "/data/file.json", "s3", 100, 0)
+    record("read", "/data/file.json", "s3", 100, start_op())
     push_mount_prefix("")
     scope.close()
     assert records[0].path == "/s3/data/file.json"
@@ -86,7 +86,7 @@ def test_record_with_virtual_prefix():
 def test_record_without_prefix():
     scope = RecordingScope()
     records = scope.records
-    record("read", "/data/file.json", "s3", 100, 0)
+    record("read", "/data/file.json", "s3", 100, start_op())
     scope.close()
     assert records[0].path == "/data/file.json"
 
@@ -95,7 +95,7 @@ def test_record_prefix_already_applied():
     scope = RecordingScope()
     records = scope.records
     push_mount_prefix("/s3")
-    record("read", "/s3/data/file.json", "s3", 100, 0)
+    record("read", "/s3/data/file.json", "s3", 100, start_op())
     push_mount_prefix("")
     scope.close()
     assert records[0].path == "/s3/data/file.json"
@@ -107,7 +107,7 @@ def test_record_prefixes_name_sharing_prefix_leading_text():
     scope = RecordingScope()
     records = scope.records
     push_mount_prefix("/s3")
-    record("read", "/s3-report.txt", "s3", 1, 0)
+    record("read", "/s3-report.txt", "s3", 1, start_op())
     push_mount_prefix("")
     scope.close()
     assert records[0].path == "/s3/s3-report.txt"
@@ -146,7 +146,7 @@ async def test_with_revisions_close_propagates_to_source():
 def test_record_carries_fingerprint_when_passed():
     scope = RecordingScope()
     records = scope.records
-    record("read", "/s3/x", "s3", 10, 0, fingerprint="abc")
+    record("read", "/s3/x", "s3", 10, start_op(), fingerprint="abc")
     scope.close()
     assert records[0].fingerprint == "abc"
     assert records[0].revision is None
@@ -155,7 +155,7 @@ def test_record_carries_fingerprint_when_passed():
 def test_record_carries_revision_when_passed():
     scope = RecordingScope()
     records = scope.records
-    record("read", "/s3/x", "s3", 10, 0, revision="v1")
+    record("read", "/s3/x", "s3", 10, start_op(), revision="v1")
     scope.close()
     assert records[0].revision == "v1"
     assert records[0].fingerprint is None
@@ -164,7 +164,13 @@ def test_record_carries_revision_when_passed():
 def test_record_carries_both_when_passed():
     scope = RecordingScope()
     records = scope.records
-    record("read", "/s3/x", "s3", 10, 0, fingerprint="abc", revision="v1")
+    record("read",
+           "/s3/x",
+           "s3",
+           10,
+           start_op(),
+           fingerprint="abc",
+           revision="v1")
     scope.close()
     assert records[0].fingerprint == "abc"
     assert records[0].revision == "v1"
@@ -173,7 +179,7 @@ def test_record_carries_both_when_passed():
 def test_record_fingerprint_default_is_none():
     scope = RecordingScope()
     records = scope.records
-    record("read", "/s3/x", "s3", 10, 0)
+    record("read", "/s3/x", "s3", 10, start_op())
     scope.close()
     assert records[0].fingerprint is None
     assert records[0].revision is None
@@ -235,11 +241,11 @@ def test_revision_for_with_none_context():
 
 def test_nested_scope_close_restores_outer():
     outer = RecordingScope()
-    record("read", "/a", "s3", 1, 0)
+    record("read", "/a", "s3", 1, start_op())
     inner = RecordingScope()
-    record("read", "/b", "s3", 1, 0)
+    record("read", "/b", "s3", 1, start_op())
     inner.close()
-    record("read", "/c", "s3", 1, 0)
+    record("read", "/c", "s3", 1, start_op())
     outer.close()
     assert [r.path for r in outer.records] == ["/a", "/c"]
     assert [r.path for r in inner.records] == ["/b"]
@@ -248,7 +254,7 @@ def test_nested_scope_close_restores_outer():
 def test_inactive_scope_joins_enclosing():
     outer = RecordingScope()
     joined = RecordingScope(active=False)
-    record("read", "/a", "s3", 1, 0)
+    record("read", "/a", "s3", 1, start_op())
     joined.close()
     outer.close()
     assert [r.path for r in outer.records] == ["/a"]
