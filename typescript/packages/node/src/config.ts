@@ -50,7 +50,11 @@ import { isModulePath, loadAttr, splitRef } from './resource/loader.ts'
 // The config door is a workspace entry point of its own (the daemon
 // builds from here), so it arms the builtin secrets sources like the
 // node Workspace module does.
-import { resolveConfigSecrets, resolveSources } from '@struktoai/mirage-core/secrets/sources'
+import {
+  configHoldsPointer,
+  resolveConfigSecrets,
+  resolveSources,
+} from '@struktoai/mirage-core/secrets/sources'
 import './secrets/constants.ts'
 import { buildResource } from './resource/registry.ts'
 import { RedisConsoleStore } from './shell/console/redis/index.ts'
@@ -962,8 +966,15 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   // Built before the mounts, because a mount's config may point at one:
   // `resolveConfigSecrets` inside `buildResource` fetches through these.
   // A file declaring no sources builds none and reaches no store.
+  // Scanned before anything is built: building a source reads its own
+  // bootstrap pointers, and a dotenv file is I/O. With no pointer to
+  // serve, that I/O stays deferred to the first line that fills a
+  // managed variable, so a source whose file is momentarily unreadable
+  // cannot stop the workspace from being created.
+  const blocks = [...Object.values(cfg.mounts), ...Object.values(cfg.clis ?? {})]
+  const wanted = blocks.some((block) => configHoldsPointer(block.config ?? {}))
   const sources =
-    cfg.secrets !== undefined && cfg.secrets !== null
+    wanted && cfg.secrets !== undefined && cfg.secrets !== null
       ? await resolveSources(cfg.secrets as SecretEntries)
       : undefined
   for (const [prefix, block] of Object.entries(cfg.mounts)) {

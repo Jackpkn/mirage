@@ -33,7 +33,8 @@ from mirage.runtime.base import Runtime
 from mirage.runtime.table import build_runtime
 from mirage.runtime.types import Language, ScriptSource
 from mirage.secrets.config import EnvVar, SecretSource
-from mirage.secrets.sources import resolve_config_secrets, resolve_sources
+from mirage.secrets.sources import (config_holds_pointer,
+                                    resolve_config_secrets, resolve_sources)
 from mirage.shell.console import JobConsole
 from mirage.shell.job_table import ConsoleFactory
 from mirage.types import (KERNEL_BACKENDS, ConsistencyPolicy, Limit,
@@ -783,8 +784,17 @@ async def resolve_secrets(config: "WorkspaceConfig") -> "WorkspaceConfig":
         SecretsError: a source could not answer, or answered without
             the wanted field.
     """
+    configs = [block.config for block in config.mounts.values()]
+    configs += [block.config for block in (config.clis or {}).values()]
+    # Scanned before anything is built: building a source reads its own
+    # bootstrap pointers, and a dotenv file is I/O. With no pointer to
+    # serve, that I/O stays where `Workspace._secret_sources` put it,
+    # deferred to the first line that fills a managed variable, so a
+    # source whose file is momentarily unreadable cannot stop the
+    # workspace from being created.
+    wanted = any(config_holds_pointer(one) for one in configs)
     sources = (await resolve_sources(config.secrets)
-               if config.secrets is not None else None)
+               if wanted and config.secrets is not None else None)
     mounts = {
         prefix:
         block.model_copy(

@@ -171,6 +171,36 @@ def is_config_pointer(value: Any) -> bool:
     return True
 
 
+def config_holds_pointer(config: Mapping[str, Any]) -> bool:
+    """Whether a raw mount or CLI config names a secret anywhere inside.
+
+    Read before any source is built, because building one reads its own
+    bootstrap pointers and a dotenv file is I/O. A config holding no
+    pointer must leave that I/O where `Workspace._secret_sources` put
+    it, deferred to the first line that fills a managed variable, or a
+    declared source whose file is momentarily unreadable stops the
+    workspace from being created at all.
+
+    Args:
+        config (Mapping[str, Any]): the raw config, as yaml or an
+            embedder wrote it.
+
+    Returns:
+        bool: True if any value, at any depth, is a pointer.
+    """
+    return any(_holds_pointer(value) for value in config.values())
+
+
+def _holds_pointer(value: Any) -> bool:
+    if isinstance(value, SecretRef) or is_config_pointer(value):
+        return True
+    if isinstance(value, Mapping):
+        return any(_holds_pointer(child) for child in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_holds_pointer(item) for item in value)
+    return False
+
+
 async def _resolve_value(value: Any, label: str, fetched: dict[tuple[str, str],
                                                                ResolvedSecret],
                          sources: Mapping[str, ResolvedSource] | None) -> Any:

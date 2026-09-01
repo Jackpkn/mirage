@@ -1160,6 +1160,38 @@ describe('the secrets block', () => {
     })
   })
 
+  it('builds no source when no mount or CLI config names one', async () => {
+    // Building a source reads its own bootstrap pointers, and a dotenv
+    // file is I/O. With nothing to serve, a source whose file is
+    // missing must not stop the workspace from being created: the
+    // managed variables that do read it resolve at command time.
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/': { resource: 'ram' } },
+      secrets: {
+        sm: {
+          source: 'aws-sm',
+          config: { region: { from: 'dotenv', ref: '/no/such/file', key: 'R' } },
+        },
+      },
+    })
+    await expect(configToWorkspaceArgs(cfg)).resolves.toBeDefined()
+  })
+
+  it('builds the source when a mount config does name one', async () => {
+    const cfg = loadWorkspaceConfig({
+      mounts: {
+        '/': { resource: 'ram', config: { root: { from: 'sm', ref: 'r', key: 'K' } } },
+      },
+      secrets: {
+        sm: {
+          source: 'aws-sm',
+          config: { region: { from: 'dotenv', ref: '/no/such/file', key: 'R' } },
+        },
+      },
+    })
+    await expect(configToWorkspaceArgs(cfg)).rejects.toThrow()
+  })
+
   it('surfaces refusals as config errors naming the instance', () => {
     const base = { mounts: { '/': { resource: 'ram' } } }
     expect(() =>

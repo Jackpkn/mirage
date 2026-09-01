@@ -234,3 +234,31 @@ async def test_a_cli_config_reads_a_pointer_too():
     out = await resolve_secrets(cfg)
     assert out.clis["demo"].config["token"] == "xoxb-SLACK_BOT_TOKEN"
     assert CALLS == [("cli", "op://mirage/SLACK_BOT_TOKEN")]
+
+
+@pytest.mark.asyncio
+async def test_a_config_with_no_pointer_builds_no_source():
+    """A declared source whose only readers are lazy managed variables
+    must not be built at config load: that reads its bootstrap pointers,
+    and a dotenv momentarily unreadable would stop the workspace from
+    being created at all."""
+    cfg = yaml_config(token="xoxb-literal")
+    out = await resolve_secrets(cfg)
+    assert out.mounts["/slack"].config["token"] == "xoxb-literal"
+    assert CALLS == []
+
+
+@pytest.mark.asyncio
+async def test_a_config_with_a_pointer_still_builds_its_sources():
+    cfg = yaml_config(token=BOT.model_dump(by_alias=True))
+    out = await resolve_secrets(cfg)
+    assert out.mounts["/slack"].config["token"] == "xoxb-SLACK_BOT_TOKEN"
+    assert CALLS == [("yaml", "op://mirage/SLACK_BOT_TOKEN")]
+
+
+@pytest.mark.asyncio
+async def test_a_nested_pointer_still_builds_its_sources():
+    """The scan recurses, so a pointer under a mapping or a list counts."""
+    cfg = yaml_config(token=[{"inner": BOT.model_dump(by_alias=True)}])
+    await resolve_secrets(cfg)
+    assert CALLS == [("yaml", "op://mirage/SLACK_BOT_TOKEN")]

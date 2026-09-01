@@ -121,6 +121,26 @@ export function isConfigPointer(value: unknown): boolean {
   return SecretRefSchema.safeParse(value).success
 }
 
+/**
+ * Whether a raw mount or CLI config names a secret anywhere inside.
+ *
+ * Read before any source is built, because building one reads its own
+ * bootstrap pointers and a dotenv file is I/O. A config holding no
+ * pointer must leave that I/O deferred to the first line that fills a
+ * managed variable, or a declared source whose file is momentarily
+ * unreadable stops the workspace from being created at all.
+ */
+export function configHoldsPointer(config: Readonly<Record<string, unknown>>): boolean {
+  return Object.values(config).some(holdsPointer)
+}
+
+function holdsPointer(value: unknown): boolean {
+  if (isConfigPointer(value)) return true
+  if (Array.isArray(value)) return value.some(holdsPointer)
+  if (isPlainObject(value)) return Object.values(value).some(holdsPointer)
+  return false
+}
+
 async function resolveValue(
   value: unknown,
   label: string,
