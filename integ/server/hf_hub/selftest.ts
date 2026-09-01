@@ -1152,6 +1152,121 @@ async function mcpChecks(): Promise<void> {
       'Listing models requires an explicit owner. Use hf://models/<owner>.',
     )
 
+    // ---- `find` at a namespace filters, rather than ignoring its own flags
+    //
+    // `find hf://<kind>/<owner> --name GLOB` is the row the captured
+    // README gives find: "Recursive name/path matching inside an owner
+    // namespace". What it matches is the repository's LEAF name -- probed,
+    // `--name "deepseek-ai/*"` finds nothing on the live server where
+    // `--name "DeepSeek-V4*"` finds every V4 model.
+    const byName = await call(
+      'hf_fs',
+      ops({ cmd: 'find', args: ['hf://models/integ', '--name', 'card-*'] }),
+    )
+    eq(
+      'find globs the repository name',
+      entriesOf(byName).map((one) => String(one.path ?? '')),
+      ['integ/card-model'],
+    )
+    const byId = await call(
+      'hf_fs',
+      ops({ cmd: 'find', args: ['hf://models/integ', '--name', 'integ/*'] }),
+    )
+    eq('and the owner is not part of what it matches', entriesOf(byId).length, 0)
+    const byCase = await call(
+      'hf_fs',
+      ops({ cmd: 'find', args: ['hf://models/integ', '--name', 'CARD-*'] }),
+    )
+    eq('and the match is case-sensitive', entriesOf(byCase).length, 0)
+    const byPath = await call(
+      'hf_fs',
+      ops({ cmd: 'find', args: ['hf://models/integ', '--path', '*-model'] }),
+    )
+    check('--path globs the same string', entriesOf(byPath).length > 0, '')
+    const bothGlobs = await call(
+      'hf_fs',
+      ops({ cmd: 'find', args: ['hf://models/integ', '--name', 'card-*', '--path', 'paged-*'] }),
+    )
+    eq('and two globs must both hold', entriesOf(bothGlobs).length, 0)
+    // `--sort` rides `ls` and `search` in the captured grammar and is absent
+    // from `find`'s line, so `find` refuses it.
+    const findSort = await call(
+      'hf_fs',
+      ops({ cmd: 'find', args: ['hf://models/integ', '--sort', 'likes'] }),
+    )
+    eq(
+      'find takes no --sort, which is its own grammar',
+      errorOf(findSort).message ?? null,
+      'EINVAL: unexpected argument for find: --sort',
+    )
+
+    // ---- `--tag` and `--kind` belong to exactly one URI
+    const taggedElsewhere = await call(
+      'hf_fs',
+      ops({ cmd: 'search', args: ['hf://datasets', 'discovery', '--tag', 'gradio'] }),
+    )
+    eq(
+      'the tag flags name where they apply, in upstream words',
+      errorOf(taggedElsewhere).message ?? null,
+      'EINVAL: --tag and --kind are supported only with search hf://spaces',
+    )
+    const mcpKind = await call(
+      'hf_fs',
+      ops({ cmd: 'search', args: ['hf://models', 'card', '--kind', 'mcp'] }),
+    )
+    eq(
+      'and --kind mcp gets the same sentence off spaces',
+      errorOf(mcpKind).message ?? null,
+      'EINVAL: --tag and --kind are supported only with search hf://spaces',
+    )
+
+    // ---- the one search this fake will not fake
+    //
+    // `search hf://spaces` is semantically ranked upstream: every row carries
+    // `semantic relevance=93.8%`, a classifier `category` and a `title`, and
+    // the percentage moves between calls for the same repository. The plain
+    // shape would be a row no live server produces.
+    await fetch(`${mcp.rest.endpoint}/api/repos/create`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${DEFAULT_TENANT}`, 'Content-Type': 'application/json' },
+      // The fake refuses a Space without one, the way the Hub does.
+      body: JSON.stringify({
+        name: 'discovery-space',
+        type: 'space',
+        organization: 'integ',
+        sdk: 'gradio',
+      }),
+    })
+    const spacesRoot = await call('hf_fs', ops({ cmd: 'search', args: ['hf://spaces', 'disc'] }))
+    check(
+      'search on the spaces root is refused, with the reason',
+      String(errorOf(spacesRoot).message ?? '').includes('cannot rank hf://spaces'),
+      String(errorOf(spacesRoot).message ?? ''),
+    )
+    // Narrow on purpose: the owner-scoped form IS the plain shape upstream,
+    // so it is answered rather than swept into the same refusal.
+    const spacesOwner = await call(
+      'hf_fs',
+      ops({ cmd: 'search', args: ['hf://spaces/integ', 'discovery'] }),
+    )
+    eq(
+      'while the owner-scoped form still answers',
+      entriesOf(spacesOwner).map((one) => String(one.path ?? '')),
+      ['integ/discovery-space'],
+    )
+    eq('and a space row names its kind', entriesOf(spacesOwner)[0]?.repo_type ?? null, 'space')
+    check(
+      'and carries no downloads, the way upstream spaces do not',
+      !('downloads' in (entriesOf(spacesOwner)[0] ?? {})),
+      JSON.stringify(entriesOf(spacesOwner)[0] ?? {}),
+    )
+    check(
+      'nor a gated key, which only a model or dataset row has',
+      !('gated' in (entriesOf(spacesOwner)[0] ?? {})),
+      JSON.stringify(entriesOf(spacesOwner)[0] ?? {}),
+    )
+    eq('but does carry its sdk', entriesOf(spacesOwner)[0]?.sdk ?? null, 'gradio')
+
     // `attach` says the same thing at every non-file URI, which is upstream's
     // sentence and not the EINVAL this fake used to invent.
     const attachNs = await call('hf_fs', ops({ cmd: 'attach', args: ['hf://models/integ'] }))

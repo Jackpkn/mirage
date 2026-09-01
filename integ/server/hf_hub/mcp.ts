@@ -506,12 +506,31 @@ function repoResult(one: RepoEntry): JsonValue {
   }
 }
 
+/**
+ * Glob, in the flavour `find` matches names with.
+ *
+ * Two probes fix both halves of the semantics. `--name "deepseek-ai/*"`
+ * matches nothing where `--name "DeepSeek-V4*"` matches every V4 model, so
+ * the string being matched is the repository's LEAF name and not its
+ * `owner/name` id -- and `--path` behaves identically at this scope, which is
+ * the same probe run twice. `--name "deepseek-v4*"` matches nothing either,
+ * so it is case-sensitive.
+ */
+function globMatch(pattern: string, text: string): boolean {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^${escaped.replace(/\*/g, '.*').replace(/\?/g, '.')}$`).test(text)
+}
+
 interface Discovery {
   query: string
   limit: number
   sort: string
   type: string
-  tags: string[]
+  // `find`'s two, and at a namespace they are the same filter: both glob the
+  // leaf repository name. Kept apart anyway because upstream keeps them
+  // apart, and a caller passing both means both must hold.
+  name: string
+  path: string
 }
 
 /**
@@ -521,7 +540,7 @@ interface Discovery {
  * says whether one is allowed rather than this reading it off `cmd`: a
  * stray positional on `ls` is a mistyped flag, not a search term.
  */
-function discoveryArgs(cmd: string, rest: string[], positional: boolean): Discovery | Refusal {
+function discoveryArgs(cmd: string, rest: string[]): Discovery | Refusal {
   const bad = (message: string): Refusal => ({ code: FS_INVALID, message })
   const max = cmd === 'search' ? SEARCH_MAX_LIMIT : LIST_MAX_LIMIT
   const out: Discovery = {
@@ -529,24 +548,37 @@ function discoveryArgs(cmd: string, rest: string[], positional: boolean): Discov
     limit: cmd === 'search' ? SEARCH_DEFAULT_LIMIT : LIST_DEFAULT_LIMIT,
     sort: '',
     type: '',
-    tags: [],
+    name: '',
+    path: '',
   }
   let i = 0
-  if (positional && rest.length > 0 && !(rest[0] ?? '').startsWith('--')) {
+  if (cmd === 'search' && rest.length > 0 && !(rest[0] ?? '').startsWith('--')) {
     out.query = rest[0] ?? ''
     i = 1
   }
   for (; i < rest.length; i += 2) {
     const flag = rest[i] ?? ''
     const raw = rest[i + 1]
-    // `--query` is not in the grammar line the tool document prints, and the
-    // live server names it anyway when it refuses a search with no query
-    // ("requires a positional query or --query"), so it is a real spelling.
+    // Per command, the way the captured grammar lists them: `--sort` rides
+    // `ls` and `search` and is absent from `find`'s line, `--name` and
+    // `--path` are `find`'s alone, and `--query` is not printed in the
+    // grammar at all -- the live server names it when it refuses a search
+    // with no query ("requires a positional query or --query"), so it is a
+    // real spelling.
     const known =
       flag === '--limit' ||
-      flag === '--sort' ||
       flag === '--type' ||
-      (cmd === 'search' && (flag === '--tag' || flag === '--query'))
+      (cmd !== 'find' && flag === '--sort') ||
+      (cmd === 'find' && (flag === '--name' || flag === '--path')) ||
+      (cmd === 'search' && flag === '--query')
+    // Upstream's own sentence, and it is a narrower rule than "search only":
+    // both flags are refused on `search hf://models` as well. Answered before
+    // the generic refusal so that a caller following the tool document's
+    // "--kind mcp selects MCP Spaces" is told WHERE it applies rather than
+    // that it does not exist.
+    if (!known && (flag === '--tag' || flag === '--kind')) {
+      return bad('EINVAL: --tag and --kind are supported only with search hf://spaces')
+    }
     if (!known) return bad(`EINVAL: unexpected argument for ${cmd}: ${flag}`)
     if (raw === undefined) return bad(`EINVAL: ${flag} needs a value`)
     if (flag === '--limit') {
@@ -575,7 +607,11 @@ function discoveryArgs(cmd: string, rest: string[], positional: boolean): Discov
       out.query = raw
       continue
     }
-    out.tags.push(raw)
+    if (flag === '--name') {
+      out.name = raw
+      continue
+    }
+    out.path = raw
   }
   return out
 }
@@ -596,16 +632,28 @@ async function discover(
   flags: Discovery,
 ): Promise<RepoEntry[]> {
   if (flags.type !== '' && flags.type !== 'repo') return []
+  const globbed = flags.name !== '' || flags.path !== ''
   const query: Record<string, string | string[]> = { full: '1' }
   if (owner !== '') query.author = owner
   if (flags.query !== '') query.search = flags.query
   if (flags.sort !== '') query.sort = SORT_FIELDS[flags.sort] ?? flags.sort
-  if (flags.tags.length > 0) query.filter = flags.tags
   // One past the limit, the way the tree listings do it: enough to know the
   // answer was cut without carrying a tail that is about to be dropped.
-  query.limit = String(flags.limit + 1)
+  //
+  // Not pushed to the route when a glob is filtering, though: the route would
+  // cut the rows BEFORE the glob saw them, so a match sitting past the limit
+  // would vanish and the listing would report itself complete. The bound then
+  // applies after the filter, where it belongs.
+  if (!globbed) query.limit = String(flags.limit + 1)
   const found = rows(await callRoute(at, 'GET', `/api/${kind}`, query))
-  return found.map((one) => repoEntry(kind, one))
+  const entries = found.map((one) => repoEntry(kind, one))
+  if (!globbed) return entries
+  // Both globs match the LEAF name, so a row must satisfy every glob given.
+  const leaf = (one: RepoEntry): string => one.id.slice(one.id.indexOf('/') + 1)
+  return entries
+    .filter((one) => flags.name === '' || globMatch(flags.name, leaf(one)))
+    .filter((one) => flags.path === '' || globMatch(flags.path, leaf(one)))
+    .slice(0, flags.limit + 1)
 }
 
 function entriesOf(reply: Reply): FsEntry[] {
@@ -1144,6 +1192,27 @@ async function discoverOne(
   if (cmd !== 'ls' && cmd !== 'find' && cmd !== 'search') {
     return fsFail(FS_INVALID, `EINVAL: unknown command: ${cmd}`)
   }
+  // `search hf://spaces` is not the search the other two roots get. Probed
+  // side by side on 2026-09-01: it is SEMANTICALLY ranked, and every row
+  // carries `semantic relevance=93.8%`, a `category` a classifier assigned
+  // and a `title` -- none of which a seeded fixture can compute, and the
+  // percentage moves between calls for the same repository. Answering it in
+  // the plain listing shape would put a row in front of the model that no
+  // live server produces, which is the same silent wrongness as an empty
+  // listing for `trending`.
+  //
+  // Narrow on purpose: `search hf://spaces/<owner>` IS the plain shape, and
+  // this fake answers it. Only the bare root is refused. That URI is also the
+  // only one where `--tag` and `--kind mcp` apply, which is why neither is
+  // served: the flags are valid on exactly the search this fake cannot rank.
+  if (cmd === 'search' && where.scope === 'kind' && where.kind === 'spaces') {
+    return fsFail(
+      FS_INVALID,
+      `EINVAL: the mirage hf_hub fake cannot rank ${uri} the way upstream does ` +
+        '(semantic relevance, category, title); ' +
+        'use search hf://spaces/<namespace> or ls hf://spaces/<namespace>',
+    )
+  }
   // `search` is discovery and `trending` is already a ranking, so upstream
   // refuses it there with the same sentence it refuses a repository with.
   if (cmd === 'search' && trending) return fsFail(FS_INVALID, SEARCH_SCOPES)
@@ -1170,7 +1239,7 @@ async function discoverOne(
     }
     if (cmd === 'ls') return noFeed()
   }
-  const flags = discoveryArgs(cmd, rest, cmd === 'search')
+  const flags = discoveryArgs(cmd, rest)
   if (!('limit' in flags)) return fsFail(flags.code, flags.message)
   const found = await discover(at, where.kind, owner, flags)
   const truncated = found.length > flags.limit
