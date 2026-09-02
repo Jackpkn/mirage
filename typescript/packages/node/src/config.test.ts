@@ -728,6 +728,27 @@ describe('clis section', () => {
     })
     await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/it takes script/)
   })
+
+  it('a script entry refuses a secrets pointer', () => {
+    // A script's config is opaque: nothing declares which key is a
+    // credential, so the snapshot captures it verbatim, and a pointer
+    // resolved into it would be written out as the value it fetched. A
+    // script reads a credential from a managed env var instead.
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        clis: {
+          pager: { script: 'pager.py', config: { token: { from: 'env', key: 'PAGER_TOKEN' } } },
+        },
+      }),
+    ).toThrow(/clis entry 'pager'.*opaque/)
+    // A literal in a script's config is the script's own business.
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/data': { resource: 'ram' } },
+      clis: { pager: { script: 'pager.py', config: { verbose: true } } },
+    })
+    expect(cfg.clis?.pager?.config).toEqual({ verbose: true })
+  })
 })
 
 // Mirrors python/tests/config/test_loader.py's mounts `resource:` cases.
@@ -1111,8 +1132,8 @@ describe('env block', () => {
       /env\.X.*not both/,
     )
     expect(() =>
-      loadWorkspaceConfig({ ...base, env: { X: { from: 'env', readonly: true } } }),
-    ).toThrow(/readonly/)
+      loadWorkspaceConfig({ ...base, env: { X: { from: 'env', export: false } } }),
+    ).toThrow(/always exported/)
     expect(() => loadWorkspaceConfig({ ...base, env: { X: { value: 'v', key: 'k' } } })).toThrow(
       /managed entries/,
     )
@@ -1160,6 +1181,38 @@ describe('the secrets block', () => {
     })
   })
 
+  it('builds no source when no mount or CLI config names one', async () => {
+    // Building a source reads its own bootstrap pointers, and a dotenv
+    // file is I/O. With nothing to serve, a source whose file is
+    // missing must not stop the workspace from being created: the
+    // managed variables that do read it resolve at command time.
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/': { resource: 'ram' } },
+      secrets: {
+        sm: {
+          source: 'aws-sm',
+          config: { region: { from: 'dotenv', ref: '/no/such/file', key: 'R' } },
+        },
+      },
+    })
+    await expect(configToWorkspaceArgs(cfg)).resolves.toBeDefined()
+  })
+
+  it('builds the source when a mount config does name one', async () => {
+    const cfg = loadWorkspaceConfig({
+      mounts: {
+        '/': { resource: 'ram', config: { root: { from: 'sm', ref: 'r', key: 'K' } } },
+      },
+      secrets: {
+        sm: {
+          source: 'aws-sm',
+          config: { region: { from: 'dotenv', ref: '/no/such/file', key: 'R' } },
+        },
+      },
+    })
+    await expect(configToWorkspaceArgs(cfg)).rejects.toThrow()
+  })
+
   it('surfaces refusals as config errors naming the instance', () => {
     const base = { mounts: { '/': { resource: 'ram' } } }
     expect(() =>
@@ -1175,6 +1228,58 @@ describe('the secrets block', () => {
       /secrets\.sm.*must be a mapping/,
     )
     expect(() => loadWorkspaceConfig({ ...base, secrets: 'nope' })).toThrow(/must be a mapping/)
+  })
+})
+
+describe('a mount or CLI credential from the secrets plane', () => {
+  it('resolves a mount pointer against a declared instance', async () => {
+    process.env.CONFIG_DOOR_PROBE = 'xoxb-from-env'
+    const args = await configToWorkspaceArgs(
+      loadWorkspaceConfig({
+        mounts: {
+          '/slack': {
+            resource: 'slack',
+            config: { token: { from: 'ambient', key: 'CONFIG_DOOR_PROBE' } },
+          },
+        },
+        secrets: { ambient: { source: 'env' } },
+      }),
+    )
+    const entry = args.resources['/slack']
+    expect(entry).toBeDefined()
+    expect(JSON.stringify(entry?.[0])).not.toContain('CONFIG_DOOR_PROBE')
+  })
+
+  it('resolves a CLI pointer against the same instances', async () => {
+    // The sources reached mount construction and not `buildCliEntries`,
+    // so the CLI's config model was handed the pointer itself.
+    process.env.CONFIG_DOOR_CLI_PROBE = 'xoxb-for-the-cli'
+    const args = await configToWorkspaceArgs(
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        clis: {
+          sl: {
+            cli: 'slack',
+            config: { token: { from: 'ambient', key: 'CONFIG_DOOR_CLI_PROBE' } },
+          },
+        },
+        secrets: { ambient: { source: 'env' } },
+      }),
+    )
+    expect(args.options.clis?.sl).toEqual(['slack', { token: 'xoxb-for-the-cli' }])
+  })
+
+  it('resolves a pointer with no secrets block at all', async () => {
+    process.env.CONFIG_DOOR_BARE_PROBE = 'xoxb-ambient'
+    const args = await configToWorkspaceArgs(
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        clis: {
+          sl: { cli: 'slack', config: { token: { from: 'env', key: 'CONFIG_DOOR_BARE_PROBE' } } },
+        },
+      }),
+    )
+    expect(args.options.clis?.sl).toEqual(['slack', { token: 'xoxb-ambient' }])
   })
 })
 

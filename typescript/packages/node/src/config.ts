@@ -25,9 +25,9 @@ import { ScriptSource } from '@struktoai/mirage-core/runtime/routing/index'
 import { buildRuntime } from '@struktoai/mirage-core/runtime/table'
 import {
   EnvVarSchema,
-  SourceBlockSchema,
+  SecretSourceSchema,
   type EnvEntries,
-  type SourceEntries,
+  type SecretEntries,
 } from '@struktoai/mirage-core/secrets/config'
 import {
   ConsistencyPolicy,
@@ -40,6 +40,7 @@ import {
 } from '@struktoai/mirage-core/types'
 import { snakeToCamel } from '@struktoai/mirage-core/utils/normalize'
 import { parseSessionProfile, type SessionProfile } from '@struktoai/mirage-core/policy/profile'
+import type { ResolvedSource } from '@struktoai/mirage-core/secrets/types'
 import type { WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/base'
 import { RAMWorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/ram'
 import { S3WorkspaceStateStore } from '@struktoai/mirage-core/workspace/store/s3'
@@ -49,6 +50,11 @@ import { isModulePath, loadAttr, splitRef } from './resource/loader.ts'
 // The config door is a workspace entry point of its own (the daemon
 // builds from here), so it arms the builtin secrets sources like the
 // node Workspace module does.
+import {
+  configHoldsPointer,
+  resolveConfigSecrets,
+  resolveSourcesFor,
+} from '@struktoai/mirage-core/secrets/sources'
 import './secrets/constants.ts'
 import { buildResource } from './resource/registry.ts'
 import { RedisConsoleStore } from './shell/console/redis/index.ts'
@@ -331,6 +337,11 @@ function validateStoreBlock(value: unknown): void {
   }
 }
 
+/** A raw block's `config`, or an empty mapping when it is absent or not one. */
+function asConfig(value: unknown): Readonly<Record<string, unknown>> {
+  return isPlainObject(value) ? value : {}
+}
+
 /**
  * Reject any key no Python config model declares, before normalization
  * folds snake_case into camelCase and the distinction is gone.
@@ -347,6 +358,18 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
     for (const [name, block] of Object.entries(raw.clis)) {
       if (!isPlainObject(block)) throw new Error(`cli \`${name}\` must be a mapping`)
       rejectUnknownKeys(block, CLI_KEYS, `cli \`${name}\``)
+      // A pointer may only fill a config that a model validates, because
+      // the model is what a snapshot redacts by. A script's config is
+      // opaque: nothing declares which key is a credential, so the
+      // snapshot captures it verbatim, and a pointer resolved into it
+      // would be written out as the value it fetched. Refused here, on
+      // the block, so every door that reads a config inherits the rule.
+      if (typeof block.script === 'string' && configHoldsPointer(asConfig(block.config))) {
+        throw new Error(
+          `clis entry '${name}': a script's config is opaque and a pointer in it would be ` +
+            'written into every snapshot; read the credential from a managed env var instead',
+        )
+      }
     }
   }
   // The profiles validate through the core's own validators (the same
@@ -385,7 +408,7 @@ function validateSecretsBlock(value: unknown): void {
   for (const [name, block] of Object.entries(value)) {
     if (!isPlainObject(block)) throw new Error(`config \`secrets.${name}\` must be a mapping`)
     rejectUnknownKeys(block, SOURCE_KEYS, `config \`secrets.${name}\``)
-    const parsed = SourceBlockSchema.safeParse(block)
+    const parsed = SecretSourceSchema.safeParse(block)
     if (!parsed.success) {
       const detail = parsed.error.issues[0]?.message ?? parsed.error.message
       throw new Error(`config \`secrets.${name}\`: ${detail}`)
@@ -957,8 +980,15 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   const consistency = coerceConsistency(cfg.consistency)
   const resources: Record<string, [Resource, MountMode, Record<string, Limit>]> = {}
   const kernelMounts: Record<string, [MountBackend, string | undefined]> = {}
+  // Built before the mounts, because a mount's config may point at one:
+  // `resolveConfigSecrets` inside `buildResource` fetches through these.
+  const blocks = [...Object.values(cfg.mounts), ...Object.values(cfg.clis ?? {})]
+  const sources = await resolveSourcesFor(
+    cfg.secrets,
+    blocks.map((block) => block.config ?? {}),
+  )
   for (const [prefix, block] of Object.entries(cfg.mounts)) {
-    const r = await buildResource(block.resource, block.config ?? {})
+    const r = await buildResource(block.resource, block.config ?? {}, sources)
     const m = coerceMountMode(block.mode, wsMode)
     resources[prefix] = [r, m, parseLimits(block.command_limits)]
     const backend = (block.backend ?? MountBackend.VFS) as MountBackend
@@ -967,7 +997,9 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   const index = buildIndex(cfg.index)
   const stateStore = buildStateStore(cfg.store)
   const cliEntries =
-    cfg.clis !== undefined && cfg.clis !== null ? await buildCliEntries(cfg.clis) : undefined
+    cfg.clis !== undefined && cfg.clis !== null
+      ? await buildCliEntries(cfg.clis, sources)
+      : undefined
   const consoleFactory = buildConsoleFactory(cfg.console)
   return {
     resources,
@@ -1005,7 +1037,7 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
       // Same reason: building a source reads its bootstrap pointers,
       // which the workspace does once, before its first fetch.
       ...(cfg.secrets !== undefined && cfg.secrets !== null
-        ? { secrets: cfg.secrets as SourceEntries }
+        ? { secrets: cfg.secrets as SecretEntries }
         : {}),
     },
     kernelMounts,
@@ -1065,6 +1097,7 @@ function asCliSpec(value: unknown, name: string, ref: string): CLISpec {
 
 async function buildCliEntries(
   clis: Record<string, CLIBlock>,
+  sources?: Readonly<Record<string, ResolvedSource>>,
 ): Promise<Record<string, [string | CLISpec, Record<string, unknown> | null]>> {
   const out: Record<string, [string | CLISpec, Record<string, unknown> | null]> = {}
   for (const [name, block] of Object.entries(clis as Record<string, unknown>)) {
@@ -1108,7 +1141,13 @@ async function buildCliEntries(
           runtime: block.runtime ?? null,
         })
       : await resolveCliRef(block.cli as string, name)
-    out[name] = [entry, block.config ?? {}]
+    // A CLI credential reads a pointer the way a mount's does: the
+    // account CLI's `config_model` is the same model a resource
+    // parses, so it must receive the credential, not the pointer.
+    out[name] = [
+      entry,
+      await resolveConfigSecrets(block.config ?? {}, sources, `clis.${name}.config`),
+    ]
   }
   return out
 }

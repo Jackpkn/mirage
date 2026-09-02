@@ -16,8 +16,11 @@ import importlib.metadata
 import logging
 from typing import Any, NamedTuple
 
+from pydantic import ValidationError
+
 from mirage.resource.base import BaseResource
 from mirage.resource.loader import load_backend_class
+from mirage.secrets.summary import error_summary
 
 logger = logging.getLogger(__name__)
 
@@ -376,11 +379,19 @@ def build_resource(name: str,
     config_ref = entry.config_path
     if config_ref is None:
         config_ref = getattr(resource_cls, "CONFIG_CLS", None)
-    if config_ref is None:
-        built = resource_cls(**cfg_dict)
-    else:
-        config_cls = resolve_class(config_ref)
-        built = resource_cls(config_cls(**cfg_dict))
+    try:
+        if config_ref is None:
+            built = resource_cls(**cfg_dict)
+        else:
+            config_cls = resolve_class(config_ref)
+            built = resource_cls(config_cls(**cfg_dict))
+    except ValidationError as exc:
+        # A mount config is where a fetched credential lands, and the
+        # create route answers `str(e)` as its 400 detail: pydantic's
+        # own rendering would hand the refused value straight back to a
+        # caller whose only way to name it was a pointer. The chain is
+        # cut for the same reason; a logged traceback prints `__cause__`.
+        raise ValueError(f"{name}: {error_summary(exc)}") from None
     if ":" in name:
         defect = _resource_defect(built)
         if defect is not None:

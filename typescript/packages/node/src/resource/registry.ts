@@ -12,6 +12,8 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
+import { resolveConfigSecrets } from '@struktoai/mirage-core/secrets/sources'
+import type { ResolvedSource } from '@struktoai/mirage-core/secrets/types'
 import type { Resource } from '@struktoai/mirage-core/resource/base'
 import type { ChromaConfig } from '@struktoai/mirage-core/resource/chroma/config'
 import type { DifyConfig } from '@struktoai/mirage-core/resource/dify/config'
@@ -398,9 +400,17 @@ async function buildFromRef(ref: string, config: Record<string, unknown>): Promi
 export async function buildResource(
   name: string,
   config: Record<string, unknown> = {},
+  sources?: Readonly<Record<string, ResolvedSource>>,
 ): Promise<Resource> {
+  // A `{from, ref, key}` in the config is fetched here, before the
+  // resource's own schema parses, so every credential reaches its
+  // client as the plain string it already reads. Python resolves one
+  // step earlier, in its config door (`resolve_secrets`), because
+  // `build_resource` is sync by rule there. A config with no pointer
+  // does no I/O.
+  const resolved = await resolveConfigSecrets(config, sources, `mounts.${name}.config`)
   const factory = REGISTRY[name] ?? CUSTOM[name]
-  if (factory !== undefined) return factory(config)
-  if (name.includes(':')) return buildFromRef(name, config)
+  if (factory !== undefined) return factory(resolved)
+  if (name.includes(':')) return buildFromRef(name, resolved)
   throw new Error(`unknown resource ${JSON.stringify(name)}; known: ${knownResources().join(', ')}`)
 }

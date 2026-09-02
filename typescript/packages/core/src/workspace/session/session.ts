@@ -226,9 +226,9 @@ export function varsFromDict(
  */
 export function varsFromEntries(entries: EnvEntries): Record<string, ShellVar> {
   const out = ownRecord<ShellVar>()
-  const exported: ReadonlySet<VarAttr> = new Set([VarAttr.Export])
   for (const [name, rawEntry] of Object.entries(entries)) {
     const entry = EnvVarSchema.parse(typeof rawEntry === 'string' ? { value: rawEntry } : rawEntry)
+    const attrs = new Set<VarAttr>()
     if (entry.from !== undefined) {
       const managed: ManagedRef = {
         source: entry.from,
@@ -236,10 +236,11 @@ export function varsFromEntries(entries: EnvEntries): Record<string, ShellVar> {
         key: entry.key ?? name,
         eager: entry.fetch === 'eager',
       }
-      out[name] = { value: null, attrs: exported, managed }
+      attrs.add(VarAttr.Export)
+      if (entry.readonly) attrs.add(VarAttr.Readonly)
+      out[name] = { value: null, attrs, managed }
       continue
     }
-    const attrs = new Set<VarAttr>()
     if (entry.export) attrs.add(VarAttr.Export)
     if (entry.readonly) attrs.add(VarAttr.Readonly)
     out[name] = makeVar(entry.value ?? null, attrs)

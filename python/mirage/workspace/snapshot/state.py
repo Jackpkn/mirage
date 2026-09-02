@@ -58,8 +58,10 @@ def cli_config_dump(config: BaseModel | dict[str, JsonValue] | None,
     its schema-declared secrets. A script install's config is an opaque
     mapping instead: with no ``config_model`` nothing declares which
     keys are secret, so it is captured verbatim rather than guessed at,
-    and a script CLI that needs a credential should read it from the
-    environment.
+    and a script CLI that needs a credential reads it from a managed
+    env var. The yaml door refuses a secrets pointer in a script's
+    config for exactly this reason (``CLIBlock``): resolved, the value
+    would sit in this verbatim capture.
 
     Args:
         config (BaseModel | dict[str, JsonValue] | None): the validated

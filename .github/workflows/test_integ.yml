@@ -178,6 +178,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies
@@ -284,12 +285,12 @@ jobs:
       - name: Start MinIO
         run: |
           for i in $(seq 1 5); do
-            docker pull minio/minio:latest && break
+            docker pull minio/minio:RELEASE.2025-09-07T16-13-09Z && break
             echo "docker pull failed (attempt $i), retrying"; sleep 10
           done
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=minio123 \
-            minio/minio:latest server /data
+            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && break
             sleep 1
@@ -625,11 +626,11 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       chroma:
-        image: chromadb/chroma:latest
+        image: chromadb/chroma:1.5.9
         ports:
           - 8000:8000
       qdrant:
-        image: qdrant/qdrant:latest
+        image: qdrant/qdrant:v1.19.0
         ports:
           - 6333:6333
     env:
@@ -650,6 +651,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies
@@ -756,6 +758,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies
@@ -827,7 +830,7 @@ jobs:
         run: |
           docker run -d --name minio-watch -p 9000:9000 \
             -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=minio123 \
-            minio/minio:latest server /data
+            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && break
             sleep 1
@@ -976,6 +979,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies
@@ -1063,6 +1067,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies (base + fuse only)
@@ -1134,6 +1139,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies (base + fuse only)
@@ -1234,6 +1240,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies
@@ -1298,24 +1305,24 @@ jobs:
       - name: Start MinIO
         run: |
           for i in $(seq 1 5); do
-            docker pull minio/minio:latest && break
+            docker pull minio/minio:RELEASE.2025-09-07T16-13-09Z && break
             echo "docker pull failed (attempt $i), retrying"; sleep 10
           done
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=minio123 \
-            minio/minio:latest server /data
+            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && break
             sleep 1
           done
 
       - name: Start the docker sandbox container (user-provisioned)
-        run: docker run -d --name "$MIRAGE_INTEG_DOCKER_CONTAINER" debian:stable-slim sleep infinity
+        run: docker run -d --name "$MIRAGE_INTEG_DOCKER_CONTAINER" debian:trixie-slim sleep infinity
 
       - name: Start the ssh sandbox host (user-provisioned)
         run: |
           ssh-keygen -t ed25519 -N '' -f "$MIRAGE_INTEG_SSH_KEY"
-          docker run -d --name mirage-integ-ssh-box -p 2222:22 debian:stable-slim sleep infinity
+          docker run -d --name mirage-integ-ssh-box -p 2222:22 debian:trixie-slim sleep infinity
           docker exec mirage-integ-ssh-box sh -c \
             'apt-get update -qq && apt-get install -y -qq openssh-server >/dev/null && mkdir -p /run/sshd /root/.ssh'
           # docker cp keeps the host uid on the file; sshd's StrictModes
@@ -1358,6 +1365,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies
@@ -1402,7 +1410,7 @@ jobs:
         run: |
           docker run -d --name mirage-jaeger \
             -p 16686:16686 -p 4317:4317 -p 4318:4318 \
-            jaegertracing/jaeger:latest
+            jaegertracing/jaeger:2.20.0
           ./python/.venv/bin/python integ/server/jaeger_seed.py \
             --host http://localhost:16686 --otlp http://localhost:4318
 
@@ -1458,6 +1466,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Install Python dependencies

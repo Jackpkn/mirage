@@ -596,6 +596,43 @@ async def test_clis_section_parses_and_maps_to_kwargs():
     }
 
 
+def test_clis_script_entry_refuses_a_secrets_pointer():
+    """A script's config is opaque: nothing declares which key is a
+    credential, so the snapshot captures it verbatim, and a pointer
+    resolved into it would be written out as the value it fetched. A
+    script reads a credential from a managed env var instead."""
+    with pytest.raises(ValueError, match="opaque"):
+        load_config({
+            "mounts": {},
+            "clis": {
+                "pager": {
+                    "script": "pager.py",
+                    "config": {
+                        "token": {
+                            "from": "env",
+                            "key": "PAGER_TOKEN"
+                        }
+                    },
+                }
+            },
+        })
+    # A literal in a script's config is the script's own business.
+    cfg = load_config({
+        "mounts": {},
+        "clis": {
+            "pager": {
+                "script": "pager.py",
+                "config": {
+                    "verbose": True
+                }
+            }
+        },
+    })
+    assert cfg.clis is not None and cfg.clis["pager"].config == {
+        "verbose": True
+    }
+
+
 @pytest.mark.asyncio
 async def test_clis_script_entry_synthesizes_a_spec(tmp_path):
     (tmp_path / "pager.py").write_text("print('page')")
@@ -1012,8 +1049,8 @@ def test_env_entry_refusals_surface_as_config_errors():
     base = {"mounts": {"/": {"resource": "ram"}}}
     with pytest.raises(ValueError, match="not both"):
         load_config({**base, "env": {"X": {"value": "v", "from": "env"}}})
-    with pytest.raises(ValueError, match="readonly"):
-        load_config({**base, "env": {"X": {"from": "env", "readonly": True}}})
+    with pytest.raises(ValueError, match="always exported"):
+        load_config({**base, "env": {"X": {"from": "env", "export": False}}})
     with pytest.raises(ValueError, match="managed entries"):
         load_config({**base, "env": {"X": {"value": "v", "key": "k"}}})
 

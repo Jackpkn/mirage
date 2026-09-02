@@ -123,18 +123,20 @@ def vars_from_entries(
             env block, name -> entry.
     """
     out: dict[str, ShellVar] = {}
-    exported = frozenset({VarAttr.EXPORT})
     for name, entry in entries.items():
         if isinstance(entry, str):
             entry = EnvVar(value=entry)
         elif not isinstance(entry, EnvVar):
             entry = EnvVar.model_validate(entry)
+        attrs = set()
         if entry.provider is not None:
             ref = ManagedRef(entry.provider, entry.ref, entry.key or name,
                              entry.fetch == "eager")
-            out[name] = ShellVar(None, exported, managed=ref)
+            attrs.add(VarAttr.EXPORT)
+            if entry.readonly:
+                attrs.add(VarAttr.READONLY)
+            out[name] = ShellVar(None, frozenset(attrs), managed=ref)
             continue
-        attrs = set()
         if entry.export:
             attrs.add(VarAttr.EXPORT)
         if entry.readonly:

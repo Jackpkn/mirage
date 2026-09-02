@@ -21,7 +21,7 @@ import { RAMResource } from '../../resource/ram/ram.ts'
 import type { Runtime } from '../../runtime/base.ts'
 import { VFSRuntime } from '../../runtime/table.ts'
 import { registerSecrets } from '../../secrets/registry.ts'
-import type { EnvEntries, SourceEntries } from '../../secrets/config.ts'
+import type { EnvEntries, SecretEntries } from '../../secrets/config.ts'
 import type { ResolvedSecret } from '../../secrets/types.ts'
 import { VarAttr } from '../../shell/variable.ts'
 import type { TSNodeLike } from '../../shell/types.ts'
@@ -80,7 +80,7 @@ async function makeWs(
   env: EnvEntries | undefined,
   policies?: Policy[],
   onAsk?: AskHandler,
-  secrets?: SourceEntries,
+  secrets?: SecretEntries,
 ): Promise<Workspace> {
   const parser = await getTestParser()
   return new Workspace(

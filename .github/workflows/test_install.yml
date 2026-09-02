@@ -46,6 +46,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.12.9"
           enable-cache: true
 
       - name: Base install (no extras) on 3.11 and 3.12
