@@ -12,7 +12,7 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from pydantic import ValidationError
@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from mirage.secrets.config import SecretRef, SecretSource
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import fetch_secret, source_for
-from mirage.secrets.summary import field_summary
+from mirage.secrets.summary import error_summary, field_summary
 from mirage.secrets.types import ResolvedSecret, ResolvedSource
 
 
@@ -132,15 +132,12 @@ async def resolve_sources(
         try:
             config = config_model.model_validate(values)
         except ValidationError as exc:
-            # The error TYPE, never pydantic's rendered message: a
-            # custom source's own validator may spell the rejected
-            # input, and `values` is where a fetched credential has
-            # just landed. The field path and the code say what is
-            # wrong.
-            detail = "; ".join(
-                f"{'.'.join(str(part) for part in err['loc'])}: {err['type']}"
-                for err in exc.errors())
-            raise SecretsError(f"secrets.{name}: {detail}") from exc
+            # `values` is where a fetched credential has just landed,
+            # and pydantic's own rendering quotes it, so the summary
+            # names the field and the type only, and the chain is cut:
+            # `__cause__` would carry the value into a logged traceback.
+            raise SecretsError(
+                f"secrets.{name}: {error_summary(exc)}") from None
         except Exception as exc:
             # A validator that RAISES rather than returning a
             # validation error never becomes an issue list, and
@@ -199,6 +196,42 @@ def _holds_pointer(value: Any) -> bool:
     if isinstance(value, (list, tuple)):
         return any(_holds_pointer(item) for item in value)
     return False
+
+
+async def resolve_sources_for(
+    declared: Mapping[str, "SecretSource | Mapping[str, Any]"] | None,
+    configs: Iterable[Mapping[str, Any]],
+) -> dict[str, ResolvedSource] | None:
+    """The declared instances, built only when one of `configs` names one.
+
+    Every door that builds a mount or a CLI from data comes through
+    here -- the yaml door, a clone override, a load override -- because
+    building a source reads its own bootstrap pointers, and a dotenv
+    file is I/O. A config holding no pointer must leave that I/O where
+    `Workspace._secret_sources` put it, deferred to the first line that
+    fills a managed variable, or a declared source whose file is
+    momentarily unreadable stops a workspace from being created, or a
+    clone from being made, that never needed it.
+
+    Args:
+        declared (Mapping[str, SecretSource | Mapping[str, Any]] | None):
+            the `secrets:` block the new workspace will run with, parsed
+            or raw; anything that is not a mapping is left for the
+            constructor to refuse.
+        configs (Iterable[Mapping[str, Any]]): every raw mount or CLI
+            config the door is about to resolve.
+
+    Returns:
+        dict[str, ResolvedSource] | None: the built instances, or None
+            when there is nothing to build or nothing that wants one.
+            None still resolves a pointer at a builtin source, which
+            `fetch_secret` builds from ambient defaults.
+    """
+    if not isinstance(declared, Mapping) or not declared:
+        return None
+    if not any(config_holds_pointer(one) for one in configs):
+        return None
+    return await resolve_sources(declared)
 
 
 async def _resolve_value(value: Any, label: str, fetched: dict[tuple[str, str],

@@ -20,7 +20,8 @@ from mirage.secrets.config import DotenvConfig, SecretSource
 from mirage.secrets.dotenv import fetch_dotenv
 from mirage.secrets.errors import SecretsError
 from mirage.secrets.registry import register_secrets
-from mirage.secrets.sources import config_value, resolve_sources
+from mirage.secrets.sources import (config_value, resolve_sources,
+                                    resolve_sources_for)
 from mirage.secrets.types import ResolvedSecret
 
 
@@ -299,3 +300,64 @@ def counting_fields():
         return ResolvedSecret(fields={"A": "a"})
 
     return fetch
+
+
+def broken_bootstrap() -> dict[str, dict]:
+    """A declaration whose own config points at a dotenv file that is
+    not there, so building it fails."""
+    return {
+        "prod": {
+            "source": "demo",
+            "config": {
+                "account": {
+                    "from": "dotenv",
+                    "ref": "/no/such/file",
+                    "key": "ACCOUNT"
+                }
+            },
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_resolve_sources_for_builds_nothing_when_no_config_points():
+    """Building a source reads its bootstrap pointers, and a dotenv file
+    is I/O; a door whose configs hold no pointer must not pay it, or a
+    momentarily unreadable file fails a workspace that never needed
+    the source."""
+    assert await resolve_sources_for(broken_bootstrap(), [{
+        "token": "literal"
+    }, {}]) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_sources_for_builds_when_a_config_points():
+    pointer = {"from": "prod", "ref": "r", "key": "credential"}
+    with pytest.raises(SecretsError, match="secrets.prod.config.account"):
+        await resolve_sources_for(broken_bootstrap(), [{"token": pointer}])
+    built = await resolve_sources_for(
+        {"prod": {
+            "source": "demo",
+            "config": {
+                "account": "a1"
+            }
+        }}, [{
+            "inner": [{
+                "token": pointer
+            }]
+        }])
+    assert built is not None and built["prod"].source == "demo"
+
+
+@pytest.mark.asyncio
+async def test_resolve_sources_for_leaves_a_bad_container_to_the_constructor():
+    pointer = {"from": "prod", "ref": "r", "key": "credential"}
+    assert await resolve_sources_for(None, [{"token": pointer}]) is None
+    assert await resolve_sources_for({}, [{"token": pointer}]) is None
+    # A list from an untyped REST override is not a mapping; the
+    # constructor refuses it with the wording every door shares.
+    assert await resolve_sources_for(
+        [broken_bootstrap()],  # type: ignore[arg-type]
+        [{
+            "token": pointer
+        }]) is None

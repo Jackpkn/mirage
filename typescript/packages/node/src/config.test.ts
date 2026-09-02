@@ -728,6 +728,27 @@ describe('clis section', () => {
     })
     await expect(configToWorkspaceArgs(cfg)).rejects.toThrow(/it takes script/)
   })
+
+  it('a script entry refuses a secrets pointer', () => {
+    // A script's config is opaque: nothing declares which key is a
+    // credential, so the snapshot captures it verbatim, and a pointer
+    // resolved into it would be written out as the value it fetched. A
+    // script reads a credential from a managed env var instead.
+    expect(() =>
+      loadWorkspaceConfig({
+        mounts: { '/data': { resource: 'ram' } },
+        clis: {
+          pager: { script: 'pager.py', config: { token: { from: 'env', key: 'PAGER_TOKEN' } } },
+        },
+      }),
+    ).toThrow(/clis entry 'pager'.*opaque/)
+    // A literal in a script's config is the script's own business.
+    const cfg = loadWorkspaceConfig({
+      mounts: { '/data': { resource: 'ram' } },
+      clis: { pager: { script: 'pager.py', config: { verbose: true } } },
+    })
+    expect(cfg.clis?.pager?.config).toEqual({ verbose: true })
+  })
 })
 
 // Mirrors python/tests/config/test_loader.py's mounts `resource:` cases.

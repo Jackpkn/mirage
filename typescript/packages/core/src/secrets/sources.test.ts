@@ -18,7 +18,13 @@ import { z } from 'zod'
 import { SecretSourceSchema } from './config.ts'
 import { SecretsError } from './errors.ts'
 import { fetchSecret, registerSecrets } from './registry.ts'
-import { configValue, isConfigPointer, resolveConfigSecrets, resolveSources } from './sources.ts'
+import {
+  configValue,
+  isConfigPointer,
+  resolveConfigSecrets,
+  resolveSources,
+  resolveSourcesFor,
+} from './sources.ts'
 import type { ResolvedSecret, ResolvedSource } from './types.ts'
 
 const DemoConfig = z.strictObject({
@@ -361,5 +367,55 @@ describe('resolveConfigSecrets', () => {
       'mounts./slack.config',
     )
     await expect(failing).rejects.toThrow("mounts./slack.config.token: wanted field 'CONFIG")
+  })
+})
+
+describe('resolveSourcesFor', () => {
+  beforeEach(() => {
+    registerSecrets('demo-sources', DemoConfig, fetchDemo)
+    registerSecrets('env', EnvConfig, () =>
+      Promise.resolve({ fields: { ...process.env } as Record<string, string> }),
+    )
+    delete process.env.SOURCES_FOR_ABSENT
+  })
+
+  // A declaration whose own config points at a bootstrap value that is
+  // not there, so building it fails.
+  function brokenBootstrap(): Record<string, unknown> {
+    return {
+      prod: {
+        source: 'demo-sources',
+        config: { account: { from: 'env', key: 'SOURCES_FOR_ABSENT' } },
+      },
+    }
+  }
+  const pointer = { from: 'prod', ref: 'r', key: 'credential' }
+
+  it('builds nothing when no config points', async () => {
+    // Building a source reads its bootstrap pointers, and a dotenv file
+    // is I/O; a door whose configs hold no pointer must not pay it, or
+    // a momentarily unreadable file fails a workspace that never
+    // needed the source.
+    expect(await resolveSourcesFor(brokenBootstrap(), [{ token: 'literal' }, {}])).toBeUndefined()
+  })
+
+  it('builds when a config points', async () => {
+    await expect(resolveSourcesFor(brokenBootstrap(), [{ token: pointer }])).rejects.toThrow(
+      'secrets.prod.config.account',
+    )
+    const built = await resolveSourcesFor(
+      { prod: { source: 'demo-sources', config: { account: 'a1' } } },
+      [{ inner: [{ token: pointer }] }],
+    )
+    expect(instance(built ?? {}, 'prod').source).toBe('demo-sources')
+  })
+
+  it('leaves a bad container to the constructor', async () => {
+    expect(await resolveSourcesFor(undefined, [{ token: pointer }])).toBeUndefined()
+    expect(await resolveSourcesFor(null, [{ token: pointer }])).toBeUndefined()
+    expect(await resolveSourcesFor({}, [{ token: pointer }])).toBeUndefined()
+    // A list from an untyped REST override is not a mapping; the
+    // constructor refuses it with the wording every door shares.
+    expect(await resolveSourcesFor([brokenBootstrap()], [{ token: pointer }])).toBeUndefined()
   })
 })

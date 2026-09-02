@@ -53,7 +53,7 @@ import { isModulePath, loadAttr, splitRef } from './resource/loader.ts'
 import {
   configHoldsPointer,
   resolveConfigSecrets,
-  resolveSources,
+  resolveSourcesFor,
 } from '@struktoai/mirage-core/secrets/sources'
 import './secrets/constants.ts'
 import { buildResource } from './resource/registry.ts'
@@ -337,6 +337,11 @@ function validateStoreBlock(value: unknown): void {
   }
 }
 
+/** A raw block's `config`, or an empty mapping when it is absent or not one. */
+function asConfig(value: unknown): Readonly<Record<string, unknown>> {
+  return isPlainObject(value) ? value : {}
+}
+
 /**
  * Reject any key no Python config model declares, before normalization
  * folds snake_case into camelCase and the distinction is gone.
@@ -353,6 +358,18 @@ function validateConfigKeys(raw: Record<string, unknown>): void {
     for (const [name, block] of Object.entries(raw.clis)) {
       if (!isPlainObject(block)) throw new Error(`cli \`${name}\` must be a mapping`)
       rejectUnknownKeys(block, CLI_KEYS, `cli \`${name}\``)
+      // A pointer may only fill a config that a model validates, because
+      // the model is what a snapshot redacts by. A script's config is
+      // opaque: nothing declares which key is a credential, so the
+      // snapshot captures it verbatim, and a pointer resolved into it
+      // would be written out as the value it fetched. Refused here, on
+      // the block, so every door that reads a config inherits the rule.
+      if (typeof block.script === 'string' && configHoldsPointer(asConfig(block.config))) {
+        throw new Error(
+          `clis entry '${name}': a script's config is opaque and a pointer in it would be ` +
+            'written into every snapshot; read the credential from a managed env var instead',
+        )
+      }
     }
   }
   // The profiles validate through the core's own validators (the same
@@ -965,18 +982,11 @@ export async function configToWorkspaceArgs(cfg: WorkspaceConfigRaw): Promise<Wo
   const kernelMounts: Record<string, [MountBackend, string | undefined]> = {}
   // Built before the mounts, because a mount's config may point at one:
   // `resolveConfigSecrets` inside `buildResource` fetches through these.
-  // A file declaring no sources builds none and reaches no store.
-  // Scanned before anything is built: building a source reads its own
-  // bootstrap pointers, and a dotenv file is I/O. With no pointer to
-  // serve, that I/O stays deferred to the first line that fills a
-  // managed variable, so a source whose file is momentarily unreadable
-  // cannot stop the workspace from being created.
   const blocks = [...Object.values(cfg.mounts), ...Object.values(cfg.clis ?? {})]
-  const wanted = blocks.some((block) => configHoldsPointer(block.config ?? {}))
-  const sources =
-    wanted && cfg.secrets !== undefined && cfg.secrets !== null
-      ? await resolveSources(cfg.secrets as SecretEntries)
-      : undefined
+  const sources = await resolveSourcesFor(
+    cfg.secrets,
+    blocks.map((block) => block.config ?? {}),
+  )
   for (const [prefix, block] of Object.entries(cfg.mounts)) {
     const r = await buildResource(block.resource, block.config ?? {}, sources)
     const m = coerceMountMode(block.mode, wsMode)

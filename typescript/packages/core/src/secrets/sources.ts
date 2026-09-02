@@ -12,8 +12,6 @@
 // limitations under the License.
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-import type { z } from 'zod'
-
 import {
   SecretRefSchema,
   SecretSourceSchema,
@@ -21,7 +19,7 @@ import {
   type SecretRef,
 } from './config.ts'
 import { SecretsError } from './errors.ts'
-import { fieldSummary } from './summary.ts'
+import { errorSummary, fieldSummary } from './summary.ts'
 import { fetchSecret, sourceFor } from './registry.ts'
 import type { ResolvedSecret, ResolvedSource } from './types.ts'
 
@@ -141,6 +139,31 @@ function holdsPointer(value: unknown): boolean {
   return false
 }
 
+/**
+ * The declared instances, built only when one of `configs` names one.
+ *
+ * Every door that builds a mount or a CLI from data comes through here
+ * -- the config door, a clone override, a load override -- because
+ * building a source reads its own bootstrap pointers, and a dotenv file
+ * is I/O. A config holding no pointer must leave that I/O deferred to
+ * the first line that fills a managed variable, or a declared source
+ * whose file is momentarily unreadable stops a workspace from being
+ * created, or a clone from being made, that never needed it.
+ *
+ * `declared` is taken as it arrived: anything that is not a mapping is
+ * left for the constructor to refuse with the wording every door
+ * shares. `undefined` still resolves a pointer at a builtin source,
+ * which `fetchSecret` builds from ambient defaults.
+ */
+export async function resolveSourcesFor(
+  declared: unknown,
+  configs: readonly Readonly<Record<string, unknown>>[],
+): Promise<Record<string, ResolvedSource> | undefined> {
+  if (!isPlainObject(declared) || Object.keys(declared).length === 0) return undefined
+  if (!configs.some(configHoldsPointer)) return undefined
+  return resolveSources(declared as SecretEntries)
+}
+
 async function resolveValue(
   value: unknown,
   label: string,
@@ -192,17 +215,6 @@ export async function resolveConfigSecrets(
     pairs.push([key, await resolveValue(value, `${label}.${key}`, fetched, sources)])
   }
   return Object.fromEntries(pairs)
-}
-
-// The field path and the error code, never the rendered message: a
-// custom source's own refinement may spell the rejected input, and the
-// values are where a fetched credential has just landed. An
-// unrecognized key carries no path, so its own names stand in -- they
-// are what the deployment wrote in the block, not anything fetched.
-function issueDetail(issue: z.core.$ZodIssue): string {
-  const path = issue.path.map(String).join('.')
-  const where = path !== '' ? path : issue.code === 'unrecognized_keys' ? issue.keys.join(', ') : ''
-  return `${where}: ${issue.code}`
 }
 
 /**
@@ -260,12 +272,9 @@ export async function resolveSources(
       throw new SecretsError(`secrets.${name}: config refused`, { cause: caught })
     }
     if (!parsed.success) {
-      // The issue CODE, never zod's rendered message: a custom
-      // source's own refinement may spell the rejected input, and
-      // `values` is where a fetched credential has just landed. The
-      // field path and the code say what is wrong.
-      const detail = parsed.error.issues.map(issueDetail).join('; ')
-      throw new SecretsError(`secrets.${name}: ${detail}`)
+      // `values` is where a fetched credential has just landed, so the
+      // summary names the field and the issue code only.
+      throw new SecretsError(`secrets.${name}: ${errorSummary(parsed.error)}`)
     }
     out.push([name, { source: block.source, config: parsed.data, fetch }])
   }

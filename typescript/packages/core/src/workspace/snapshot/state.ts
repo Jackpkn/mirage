@@ -215,6 +215,10 @@ function captureCliConfig(install: CLIInstall): Record<string, unknown> | null {
   if (model instanceof z.ZodObject) {
     return redactConfigWithSchema(model, install.config)
   }
+  // A script's config is opaque, so it is captured verbatim rather than
+  // guessed at; the config door refuses a secrets pointer in one for
+  // exactly this reason (`validateConfigKeys`), since resolved, the
+  // value would sit in this capture.
   if (install.config !== null && typeof install.config === 'object') {
     return install.config as Record<string, unknown>
   }

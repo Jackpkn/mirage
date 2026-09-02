@@ -12,22 +12,18 @@
 # limitations under the License.
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
-from collections.abc import Mapping
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from mirage import Workspace
 from mirage.config import resolve_secrets
-from mirage.resource.registry import build_resource
 from mirage.secrets.errors import SecretsError
-from mirage.secrets.sources import resolve_config_secrets, resolve_sources
-from mirage.secrets.types import ResolvedSource
-from mirage.server.clone import clone_workspace_with_override
+from mirage.server.clone import (build_override_resources,
+                                 clone_workspace_with_override)
 from mirage.server.paths import PathOutsideRootError, resolve_within_root
 from mirage.server.summary import make_brief, make_detail
 from mirage.utils.ids import new_workspace_id
-from mirage.workspace.snapshot.utils import norm_mount_prefix
 from mirage.workspace.store import DiskWorkspaceStateStore
 
 from mirage.server.schemas import (  # isort: skip
@@ -176,12 +172,10 @@ async def load_workspace(req: LoadWorkspaceRequest,
                             detail=f"workspace id already exists: {req.id!r}")
     secrets = _build_load_secrets(req.override)
     try:
-        # Before the resources, because an override mount's credential
-        # may be a pointer at one of these declarations. A container
-        # the constructor will reject is left for it to reject.
-        sources = (await resolve_sources(secrets)
-                   if isinstance(secrets, Mapping) and secrets else None)
-        resources = await _build_load_resources(req.override, sources)
+        # An override mount's credential may be a pointer at one of
+        # these declarations; a container the constructor will reject
+        # is left for it to reject.
+        resources = await build_override_resources(req.override, secrets)
         ws = await Workspace.load(str(safe_path),
                                   resources=resources,
                                   secrets=secrets)
@@ -215,25 +209,3 @@ def _build_load_secrets(
     # filtering here turned a bad override into a successful load whose
     # every restored pointer was unresolvable.
     return override.get("secrets")
-
-
-async def _build_load_resources(
-        override: dict[str, Any] | None,
-        sources: Mapping[str, ResolvedSource] | None) -> dict[str, Any] | None:
-    if not override or "mounts" not in override:
-        return None
-    out: dict[str, Any] = {}
-    for prefix, block in override["mounts"].items():
-        if not isinstance(block, dict):
-            continue
-        resource_name = block.get("resource")
-        config = block.get("config") or {}
-        if resource_name is None:
-            continue
-        # An override mount reads a pointer the way a yaml one does:
-        # `build_resource` is sync, so the credential is fetched first,
-        # against the declarations this load supplies.
-        out[norm_mount_prefix(prefix)] = build_resource(
-            resource_name, await
-            resolve_config_secrets(config, sources, f"mounts.{prefix}.config"))
-    return out or None
