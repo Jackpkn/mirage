@@ -56,6 +56,7 @@ from mirage.workspace.mount.namespace import Namespace
 from mirage.workspace.mount.namespace.store import NamespaceStore
 from mirage.workspace.node.explain import explain_line
 from mirage.workspace.session import Session, SessionManager, SessionStore
+from mirage.workspace.session.constants import DEFAULT_PROFILE
 from mirage.workspace.session.resolve import (apply_profile, compile_profile,
                                               resolve_profile, with_inline)
 from mirage.workspace.session.session import vars_from_entries
@@ -931,8 +932,8 @@ class Workspace:
 
     def _profile_name(self, profile: str | SessionProfile | None) -> str:
         """The name of the profile ``_base_profile`` resolves, which its
-        script reads as ``ctx["profile"]``; empty for a profile document
-        passed without one.
+        script reads as ``ctx["profile"]`` and the session reports as
+        its group; empty for a profile document passed without one.
 
         Args:
             profile (str | SessionProfile | None): what the caller
@@ -942,6 +943,8 @@ class Workspace:
             return profile
         if profile is None and self._default_profile_name is not None:
             return self._default_profile_name
+        if profile is None and DEFAULT_PROFILE in self._profiles:
+            return DEFAULT_PROFILE
         return ""
 
     def _mount_prefixes(self) -> list[str]:

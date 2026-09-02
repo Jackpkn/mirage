@@ -159,6 +159,12 @@ export interface SessionInit {
    */
   script?: ProfileScript | null
   /**
+   * The name of the profile the session runs under, null for an
+   * unrestricted session. What an owner-rendering command prints as the
+   * group. Stamped by the profile like script, so it persists.
+   */
+  profile?: string | null
+  /**
    * The host's standing answers to asked lines (design 3.9): session
    * state like functions and cwd, persisted, read and written through
    * the manager by id so a fork shares them, never another session's.
@@ -442,6 +448,7 @@ export class Session {
   hideReasons: readonly HideReason[]
   commands: AdmissionRules | null
   script: ProfileScript | null
+  profile: string | null
   decisions: readonly Decision[]
   generation: number
   pipelineTimeoutSeconds: number | null
@@ -467,6 +474,7 @@ export class Session {
     this.hideReasons = init.hideReasons ?? []
     this.commands = init.commands ?? null
     this.script = init.script ?? null
+    this.profile = init.profile ?? null
     this.decisions = init.decisions ?? []
     this.generation = init.generation ?? 0
     this.pipelineTimeoutSeconds = init.pipelineTimeoutSeconds ?? null
@@ -522,6 +530,7 @@ export class Session {
       hideReasons: overrides.hideReasons ?? this.hideReasons,
       commands: overrides.commands ?? this.commands,
       script: overrides.script ?? this.script,
+      profile: overrides.profile ?? this.profile,
       decisions: overrides.decisions ?? this.decisions,
       generation: overrides.generation ?? this.generation,
       pipelineTimeoutSeconds: overrides.pipelineTimeoutSeconds ?? this.pipelineTimeoutSeconds,
@@ -744,6 +753,7 @@ export class Session {
     }
     if (this.commands !== null) data.commands = commandsToJSON(this.commands)
     if (this.script !== null) data.script = scriptToJSON(this.script)
+    if (this.profile !== null) data.profile = this.profile
     if (this.decisions.length > 0) data.decisions = this.decisions.map(decisionToJSON)
     return data
   }
@@ -762,6 +772,7 @@ export class Session {
     hidden_vars?: { names?: string[]; patterns?: string[] } | null
     commands?: CommandsJSON | null
     script?: ScriptJSON | null
+    profile?: string | null
     decisions?: DecisionJSON[] | null
     generation?: number
   }): Session {
@@ -801,6 +812,7 @@ export class Session {
           : [],
       commands: data.commands != null ? commandsFromJSON(data.commands) : null,
       script: data.script != null ? scriptFromJSON(data.script) : null,
+      profile: data.profile ?? null,
       decisions: data.decisions != null ? data.decisions.map(decisionFromJSON) : [],
     })
   }

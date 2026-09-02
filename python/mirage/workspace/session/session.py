@@ -267,6 +267,10 @@ class Session:
     # admission gate. A durable restriction like commands, so it
     # persists with the session record.
     script: ProfileScript | None = None
+    # The name of the profile the session runs under, None for an
+    # unrestricted session. What an owner-rendering command prints as
+    # the group. Stamped by the profile like script, so it persists.
+    profile: str | None = None
     # The host's standing answers to asked lines (design 3.9): session
     # state like functions and cwd, persisted, read and written through
     # the manager by id so a fork shares them, never another session's.
@@ -421,6 +425,8 @@ class Session:
             data["commands"] = commands_to_dict(self.commands)
         if self.script is not None:
             data["script"] = script_to_dict(self.script)
+        if self.profile is not None:
+            data["profile"] = self.profile
         if self.decisions:
             data["decisions"] = [decision_to_dict(d) for d in self.decisions]
         return data

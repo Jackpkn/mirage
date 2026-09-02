@@ -389,6 +389,7 @@ export function compileProfile(effective: SessionProfile | null, name = ''): Com
       script: null,
       shownPaths: null,
       hideReasons: [],
+      profile: name === '' ? null : name,
     }
   }
   const commands = compileCommands(effective)
@@ -403,6 +404,7 @@ export function compileProfile(effective: SessionProfile | null, name = ''): Com
     script: compileScript(effective, name),
     shownPaths: shownOf(effective),
     hideReasons: hideReasonsOf(effective),
+    profile: name === '' ? null : name,
   }
 }
 
@@ -410,7 +412,7 @@ export function compileProfile(effective: SessionProfile | null, name = ''): Com
  * Stamp a compiled profile's narrowing onto a session: the fields no
  * shell line can edit (the per-mount modes, hidden paths, show entries,
  * hidden variables, hide reasons, the admission rules, the profile's
- * script). Applied at creation and again
+ * script, the profile's name). Applied at creation and again
  * whenever a stored record could carry a stale copy (the default
  * session after hydration), so the document, not the store, is what an
  * agent runs under.
@@ -423,6 +425,7 @@ export function narrow(session: Session, compiled: CompiledProfile): void {
   session.hideReasons = compiled.hideReasons ?? []
   session.commands = compiled.commands
   session.script = compiled.script ?? null
+  session.profile = compiled.profile ?? null
 }
 
 /**

@@ -528,5 +528,6 @@ export function sessionView(session: Session, policies: Policies | null = null):
     unset: (name, followRef = true) => unsetVar(session, policies, name, followRef),
     mark: (name, attr, on) => markVar(session, policies, name, attr, on),
     isReadonly: (name) => envIsReadonly(session, name),
+    profile: () => session.profile,
   }
 }

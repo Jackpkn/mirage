@@ -58,6 +58,13 @@ describe('sessionView', () => {
     expect('B' in session.env).toBe(false)
   })
 
+  it('profile reads the session profile', () => {
+    const [view, session] = makeView()
+    expect(view.profile()).toBeNull()
+    session.profile = 'admin'
+    expect(view.profile()).toBe('admin')
+  })
+
   it('set and unset write the session', async () => {
     const [view, session] = makeView()
     await view.set('B', '2')

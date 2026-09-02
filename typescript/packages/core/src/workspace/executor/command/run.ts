@@ -113,15 +113,13 @@ function scalarFindFlags(flagKwargs: Flags): Flags {
   return out
 }
 
-// Merge namespace attr overlays into one stat row (ls/stat rendering). A path
-// never chown'd defaults its owner to the workspace user (the launch agent,
-// what whoami reports) so ls -l and stat -c agree; an unclaimed workspace
-// leaves uid/gid null and the formatters fall back to the neutral "user".
+// Merge namespace attr overlays into one stat row (ls/stat rendering). Only
+// what chmod/chown/chgrp/touch recorded: a path never chown'd keeps uid and
+// gid null, and the owner-rendering commands fall back through `Identity`
+// (the workspace user for the owner, the session's profile for the group),
+// which is the one rule ls -l, stat -c and find -printf share.
 function namespaceStatOverlay(namespace: Namespace, virtual: string, stat: FileStat): FileStat {
-  const merged = mergeOverlayStat(namespace.metaFor(virtual), stat)
-  const user = namespace.user
-  if (user === null || (merged.uid !== null && merged.gid !== null)) return merged
-  return merged.with({ uid: merged.uid ?? user, gid: merged.gid ?? user })
+  return mergeOverlayStat(namespace.metaFor(virtual), stat)
 }
 
 /**
@@ -384,8 +382,8 @@ function linkView(
 }
 
 // The name plane's facts on offer, bundled as one view: symlinks, mount
-// boundaries, the attr overlay, and the child names the namespace owes a
-// directory. Which commands receive it is decided by whether the handler
+// boundaries, the attr overlay, the child names the namespace owes a
+// directory, and the workspace user. Which commands receive it is decided by whether the handler
 // reads `ns` off its context, so there is no list of aware commands to
 // keep in step here or anywhere else. Exported for the mount fan-out,
 // which reaches `executeCmd` without going through `runOnMount` and
@@ -405,5 +403,6 @@ export function namespaceViewOf(
     mounts: mountView(registry),
     ...(statOverlay !== null ? { statOverlay } : {}),
     childMounts: (parent: string) => namespaceNames(registry.mountPrefixes(), namespace, parent),
+    ...(namespace !== null && namespace.user !== null ? { user: namespace.user } : {}),
   }
 }

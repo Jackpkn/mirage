@@ -257,7 +257,8 @@ async def handle_command(
             run_operand,
             stdin=stdin,
             storage_key=make_storage_key(registry),
-            ns=cross_ns)
+            ns=cross_ns,
+            session_view=session_view(session, registry.policies))
         if cross_parsed.warnings:
             warn = "".join(f"{cmd_name}: {w}\n"
                            for w in cross_parsed.warnings).encode()

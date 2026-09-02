@@ -13,7 +13,7 @@
 // ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import { describe, expect, it } from 'vitest'
-import { FileStat, FileType } from '../../../types.ts'
+import { DEVICE_NUMBERS_KEY, FileStat, FileType } from '../../../types.ts'
 import { formatLsLong, humanSize } from './formatting.ts'
 import { readStdinAsync, resolveSource, wrapBytes } from './stream.ts'
 
@@ -73,7 +73,51 @@ describe('formatLsLong', () => {
       modified: '2026-01-01T00:00:00Z',
     })
     const [line] = formatLsLong([stat])
-    expect(line).toBe('-rw-r--r-- 1 user user 5 Jan  1 00:00 file.txt')
+    expect(line).toBe('-rw-r--r-- 1 - - 5 Jan  1 00:00 file.txt')
+  })
+
+  it('renders the owner as the user and the group as the profile', () => {
+    const stat = new FileStat({
+      name: 'file.txt',
+      size: 5,
+      type: FileType.TEXT,
+      modified: '2026-01-01T00:00:00Z',
+    })
+    const identity = { user: 'alice', profile: 'admin' }
+    expect(formatLsLong([stat], { identity })[0]).toBe(
+      '-rw-r--r-- 1 alice admin 5 Jan  1 00:00 file.txt',
+    )
+    // A reported uid/gid (disk, or a chown in the overlay) wins over both.
+    const owned = stat.with({ uid: 501, gid: 'staff' })
+    expect(formatLsLong([owned], { identity })[0]).toBe(
+      '-rw-r--r-- 1 501 staff 5 Jan  1 00:00 file.txt',
+    )
+    // Half an identity fills half the columns.
+    expect(formatLsLong([stat], { identity: { user: null, profile: 'admin' } })[0]).toBe(
+      '-rw-r--r-- 1 - admin 5 Jan  1 00:00 file.txt',
+    )
+  })
+
+  it('keeps the owner columns on a metadata-less row', () => {
+    // A synthetic directory with neither size nor mtime shows `-` for
+    // both rather than inventing size 0 and the epoch, and still names
+    // who the session is.
+    const stat = new FileStat({ name: 'dev', type: FileType.DIRECTORY })
+    expect(formatLsLong([stat])[0]).toBe('drwxr-xr-x 1 - - - - dev')
+    expect(formatLsLong([stat], { identity: { user: null, profile: 'admin' } })[0]).toBe(
+      'drwxr-xr-x 1 - admin - - dev',
+    )
+  })
+
+  it('renders a device row with its numbers in the size column', () => {
+    const nul = new FileStat({
+      name: 'null',
+      type: FileType.CHAR_DEVICE,
+      extra: { [DEVICE_NUMBERS_KEY]: [1, 3] },
+    })
+    expect(formatLsLong([nul], { identity: { user: 'alice', profile: null } })[0]).toBe(
+      'crw-rw-rw- 1 alice - 1, 3 - null',
+    )
   })
 
   it('emits "d" type char and dir perms for directories', () => {

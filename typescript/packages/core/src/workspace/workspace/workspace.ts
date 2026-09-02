@@ -74,6 +74,7 @@ import { SecretsError } from '../../secrets/errors.ts'
 import { sourceFor } from '../../secrets/registry.ts'
 import { resolveSources } from '../../secrets/sources.ts'
 import type { ResolvedSource } from '../../secrets/types.ts'
+import { DEFAULT_PROFILE } from '../session/constants.ts'
 import { SessionManager } from '../session/manager.ts'
 import type { WorkspaceFields, WorkspaceStateStore } from '../store/base.ts'
 import { varsFromEntries, type Session } from '../session/session.ts'
@@ -620,6 +621,7 @@ export class Workspace {
   private profileName(profile: string | SessionProfile | null): string {
     if (typeof profile === 'string') return profile
     if (profile === null && this.defaultProfileName !== null) return this.defaultProfileName
+    if (profile === null && DEFAULT_PROFILE in this.profiles) return DEFAULT_PROFILE
     return ''
   }
 

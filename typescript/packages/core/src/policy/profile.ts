@@ -171,6 +171,8 @@ export interface CompiledProfile {
   readonly shownPaths?: ShownPaths | null
   /** The operator's reasons for grouped hides, never rendered to the agent. */
   readonly hideReasons?: readonly HideReason[]
+  /** The profile's name, null for a document passed without one; the session's group. */
+  readonly profile?: string | null
 }
 
 const RULE_FIELDS = ['reason', 'commands', 'paths'] as const

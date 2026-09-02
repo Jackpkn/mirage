@@ -37,6 +37,7 @@ import {
   type PredNode,
 } from '../find_eval.ts'
 import { expandPrintf, printfKind, printfNeedsStat, type PrintfStatFacts } from '../find_printf.ts'
+import { identityOf } from '../utils/identity.ts'
 import type { LinkView } from '../../../ops/types.ts'
 import { pathAllowed } from '../../../context/session_context.ts'
 import { compareCodePoints } from '../../../utils/sort.ts'
@@ -548,6 +549,8 @@ async function printfStat(
       mtimeEpoch: modifiedTs(linkRow.modified ?? null) ?? 0,
       mode: linkRow.mode,
       targetKind: target === null ? 'N' : printfKind(target),
+      uid: linkRow.uid,
+      gid: linkRow.gid,
     }
   }
   let st: FileStat | null = null
@@ -577,6 +580,8 @@ async function printfStat(
     mtimeEpoch: modifiedTs(st.modified ?? null) ?? 0,
     mode: st.mode,
     targetKind: null,
+    uid: st.uid,
+    gid: st.gid,
   }
 }
 
@@ -600,7 +605,7 @@ async function renderPrintfRows(
   for (const [row, root] of pairs) {
     const st = needs ? await printfStat(row, root, stat, opts) : null
     const base = root.rawPath !== '' ? root.rawPath : root.virtual
-    parts.push(expandPrintf(fmt, row, base, st, warnings))
+    parts.push(expandPrintf(fmt, row, base, st, warnings, identityOf(opts)))
   }
   const err = [...missing, ...warnings]
   const io = new IOResult({

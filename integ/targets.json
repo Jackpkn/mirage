@@ -2141,7 +2141,15 @@
           "backend": "memory",
           "fixture": "statvfs/v1"
         }
-      ]
+      ],
+      "profile": "ops",
+      "profiles": {
+        "ops": {},
+        "auditor": {}
+      },
+      "sessions": {
+        "auditor": "auditor"
+      }
     },
     {
       "id": "argerr-databricks",
