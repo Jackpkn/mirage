@@ -436,6 +436,16 @@ const SINGULAR: Record<string, string> = {
 // order by are here; the other five the grammar advertises (likes30d,
 // mainSize, id, trending, upvotes) have no key behind them, and are refused
 // by name below rather than accepted and ignored.
+// `TYPE = file|dir|repo|bucket|collection|paper|link.` -- the captured
+// grammar's own line, and a closed set. Four of the seven name entry kinds
+// this fake holds nothing of, and those still ANSWER: `ls --type bucket`
+// returns an empty table upstream rather than an error, because the value is
+// valid and simply matches nothing. A value off the list is the error, and
+// keeping the two apart is the whole point: `--type repos` is a typo, and an
+// empty listing would make it indistinguishable from an owner with no
+// repositories.
+const ENTRY_TYPES = ['file', 'dir', 'repo', 'bucket', 'collection', 'paper', 'link']
+
 const SORT_FIELDS: Record<string, string> = {
   createdAt: 'created_at',
   downloads: 'downloads',
@@ -600,6 +610,11 @@ function discoveryArgs(cmd: string, rest: string[]): Discovery | Refusal {
       continue
     }
     if (flag === '--type') {
+      // Upstream's sentence, down to the advice at the end -- which is odd
+      // out of context (why `file`?) and is copied rather than improved.
+      if (!ENTRY_TYPES.includes(raw)) {
+        return bad(`EINVAL: invalid entry type: ${raw}. Use --type file for files.`)
+      }
       out.type = raw
       continue
     }

@@ -1073,6 +1073,36 @@ async function mcpChecks(): Promise<void> {
       ops({ cmd: 'ls', args: ['hf://models/integ', '--type', 'file'] }),
     )
     eq('a discovery scope holds no files', entriesOf(typed).length, 0)
+    // ...but only for a type that EXISTS. The grammar's TYPE is a closed set
+    // of seven, and four of them name entry kinds this fake holds nothing of;
+    // those still answer empty, because the value is valid and matches
+    // nothing. A value off the list is a typo, and answering it empty would
+    // make `--type repos` indistinguishable from an owner with no
+    // repositories.
+    const validButAbsent = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ', '--type', 'bucket'] }),
+    )
+    eq('a valid type this fake has none of is empty', entriesOf(validButAbsent).length, 0)
+    check('and not an error', !('isError' in validButAbsent), '')
+    const mistyped = await call(
+      'hf_fs',
+      ops({ cmd: 'ls', args: ['hf://models/integ', '--type', 'repos'] }),
+    )
+    eq(
+      'while a type off the list is refused in upstream words',
+      errorOf(mistyped).message ?? null,
+      'EINVAL: invalid entry type: repos. Use --type file for files.',
+    )
+    const mistypedSearch = await call(
+      'hf_fs',
+      ops({ cmd: 'search', args: ['hf://models', 'card', '--type', 'nonsense'] }),
+    )
+    eq(
+      'and search says the same thing',
+      errorOf(mistypedSearch).message ?? null,
+      'EINVAL: invalid entry type: nonsense. Use --type file for files.',
+    )
 
     // ---- `trending` is RESERVED, not an owner
     //
