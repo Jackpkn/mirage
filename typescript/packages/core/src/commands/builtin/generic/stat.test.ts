@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { materialize } from '../../../io/types.ts'
 import { OpsRegistry, type RegisteredOp } from '../../../ops/registry.ts'
+import { parseSessionProfile } from '../../../policy/profile.ts'
 import { RAMResource } from '../../../resource/ram/ram.ts'
 import { type CommandOpts } from '../../config.ts'
 import {
@@ -185,10 +186,10 @@ describe('stat -c directive formatting', () => {
     expect(await render('%N', linkFs('a\tb'))).toBe("'/data/f.txt' -> 'a'$'\\t''b'")
   })
 
-  it('renders owner directives, falling back to "user"', async () => {
+  it('renders owner directives, falling back to "-"', async () => {
     const owned = fs({ uid: 1000, gid: 'dev' })
     expect(await render('%u %U %g %G', owned)).toBe('1000 1000 dev dev')
-    expect(await render('%u %U %g %G', fs({ uid: null, gid: null }))).toBe('user user user user')
+    expect(await render('%u %U %g %G', fs({ uid: null, gid: null }))).toBe('- - - -')
   })
 
   it('renders time directives and epochs', async () => {
@@ -291,17 +292,38 @@ describe('stat -c workspace integration', () => {
     )
     const [code, out] = await run(ws, 'stat -c "%U:%G" /data/f.txt')
     expect(code).toBe(0)
-    expect(out).toBe('agent7:agent7\n')
+    // The owner is the workspace user; the group is the session's
+    // profile, and this session runs under none.
+    expect(out).toBe('agent7:-\n')
   })
 
-  it('falls back to "user" when the workspace is unclaimed', async () => {
+  it('renders the group as the session profile', async () => {
+    const parser = await getTestParser()
+    const resource = new RAMResource()
+    resource.store.files.set('/f.txt', new TextEncoder().encode('hello'))
+    const ws = new Workspace(
+      { '/data': resource },
+      {
+        mode: MountMode.WRITE,
+        shellParser: parser,
+        agentId: 'agent7',
+        profiles: { admin: parseSessionProfile({}) },
+        profile: 'admin',
+      },
+    )
+    const [code, out] = await run(ws, 'stat -c "%U:%G" /data/f.txt')
+    expect(code).toBe(0)
+    expect(out).toBe('agent7:admin\n')
+  })
+
+  it('falls back to "-" when the workspace is unclaimed', async () => {
     const parser = await getTestParser()
     const resource = new RAMResource()
     resource.store.files.set('/f.txt', new TextEncoder().encode('hello'))
     const ws = new Workspace({ '/data': resource }, { mode: MountMode.WRITE, shellParser: parser })
     const [code, out] = await run(ws, 'stat -c "%U:%G" /data/f.txt')
     expect(code).toBe(0)
-    expect(out).toBe('user:user\n')
+    expect(out).toBe('-:-\n')
   })
 
   it('agrees with ls -l on owner', async () => {
@@ -314,7 +336,7 @@ describe('stat -c workspace integration', () => {
     )
     const [, statOwner] = await run(ws, 'stat -c "%U %G" /data/f.txt')
     const [, lsLong] = await run(ws, 'ls -l /data/f.txt')
-    expect(statOwner.trim()).toBe('agent7 agent7')
-    expect(lsLong).toContain('agent7 agent7')
+    expect(statOwner.trim()).toBe('agent7 -')
+    expect(lsLong).toContain(' 1 agent7 - ')
   })
 })

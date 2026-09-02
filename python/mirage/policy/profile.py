@@ -655,6 +655,8 @@ class CompiledProfile:
             states, its own and its mount sections' in one list.
         hide_reasons (tuple[HideReason, ...]): the operator's reasons
             for grouped hides, never rendered to the agent.
+        profile (str | None): the profile's name, None for a document
+            passed without one; what the session reports as its group.
     """
 
     mount_modes: dict[str, MountMode] | None
@@ -666,3 +668,4 @@ class CompiledProfile:
     script: ProfileScript | None = None
     shown_paths: ShownPaths | None = None
     hide_reasons: tuple[HideReason, ...] = ()
+    profile: str | None = None

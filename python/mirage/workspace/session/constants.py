@@ -42,6 +42,7 @@ INHERITED_FIELDS: tuple[str, ...] = (
     "hide_reasons",
     "commands",
     "script",
+    "profile",
     "decisions",
     "generation",
     "pipeline_timeout_seconds",

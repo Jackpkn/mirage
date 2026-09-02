@@ -398,3 +398,10 @@ def test_unset_var_deletes_a_managed_name_quietly():
         assert "TOKEN" not in session.vars
 
     asyncio.run(run())
+
+
+def test_profile_reads_the_session_profile():
+    view, session = _view()
+    assert view.profile() is None
+    session.profile = "admin"
+    assert view.profile() == "admin"

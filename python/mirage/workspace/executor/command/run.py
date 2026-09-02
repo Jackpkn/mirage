@@ -13,7 +13,6 @@
 # ========= Copyright 2026 @ Strukto.AI All Rights Reserved. =========
 
 import functools
-from typing import Any
 
 from mirage.commands.config import ExecContext
 from mirage.commands.errors import CommandTimeoutError, UsageError
@@ -257,7 +256,8 @@ def namespace_view_of(registry: MountRegistry, namespace: Namespace | None,
         stat_overlay=(functools.partial(namespace_stat_overlay, namespace)
                       if namespace is not None else None),
         child_mounts=functools.partial(registry_child_mounts, registry,
-                                       namespace))
+                                       namespace),
+        user=namespace.user if namespace is not None else None)
 
 
 async def drop_service_caches(registry: MountRegistry,
@@ -305,26 +305,18 @@ def namespace_stat_overlay(namespace: Namespace, virtual: str,
                            stat: FileStat) -> FileStat:
     """Merge namespace attr overlays into one stat row (ls/stat rendering).
 
-    A path never chown'd defaults its owner to the workspace user (the
-    launch agent, what ``whoami`` reports), so ``ls -l`` and ``stat -c``
-    agree on ownership. An unclaimed workspace leaves uid/gid None and the
-    formatters fall back to the neutral ``user`` placeholder.
+    Only what ``chmod``/``chown``/``chgrp``/``touch`` recorded: a path
+    never chown'd keeps uid and gid None, and the owner-rendering
+    commands fall back through ``Identity`` (the workspace user for the
+    owner, the session's profile for the group), which is the one rule
+    ``ls -l``, ``stat -c`` and ``find -printf`` share.
 
     Args:
         namespace (Namespace): addressing authority holding the overlay.
         virtual (str): absolute virtual path of the statted entry.
         stat (FileStat): backend stat result.
     """
-    merged = merge_overlay_stat(namespace.meta_for(virtual), stat)
-    user = namespace.user
-    if user is None:
-        return merged
-    update: dict[str, Any] = {}
-    if merged.uid is None:
-        update["uid"] = user
-    if merged.gid is None:
-        update["gid"] = user
-    return merged.model_copy(update=update) if update else merged
+    return merge_overlay_stat(namespace.meta_for(virtual), stat)
 
 
 async def run_on_mount(

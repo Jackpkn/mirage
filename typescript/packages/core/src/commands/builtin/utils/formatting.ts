@@ -14,6 +14,7 @@
 
 import { DEVICE_NUMBERS_KEY, FileType, LINK_TARGET_KEY, type FileStat } from '../../../types.ts'
 import { DEFAULT_MODES, EPOCH_LS_TIME, MONTHS, NUMERIC_PREFIX, TYPE_CHARS } from './constants.ts'
+import { UNKNOWN_NAME, groupName, ownerName, type Identity } from './identity.ts'
 
 /**
  * GNU's `human_readable` rounding, shared by `-h` and `-H`.
@@ -110,8 +111,9 @@ function lsTimeString(modified: string | null | undefined): string {
 
 export interface LsLongOptions {
   human?: boolean
-  owner?: string
-  group?: string
+  // Who the session is; null outside a workspace, where both the owner
+  // and the group column fall back to `-`.
+  identity?: Identity | null
   sizeWidth?: number
 }
 
@@ -122,28 +124,37 @@ function lsName(s: FileStat): string {
   return typeof target === 'string' && target !== '' ? `${s.name} -> ${target}` : s.name
 }
 
+// The size and time columns of one `ls -l` row. A device row carries its
+// major and minor numbers where GNU puts them. An entry with neither a
+// size nor a time (a synthetic API-backend directory) shows `-` in both
+// rather than inventing size 0 and the epoch, mirroring the python
+// formatter.
+function lsSizeAndTime(s: FileStat, human: boolean): [string, string] {
+  const device = s.extra[DEVICE_NUMBERS_KEY]
+  if (Array.isArray(device) && device.length === 2) {
+    const time = s.modified == null ? UNKNOWN_NAME : lsTimeString(s.modified)
+    return [`${String(device[0])}, ${String(device[1])}`, time]
+  }
+  if (s.size == null && s.modified == null) return [UNKNOWN_NAME, UNKNOWN_NAME]
+  const size = human ? humanSize(s.size ?? 0) : String(s.size ?? 0)
+  return [size, lsTimeString(s.modified)]
+}
+
+// `ls -l` rows: mode, links, owner, group, size, time, name. The owner is
+// the entry's uid when a backend or the attr overlay reports one, else
+// the workspace user; the group is the gid, else the session's profile;
+// `-` when nothing names one.
 export function formatLsLong(stats: readonly FileStat[], opts: LsLongOptions = {}): string[] {
-  const owner = opts.owner ?? 'user'
-  const group = opts.group ?? 'user'
+  const identity = opts.identity ?? null
   const human = opts.human ?? false
-  const sizes = stats.map((s) => (human ? humanSize(s.size ?? 0) : String(s.size ?? 0)))
-  const width = opts.sizeWidth ?? sizes.reduce((m, s) => Math.max(m, s.length), 1)
+  const columns = stats.map((s) => lsSizeAndTime(s, human))
+  const width = opts.sizeWidth ?? columns.reduce((m, [size]) => Math.max(m, size.length), 1)
   return stats.map((s, i) => {
+    const [rawSize, time] = columns[i] ?? [UNKNOWN_NAME, UNKNOWN_NAME]
     const mode = lsModeString(s)
-    const device = s.extra[DEVICE_NUMBERS_KEY]
-    if (Array.isArray(device) && device.length === 2) {
-      return `${mode}\t${String(device[0])}, ${String(device[1])}\t-\t${lsName(s)}`
-    }
-    // Metadata-less entries (synthetic API-backend directories) render the
-    // compact placeholder form instead of inventing size 0 + epoch mtime,
-    // mirroring the python formatter.
-    if (s.size == null && s.modified == null) {
-      return `${mode}\t-\t-\t${lsName(s)}`
-    }
-    const size = padLeft(sizes[i] ?? '0', width)
-    const time = lsTimeString(s.modified)
-    const who = s.uid !== null ? String(s.uid) : owner
-    const grp = s.gid !== null ? String(s.gid) : group
+    const size = padLeft(rawSize, width)
+    const who = ownerName(s.uid, identity)
+    const grp = groupName(s.gid, identity)
     return `${mode} 1 ${who} ${grp} ${size} ${time} ${lsName(s)}`
   })
 }

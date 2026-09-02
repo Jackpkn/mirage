@@ -297,6 +297,7 @@ export async function handleCommand(
       cmdStr,
       makeStorageKey(registry),
       csNs,
+      sessionView(session, registry.policies),
     )
     if (csParsed.warnings.length > 0) {
       const csWarn = new TextEncoder().encode(

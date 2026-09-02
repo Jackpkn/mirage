@@ -18,6 +18,8 @@ from mirage.commands.builtin.utils.constants import (DEFAULT_MODES,
                                                      EPOCH_LS_TIME, MONTHS,
                                                      NUMERIC_PREFIX,
                                                      TYPE_CHARS)
+from mirage.commands.builtin.utils.identity import (UNKNOWN_NAME, Identity,
+                                                    group_name, owner_name)
 from mirage.types import (DEVICE_NUMBERS_KEY, LINK_TARGET_KEY, FileStat,
                           FileType)
 
@@ -104,33 +106,59 @@ def _ls_name(s: FileStat) -> str:
     return f"{s.name} -> {target}" if target else s.name
 
 
+def _ls_size_and_time(s: FileStat, human: bool) -> tuple[str, str]:
+    """The size and time columns of one ``ls -l`` row.
+
+    A device row carries its major and minor numbers where GNU puts
+    them. An entry with neither a size nor a time (a synthetic
+    API-backend directory) shows ``-`` in both rather than inventing
+    size 0 and the epoch.
+
+    Args:
+        s (FileStat): the row's stat.
+        human (bool): render the size with ``-h`` units.
+    """
+    dev = s.extra.get(DEVICE_NUMBERS_KEY) if s.extra else None
+    if dev:
+        time = (UNKNOWN_NAME
+                if s.modified is None else _ls_time_string(s.modified))
+        return f"{dev[0]}, {dev[1]}", time
+    if s.size is None and s.modified is None:
+        return UNKNOWN_NAME, UNKNOWN_NAME
+    size = human_size(s.size or 0) if human else str(s.size or 0)
+    return size, _ls_time_string(s.modified)
+
+
 def format_ls_long(
     stats: list[FileStat],
     *,
     human: bool = False,
-    owner: str = "user",
-    group: str = "user",
+    identity: Identity | None = None,
     size_width: int | None = None,
 ) -> list[str]:
-    sizes = [
-        human_size(s.size or 0) if human else str(s.size or 0) for s in stats
-    ]
+    """Render ``ls -l`` rows: mode, links, owner, group, size, time, name.
+
+    The owner is the entry's uid when a backend or the attr overlay
+    reports one, else the workspace user; the group is the gid, else the
+    session's profile; ``-`` when nothing names one.
+
+    Args:
+        stats (list[FileStat]): the rows to render.
+        human (bool): render sizes with ``-h`` units.
+        identity (Identity | None): who the session is; None outside a
+            workspace, where both columns fall back to ``-``.
+        size_width (int | None): the size column's width, computed from
+            the rows when None.
+    """
+    columns = [_ls_size_and_time(s, human) for s in stats]
     width = size_width if size_width is not None else max(
-        (len(x) for x in sizes), default=1)
+        (len(size) for size, _ in columns), default=1)
     out: list[str] = []
-    for s, raw_size in zip(stats, sizes):
+    for s, (raw_size, time) in zip(stats, columns):
         mode = ls_mode_string(s)
-        dev = s.extra.get(DEVICE_NUMBERS_KEY) if s.extra else None
-        if dev:
-            out.append(f"{mode}\t{dev[0]}, {dev[1]}\t-\t{_ls_name(s)}")
-            continue
-        if s.size is None and s.modified is None:
-            out.append(f"{mode}\t-\t-\t{_ls_name(s)}")
-            continue
         size = raw_size.rjust(width)
-        time = _ls_time_string(s.modified)
-        who = str(s.uid) if s.uid is not None else owner
-        grp = str(s.gid) if s.gid is not None else group
+        who = owner_name(s.uid, identity)
+        grp = group_name(s.gid, identity)
         out.append(f"{mode} 1 {who} {grp} {size} {time} {_ls_name(s)}")
     return out
 

@@ -14,6 +14,7 @@ from mirage.commands.builtin.find_parse import (parse_depth,
                                                 parse_mtime, parse_size)
 from mirage.commands.builtin.find_printf import (expand_printf, printf_kind,
                                                  printf_needs_stat)
+from mirage.commands.builtin.utils.identity import Identity, identity_of
 from mirage.commands.builtin.utils.output import format_records
 from mirage.commands.config import CommandOpts
 from mirage.commands.spec import SPECS
@@ -177,6 +178,7 @@ async def render_printf_rows(
     stat_path: StatPath | None,
     links: LinkView | None,
     missing: list[str],
+    identity: Identity | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     """Render matched rows through a -printf format.
 
@@ -194,6 +196,8 @@ async def render_printf_rows(
         stat (Callable | None): bound overlay-aware stat, when wired.
         links (LinkView | None): the namespace's symlink facts.
         missing (list[str]): diagnostics for start points not walked.
+        identity (Identity | None): who the session is, for the owner
+            directives on an entry that reports no owner of its own.
     """
     warnings: list[str] = []
     needs = printf_needs_stat(fmt)
@@ -201,7 +205,8 @@ async def render_printf_rows(
     for row, search in pairs:
         st, target = (await _printf_stat(row, search, stat, stat_path, links)
                       if needs else (None, None))
-        parts.append(expand_printf(fmt, row, search, st, warnings, target))
+        parts.append(
+            expand_printf(fmt, row, search, st, warnings, target, identity))
     err = missing + warnings
     io = IOResult(stderr=("\n".join(err) + "\n").encode() if err else None,
                   exit_code=1 if missing else 0)
@@ -472,6 +477,7 @@ async def find(
     empty: bool = False,
     links: LinkView | None = None,
     follow: bool = False,
+    identity: Identity | None = None,
 ) -> tuple[ByteSource | None, IOResult]:
     args = parse_find_args(texts,
                            name=name,
@@ -509,7 +515,7 @@ async def find(
             printf_pairs.extend((row, search_path) for row in rows)
     if args.printf is not None:
         return await render_printf_rows(printf_pairs, args.printf, stat,
-                                        stat_path, links, missing)
+                                        stat_path, links, missing, identity)
     if missing:
         return format_records(results), IOResult(stderr=("\n".join(missing) +
                                                          "\n").encode(),
@@ -1002,7 +1008,8 @@ async def find_generic(
                       mindepth=parsed.mindepth,
                       empty=parsed.empty,
                       links=opts.ns.links if opts.ns is not None else None,
-                      follow=parsed.follow)
+                      follow=parsed.follow,
+                      identity=identity_of(opts))
 
 
 async def find_walk_generic(
@@ -1083,7 +1090,7 @@ async def find_walk_generic(
         return await render_printf_rows(
             printf_pairs, args.printf,
             partial(_stat_with_index, stat, opts.index), stat_path, links,
-            missing)
+            missing, identity_of(opts))
     if missing:
         return format_records(results), IOResult(stderr=("\n".join(missing) +
                                                          "\n").encode(),

@@ -692,9 +692,18 @@ async def mark_var(session: Session,
     set_attr(session, name, attr, on)
 
 
+def session_profile(session: Session) -> str | None:
+    """The name of the profile the session runs under, None when none.
+
+    Args:
+        session (Session): the session to read.
+    """
+    return session.profile
+
+
 def session_view(session: Session,
                  policies: Policies | None = None) -> SessionView:
-    """The session plane's view: six facts bound to one session.
+    """The session plane's view: seven facts bound to one session.
 
     The one constructor every tier uses — builtins, the command
     dispatcher, a bare unit test — so the gate cannot be skipped by
@@ -712,4 +721,5 @@ def session_view(session: Session,
                        set=functools.partial(set_var, session, policies),
                        unset=functools.partial(unset_var, session, policies),
                        mark=functools.partial(mark_var, session, policies),
-                       is_readonly=functools.partial(env_is_readonly, session))
+                       is_readonly=functools.partial(env_is_readonly, session),
+                       profile=functools.partial(session_profile, session))
